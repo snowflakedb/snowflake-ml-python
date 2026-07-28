@@ -1077,11 +1077,9 @@ class MergingSqlGenerator:
 
             elif spec.function == AggregationType.APPROX_COUNT_DISTINCT:
                 col_name = spec.get_tile_column_name("DS_HLL")
-                agg_columns.append(
-                    f"DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE("
-                    f"CASE WHEN {tile_filter} THEN {col_name} ELSE NULL END"
-                    f")) AS {output_col}"
-                )
+                # Round the HLL estimate to a BIGINT for online/offline parity.
+                sketch_expr = f"DATASKETCHES_HLL_COMBINE(CASE WHEN {tile_filter} THEN {col_name} ELSE NULL END)"
+                agg_columns.append(f"ROUND(DATASKETCHES_HLL_ESTIMATE({sketch_expr}))::BIGINT AS {output_col}")
 
             elif spec.function == AggregationType.APPROX_PERCENTILE:
                 # Combine T-Digest states and estimate percentile
@@ -1209,9 +1207,9 @@ class MergingSqlGenerator:
                     )
                 elif spec.function == AggregationType.APPROX_COUNT_DISTINCT:
                     partial = spec.get_tile_column_name("DS_HLL")
-                    inner_exprs.append(
-                        f"DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE({partial})) AS {output_col}"
-                    )
+                    # Round the HLL estimate to a BIGINT for online/offline parity.
+                    sketch_expr = f"DATASKETCHES_HLL_COMBINE({partial})"
+                    inner_exprs.append(f"ROUND(DATASKETCHES_HLL_ESTIMATE({sketch_expr}))::BIGINT AS {output_col}")
                 elif spec.function == AggregationType.APPROX_PERCENTILE:
                     # T-Digest states are likewise mergeable across tiles per
                     # (entity, sk): combine then estimate at the requested
@@ -1378,7 +1376,8 @@ class MergingSqlGenerator:
 
             elif spec.function == AggregationType.APPROX_COUNT_DISTINCT:
                 cum_col = spec.get_cumulative_column_name("DS_HLL")
-                select_cols.append(f"DATASKETCHES_HLL_ESTIMATE(TILES.{cum_col}) AS {output_col}")
+                # Round the HLL estimate to a BIGINT for online/offline parity.
+                select_cols.append(f"ROUND(DATASKETCHES_HLL_ESTIMATE(TILES.{cum_col}))::BIGINT AS {output_col}")
 
             elif spec.function == AggregationType.APPROX_PERCENTILE:
                 cum_col = spec.get_cumulative_column_name("TDIGEST")

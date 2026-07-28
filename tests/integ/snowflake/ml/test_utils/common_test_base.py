@@ -5,17 +5,21 @@ import logging
 import os
 import tempfile
 from typing import Any, Callable, Literal, Optional, TypeVar, Union
+from unittest import mock
 
 import cloudpickle
 from absl.testing import absltest, parameterized
 from packaging import requirements, specifiers
 from typing_extensions import Concatenate, ParamSpec
 
-from snowflake.ml._internal import env, env_utils, file_utils
+from snowflake.ml._internal import env, env_utils, file_utils, platform_capabilities
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.snowpark import functions as F, session
 from snowflake.snowpark._internal import udf_utils, utils as snowpark_utils
 from tests.integ.snowflake.ml.test_utils import _snowml_requirements, test_env_utils
+
+# Force hidden live commit in registry integ tests until client release enables the server flag.
+_ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG = True
 
 _V = TypeVar("_V", bound="CommonTestBase")
 _T_args = ParamSpec("_T_args")
@@ -58,6 +62,15 @@ def get_modified_test_cases(
 class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
+        self._hidden_live_commit_patcher: Optional[Any] = None
+        if _ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG:
+            self._hidden_live_commit_patcher = mock.patch.object(
+                platform_capabilities.PlatformCapabilities,
+                "is_hidden_live_commit_enabled",
+                return_value=True,
+            )
+            self._hidden_live_commit_patcher.start()
+
         self.session = test_env_utils.get_available_session()
 
         try:
@@ -67,6 +80,8 @@ class CommonTestBase(parameterized.TestCase):
             logging.warning(f"Failed to retrieve the Snowflake version: {e}")
 
     def tearDown(self) -> None:
+        if self._hidden_live_commit_patcher is not None:
+            self._hidden_live_commit_patcher.stop()
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             self.session.close()
 

@@ -8,7 +8,7 @@ from snowflake.ml._internal import env_utils, platform_capabilities, telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import target_platform, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
-from snowflake.ml.model._client.ops import service_ops
+from snowflake.ml.model._client.ops import live_commit_naming, service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
@@ -17,6 +17,7 @@ from snowflake.ml.registry._manager import model_manager, model_parameter_reconc
 from snowflake.ml.test_utils import mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Row, Session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class ModelManagerTest(parameterized.TestCase):
@@ -66,12 +67,13 @@ class ModelManagerTest(parameterized.TestCase):
         )
         self._pypi_shared_repo_access_patcher.start()
         self.addCleanup(self._pypi_shared_repo_access_patcher.stop)
-        with platform_capabilities.PlatformCapabilities.mock_features():
-            self.m_r = model_manager.ModelManager(
-                self.c_session,
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("TEST"),
-            )
+        platform_capabilities.PlatformCapabilities.set_mock_features({})
+        self.addCleanup(platform_capabilities.PlatformCapabilities.clear_mock_features)
+        self.m_r = model_manager.ModelManager(
+            self.c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("TEST"),
+        )
         with mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 self.m_r._model_ops,
@@ -200,11 +202,7 @@ class ModelManagerTest(parameterized.TestCase):
                 statement_params=mock.ANY,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_minimal(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_minimal(self) -> None:
         m_model = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_model_metadata = mock.MagicMock()
@@ -229,9 +227,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -278,7 +273,6 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
                 statement_params=self._build_expected_create_model_statement_params("angry_yeti_1"),
-                use_live_commit=False,
             )
             mock_list_models_or_versions.assert_not_called()
             mock_hrid_generate.assert_called_once_with()
@@ -292,11 +286,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ),
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_1(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_1(self) -> None:
         m_model = mock.MagicMock()
         m_conda_dependency = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
@@ -316,9 +306,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -367,15 +354,10 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1"),
                 statement_params=self._build_expected_create_model_statement_params("v1"),
-                use_live_commit=False,
             )
             self.assertEqual(mv, self.m_mv)
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_2(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_2(self) -> None:
         m_model = mock.MagicMock()
         m_pip_requirements = mock.MagicMock()
         m_signatures = mock.MagicMock()
@@ -396,9 +378,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -447,18 +426,13 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
-                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
                 self.m_mv,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_3(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_3(self) -> None:
         m_model = mock.MagicMock()
         m_python_version = mock.MagicMock()
         m_code_paths = mock.MagicMock()
@@ -479,9 +453,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -525,18 +496,13 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
-                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
                 self.m_mv,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_4(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_4(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
@@ -556,9 +522,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -601,7 +564,6 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
-                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
@@ -656,20 +618,13 @@ class ModelManagerTest(parameterized.TestCase):
                 ]
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_unsupported_platform(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_unsupported_platform(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         with (
             mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
             mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
             self.assertRaises(ValueError) as ex,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
-            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -681,7 +636,6 @@ class ModelManagerTest(parameterized.TestCase):
             self.assertIn("is not a valid TargetPlatform", str(ex.exception))
 
     @parameterized.product(  # type: ignore[misc]
-        is_live_commit_enabled=[True, False],
         target_platforms=[
             ["SNOWPARK_CONTAINER_SERVICES"],
             [target_platform.TargetPlatform.WAREHOUSE],
@@ -689,7 +643,8 @@ class ModelManagerTest(parameterized.TestCase):
         ],
     )
     def test_log_model_target_platforms(
-        self, target_platforms: list[type_hints.SupportedTargetPlatformType], is_live_commit_enabled: bool = False
+        self,
+        target_platforms: list[type_hints.SupportedTargetPlatformType],
     ) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
@@ -706,9 +661,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             self.m_r.log_model(
@@ -750,7 +702,6 @@ class ModelManagerTest(parameterized.TestCase):
             )
 
     @parameterized.product(  # type: ignore[misc]
-        is_live_commit_enabled=[True, False],
         target_platform_constant=[
             target_platform.WAREHOUSE_ONLY,
             target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY,
@@ -760,7 +711,6 @@ class ModelManagerTest(parameterized.TestCase):
     def test_log_model_target_platform_constant(
         self,
         target_platform_constant: list[Union[target_platform.TargetPlatform, str]],
-        is_live_commit_enabled: bool = False,
     ) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
@@ -777,9 +727,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             self.m_r.log_model(
@@ -816,11 +763,7 @@ class ModelManagerTest(parameterized.TestCase):
                 experiment_info=None,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_fully_qualified(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_fully_qualified(self) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
@@ -840,9 +783,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             mv = self.m_r.log_model(
@@ -885,7 +825,6 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self._build_expected_create_model_statement_params("V1"),
-                use_live_commit=False,
             )
             self.assertEqual(
                 mv,
@@ -954,11 +893,7 @@ class ModelManagerTest(parameterized.TestCase):
                 statement_params=mock.ANY,
             )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_version_name_dedup(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_version_name_dedup(self) -> None:
         def validate_existence_side_effect(**kwargs: Any) -> bool:
             if kwargs.get("version_name") is not None:
                 return False
@@ -989,9 +924,6 @@ class ModelManagerTest(parameterized.TestCase):
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
             ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
-            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -1002,11 +934,7 @@ class ModelManagerTest(parameterized.TestCase):
             )
             self.assertEqual(mock_hrid_generate.call_count, 2)
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
-    )
-    def test_log_model_in_ml_runtime(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_in_ml_runtime(self) -> None:
         m_model = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_model_metadata = mock.MagicMock()
@@ -1023,9 +951,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             self.m_r.log_model(
@@ -1056,7 +981,6 @@ class ModelManagerTest(parameterized.TestCase):
             )
 
     @parameterized.product(  # type: ignore[misc]
-        is_live_commit_enabled=[True, False],
         options=[
             type_hints.BaseModelSaveOption(function_type="TABLE_FUNCTION"),
             type_hints.BaseModelSaveOption(
@@ -1067,9 +991,7 @@ class ModelManagerTest(parameterized.TestCase):
             ),
         ],
     )
-    def test_log_model_table_function(
-        self, is_live_commit_enabled: bool, options: type_hints.BaseModelSaveOption
-    ) -> None:
+    def test_log_model_table_function(self, options: type_hints.BaseModelSaveOption) -> None:
         m_model = mock.MagicMock()
         m_sample_input_data = mock.MagicMock()
         m_model_metadata = mock.MagicMock()
@@ -1086,9 +1008,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
         ):
             self.m_r.log_model(
@@ -1164,9 +1083,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
             ),
         ):
             self.m_r.log_model(
@@ -1277,9 +1193,6 @@ class ModelManagerTest(parameterized.TestCase):
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
             ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
-            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -1332,9 +1245,6 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
             mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
-            ),
         ):
             mv = self.m_r.log_model(
                 model=m_hf_model,
@@ -1383,9 +1293,6 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
             mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
-            ),
         ):
             mv = self.m_r.log_model(
                 model=m_hf_model,
@@ -1443,9 +1350,6 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
             mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
-            ),
         ):
             mv = self.m_r.log_model(
                 model=m_hf_model,
@@ -1481,6 +1385,213 @@ class ModelManagerTest(parameterized.TestCase):
                 ),
             )
 
+    def test_log_model_hidden_live_create_path(self) -> None:
+        m_model = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        pending_model = sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL")
+        live_version = sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION")
+        stage_path = "snow://model/TEMP.TEST.PENDING_A1B2C3D4_MODEL/versions/LIVE_E5F6A7B8_VERSION/"
+
+        with (
+            mock.patch.object(snowpark_utils, "is_in_stored_procedure", return_value=False),
+            mock.patch.object(
+                platform_capabilities.PlatformCapabilities,
+                "is_hidden_live_commit_enabled",
+                return_value=True,
+            ),
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_pending_model_name",
+                return_value=pending_model,
+            ),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_live_version_name",
+                return_value=live_version,
+            ),
+            mock.patch.object(self.m_r._model_ops, "create_live_version") as mock_create_live_version,
+            mock.patch.object(
+                self.m_r._model_ops,
+                "get_model_version_stage_path",
+                return_value=stage_path,
+            ) as mock_get_model_version_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "commit_live_version") as mock_commit_live_version,
+            mock.patch.object(
+                self.m_r._model_ops, "list_models_or_versions", return_value=[]
+            ) as mock_list_models_or_versions,
+            mock.patch.object(
+                self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
+            ) as mock_hrid_generate,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            mock_create_live_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=pending_model,
+                version_name=live_version,
+                statement_params=mock.ANY,
+            )
+            mock_get_model_version_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=pending_model,
+                version_name=live_version,
+            )
+            mock_save.assert_called_once_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                artifact_repository_map=None,
+                resource_constraint=None,
+                target_platforms=None,
+                python_version=None,
+                user_files=None,
+                code_paths=None,
+                ext_modules=None,
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
+                task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
+                experiment_info=None,
+            )
+            mock_commit_live_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                checkout_model_name=pending_model,
+                checkout_version_name=live_version,
+                rename_model_to=sql_identifier.SqlIdentifier("MODEL"),
+                rename_version_to=sql_identifier.SqlIdentifier("angry_yeti_1"),
+                statement_params=self._build_expected_create_model_statement_params("angry_yeti_1"),
+            )
+            mock_list_models_or_versions.assert_not_called()
+            mock_hrid_generate.assert_called_once_with()
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    self.m_r._model_ops,
+                    service_ops=self.m_r._service_ops,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("angry_yeti_1"),
+                ),
+            )
+
+    def test_log_model_hidden_live_alter_path(self) -> None:
+        m_model = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        live_version = sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION")
+        stage_path = "snow://model/TEMP.TEST.MODEL/versions/LIVE_E5F6A7B8_VERSION/"
+
+        with (
+            mock.patch.object(snowpark_utils, "is_in_stored_procedure", return_value=False),
+            mock.patch.object(
+                platform_capabilities.PlatformCapabilities,
+                "is_hidden_live_commit_enabled",
+                return_value=True,
+            ),
+            mock.patch.object(
+                self.m_r._model_ops,
+                "validate_existence",
+                side_effect=[True, False],
+            ),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_live_version_name",
+                return_value=live_version,
+            ),
+            mock.patch.object(self.m_r._model_ops, "add_live_version") as mock_add_live_version,
+            mock.patch.object(
+                self.m_r._model_ops,
+                "get_model_version_stage_path",
+                return_value=stage_path,
+            ) as mock_get_model_version_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "commit_live_version") as mock_commit_live_version,
+            mock.patch.object(
+                self.m_r._model_ops, "list_models_or_versions", return_value=[]
+            ) as mock_list_models_or_versions,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V2",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            mock_add_live_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=live_version,
+                statement_params=mock.ANY,
+            )
+            mock_get_model_version_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=live_version,
+            )
+            mock_save.assert_called_once_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                artifact_repository_map=None,
+                resource_constraint=None,
+                target_platforms=None,
+                python_version=None,
+                user_files=None,
+                code_paths=None,
+                ext_modules=None,
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
+                task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
+                experiment_info=None,
+            )
+            mock_commit_live_version.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                checkout_model_name=sql_identifier.SqlIdentifier("MODEL"),
+                checkout_version_name=live_version,
+                rename_model_to=None,
+                rename_version_to=sql_identifier.SqlIdentifier("V2"),
+                statement_params=self._build_expected_create_model_statement_params("V2"),
+            )
+            mock_list_models_or_versions.assert_not_called()
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    self.m_r._model_ops,
+                    service_ops=self.m_r._service_ops,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V2"),
+                ),
+            )
+
     def test_log_huggingface_model_with_snapshot_dir(self) -> None:
         """Test HuggingFace model with repo_snapshot_dir uses regular logging path."""
         from snowflake.ml.model.models import huggingface
@@ -1506,9 +1617,6 @@ class ModelManagerTest(parameterized.TestCase):
                 env_utils,
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ),
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
             ),
         ):
             # Should use regular logging path, not remote

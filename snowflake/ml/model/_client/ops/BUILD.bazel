@@ -59,6 +59,26 @@ py_test(
 )
 
 py_library(
+    name = "live_commit_naming",
+    srcs = ["live_commit_naming.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "live_commit_naming_test",
+    srcs = ["live_commit_naming_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":live_commit_naming",
+    ],
+)
+
+py_library(
     name = "model_ops",
     srcs = ["model_ops.py"],
     deps = [

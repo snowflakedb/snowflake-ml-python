@@ -791,6 +791,30 @@ class RoundTripTest(absltest.TestCase):
 
         self.assertEqual(fg._postgres_online_query_url, "https://q.example/svc")
 
+    def test_get_feature_group_hydrates_query_url_during_updating(self) -> None:
+        """UPDATING (redeploy in progress) still hydrates ``_postgres_online_query_url``."""
+        fv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["F1"])
+        meta = FeatureGroupMetadata(
+            name="FG",
+            version="v1",
+            desc="hello",
+            auto_prefix=True,
+            sources=[FeatureGroupSourceRef(fv_name="USER_FV", fv_version="v1")],
+        )
+        md = MagicMock()
+        md.get_feature_group_metadata = MagicMock(return_value=meta)
+        fs = _new_fs_with_mocks(metadata_manager=md)
+        object.__setattr__(fs, "get_feature_view", MagicMock(return_value=fv))
+
+        stub_status = MagicMock()
+        stub_status.status = "UPDATING"
+        with patch.object(online_service, "fetch_online_service_status", return_value=stub_status), patch.object(
+            online_service, "endpoint_url", return_value="https://q.example/svc"
+        ):
+            fg = fs.get_feature_group("FG", "v1")
+
+        self.assertEqual(fg._postgres_online_query_url, "https://q.example/svc")
+
 
 class ListFeatureGroupsTest(absltest.TestCase):
     """``list_feature_groups`` joins persisted FG metadata with the tag scan."""

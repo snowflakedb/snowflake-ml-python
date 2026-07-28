@@ -356,10 +356,14 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
         ]
         self._stream_ingest_with_retry(fs, stream, ingest_rows)
 
+        # key_a ingested categories {electronics, books} -> exactly 2 distinct.
+        # The online store returns a rounded integer estimate; assert an exact
+        # integer value (no float coercion, no tolerance) for parity.
         def _validate(pdf):
             self.assertIn("UNIQUE_CATS_2D", pdf.columns)
-            val = float(pdf.iloc[0]["UNIQUE_CATS_2D"])
-            self.assertAlmostEqual(val, 2.0, delta=0.1)
+            self.assert_long_feature(
+                pdf.iloc[0]["UNIQUE_CATS_2D"], expected=2, msg="stream online approx_count_distinct"
+            )
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[[key_a]], validate_fn=_validate, desc="stream ingest approx_count_distinct"

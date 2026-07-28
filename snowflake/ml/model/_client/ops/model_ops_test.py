@@ -1590,6 +1590,81 @@ class ModelOpsTest(parameterized.TestCase):
             mock_create_from_stage.assert_not_called()
             mock_add_version_from_stagel.assert_not_called()
 
+    def test_create_live_version(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "create_live_version") as mock_create_live_version:
+            self.m_ops.create_live_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                statement_params=self.m_statement_params,
+            )
+            mock_create_live_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_add_live_version(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "add_live_version") as mock_add_live_version:
+            self.m_ops.add_live_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                statement_params=self.m_statement_params,
+            )
+            mock_add_live_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_commit_live_version_create_path(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "commit_version") as mock_commit_version:
+            self.m_ops.commit_live_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                checkout_model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+                checkout_version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                rename_model_to=sql_identifier.SqlIdentifier("MODEL"),
+                rename_version_to=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+            mock_commit_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                rename_model_to=sql_identifier.SqlIdentifier("MODEL"),
+                rename_version_to=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+
+    def test_commit_live_version_alter_path(self) -> None:
+        with mock.patch.object(self.m_ops._model_version_client, "commit_version") as mock_commit_version:
+            self.m_ops.commit_live_version(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                checkout_model_name=sql_identifier.SqlIdentifier("MODEL"),
+                checkout_version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                rename_version_to=sql_identifier.SqlIdentifier("V2"),
+                statement_params=self.m_statement_params,
+            )
+            mock_commit_version.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+                rename_model_to=None,
+                rename_version_to=sql_identifier.SqlIdentifier("V2"),
+                statement_params=self.m_statement_params,
+            )
+
     def test_create_from_model_version_create(self) -> None:
         with mock.patch.object(
             self.m_ops._model_version_client, "create_from_model_version"

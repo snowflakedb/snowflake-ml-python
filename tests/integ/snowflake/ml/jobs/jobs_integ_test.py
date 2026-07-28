@@ -724,35 +724,6 @@ class JobManagerTest(JobTestBase):
         self.assertIsInstance(job2_loaded_cm.exception.__cause__, NotImplementedError)
         self.assertEqual(str(job2_loaded_cm.exception.__cause__), "This function is expected to fail")
 
-    def test_job_runtime_api(self) -> None:
-        # Submit this function via file to avoid pickling issues
-        # TODO: Test this via job decorator as well
-        def runtime_func() -> None:
-            from common_utils import common_util as mlrs_util
-
-            from snowflake.ml.data.data_connector import DataConnector
-            from snowflake.snowpark.context import get_active_session
-
-            # Validate simple data ingestion
-            session = get_active_session()
-            num_rows = 100
-            df = session.sql(
-                f"SELECT uniform(1, 1000, random()) as random_val FROM table(generator(rowcount => {num_rows}))"
-            )
-            dc = DataConnector.from_dataframe(df)
-            assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
-            assert len(dc.to_pandas()) == num_rows, len(dc.to_pandas())
-
-            # Validate mlruntimes utils
-            assert mlrs_util.get_num_ray_nodes() > 0
-
-            # Print success message which will be checked in the test
-            print("Runtime API test success")
-
-        job = self._submit_func_as_file(runtime_func)
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
-        self.assertIn("Runtime API test success", job_logs)
-
     def test_job_data_connector(self) -> None:
         from snowflake.ml.data import data_connector
         from snowflake.ml.data._internal import arrow_ingestor

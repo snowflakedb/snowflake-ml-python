@@ -5,10 +5,12 @@ from unittest.mock import MagicMock
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_store import FeatureStore
 from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewVersion
 from snowflake.ml.feature_store.metadata_manager import StreamingMetadata
+from snowflake.snowpark import Row
 
 
 class _FakeFSConfig:
@@ -190,6 +192,45 @@ class GetOfflineRefreshHistoryTest(absltest.TestCase):
 
         for w in captured:
             self.assertNotIn("backfill task history", str(w.message))
+
+
+def _make_fs_for_refresh_mode(found_dts: list[Row]) -> FeatureStore:
+    """FeatureStore stub whose ``_find_object`` (SHOW DYNAMIC TABLES) returns ``found_dts``."""
+    fs = object.__new__(FeatureStore)
+    fs._find_object = MagicMock(return_value=found_dts)  # type: ignore[method-assign]
+    return fs
+
+
+class CheckDynamicTableRefreshModeTest(absltest.TestCase):
+    """Tests for ``FeatureStore._check_dynamic_table_refresh_mode``.
+
+    The warning depends on the refresh mode Snowflake assigns to the dynamic table (reported via
+    ``SHOW DYNAMIC TABLES``). That classification is server-side and can change -- e.g. the
+    July 16, 2026 GA that made VOLATILE scalar UDFs incrementally refreshable flipped a
+    previously-``FULL`` pattern to ``INCREMENTAL``, which silently broke an integration test that
+    assumed a UDF always forces full refresh. Mocking the SHOW lookup covers both branches
+    deterministically, independent of the server's classification.
+    """
+
+    def test_warns_when_refresh_mode_is_not_incremental(self) -> None:
+        fs = _make_fs_for_refresh_mode(
+            [Row(refresh_mode="FULL", refresh_mode_reason="function MINUS_ONE is not supported")]
+        )
+        with self.assertWarnsRegex(UserWarning, "Your pipeline won't be incrementally refreshed due to:"):
+            fs._check_dynamic_table_refresh_mode(SqlIdentifier("MY_FV"))
+
+    def test_does_not_warn_when_refresh_mode_is_incremental(self) -> None:
+        # This is the case that started happening after the Jul 16, 2026 GA for VOLATILE scalar UDFs.
+        fs = _make_fs_for_refresh_mode([Row(refresh_mode="INCREMENTAL", refresh_mode_reason=None)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any emitted UserWarning would fail the test
+            fs._check_dynamic_table_refresh_mode(SqlIdentifier("MY_FV"))
+
+    def test_raises_when_dynamic_table_not_uniquely_found(self) -> None:
+        for found_dts in ([], [Row(refresh_mode="FULL", refresh_mode_reason=None)] * 2):
+            fs = _make_fs_for_refresh_mode(found_dts)
+            with self.assertRaises(snowml_exceptions.SnowflakeMLException):
+                fs._check_dynamic_table_refresh_mode(SqlIdentifier("MY_FV"))
 
 
 if __name__ == "__main__":

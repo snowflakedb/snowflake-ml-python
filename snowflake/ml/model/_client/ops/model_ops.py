@@ -170,6 +170,40 @@ class ModelOperator:
         else:
             return ModelAction.CREATE
 
+    def create_live_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self._model_version_client.create_live_version(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+
+    def add_live_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self._model_version_client.add_live_version(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+
     def add_or_create_live_version(
         self,
         *,
@@ -187,7 +221,7 @@ class ModelOperator:
             statement_params=statement_params,
         )
         if model_action == ModelAction.CREATE:
-            self._model_version_client.create_live_version(
+            self.create_live_version(
                 database_name=database_name,
                 schema_name=schema_name,
                 model_name=model_name,
@@ -195,7 +229,7 @@ class ModelOperator:
                 statement_params=statement_params,
             )
         elif model_action == ModelAction.ALTER:
-            self._model_version_client.add_live_version(
+            self.add_live_version(
                 database_name=database_name,
                 schema_name=schema_name,
                 model_name=model_name,
@@ -204,6 +238,27 @@ class ModelOperator:
             )
         else:
             raise AssertionError(f"The model_action is {model_action}. Expected CREATE or ALTER.")
+
+    def commit_live_version(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        checkout_model_name: sql_identifier.SqlIdentifier,
+        checkout_version_name: sql_identifier.SqlIdentifier,
+        rename_model_to: Optional[sql_identifier.SqlIdentifier] = None,
+        rename_version_to: Optional[sql_identifier.SqlIdentifier] = None,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self._model_version_client.commit_version(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=checkout_model_name,
+            version_name=checkout_version_name,
+            rename_model_to=rename_model_to,
+            rename_version_to=rename_version_to,
+            statement_params=statement_params,
+        )
 
     def create_from_stage(
         self,
@@ -214,49 +269,35 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[dict[str, Any]] = None,
-        use_live_commit: Optional[bool] = False,
     ) -> None:
-        if use_live_commit:
-            # if the model version is live, we can only commit the version
-            self._model_version_client.commit_version(
+        stage_path = str(composed_model.stage_path)
+        model_action = self.get_model_action_from_model_name_and_version(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            statement_params=statement_params,
+        )
+        if model_action == ModelAction.ALTER:
+            self._model_version_client.add_version_from_stage(
                 database_name=database_name,
                 schema_name=schema_name,
+                stage_path=stage_path,
+                model_name=model_name,
+                version_name=version_name,
+                statement_params=statement_params,
+            )
+        elif model_action == ModelAction.CREATE:
+            self._model_version_client.create_from_stage(
+                database_name=database_name,
+                schema_name=schema_name,
+                stage_path=stage_path,
                 model_name=model_name,
                 version_name=version_name,
                 statement_params=statement_params,
             )
         else:
-            stage_path = str(composed_model.stage_path)
-            # if the model version is not live,
-            # find whether the model exists and whether the version exists
-            # and then decide whether to create or alter the model
-            model_action = self.get_model_action_from_model_name_and_version(
-                database_name=database_name,
-                schema_name=schema_name,
-                model_name=model_name,
-                version_name=version_name,
-                statement_params=statement_params,
-            )
-            if model_action == ModelAction.ALTER:
-                self._model_version_client.add_version_from_stage(
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    stage_path=stage_path,
-                    model_name=model_name,
-                    version_name=version_name,
-                    statement_params=statement_params,
-                )
-            elif model_action == ModelAction.CREATE:
-                self._model_version_client.create_from_stage(
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    stage_path=stage_path,
-                    model_name=model_name,
-                    version_name=version_name,
-                    statement_params=statement_params,
-                )
-            else:
-                raise AssertionError(f"The model_action is {model_action}. Expected CREATE or ALTER.")
+            raise AssertionError(f"The model_action is {model_action}. Expected CREATE or ALTER.")
 
     def create_from_model_version(
         self,

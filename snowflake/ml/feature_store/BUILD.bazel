@@ -179,6 +179,18 @@ py_test(
 )
 
 py_test(
+    name = "metadata_manager_test",
+    srcs = ["metadata_manager_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "stream_source_test",
     srcs = ["stream_source_test.py"],
     tags = [

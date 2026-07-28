@@ -1047,6 +1047,123 @@ class ModelVersionSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_create_live_version(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model PENDING_A1B2C3D4_MODEL successfully created.")],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql(
+            """CREATE MODEL TEMP."test".PENDING_A1B2C3D4_MODEL WITH LIVE VERSION LIVE_E5F6A7B8_VERSION""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).create_live_version(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+            version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+            statement_params=m_statement_params,
+        )
+
+    def test_add_live_version(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL ADD LIVE VERSION LIVE_E5F6A7B8_VERSION""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).add_live_version(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+            statement_params=m_statement_params,
+        )
+
+    def test_commit_version_without_rename(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            """ALTER MODEL TEMP."test".MODEL COMMIT VERSION LIVE_A1B2C3D4_VERSION""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).commit_version(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("LIVE_A1B2C3D4_VERSION"),
+            statement_params=m_statement_params,
+        )
+
+    def test_commit_version_with_model_and_version_rename(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            (
+                'ALTER MODEL TEMP."test".PENDING_A1B2C3D4_MODEL COMMIT VERSION LIVE_E5F6A7B8_VERSION'
+                ' RENAME TO TEMP."test".MODEL RENAME VERSION TO V1'
+            ),
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).commit_version(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL"),
+            version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+            rename_model_to=sql_identifier.SqlIdentifier("MODEL"),
+            rename_version_to=sql_identifier.SqlIdentifier("V1"),
+            statement_params=m_statement_params,
+        )
+
+    def test_commit_version_with_version_rename_only(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")], collect_statement_params=m_statement_params
+        )
+        self.m_session.add_mock_sql(
+            ('ALTER MODEL TEMP."test".MODEL COMMIT VERSION LIVE_E5F6A7B8_VERSION' " RENAME VERSION TO V2"),
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).commit_version(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION"),
+            rename_version_to=sql_identifier.SqlIdentifier("V2"),
+            statement_params=m_statement_params,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

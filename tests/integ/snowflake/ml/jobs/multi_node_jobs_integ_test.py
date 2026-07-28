@@ -104,9 +104,11 @@ class MultiNodeJobsTest(JobTestBase):
 
     def test_multinode_job_wait_for_instances(self) -> None:
         def get_cluster_size() -> None:
-            from common_utils import common_util as mlrs_util
+            import ray
 
-            num_nodes = mlrs_util.get_num_ray_nodes()
+            if not ray.is_initialized():
+                ray.init(address="auto", ignore_reinit_error=True, log_to_driver=False, logging_level="CRITICAL")
+            num_nodes = len([node for node in ray.nodes() if node["Alive"]])
             print("num_nodes:", num_nodes)
 
         # Verify min_instances met

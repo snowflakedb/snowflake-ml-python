@@ -98,6 +98,49 @@ class UtilTest(absltest.TestCase):
             explain_sig.outputs,
         )
 
+    def test_add_inferred_explain_method_signature_all_null_input_column(self) -> None:
+        # Regression test: a numeric input column that is entirely null within the truncated background window
+        # must not fail explain-signature inference. The input schema is reused from the target method (which
+        # was inferred over the full sample) rather than being re-inferred from the background rows.
+        predict_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="MASS"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="LIQUID_DENSITY"),
+            ],
+            outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output1")],
+        )
+        meta = model_meta.ModelMetadata(
+            name="name", env=model_env.ModelEnv(), model_type="custom", signatures={"predict": predict_sig}
+        )
+
+        def explain_fn(data: type_hints.SupportedDataType) -> pd.DataFrame:
+            return pd.DataFrame({"MASS": [0.3, 0.5], "LIQUID_DENSITY": [0.1, 0.2]})
+
+        new_meta = handlers_utils.add_inferred_explain_method_signature(
+            model_meta=meta,
+            explain_method="explain",
+            target_method="predict",
+            background_data=pd.DataFrame(
+                {
+                    "MASS": [1.0, 2.0, 3.0, 4.0, 5.0],
+                    "LIQUID_DENSITY": [None, None, None, None, None],  # entirely null within the background window
+                }
+            ),
+            explain_fn=explain_fn,
+        )
+
+        self.assertIn("explain", new_meta.signatures)
+        explain_sig = new_meta.signatures["explain"]
+        self.assertEqual(explain_sig.inputs, predict_sig.inputs)
+        self.assertIn(
+            model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="MASS_explanation"),
+            explain_sig.outputs,
+        )
+        self.assertIn(
+            model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="LIQUID_DENSITY_explanation"),
+            explain_sig.outputs,
+        )
+
     def test_add_inferred_explain_method_signature_with_params(self) -> None:
         predict_sig = model_signature.ModelSignature(
             inputs=[
@@ -263,7 +306,6 @@ class UtilTest(absltest.TestCase):
         pd.testing.assert_frame_equal(explanations_df, expected_df)
 
     def test_validate_model_task(self) -> None:
-
         task_list = list(type_hints.Task)
         for task in task_list:
             for inferred_task in task_list:
@@ -383,7 +425,6 @@ class UtilTest(absltest.TestCase):
         self.assertEqual(predict_sig, meta.signatures.get("predict"))
 
     def test_get_truncated_sample_data(self) -> None:
-
         # when data_size > 10 rows
         df = pd.DataFrame(np.random.randint(0, 100, size=(100, 3)))
         self.assertEqual(10, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df, 10)).shape[0])

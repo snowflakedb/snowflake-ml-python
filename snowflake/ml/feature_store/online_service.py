@@ -533,7 +533,9 @@ def _assert_online_service_running(
                 "then poll get_online_service_status() until RUNNING."
             ),
         )
-    if st.status != "RUNNING":
+    # UPDATING means a redeploy is in progress; the service is still operational and
+    # serves reads/writes, so treat it like RUNNING as long as an endpoint is available.
+    if st.status not in ("RUNNING", "UPDATING"):
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError(

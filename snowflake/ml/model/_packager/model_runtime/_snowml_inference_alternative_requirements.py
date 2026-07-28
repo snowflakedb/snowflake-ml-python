@@ -4,7 +4,7 @@
 REQUIREMENTS = [
     "aiohttp!=4.0.0a0, !=4.0.0a1",
     "anyio>=3.5.0,<5",
-    "cachetools>=3.1.1,<6",
+    "cachetools>=3.1.1",
     "cloudpickle>=2.0.0",
     "cryptography",
     "fsspec>=2024.6.1,<2026",

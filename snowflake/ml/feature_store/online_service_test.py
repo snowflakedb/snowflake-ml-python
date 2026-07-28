@@ -1100,6 +1100,23 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
         self.assertIn("no query endpoint", str(ctx.exception.original_exception))
 
+    def test_assert_updating_with_endpoint_succeeds(self) -> None:
+        """UPDATING (redeploy in progress) with a live query endpoint is serviceable and must not raise."""
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "UPDATING", "endpoints": [{"name": "query", "url": "https://q.example"}]})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        st = online_service.assert_online_service_running_with_query_endpoint(
+            session, SqlIdentifier("DB"), SqlIdentifier("SC")
+        )
+        self.assertEqual(st.status, "UPDATING")
+        self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
+
     # --- Stream ingest edge case tests ---
 
     def test_stream_ingest_records_datetime_serialization(self) -> None:

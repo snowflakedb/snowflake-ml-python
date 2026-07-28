@@ -16,7 +16,7 @@ from snowflake.ml.feature_store.metadata_manager import (
 )
 
 
-def _make_manager():
+def _make_manager() -> tuple[FeatureStoreMetadataManager, MagicMock]:
     """Create a FeatureStoreMetadataManager with a mocked session."""
     session = MagicMock()
     session.sql.return_value.collect.return_value = []
@@ -110,6 +110,42 @@ class FeatureViewMetadataNormalizationTest(absltest.TestCase):
         self.assertIn("'myFV'", quoted_sql)
 
 
+class GetMetadataLatestRowTest(absltest.TestCase):
+    """Tests that ``_get_metadata`` always returns the newest row.
+
+    ``save_feature_view_metadata`` appends via plain INSERT and Snowflake does
+    not enforce the primary key, so a re-registered feature view can leave
+    multiple rows for the same key. The read path must pick the most recently
+    written row so ``get_feature_view`` reflects the latest registration.
+    """
+
+    def test_get_metadata_orders_by_latest_and_limits_to_one(self) -> None:
+        """The read query orders by newest timestamp and returns a single row."""
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = []
+
+        manager.get_feature_specs(str(SqlIdentifier("MY_FV")), "v1")
+
+        sql = session.sql.call_args[0][0]
+        normalized = " ".join(sql.split()).upper()
+        self.assertIn("ORDER BY UPDATED_AT DESC, CREATED_AT DESC", normalized)
+        self.assertIn("LIMIT 1", normalized)
+
+    def test_get_metadata_returns_single_row(self) -> None:
+        """With one row returned (as Snowflake would after LIMIT 1), the value round-trips."""
+        manager, session = _make_manager()
+        specs = AggregationMetadata(feature_granularity="1h", features=[])
+        session.sql.return_value.collect.return_value = [
+            MagicMock(__getitem__=lambda self, key: specs.to_dict() if key == "METADATA" else None)
+        ]
+
+        result = manager.get_feature_specs(str(SqlIdentifier("MY_FV")), "v1")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.feature_granularity, "1h")
+
+
 class StreamSourceMetadataNormalizationTest(absltest.TestCase):
     """Tests that stream source metadata normalization uses strip('"') consistently."""
 
@@ -164,7 +200,7 @@ class TestFvSourceRefsMetadata(absltest.TestCase):
     byte-identically across the metadata table.
     """
 
-    def _sample_sources(self) -> list[dict]:
+    def _sample_sources(self) -> list[dict[str, object]]:
         return [
             {
                 "name": "EVENTS_BATCH_DECL",

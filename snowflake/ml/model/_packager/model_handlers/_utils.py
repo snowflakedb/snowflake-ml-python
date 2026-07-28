@@ -1,3 +1,4 @@
+import copy
 import importlib
 import json
 import logging
@@ -130,16 +131,19 @@ def add_inferred_explain_method_signature(
         suffixed_output_names = [f"{name}_explanation" for name in output_feature_names]
 
     truncated_background_data = get_truncated_sample_data(background_data, 5)
-    sig = model_signature.infer_signature(
-        input_data=truncated_background_data,
-        output_data=explain_fn(truncated_background_data),
-        input_feature_names=[spec.name for spec in inputs],
-        output_feature_names=suffixed_output_names,
+
+    # The target method's signature already describes the model inputs, so reuse those specs for the explain
+    # signature (copied so it owns independent objects). The background sample is used only to infer the shape and
+    # data types of the explanation outputs.
+    explain_inputs = copy.deepcopy(list(inputs))
+    explain_outputs = model_signature_utils.rename_features(
+        model_signature._infer_signature(explain_fn(truncated_background_data), role="output"),
+        feature_names=list(suffixed_output_names),
     )
 
     target_sig = model_meta.signatures.get(target_method)
-    if target_sig is not None and target_sig.params is not None:
-        sig = model_signature.ModelSignature(inputs=sig.inputs, outputs=sig.outputs, params=target_sig.params)
+    params = target_sig.params if target_sig is not None else None
+    sig = model_signature.ModelSignature(inputs=explain_inputs, outputs=explain_outputs, params=params)
 
     model_meta.signatures[explain_method] = sig
     return model_meta

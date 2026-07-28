@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import pandas as pd
 import pytest
-import requests
 from absl.testing import absltest, parameterized
 from sklearn.ensemble import RandomForestRegressor
 
@@ -407,7 +406,9 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
         # Send request and verify response works
         response = self._inference_using_rest_api(
-            self._to_external_data_format(test_input), endpoint=endpoint, target_method="predict"
+            self._create_payload_for_protocol(test_input, "dataframe_records"),
+            endpoint=endpoint,
+            target_method="predict",
         )
         self.assertIsNotNone(response)
         self.assertEqual(len(response), len(test_input), "Response should match input size")
@@ -466,7 +467,9 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
         # Send request and verify response works
         response = self._inference_using_rest_api(
-            self._to_external_data_format(test_input), endpoint=endpoint, target_method="predict"
+            self._create_payload_for_protocol(test_input, "dataframe_records"),
+            endpoint=endpoint,
+            target_method="predict",
         )
         self.assertIsNotNone(response, f"Response should not be None when {test_description}")
         self.assertEqual(len(response), len(test_input), f"Response should match input size when {test_description}")
@@ -753,161 +756,6 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
             "snow.model_serving.request.params.timestamp",
             record_attributes,
             "Expected 'timestamp' to be captured since it was explicitly provided.",
-        )
-
-    def test_autocapture_external_function_formats(self):
-        """Test autocapture with ExternalFunction FLAT and WIDE formats.
-
-        This test verifies that:
-        1. Inference works correctly for both FLAT and WIDE formats with params
-        2. Autocapture captures feature data but NOT params for ExternalFunction formats
-
-        Note: Params are intentionally NOT captured for ExternalFunction formats because:
-        - Inference extracts params from the first record only (request-level)
-        - Each record could have different param values in the data (user modified)
-        - Capturing per-record param values would be misleading
-        """
-        if not self._has_image_override():
-            self.skipTest("Skipping test: image override environment variables not set.")
-
-        service_name = f"autocapture_external_format_test_{self._run_id}"
-
-        try:
-            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
-        except Exception as e:
-            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
-
-        model = ModelWithScalarParams(custom_model.ModelContext())
-        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
-        sample_output = model.predict(sample_input, temperature=0.7, max_tokens=100)
-
-        params = [
-            model_signature.ParamSpec(
-                name="temperature",
-                dtype=model_signature.DataType.FLOAT,
-                default_value=0.7,
-            ),
-            model_signature.ParamSpec(
-                name="max_tokens",
-                dtype=model_signature.DataType.INT64,
-                default_value=100,
-            ),
-        ]
-
-        sig = model_signature.infer_signature(
-            input_data=sample_input,
-            output_data=sample_output,
-            params=params,
-        )
-
-        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
-        mv = self._test_registry_model_deployment(
-            model=model,
-            prediction_assert_fns=prediction_assert_fns,
-            sample_input_data=sample_input,
-            signatures={"predict": sig},
-            autocapture=True,
-            service_name=service_name,
-            skip_rest_api_test=True,
-        )
-
-        endpoint = self._ensure_ingress_url(mv)
-        self._verify_list_service(mv, expected_autocapture=True)
-
-        # WIDE FORMAT TESTS
-
-        # Test 1: WIDE format with all params
-        # Format: [index, {value: v, temperature: t, max_tokens: m}]
-        wide_all_payload = {"data": [[0, {"value": 10.0, "temperature": 0.9, "max_tokens": 150}]]}
-        result_df = self._inference_using_rest_api(wide_all_payload, endpoint=endpoint, target_method="predict")
-
-        # output = 10.0 * 0.9 + 150 = 159.0
-        self.assertAlmostEqual(result_df["output"].iloc[0], 159.0, places=5)
-        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.9, places=5)
-        self.assertEqual(result_df["received_max_tokens"].iloc[0], 150)
-
-        # Test 2: WIDE format with partial params (only temperature, max_tokens uses default)
-        wide_partial_payload = {"data": [[1, {"value": 20.0, "temperature": 0.5}]]}
-        result_df = self._inference_using_rest_api(wide_partial_payload, endpoint=endpoint, target_method="predict")
-
-        # output = 20.0 * 0.5 + 100 (default) = 110.0
-        self.assertAlmostEqual(result_df["output"].iloc[0], 110.0, places=5)
-        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.5, places=5)
-        self.assertEqual(result_df["received_max_tokens"].iloc[0], 100)  # default
-
-        # Test 3: WIDE format with no params (all use defaults)
-        wide_no_params_payload = {"data": [[2, {"value": 30.0}]]}
-        result_df = self._inference_using_rest_api(wide_no_params_payload, endpoint=endpoint, target_method="predict")
-
-        # output = 30.0 * 0.7 (default) + 100 (default) = 121.0
-        self.assertAlmostEqual(result_df["output"].iloc[0], 121.0, places=5)
-        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.7, places=5)  # default
-        self.assertEqual(result_df["received_max_tokens"].iloc[0], 100)  # default
-
-        # FLAT FORMAT TESTS
-
-        # Test 4: FLAT format with all params
-        # Format: [index, value, temperature, max_tokens]
-        flat_all_payload = {"data": [[3, 40.0, 0.8, 200]]}
-        result_df = self._inference_using_rest_api(flat_all_payload, endpoint=endpoint, target_method="predict")
-
-        # output = 40.0 * 0.8 + 200 = 232.0
-        self.assertAlmostEqual(result_df["output"].iloc[0], 232.0, places=5)
-        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.8, places=5)
-        self.assertEqual(result_df["received_max_tokens"].iloc[0], 200)
-
-        # Test 5: FLAT format with partial params - should FAIL (row too short)
-        # Format: [index, value, temperature] - missing max_tokens
-        flat_partial_payload = {"data": [[4, 50.0, 0.6]]}
-        with self.assertRaises(requests.exceptions.HTTPError) as context:
-            self._inference_using_rest_api(flat_partial_payload, endpoint=endpoint, target_method="predict")
-        self.assertEqual(context.exception.response.status_code, 400, "FLAT with partial params should fail with 400")
-
-        # Test 6: FLAT format with no params - should FAIL (row too short)
-        # Format: [index, value] - missing both params
-        flat_no_params_payload = {"data": [[5, 60.0]]}
-        with self.assertRaises(requests.exceptions.HTTPError) as context:
-            self._inference_using_rest_api(flat_no_params_payload, endpoint=endpoint, target_method="predict")
-        self.assertEqual(context.exception.response.status_code, 400, "FLAT with no params should fail with 400")
-
-        # VERIFY AUTOCAPTURE
-        # Only 4 successful records (Tests 1-4), failed requests (Tests 5-6) NOT captured
-        inference_table_df = self._query_inference_table(
-            mv=mv, service_name=service_name, expected_record_count=4, timeout_seconds=120
-        )
-        self.assertIsNotNone(inference_table_df, "Should have inference table results")
-        self.assertEqual(
-            len(inference_table_df), 4, "Should have exactly 4 records (failed FLAT requests should NOT be captured)"
-        )
-
-        # Expected input->output pairs from the 4 successful requests (Tests 1-4)
-        expected_pairs = {
-            10.0: 159.0,  # Test 1: WIDE all params - value=10.0, output=10.0*0.9+150=159.0
-            20.0: 110.0,  # Test 2: WIDE partial - value=20.0, output=20.0*0.5+100=110.0
-            30.0: 121.0,  # Test 3: WIDE no params - value=30.0, output=30.0*0.7+100=121.0
-            40.0: 232.0,  # Test 4: FLAT all params - value=40.0, output=40.0*0.8+200=232.0
-        }
-        captured_pairs = {}
-
-        for i, row in inference_table_df.iterrows():
-            record_attributes = json.loads(row["RECORD_ATTRIBUTES"])
-
-            self._assert_autocapture_record(
-                record_attributes,
-                unexpected_params=["temperature", "max_tokens"],
-                record_idx=i,
-            )
-
-            self.assertIn("snow.model_serving.request.data.value", record_attributes)
-            self.assertIn("snow.model_serving.response.data.output", record_attributes)
-
-            req_value = record_attributes["snow.model_serving.request.data.value"]
-            resp_output = record_attributes["snow.model_serving.response.data.output"]
-            captured_pairs[req_value] = resp_output
-
-        # Verify all expected request->response pairs were captured correctly
-        self.assertEqual(
-            captured_pairs, expected_pairs, f"Captured pairs {captured_pairs} should match expected {expected_pairs}"
         )
 
     def test_autocapture_with_null_values(self):

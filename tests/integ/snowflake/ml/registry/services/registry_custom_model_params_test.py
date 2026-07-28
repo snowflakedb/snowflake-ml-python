@@ -1,29 +1,26 @@
 """Integration tests for custom model runtime parameter passing.
 
 Tests that ParamSpec parameters of all supported data types are correctly
-handled across all invocation paths: mv.run, REST flat, REST split, REST records,
-and REST wide (500+ features).
+handled across the supported invocation paths: mv.run, REST split, and REST
+records. The wide model (500+ features) is exercised via mv.run.
 
 Deploys one model per test method, then reuses each across subtests covering
 full/partial/default/none params, error cases (invalid_name, invalid_type,
-too_many_cols, too_few_cols, extra_cols).
+extra_cols).
 
-Coverage matrix (38 subtests + 7 TODO, 2 deployments):
+Coverage matrix (2 deployments):
 
-    Invocation   | full | partial | default | none | invalid_name | invalid_type | too_many | too_few | extra_cols
-    -------------|------|---------|---------|------|--------------|--------------|----------|---------|----------
-    mv.run       |  Y   |   Y     |   Y     |  Y   | Y (VE)       |   Y (VE)     |   N/A    |  N/A    |   N/A
-    REST flat    |  Y   |   Y     |   Y     |  Y   |    N/A       |   Y (400)    |  Y (400) | Y (400) |   N/A
-    REST split   |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
-    REST records |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
-    REST wide    |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    |   N/A
+    Invocation   | full | partial | default | none | invalid_name | invalid_type | too_many | extra_cols
+    -------------|------|---------|---------|------|--------------|--------------|----------|-----------
+    mv.run       |  Y   |   Y     |   Y     |  Y   | Y (VE)       |   Y (VE)     |   N/A    |   N/A
+    REST split   |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   | Y (200)
+    REST records |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   | Y (200)
+    mv.run wide  |  Y   |   Y     |   Y     |  Y   | Y (VE)       |   Y (VE)     |   N/A    |   N/A
 
     † = commented out — server currently ignores silently instead of returning 400
 
     Additional edge cases:
     - mv.run / multi_row_with_params: params applied consistently across all rows
-    - REST flat / varying_params_across_rows: TODO† — should reject varying rows
-    - REST wide / trailing_positional_params: params after feature dict use defaults
 """
 
 import datetime
@@ -271,32 +268,6 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "penalties": [0.5, 0.3],
     "sampling": {"seed": 42, "strategy": "greedy"},
     "models": _DEFAULT_MODELS,
-}
-
-# JSON-serializable version of all param defaults (bytes as hex, datetime as ISO).
-# Flat format requires ALL columns present, so this is used to fill missing columns.
-_REST_DEFAULT_PARAMS: dict[str, Any] = {
-    **_serialize_for_rest(
-        {
-            "int8_param": 1,
-            "int16_param": 2,
-            "int32_param": 3,
-            "int64_param": 4,
-            "uint8_param": 5,
-            "uint16_param": 6,
-            "uint32_param": 7,
-            "uint64_param": 8,
-            "float_param": 1.5,
-            "double_param": 2.5,
-            "bool_param": True,
-            "string_param": "default",
-            "bytes_param": b"default",
-            "timestamp_param": _DEFAULT_TIMESTAMP,
-            "weights_param": _DEFAULT_WEIGHTS,
-            "nested_list": _DEFAULT_NESTED_LIST,
-        }
-    ),
-    "config": _DEFAULT_CONFIG,
 }
 
 # ---------------------------------------------------------------------------
@@ -671,22 +642,6 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
         self.assertEqual(row["received_offset"], expected["received_offset"], f"{tag}received_offset")
 
     # ===================================================================
-    # Payload builders
-    # ===================================================================
-
-    def _flat_payload(self, value: float, params: dict[str, Any]) -> dict[str, Any]:
-        """Build flat format payload: {"data": [[row_id, feature, param1, param2, ...]]}."""
-        test_input = pd.DataFrame({"value": [value], **{k: [v] for k, v in params.items()}})
-        return self._to_external_data_format(test_input)
-
-    def _build_wide_payload(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Build WIDE format payload: {"data": [[row_id, {features + params}]]}."""
-        row_dict = {f"f_{i}": 1.0 for i in range(_WIDE_FORMAT_NUM_FEATURES)}
-        if params:
-            row_dict.update(params)
-        return {"data": [[0, row_dict]]}
-
-    # ===================================================================
     # Deploy helpers
     # ===================================================================
 
@@ -768,65 +723,6 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 self.assertAlmostEqual(row["input_value"], [10.0, 20.0, 30.0][i], places=5)
                 self.assertEqual(row["received_int8"], 10, f"Row {i} should use int8_param=10")
                 self.assertEqual(row["received_string"], "custom_value", f"Row {i} should use string_param override")
-
-    # ===================================================================
-    # REST flat subtests
-    # ===================================================================
-
-    def _test_rest_flat(self, endpoint: str) -> None:
-        # Flat format sends params as columns alongside features (positional, all columns required).
-        # All params are always present as serialized strings, so bytes arrive as lowercase hex.
-
-        with self.subTest("rest_flat / full"):
-            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_FULL_PARAMS)}
-            response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label="flat/full")
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_all_data_types_df(res_df, _to_raw_expected(_FULL_EXPECTED), "flat/full")
-
-        with self.subTest("rest_flat / partial"):
-            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_PARTIAL_PARAMS)}
-            response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label="flat/partial")
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_all_data_types_df(res_df, _to_raw_expected(_PARTIAL_EXPECTED), "flat/partial")
-
-        with self.subTest("rest_flat / default"):
-            response = self._assert_rest_ok(
-                endpoint, self._flat_payload(10.0, _REST_DEFAULT_PARAMS), label="flat/default"
-            )
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_all_data_types_df(res_df, _to_raw_expected(_DEFAULT_EXPECTED), "flat/default")
-
-        with self.subTest("rest_flat / none"):
-            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_NONE_PARAMS)}
-            response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label="flat/none")
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            # bytes_param=None → server resolves default as actual bytes → model does .hex().upper() → uppercase hex
-            self._check_all_data_types_df(res_df, _DEFAULT_EXPECTED, "flat/none")
-
-        # Flat-specific edge cases (invalid_name is N/A for positional format)
-        with self.subTest("rest_flat / invalid_type"):
-            bad_type = {**_REST_DEFAULT_PARAMS, "int8_param": "not_an_int"}
-            self._assert_rest_400(endpoint, self._flat_payload(10.0, bad_type), label="flat/invalid_type")
-
-        with self.subTest("rest_flat / too_many_cols"):
-            payload = self._flat_payload(10.0, _REST_DEFAULT_PARAMS)
-            payload["data"][0].append("extra_value")
-            self._assert_rest_400(endpoint, payload, label="flat/too_many_cols")
-
-        with self.subTest("rest_flat / too_few_cols"):
-            self._assert_rest_400(endpoint, {"data": [[0, 10.0, 1, 2]]}, label="flat/too_few_cols")
-
-        # TODO: Service path should reject rows with varying param values.
-        #  Currently first-row-wins silently. Uncomment once the server validates param equality.
-        # with self.subTest("rest_flat / varying_params_across_rows"):
-        #     row0_params = {**_REST_DEFAULT_PARAMS, "int8_param": 10}
-        #     row1_params = {**_REST_DEFAULT_PARAMS, "int8_param": 99}
-        #     row0 = pd.DataFrame({"value": [10.0], **{k: [v] for k, v in row0_params.items()}})
-        #     row1 = pd.DataFrame({"value": [20.0], **{k: [v] for k, v in row1_params.items()}})
-        #     payload0 = self._to_external_data_format(row0)
-        #     payload1 = self._to_external_data_format(row1)
-        #     payload0["data"].extend(payload1["data"])
-        #     self._assert_rest_400(endpoint, payload0, label="flat/varying_params")
 
     # ===================================================================
     # REST split subtests
@@ -999,89 +895,26 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 mv.run(input_df, function_name="predict", service_name=service_name, params=_WIDE_INVALID_TYPE_PARAMS)
 
     # ===================================================================
-    # Wide: REST wide subtests
-    # ===================================================================
-
-    def _test_rest_wide(self, endpoint: str) -> None:
-        with self.subTest("rest_wide / full"):
-            response = self._assert_rest_ok(endpoint, self._build_wide_payload(_WIDE_FULL_PARAMS), label="wide/full")
-            row = self._parse_rest_rows(response)[0]
-            self._check_wide(row, _WIDE_FULL_EXPECTED, "wide/full")
-
-        with self.subTest("rest_wide / partial"):
-            response = self._assert_rest_ok(
-                endpoint, self._build_wide_payload(_WIDE_PARTIAL_PARAMS), label="wide/partial"
-            )
-            row = self._parse_rest_rows(response)[0]
-            self._check_wide(row, _WIDE_PARTIAL_EXPECTED, "wide/partial")
-
-        with self.subTest("rest_wide / default"):
-            response = self._assert_rest_ok(endpoint, self._build_wide_payload(), label="wide/default")
-            row = self._parse_rest_rows(response)[0]
-            self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/default")
-
-        with self.subTest("rest_wide / none"):
-            response = self._assert_rest_ok(endpoint, self._build_wide_payload(_WIDE_NONE_PARAMS), label="wide/none")
-            row = self._parse_rest_rows(response)[0]
-            # None params → server substitutes defaults
-            self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/none")
-
-        # TODO: Server silently ignores unknown keys in the wide dict instead of returning 400.
-        #  Uncomment once the inference server validates param names in wide format.
-        # with self.subTest("rest_wide / invalid_name"):
-        #     self._assert_rest_400(
-        #         endpoint, self._build_wide_payload(_WIDE_INVALID_NAME_PARAMS), label="wide/invalid_name"
-        #     )
-
-        with self.subTest("rest_wide / invalid_type"):
-            self._assert_rest_400(
-                endpoint, self._build_wide_payload(_WIDE_INVALID_TYPE_PARAMS), label="wide/invalid_type"
-            )
-
-        # TODO: Server silently ignores extra keys in the wide dict instead of returning 400.
-        #  Uncomment once the inference server validates column counts in wide format.
-        # with self.subTest("rest_wide / too_many_cols"):
-        #     payload = self._build_wide_payload()
-        #     payload["data"][0][1]["extra_col"] = "unexpected"
-        #     self._assert_rest_400(endpoint, payload, label="wide/too_many_cols")
-
-        with self.subTest("rest_wide / trailing_positional_params"):
-            # Alternate wire format: params as trailing positional elements AFTER the feature dict.
-            # Format: [index, {features_only}, param1, param2, ...]
-            # This occurs when SQL passes OBJECT_CONSTRUCT for features with separate param args.
-            # The server extracts params from the dict only (not trailing args), so defaults are used.
-            features_only = {f"f_{i}": 1.0 for i in range(_WIDE_FORMAT_NUM_FEATURES)}
-            payload = {"data": [[0, features_only, 2.0, 100]]}  # trailing multiplier=2.0, offset=100
-            response = self._assert_rest_ok(endpoint, payload, label="wide/trailing_positional")
-            row = self._parse_rest_rows(response)[0]
-            # Trailing positional params are ignored — server uses defaults
-            self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/trailing_positional")
-
-    # ===================================================================
     # Entry points — one deployment per test method
     # ===================================================================
 
     def test_all_data_types_params(self) -> None:
-        """Deploy ModelWithAllDataTypes once, then run 27 subtests across all paths and param variants."""
+        """Deploy ModelWithAllDataTypes once, then run subtests across mv.run and REST split/records paths."""
         mv, endpoint = self._deploy_all_data_types()
 
         with self.subTest("mv_run"):
             self._test_mv_run(mv)
-        with self.subTest("rest_flat"):
-            self._test_rest_flat(endpoint)
         with self.subTest("rest_split"):
             self._test_rest_split(endpoint)
         with self.subTest("rest_records"):
             self._test_rest_records(endpoint)
 
     def test_wide_format_params(self) -> None:
-        """Deploy ModelWithManyFeatures once, then run 12 subtests across mv.run and REST wide."""
+        """Deploy ModelWithManyFeatures once, then run subtests across the mv.run wide path."""
         mv, endpoint = self._deploy_wide()
 
         with self.subTest("mv_run_wide"):
             self._test_mv_run_wide(mv)
-        with self.subTest("rest_wide"):
-            self._test_rest_wide(endpoint)
 
 
 if __name__ == "__main__":

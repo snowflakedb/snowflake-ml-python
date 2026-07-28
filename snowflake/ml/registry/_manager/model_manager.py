@@ -12,7 +12,12 @@ from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
-from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
+from snowflake.ml.model._client.ops import (
+    live_commit_naming,
+    metadata_ops,
+    model_ops,
+    service_ops,
+)
 from snowflake.ml.model._client.service import (
     import_model_spec_schema,
     model_deployment_spec_schema,
@@ -154,6 +159,7 @@ class ModelManager:
             model=model,
             model_name=model_name,
             version_name=version_name,
+            model_exists=model_exists,
             comment=comment,
             metrics=metrics,
             conda_dependencies=conda_dependencies,
@@ -180,6 +186,7 @@ class ModelManager:
         *,
         model_name: str,
         version_name: str,
+        model_exists: bool,
         progress_status: type_hints.ProgressStatus,
         comment: Optional[str] = None,
         metrics: Optional[dict[str, Any]] = None,
@@ -230,36 +237,58 @@ class ModelManager:
             )
 
         # TODO(SNOW-2091317): Remove this when the snowpark enables file PUT operation for snowurls
-        use_live_commit = (
+        use_hidden_live_commit = (
             not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
-        ) and platform_capabilities.PlatformCapabilities.get_instance().is_live_commit_enabled()
-        if use_live_commit:
-            logger.info("Using live commit model version")
+        ) and platform_capabilities.PlatformCapabilities.get_instance().is_hidden_live_commit_enabled()
+        if use_hidden_live_commit:
+            logger.info("Using hidden live commit model version")
         else:
             logger.info("Using non-live commit model version")
 
-        if use_live_commit:
-            # This step creates the live model version, and the files can be written directly to the stage
-            # after this.
-            try:
-                self._model_ops.add_or_create_live_version(
-                    database_name=database_name_id,
-                    schema_name=schema_name_id,
-                    model_name=model_name_id,
-                    version_name=version_name_id,
-                    statement_params=statement_params,
-                )
-            except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
-                logger.info(f"Failed to create live model version: {e}, falling back to regular model version creation")
-                use_live_commit = False
+        checkout_model_name_id = model_name_id
+        checkout_version_name_id: Optional[sql_identifier.SqlIdentifier] = None
+        rename_model_to_id: Optional[sql_identifier.SqlIdentifier] = None
 
-        if use_live_commit:
-            # using model version's stage path to write files directly to the stage
+        if use_hidden_live_commit:
+            model_action = model_ops.ModelAction.ALTER if model_exists else model_ops.ModelAction.CREATE
+            live_version_name_id = live_commit_naming.generate_live_version_name()
+            checkout_version_name_id = live_version_name_id
+            if model_action == model_ops.ModelAction.CREATE:
+                checkout_model_name_id = live_commit_naming.generate_pending_model_name()
+                rename_model_to_id = model_name_id
+            try:
+                if model_action == model_ops.ModelAction.CREATE:
+                    self._model_ops.create_live_version(
+                        database_name=database_name_id,
+                        schema_name=schema_name_id,
+                        model_name=checkout_model_name_id,
+                        version_name=live_version_name_id,
+                        statement_params=statement_params,
+                    )
+                else:
+                    self._model_ops.add_live_version(
+                        database_name=database_name_id,
+                        schema_name=schema_name_id,
+                        model_name=checkout_model_name_id,
+                        version_name=live_version_name_id,
+                        statement_params=statement_params,
+                    )
+            except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
+                logger.info(
+                    f"Failed to create hidden live model version: {e}, falling back to regular model version creation"
+                )
+                use_hidden_live_commit = False
+                checkout_model_name_id = model_name_id
+                checkout_version_name_id = None
+                rename_model_to_id = None
+
+        if use_hidden_live_commit:
+            assert checkout_version_name_id is not None
             stage_path = self._model_ops.get_model_version_stage_path(
                 database_name=database_name_id,
                 schema_name=schema_name_id,
-                model_name=model_name_id,
-                version_name=version_name_id,
+                model_name=checkout_model_name_id,
+                version_name=checkout_version_name_id,
             )
         else:
             # using a temp path to write files and then upload to the model version's stage
@@ -307,6 +336,7 @@ class ModelManager:
         progress_status.increment()
 
         model_metadata: model_meta.ModelMetadata = mc.save(
+            # Artifact identity must use the target model name, not checkout (pending/live) names.
             name=model_name_id.resolved(),
             model=model,
             signatures=signatures,
@@ -338,15 +368,26 @@ class ModelManager:
         progress_status.update("creating model object in Snowflake...")
         progress_status.increment()
 
-        self._model_ops.create_from_stage(
-            composed_model=mc,
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            model_name=model_name_id,
-            version_name=version_name_id,
-            statement_params=statement_params,
-            use_live_commit=use_live_commit,
-        )
+        if use_hidden_live_commit:
+            assert checkout_version_name_id is not None
+            self._model_ops.commit_live_version(
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                checkout_model_name=checkout_model_name_id,
+                checkout_version_name=checkout_version_name_id,
+                rename_model_to=rename_model_to_id,
+                rename_version_to=version_name_id,
+                statement_params=statement_params,
+            )
+        else:
+            self._model_ops.create_from_stage(
+                composed_model=mc,
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                model_name=model_name_id,
+                version_name=version_name_id,
+                statement_params=statement_params,
+            )
 
         mv = self._create_model_version_ref(
             database_name_id=database_name_id,

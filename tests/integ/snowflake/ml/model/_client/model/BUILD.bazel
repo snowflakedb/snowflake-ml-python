@@ -1,6 +1,21 @@
 load("//bazel:py_rules.bzl", "py_test")
 
 py_test(
+    name = "hidden_live_commit_integ_test",
+    timeout = "long",
+    srcs = ["hidden_live_commit_integ_test.py"],
+    tags = [
+        "feature:model_registry",
+    ],
+    deps = [
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
     name = "model_impl_integ_test",
     timeout = "long",
     srcs = ["model_impl_integ_test.py"],
