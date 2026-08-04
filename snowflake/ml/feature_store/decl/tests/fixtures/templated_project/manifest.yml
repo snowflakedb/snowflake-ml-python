@@ -1,0 +1,27 @@
+manifest_version: 1
+type: feature_store
+default_target: DEV
+targets:
+  DEV:
+    account_identifier: ORG-ACCOUNT
+    database: TPL_DB
+    schema: TPL_SC
+    role: TESTROLE
+    templating_config: DEV
+  PROD:
+    account_identifier: ORG-ACCOUNT
+    database: TPL_DB
+    schema: TPL_SC
+    role: TESTROLE
+    templating_config: PROD
+templating:
+  defaults:
+    env_suffix: _BASE
+    row_limit: 1
+  configurations:
+    DEV:
+      env_suffix: _DEV
+      row_limit: 10
+    PROD:
+      env_suffix: _PROD
+      row_limit: 100

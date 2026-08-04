@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 _ITERATIONS_DEFAULT = 50
 _WARMUP_DEFAULT = 10
 
+# Bounded soft-retry for a single measured read: a transient online-serving 404
+# after readiness should retry the iteration rather than fail the benchmark, but
+# a sustained outage must still surface.
+_MEASUREMENT_READ_RETRIES = 6
+_MEASUREMENT_READ_BACKOFF_SEC = 5.0
+
 
 def _env_int(name: str, default: int) -> int:
     val = os.environ.get(name, "").strip()
@@ -113,6 +119,14 @@ def _run_measurement(
     session = fs._session
     use_as_pandas = materialize == "as_pandas"
 
+    def _materialize(out: Any) -> None:
+        if use_as_pandas:
+            return
+        if materialize == "to_pandas":
+            out.to_pandas()
+        elif materialize == "collect":
+            out.collect()
+
     with _patch_attr(session, "get_current_warehouse", buckets["wh_get_current"]), _patch_attr(
         session, "use_warehouse", buckets["wh_use"]
     ), _patch_attr(session, "create_dataframe", buckets["create_dataframe"]), _patch_attr(
@@ -121,32 +135,47 @@ def _run_measurement(
         os_mod, "read_postgres_online_features", buckets["read_pg_online_helper"]
     ):
         for _ in range(warmup):
-            out = fs.read_feature_view(fv, keys=keys, store_type=StoreType.ONLINE, as_pandas=use_as_pandas)
-            if not use_as_pandas:
-                if materialize == "to_pandas":
-                    out.to_pandas()
-                elif materialize == "collect":
-                    out.collect()
+            for attempt in range(_MEASUREMENT_READ_RETRIES + 1):
+                try:
+                    out = fs.read_feature_view(fv, keys=keys, store_type=StoreType.ONLINE, as_pandas=use_as_pandas)
+                    _materialize(out)
+                    break
+                except Exception as e:
+                    if attempt == _MEASUREMENT_READ_RETRIES:
+                        raise
+                    logger.debug("warmup read attempt %d failed (%s=%s), retrying", attempt, materialize, e)
+                    time.sleep(_MEASUREMENT_READ_BACKOFF_SEC)
 
         for b in buckets.values():
             b.clear()
 
         for _ in range(iterations):
-            t_start = time.perf_counter()
+            for attempt in range(_MEASUREMENT_READ_RETRIES + 1):
+                # Snapshot bucket lengths so a transient failure mid-iteration can
+                # be rolled back: the timing wrappers append synchronously, so a
+                # failed read would otherwise inflate the latency buckets.
+                snapshot = {name: len(b) for name, b in buckets.items()}
+                try:
+                    t_start = time.perf_counter()
 
-            t0 = time.perf_counter()
-            out = fs.read_feature_view(fv, keys=keys, store_type=StoreType.ONLINE, as_pandas=use_as_pandas)
-            buckets["read_feature_view"].append((time.perf_counter() - t0) * 1000.0)
+                    t0 = time.perf_counter()
+                    out = fs.read_feature_view(fv, keys=keys, store_type=StoreType.ONLINE, as_pandas=use_as_pandas)
+                    buckets["read_feature_view"].append((time.perf_counter() - t0) * 1000.0)
 
-            if not use_as_pandas and materialize != "none":
-                t1 = time.perf_counter()
-                if materialize == "to_pandas":
-                    out.to_pandas()
-                else:
-                    out.collect()
-                buckets["materialize"].append((time.perf_counter() - t1) * 1000.0)
+                    if not use_as_pandas and materialize != "none":
+                        t1 = time.perf_counter()
+                        _materialize(out)
+                        buckets["materialize"].append((time.perf_counter() - t1) * 1000.0)
 
-            buckets["total"].append((time.perf_counter() - t_start) * 1000.0)
+                    buckets["total"].append((time.perf_counter() - t_start) * 1000.0)
+                    break
+                except Exception as e:
+                    if attempt == _MEASUREMENT_READ_RETRIES:
+                        raise
+                    logger.debug("measurement read attempt %d failed (%s=%s), retrying", attempt, materialize, e)
+                    for name, b in buckets.items():
+                        del b[snapshot[name] :]
+                    time.sleep(_MEASUREMENT_READ_BACKOFF_SEC)
 
     return buckets
 
@@ -189,22 +218,38 @@ class PostgresOnlineReadPerfIntegTest(StreamingFeatureViewIntegTestBase, absltes
         self.fs.register_feature_view(fv, "v1")
         return fv_name, "v1", key
 
-    def _wait_until_online_read_returns_rows(self, fv_name: str, version: str, key: str, timeout: float = 300.0) -> Any:
-        """Poll online read until a row is returned; returns the live FV handle."""
-        deadline = time.time() + timeout
+    def _wait_until_online_read_stable(self, fv_name: str, version: str, key: str) -> Any:
+        """Wait until the FV is reliably online-readable; returns the live FV handle.
+
+        First delegates to the shared ``_poll_online_read`` (600s / 5s backoff) for
+        initial readiness, then requires several consecutive successful reads so a
+        measurement does not begin while the FV oscillates between available and
+        unavailable during initial Online Service propagation.
+        """
+        self._poll_online_read(self.fs, fv_name, version, keys=[[key]], desc="perf online read readiness")
+        fv_live = self.fs.get_feature_view(fv_name, version)
+
+        required_streak = 3
+        streak = 0
+        deadline = time.time() + 120.0
         last_err: str | None = None
         while time.time() < deadline:
             try:
-                fv_live = self.fs.get_feature_view(fv_name, version)
                 # Postgres online reads default to pandas; use len() for a backend-agnostic non-empty check.
                 out = self.fs.read_feature_view(fv_live, keys=[[key]], store_type=StoreType.ONLINE)
                 if len(out) > 0:
-                    return fv_live
+                    streak += 1
+                    if streak >= required_streak:
+                        return fv_live
+                else:
+                    streak = 0
             except Exception as e:
+                streak = 0
                 last_err = f"{type(e).__name__}: {e}"
-            time.sleep(10)
+            time.sleep(5)
         self.fail(
-            f"Online read for {fv_name}/{version} did not return rows within " f"{timeout}s; last_err={last_err!r}"
+            f"Online read for {fv_name}/{version} did not stabilize over {required_streak} consecutive reads; "
+            f"last_err={last_err!r}"
         )
 
     def test_postgres_online_read_latency_breakdown(self) -> None:
@@ -212,7 +257,7 @@ class PostgresOnlineReadPerfIntegTest(StreamingFeatureViewIntegTestBase, absltes
         warmup = _env_int("PERF_WARMUP", _WARMUP_DEFAULT)
 
         fv_name, version, key = self._register_minimal_fv()
-        fv_live = self._wait_until_online_read_returns_rows(fv_name, version, key)
+        fv_live = self._wait_until_online_read_stable(fv_name, version, key)
 
         # prime compute before measurement
         self._session.sql("SELECT 1").collect()

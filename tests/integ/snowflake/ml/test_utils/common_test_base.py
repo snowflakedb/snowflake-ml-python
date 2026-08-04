@@ -25,6 +25,67 @@ _V = TypeVar("_V", bound="CommonTestBase")
 _T_args = ParamSpec("_T_args")
 _R_args = TypeVar("_R_args")
 
+# Retries for flaky HuggingFace Hub / Artifactory connections during local-mode downloads in tests.
+_HF_HUB_RETRY_ATTEMPTS = 5
+_HF_HUB_RETRY_WAIT_MULTIPLIER_MS = 1000
+_HF_HUB_RETRY_WAIT_MAX_MS = 30000
+# Spread concurrent retries so parallel workers don't stampede the hub together.
+_HF_HUB_RETRY_WAIT_JITTER_MAX_MS = 1000
+
+
+def _is_retryable_hf_hub_error(exception: Exception) -> bool:
+    """Return True for transient HuggingFace Hub network failures worth retrying in tests."""
+    if isinstance(exception, (ConnectionError, TimeoutError)):
+        return True
+
+    try:
+        import requests
+
+        if isinstance(
+            exception,
+            (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ),
+        ):
+            return True
+    except ImportError:
+        pass
+
+    try:
+        from huggingface_hub.utils import HfHubHTTPError
+
+        if isinstance(exception, HfHubHTTPError) and getattr(exception, "response", None) is not None:
+            status_code = exception.response.status_code
+            if status_code in (429, 500, 502, 503, 504):
+                return True
+    except ImportError:
+        pass
+
+    cause = exception.__cause__
+    if isinstance(cause, Exception) and cause is not exception and _is_retryable_hf_hub_error(cause):
+        return True
+
+    for arg in getattr(exception, "args", ()):
+        if isinstance(arg, Exception) and arg is not exception and _is_retryable_hf_hub_error(arg):
+            return True
+
+    return False
+
+
+def _wrap_with_hf_hub_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap ``fn`` with exponential backoff on transient HuggingFace Hub network errors."""
+    import retrying
+
+    return retrying.retry(
+        retry_on_exception=_is_retryable_hf_hub_error,
+        stop_max_attempt_number=_HF_HUB_RETRY_ATTEMPTS,
+        wait_exponential_multiplier=_HF_HUB_RETRY_WAIT_MULTIPLIER_MS,
+        wait_exponential_max=_HF_HUB_RETRY_WAIT_MAX_MS,
+        wait_jitter_max=_HF_HUB_RETRY_WAIT_JITTER_MAX_MS,
+    )(fn)
+
 
 def get_function_body(func: Callable[..., Any]) -> str:
     source_lines = inspect.getsourcelines(func)[0]
@@ -79,11 +140,37 @@ class CommonTestBase(parameterized.TestCase):
         except Exception as e:
             logging.warning(f"Failed to retrieve the Snowflake version: {e}")
 
+        # Soften Artifactory / Hub connection flakes during local snapshot downloads.
+        try:
+            self._enable_hf_hub_download_retry()
+        except ImportError:
+            pass
+
     def tearDown(self) -> None:
         if self._hidden_live_commit_patcher is not None:
             self._hidden_live_commit_patcher.stop()
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             self.session.close()
+
+    def _enable_hf_hub_download_retry(self) -> None:
+        """Patch HuggingFace Hub downloads with exponential backoff for this test.
+
+        Artifactory often drops connections under parallel CI load when tests log
+        models in local snapshot-download mode. No-ops when ``huggingface_hub`` is
+        not installed.
+        """
+        import huggingface_hub
+
+        targets = (
+            (huggingface_hub, "hf_hub_download"),
+            (huggingface_hub, "snapshot_download"),
+            (huggingface_hub.HfApi, "model_info"),
+        )
+        for owner, attribute_name in targets:
+            original = getattr(owner, attribute_name)
+            patcher = mock.patch.object(owner, attribute_name, new=_wrap_with_hf_hub_retry(original))
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     @classmethod
     def sproc_test(

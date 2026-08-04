@@ -62,13 +62,13 @@ def compare_feature_views(actual_fvs: list[FeatureView], target_fvs: list[Featur
 
 
 def create_mock_session(trouble_query: str, exception: Exception, config: Optional[dict[str, str]] = None) -> Any:
-    def side_effect(session: Session) -> Callable[[Any], Any]:
+    def side_effect(session: Session) -> Callable[..., Any]:
         original_sql = session.sql
 
-        def dispatch(*args: Any) -> Any:
+        def dispatch(*args: Any, **kwargs: Any) -> Any:
             if trouble_query in args[0]:
                 raise exception
-            return original_sql(*args)
+            return original_sql(*args, **kwargs)
 
         return dispatch
 

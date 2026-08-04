@@ -241,6 +241,16 @@ def create_online_service(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError("producer_role and consumer_role must be non-empty."),
         )
+    from snowflake.ml.feature_store.feature_view import (
+        validate_postgres_online_schema_length,
+    )
+
+    try:
+        validate_postgres_online_schema_length(schema.resolved())
+    except ValueError as e:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT, original_exception=e
+        ) from e
     payload = json.dumps(
         {
             "roles": {

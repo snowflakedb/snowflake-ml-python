@@ -1,0 +1,10 @@
+kind: BatchSource
+name: EVENTS_BATCH_DECL
+table: RAW_EVENTS_BATCH_DECL
+columns:
+  - name: USER_ID
+    type: StringType
+  - name: EVENT_TS
+    type: TimestampType
+  - name: METRIC_VAL
+    type: FloatType

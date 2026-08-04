@@ -14,6 +14,7 @@ from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import inference_engine, openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
+    batch_inference_job_specs,
     batch_inference_specs,
     inference_engine_utils,
 )
@@ -664,6 +665,12 @@ class ModelVersion(lineage_node.LineageNode):
     ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
 
+        .. deprecated::
+            The backend this method uses will be removed in a future release, and it will be
+            replaced by an updated batch inference jobs API. For new work, use
+            :meth:`_run_batch_v2`, which runs on the updated backend and becomes the public
+            ``run_batch`` in the next major release (2.0).
+
         Args:
             compute_pool (str): Name of the compute pool to use for building the image containers and batch
                 inference execution.
@@ -768,6 +775,13 @@ class ModelVersion(lineage_node.LineageNode):
             The input data is temporarily stored in the output stage location under /_temporary before
             inference execution.
         """
+        warnings.warn(
+            "run_batch is deprecated: the batch inference backend it currently uses will be removed in a "
+            "future release, and the method will be replaced by an updated batch inference jobs API. Existing "
+            "calls will stop working once the backend is removed.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -894,26 +908,31 @@ class ModelVersion(lineage_node.LineageNode):
 
     def _run_batch_v2(
         self,
-        X: dataframe.DataFrame,
+        X: Optional[dataframe.DataFrame] = None,
         *,
+        input_stage_location: Optional[str] = None,
         compute_pool: str,
-        output_spec: batch_inference_specs.Output,
-        input_spec: Optional[batch_inference_specs.Input] = None,
-        resources_spec: Optional[batch_inference_specs.Resources] = None,
-        inference_spec: Optional[batch_inference_specs.Inference] = None,
-        image_build_spec: Optional[batch_inference_specs.ImageBuild] = None,
+        output_spec: batch_inference_job_specs.OutputSpec,
+        input_spec: Optional[batch_inference_job_specs.InputSpec] = None,
+        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec] = None,
+        inference_spec: Optional[batch_inference_job_specs.InferenceSpec] = None,
+        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec] = None,
         function_name: Optional[str] = None,
         job_name: Optional[str] = None,
         replicas: Optional[int] = None,
         async_: bool = True,
     ) -> job.MLJob[Any]:
-        """Run batch inference via ``EXECUTE INFERENCE JOB SERVICE`` (private).
+        """Run batch inference on a model as a Snowflake job.
 
-        This is a private preview API. Prefer :meth:`run_batch` until this path
-        is generally available.
+        This is the batch inference jobs API that will become the public :meth:`run_batch`
+        in a future release; the deprecated :meth:`run_batch` runs on the older backend and
+        should not be used for new work.
 
         Args:
-            X: Snowpark DataFrame with the input rows.
+            X: Optional Snowpark DataFrame with the input rows. Provide exactly one of ``X`` or
+                ``input_stage_location``.
+            input_stage_location: Optional existing stage path holding the input data. Provide exactly
+                one of ``X`` or ``input_stage_location``.
             compute_pool: Compute pool used by the SPCS job and image build.
             output_spec: Output block. ``stage_location`` is treated as a base;
                 results are written under a per-job subdirectory,
@@ -933,16 +952,19 @@ class ModelVersion(lineage_node.LineageNode):
             MLJob handle for the launched batch inference job.
 
         Raises:
-            ValueError: If ``input_spec.partition_column`` is supplied for a
-                HuggingFace pipeline model or a FUNCTION-type method, or if
-                the partition column collides with a partitioned model output.
+            ValueError: If not exactly one of ``X`` / ``input_stage_location`` is provided, or if
+                ``input_spec.partition_column`` is supplied for a HuggingFace pipeline model or a
+                FUNCTION-type method, or if the partition column collides with a partitioned model output.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
-        effective_input_spec = input_spec if input_spec is not None else batch_inference_specs.Input()
+        if (X is None) == (input_stage_location is None):
+            raise ValueError("Exactly one of X or input_stage_location must be provided.")
+
+        effective_input_spec = input_spec if input_spec is not None else batch_inference_job_specs.InputSpec()
         partition_columns = (
             [effective_input_spec.partition_column] if effective_input_spec.partition_column is not None else None
         )
@@ -984,6 +1006,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         return self._service_ops.execute_inference_job_service(
             X=X,
+            input_stage_location=input_stage_location,
             model_name=self._model_name,
             version_name=self._version_name,
             compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),

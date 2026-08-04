@@ -270,4 +270,6 @@ class SqlResultValidator(ResultValidator):
 
     def _get_result(self) -> list[snowpark.Row]:
         """Collect the result of the given SQL query."""
+        if self._params is None:
+            return self._session.sql(self._query).collect(statement_params=self._statement_params)
         return self._session.sql(self._query, params=self._params).collect(statement_params=self._statement_params)

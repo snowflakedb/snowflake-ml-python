@@ -2,7 +2,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -57,7 +57,7 @@ class TestExecuteInferenceJobServiceEmptyStructInteg(
             sample_input_data=None,
             signatures={"predict": sig},
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict",
             job_name=job_name,
             replicas=1,

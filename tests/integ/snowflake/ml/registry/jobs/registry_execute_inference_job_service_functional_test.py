@@ -8,7 +8,7 @@ from snowflake import snowpark
 from snowflake.connector import errors as connector_errors
 from snowflake.ml.jobs.manager import delete_job, get_job
 from snowflake.ml.model import ModelVersion, custom_model
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -68,7 +68,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             expected_predictions=expected_predictions,
         )
 
@@ -81,20 +81,20 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            input_spec=batch_inference_specs.Input(),
-            output_spec=batch_inference_specs.Output(
+            input_spec=batch_inference_job_specs.InputSpec(),
+            output_spec=batch_inference_job_specs.OutputSpec(
                 stage_location=output_stage_location,
-                mode=batch_inference_specs.SaveMode.OVERWRITE,
+                mode=batch_inference_job_specs.SaveMode.OVERWRITE,
             ),
-            resources_spec=batch_inference_specs.Resources(
+            resources_spec=batch_inference_job_specs.ResourcesSpec(
                 cpu_requests="1",
                 memory_requests="2Gi",
             ),
-            inference_spec=batch_inference_specs.Inference(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
                 num_workers=2,
                 max_batch_rows=1,
             ),
-            image_build_spec=batch_inference_specs.ImageBuild(force_rebuild=False),
+            image_build_spec=batch_inference_job_specs.ImageBuildSpec(force_rebuild=False),
             function_name="predict",
             job_name=job_name,
             expected_predictions=expected_predictions,
@@ -108,7 +108,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             replicas=2,
             expected_predictions=expected_predictions,
         )
@@ -121,7 +121,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             async_=False,
             expected_predictions=expected_predictions,
         )
@@ -144,7 +144,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
                 job_name=job_name,
             )
 
@@ -172,9 +172,9 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
         self._deploy_execute_inference_job_service(
             mv,
             X=input_df,
-            output_spec=batch_inference_specs.Output(
+            output_spec=batch_inference_job_specs.OutputSpec(
                 stage_location=output_stage_location,
-                mode=batch_inference_specs.SaveMode.OVERWRITE,
+                mode=batch_inference_job_specs.SaveMode.OVERWRITE,
             ),
             job_name=job_name,
             expected_predictions=expected_predictions,
@@ -203,7 +203,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             replicas=replicas,
             blocking=False,
@@ -229,7 +229,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             blocking=False,
         )
@@ -250,7 +250,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             sample_input_data=sp_df,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict",
             job_name=job_name,
             replicas=2,
@@ -264,7 +264,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             expected_predictions=expected_predictions,
         )
 
@@ -281,8 +281,8 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            image_build_spec=batch_inference_specs.ImageBuild(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            image_build_spec=batch_inference_job_specs.ImageBuildSpec(
                 image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
             ),
             expected_predictions=expected_predictions,
@@ -303,7 +303,7 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
                 model=model,
                 sample_input_data=sp_df,
                 X=input_df,
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
                 job_name=job_name,
                 expected_predictions=expected_predictions,
             )

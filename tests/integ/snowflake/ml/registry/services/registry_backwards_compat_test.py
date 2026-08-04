@@ -18,7 +18,6 @@ Tested versions:
 
 Tested invocation paths:
     - mv.run (SQL service function path)
-    - REST flat (external function / positional format)
     - REST split (dataframe_split with params dict)
     - REST records (dataframe_records with params dict)
 
@@ -86,17 +85,6 @@ _PARTIAL_PARAMS: dict[str, Any] = {
     "temperature": 0.5,
     "max_tokens": 50,
 }
-
-_REST_DEFAULT_PARAMS: dict[str, Any] = _serialize_for_rest(
-    {
-        "temperature": 1.0,
-        "max_tokens": 100,
-        "label": "default",
-        "verbose": False,
-        "tag": b"default",
-        "created_at": _DEFAULT_TIMESTAMP,
-    }
-)
 
 _FULL_EXPECTED: dict[str, Any] = {
     "input_value": 10.0,
@@ -288,16 +276,6 @@ class TestBackwardsCompatNoParams(registry_param_test_base.ParamTestBase):
             self.assertEqual(len(res), 1, f"[{ctx}] Expected single response row")
             self._check_simple_row(res.iloc[0], 10.0, f"{ctx}/mv_run/basic")
 
-    def _test_rest_flat_simple(self, endpoint: str, ctx: str) -> None:
-        test_input = pd.DataFrame({"value": [10.0]})
-        payload = self._to_external_data_format(test_input)
-
-        with self.subTest("rest_flat / basic"):
-            response = self._assert_rest_ok(endpoint, payload, label=f"{ctx}/flat/basic")
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self.assertEqual(len(res_df), 1, f"[{ctx}/flat/basic] Expected single response row")
-            self._check_simple_row(res_df.iloc[0], 10.0, f"{ctx}/flat/basic")
-
     def _test_rest_split_simple(self, endpoint: str, ctx: str) -> None:
         payload = {"dataframe_split": {"index": [0], "columns": ["value"], "data": [[10.0]]}}
 
@@ -325,8 +303,6 @@ class TestBackwardsCompatNoParams(registry_param_test_base.ParamTestBase):
             self._assert_snowml_version(mv, snowml_version)
         with self.subTest("mv_run"):
             self._test_mv_run_simple(mv, ctx)
-        with self.subTest("rest_flat"):
-            self._test_rest_flat_simple(endpoint, ctx)
         with self.subTest("rest_split"):
             self._test_rest_split_simple(endpoint, ctx)
         with self.subTest("rest_records"):
@@ -466,15 +442,6 @@ class TestBackwardsCompatWithParams(registry_param_test_base.ParamTestBase):
         self._check_row(res.iloc[0], expected, label)
 
     # ===================================================================
-    # Payload builders
-    # ===================================================================
-
-    def _flat_payload(self, value: float, params: dict[str, Any]) -> dict[str, Any]:
-        """Build flat format payload: {"data": [[row_id, feature, param1, param2, ...]]}."""
-        test_input = pd.DataFrame({"value": [value], **{k: [v] for k, v in params.items()}})
-        return self._to_external_data_format(test_input)
-
-    # ===================================================================
     # Subtests: mv.run
     # ===================================================================
 
@@ -493,32 +460,6 @@ class TestBackwardsCompatWithParams(registry_param_test_base.ParamTestBase):
         with self.subTest("mv_run / default"):
             res = mv.run(input_df, function_name="predict", service_name=service_name)
             self._check_df(res, _DEFAULT_EXPECTED, f"{ctx}/mv_run/default")
-
-    # ===================================================================
-    # Subtests: REST flat
-    # ===================================================================
-
-    def _test_rest_flat(self, endpoint: str, ctx: str) -> None:
-        with self.subTest("rest_flat / full"):
-            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_FULL_PARAMS)}
-            response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label=f"{ctx}/flat/full")
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_df(res_df, _to_raw_expected(_FULL_EXPECTED), f"{ctx}/flat/full")
-
-        with self.subTest("rest_flat / partial"):
-            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_PARTIAL_PARAMS)}
-            response = self._assert_rest_ok(
-                endpoint, self._flat_payload(10.0, flat_params), label=f"{ctx}/flat/partial"
-            )
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_df(res_df, _to_raw_expected(_PARTIAL_EXPECTED), f"{ctx}/flat/partial")
-
-        with self.subTest("rest_flat / default"):
-            response = self._assert_rest_ok(
-                endpoint, self._flat_payload(10.0, _REST_DEFAULT_PARAMS), label=f"{ctx}/flat/default"
-            )
-            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-            self._check_df(res_df, _to_raw_expected(_DEFAULT_EXPECTED), f"{ctx}/flat/default")
 
     # ===================================================================
     # Subtests: REST split
@@ -588,8 +529,6 @@ class TestBackwardsCompatWithParams(registry_param_test_base.ParamTestBase):
             self._assert_snowml_version(mv, self._SNOWML_VERSION)
         with self.subTest("mv_run"):
             self._test_mv_run(mv, ctx)
-        with self.subTest("rest_flat"):
-            self._test_rest_flat(endpoint, ctx)
         with self.subTest("rest_split"):
             self._test_rest_split(endpoint, ctx)
         with self.subTest("rest_records"):

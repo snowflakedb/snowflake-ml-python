@@ -1,0 +1,6 @@
+kind: BatchSource
+name: EVENTS
+table: RAW_EVENTS
+columns:
+  - name: USER_ID
+    type: StringType

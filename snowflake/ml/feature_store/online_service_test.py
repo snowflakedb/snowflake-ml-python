@@ -14,6 +14,7 @@ from snowflake.ml._internal.exceptions import (
 )
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import online_service, online_service_http_client
+from snowflake.ml.feature_store.feature_view import _POSTGRES_ONLINE_MAX_SCHEMA_LEN
 from snowflake.snowpark import Row, Session
 from snowflake.snowpark.types import StringType
 
@@ -1022,6 +1023,33 @@ class OnlineServiceTest(absltest.TestCase):
             )
         self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
         self.assertIn("non-empty", str(ctx.exception.original_exception))
+
+    def test_create_online_service_rejects_schema_too_long(self) -> None:
+        session = create_autospec(Session)
+        long_schema = SqlIdentifier("A" * (_POSTGRES_ONLINE_MAX_SCHEMA_LEN + 1))
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.create_online_service(
+                session, SqlIdentifier("DB"), long_schema, producer_role="p", consumer_role="c"
+            )
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("is too long for the Postgres online store", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_create_online_service_accepts_schema_at_max_len(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        max_schema = SqlIdentifier("A" * _POSTGRES_ONLINE_MAX_SCHEMA_LEN)
+        result = online_service.create_online_service(
+            session, SqlIdentifier("DB"), max_schema, producer_role="p", consumer_role="c"
+        )
+        self.assertEqual(result.status, "SUCCESS")
 
     def test_drop_online_service_invalid_json_response(self) -> None:
         session = create_autospec(Session)

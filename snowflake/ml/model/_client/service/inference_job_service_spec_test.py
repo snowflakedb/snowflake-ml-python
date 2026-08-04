@@ -4,7 +4,7 @@ import yaml
 from absl.testing import absltest
 
 from snowflake.ml.model import inference_engine as inference_engine_module
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._client.service import inference_job_service_spec
 
 
@@ -20,33 +20,33 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
         builder = inference_job_service_spec.InferenceJobServiceSpec()
         if with_input:
             builder.add_input_spec(
-                batch_inference_specs.Input(
+                batch_inference_job_specs.InputSpec(
                     params={"temperature": 0.7},
                     column_handling={
                         "image_col": {
-                            "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                            "convert_to": batch_inference_specs.FileEncoding.BASE64,
+                            "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                            "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
                         }
                     },
                     partition_column="PART_COL",
                 )
             )
         builder.add_output_spec(
-            batch_inference_specs.Output(
+            batch_inference_job_specs.OutputSpec(
                 stage_location="@DB.SCHEMA.STAGE/out/",
-                mode=batch_inference_specs.SaveMode.OVERWRITE,
+                mode=batch_inference_job_specs.SaveMode.OVERWRITE,
             )
         )
         if with_resources:
             builder.add_resources_spec(
-                batch_inference_specs.Resources(cpu_requests="2", memory_requests="8GiB", gpu_requests=None)
+                batch_inference_job_specs.ResourcesSpec(cpu_requests="2", memory_requests="8GiB", gpu_requests=None)
             )
         if with_inference:
             builder.add_inference_spec(
-                batch_inference_specs.Inference(
+                batch_inference_job_specs.InferenceSpec(
                     num_workers=4,
                     max_batch_rows=2048,
-                    engine_options=batch_inference_specs.EngineOptions(
+                    engine_options=batch_inference_job_specs.EngineOptions(
                         engine=inference_engine_module.InferenceEngine.VLLM,
                         engine_args_override=["--max-num-seqs=128"],
                     ),
@@ -54,7 +54,7 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
             )
         if with_image_build:
             builder.add_image_build_spec(
-                batch_inference_specs.ImageBuild(
+                batch_inference_job_specs.ImageBuildSpec(
                     image_repo="DB.SCHEMA.REPO",
                     force_rebuild=True,
                 )
@@ -73,11 +73,11 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
 
     def test_full_body_has_all_blocks_in_canonical_order(self) -> None:
         builder = inference_job_service_spec.InferenceJobServiceSpec()
-        builder.add_image_build_spec(batch_inference_specs.ImageBuild(image_repo="DB.SCHEMA.REPO"))
-        builder.add_inference_spec(batch_inference_specs.Inference(num_workers=2))
-        builder.add_resources_spec(batch_inference_specs.Resources(cpu_requests="1"))
-        builder.add_output_spec(batch_inference_specs.Output(stage_location="@stage/"))
-        builder.add_input_spec(batch_inference_specs.Input(params={"k": "v"}))
+        builder.add_image_build_spec(batch_inference_job_specs.ImageBuildSpec(image_repo="DB.SCHEMA.REPO"))
+        builder.add_inference_spec(batch_inference_job_specs.InferenceSpec(num_workers=2))
+        builder.add_resources_spec(batch_inference_job_specs.ResourcesSpec(cpu_requests="1"))
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_input_spec(batch_inference_job_specs.InputSpec(params={"k": "v"}))
         rendered = builder.save()
         self.assertLess(rendered.index("input"), rendered.index("output"))
         self.assertLess(rendered.index("output"), rendered.index("resources"))
@@ -109,8 +109,8 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
 
     def test_clear_resets_state(self) -> None:
         builder = inference_job_service_spec.InferenceJobServiceSpec()
-        builder.add_output_spec(batch_inference_specs.Output(stage_location="@stage/"))
-        builder.add_input_spec(batch_inference_specs.Input(params={"a": 1}))
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_input_spec(batch_inference_job_specs.InputSpec(params={"a": 1}))
         builder.clear()
         with self.assertRaises(ValueError):
             builder.save()

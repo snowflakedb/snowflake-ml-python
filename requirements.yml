@@ -96,11 +96,6 @@
 - name: cloudpickle
   dev_version: 2.2.1
   version_requirements: '>=2.0.0'
-- name: cryptography
-  dev_version: 41.0.3
-  version_requirements: ''
-  # Skipping version requirements as it should come as part of connector.
-  # Only used in connection_params.py, which is an util library anyways.
 - name: coverage
   dev_version: 7.6.1
 - name_pypi: datasets

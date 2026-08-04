@@ -43,6 +43,11 @@ class ParseIntervalTest(parameterized.TestCase):
         "1",
         "1x",
         "-1h",
+        # Fractional values are rejected at parse_interval to keep the
+        # integer-only contract for SQL-string-interpolating callers in
+        # tile_sql_generator.py.
+        "1.5m",
+        "0.5h",
     )
     def test_parse_interval_invalid(self, interval: str) -> None:
         """Test parse_interval with invalid inputs."""

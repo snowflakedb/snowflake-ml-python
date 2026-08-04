@@ -1,0 +1,6 @@
+SELECT
+    USER_ID,
+    EVENT_TS,
+    METRIC_VAL
+FROM RAW_EVENTS
+LIMIT {{ row_limit }}

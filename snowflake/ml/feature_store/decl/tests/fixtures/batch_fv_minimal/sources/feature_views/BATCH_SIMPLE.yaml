@@ -1,0 +1,10 @@
+kind: BatchFeatureView
+name: BATCH_SIMPLE
+version: V1
+online: false
+entities:
+  - USER_ID
+sources:
+  - name: EVENTS
+    source_type: Batch
+refresh_freq: 1 hour

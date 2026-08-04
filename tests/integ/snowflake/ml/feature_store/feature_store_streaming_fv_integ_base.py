@@ -559,7 +559,8 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         *,
         retries: int = 6,
         backoff_sec: float = 5.0,
-    ) -> pd.DataFrame:
+        as_pandas: bool = True,
+    ) -> Any:
         """Read ONLINE with bounded retry against transient online-serving skew.
 
         Mirrors the FeatureGroup bundle's ``_read_feature_group_with_retry``: use
@@ -574,9 +575,14 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             keys: Join-key rows passed to ``read_feature_view``.
             retries: Maximum attempts before giving up.
             backoff_sec: Fixed sleep between attempts.
+            as_pandas: When ``True`` return a ``pandas.DataFrame``; when ``False``
+                return the Snowpark ``DataFrame`` so parity tests can retry the
+                ``.to_pandas()`` arm as well.
 
         Returns:
-            The pandas DataFrame from the first successful attempt.
+            The result of the first successful read. When ``as_pandas`` is
+            ``True`` this is a ``pandas.DataFrame``; otherwise a Snowpark
+            ``DataFrame``.
 
         Raises:
             last_err: The last exception observed if every attempt fails.
@@ -584,7 +590,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         last_err: Optional[Exception] = None
         for _ in range(retries):
             try:
-                return fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=True)
+                return fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=as_pandas)
             except Exception as e:
                 last_err = e
                 time.sleep(backoff_sec)

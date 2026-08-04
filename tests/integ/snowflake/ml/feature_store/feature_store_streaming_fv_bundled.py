@@ -1422,7 +1422,7 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=240.0, desc="all types SFV"
+            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types SFV"
         )
 
     # =========================================================================

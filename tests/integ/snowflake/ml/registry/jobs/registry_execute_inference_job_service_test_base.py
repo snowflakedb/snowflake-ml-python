@@ -11,7 +11,7 @@ from absl.testing import absltest
 from snowflake import snowpark
 from snowflake.ml.jobs import job
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
@@ -134,12 +134,12 @@ class ExecuteInferenceJobServiceTestBase(registry_spcs_test_base.RegistrySPCSTes
         model: model_types.SupportedModelType,
         X: snowpark.DataFrame,
         *,
-        output_spec: batch_inference_specs.Output,
+        output_spec: batch_inference_job_specs.OutputSpec,
         compute_pool: Optional[str] = None,
-        input_spec: Optional[batch_inference_specs.Input] = None,
-        resources_spec: Optional[batch_inference_specs.Resources] = None,
-        inference_spec: Optional[batch_inference_specs.Inference] = None,
-        image_build_spec: Optional[batch_inference_specs.ImageBuild] = None,
+        input_spec: Optional[batch_inference_job_specs.InputSpec] = None,
+        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec] = None,
+        inference_spec: Optional[batch_inference_job_specs.InferenceSpec] = None,
+        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec] = None,
         function_name: Optional[str] = None,
         job_name: Optional[str] = None,
         replicas: Optional[int] = None,
@@ -278,12 +278,12 @@ class ExecuteInferenceJobServiceTestBase(registry_spcs_test_base.RegistrySPCSTes
         mv: ModelVersion,
         X: snowpark.DataFrame,
         *,
-        output_spec: batch_inference_specs.Output,
+        output_spec: batch_inference_job_specs.OutputSpec,
         compute_pool: Optional[str] = None,
-        input_spec: Optional[batch_inference_specs.Input] = None,
-        resources_spec: Optional[batch_inference_specs.Resources] = None,
-        inference_spec: Optional[batch_inference_specs.Inference] = None,
-        image_build_spec: Optional[batch_inference_specs.ImageBuild] = None,
+        input_spec: Optional[batch_inference_job_specs.InputSpec] = None,
+        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec] = None,
+        inference_spec: Optional[batch_inference_job_specs.InferenceSpec] = None,
+        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec] = None,
         function_name: Optional[str] = None,
         job_name: Optional[str] = None,
         replicas: Optional[int] = None,

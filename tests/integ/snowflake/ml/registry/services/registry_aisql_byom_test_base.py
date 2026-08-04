@@ -123,6 +123,20 @@ class AISQLBYOMTestBase(registry_model_deployment_test_base.RegistryModelDeploym
                     self.session.sql(f"GRANT USAGE ON DATABASE {svc_db} TO ROLE {role}").collect()
                     self.session.sql(f"GRANT USAGE ON SCHEMA {svc_db}.{svc_schema} TO ROLE {role}").collect()
 
+        # Log whether PUBLIC has CORTEX_USER so failures are easy to diagnose.
+        # All roles (including ephemeral test roles) inherit CORTEX_USER via PUBLIC
+        # when regtest_env.sql has been run. Without it, AI_COMPLETE with SPCS
+        # service names returns "Unknown function".
+        cortex_grants = self.session.sql("SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER").collect()
+        public_has_cortex = any(r.as_dict().get("grantee_name", "") == "PUBLIC" for r in cortex_grants)
+        logger.info("PUBLIC has SNOWFLAKE.CORTEX_USER: %s", public_has_cortex)
+        if not public_has_cortex:
+            logger.warning(
+                "PUBLIC does not have SNOWFLAKE.CORTEX_USER — AI_COMPLETE with SPCS "
+                "service names will fail for role %s. Re-run regtest_env.sql to fix.",
+                role,
+            )
+
         return role
 
     def _deploy_test_service(self) -> None:

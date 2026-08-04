@@ -13,7 +13,7 @@ from absl.testing import absltest, parameterized
 from sklearn import compose, datasets, impute, pipeline, preprocessing
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -114,7 +114,7 @@ class RegistryExecuteInferenceJobServiceAdditionalImportTest(
         self._deploy_execute_inference_job_service(
             mv,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict",
             job_name=job_name,
             expected_predictions=expected_predictions,

@@ -1,0 +1,5 @@
+kind: Entity
+name: USER_BATCH_DECL
+join_keys:
+  - name: USER_ID
+    type: StringType

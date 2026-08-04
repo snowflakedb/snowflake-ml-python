@@ -1,0 +1,268 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ---------------------------------------------------------------------------
+# Library — loader tier (layer 1 of the import-DAG)
+#
+# Loading + spec models + templating.  The declarative package is distributed
+# as a standalone lightweight wheel; the only intra-repo runtime dependencies
+# permitted by the wheel-isolation contract are the two stdlib-only siblings
+# ``spec.enums`` (FS enum vocabulary) and ``interval_utils`` (duration parsing),
+# both of which live in ``:feature_store_lib``.  The import-isolation contract
+# itself is enforced at runtime by ``tests/test_wheel_isolation.py``.
+#
+# Higher layers of the import-DAG (invariants/dependencies/planner,
+# state/queries/exporter, imperative_executor/api/service) extend this BUILD
+# file with additional ``py_library`` targets that depend on
+# ``:decl_lib_loader``.
+# ---------------------------------------------------------------------------
+py_library(
+    name = "decl_lib_loader",
+    srcs = [
+        "__init__.py",
+        "compiler.py",
+        "enums.py",
+        "errors.py",
+        "loader.py",
+        "manifest.py",
+        "project_paths.py",
+        "serializer.py",
+        "spec_compiler.py",
+        "spec_models.py",
+        "templating.py",
+        "types.py",
+        "udf_loader.py",
+    ],
+    tags = ["feature:feature_store"],
+    deps = [
+        "//snowflake/ml/feature_store:feature_store_lib",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Test fixtures
+# ---------------------------------------------------------------------------
+filegroup(
+    name = "decl_loader_test_fixtures",
+    srcs = glob(["tests/fixtures/**"]),
+)
+
+# ---------------------------------------------------------------------------
+# Unit tests (one target per test file)
+# ---------------------------------------------------------------------------
+py_test(
+    name = "spec_models_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_spec_models.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_spec_models.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "spec_models_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_spec_models_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_spec_models_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "spec_models_fv_subclasses_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_spec_models_fv_subclasses.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_spec_models_fv_subclasses.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "spec_compiler_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_spec_compiler.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_spec_compiler.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "loader_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_loader.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_loader.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "loader_feature_groups_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_loader_feature_groups.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_loader_feature_groups.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "loader_project_mode_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_loader_project_mode.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_loader_project_mode.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "load_python_form_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_load_python_form.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_load_python_form.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "templating_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_templating.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_templating.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "templating_sidecars_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_templating_sidecars.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_templating_sidecars.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "manifest_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_manifest.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_manifest.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "project_paths_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_project_paths.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_project_paths.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "compiler_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_compiler.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_compiler.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "udf_loader_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_udf_loader.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_udf_loader.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "enums_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_enums.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_enums.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "enums_consolidation_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_enums_consolidation.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_enums_consolidation.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "decorator_removed_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_decorator_removed.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_decorator_removed.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+py_test(
+    name = "wheel_isolation_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_wheel_isolation.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_wheel_isolation.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)

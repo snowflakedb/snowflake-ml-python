@@ -1,6 +1,7 @@
 import dataclasses
 import logging
 import pathlib
+import posixpath
 import re
 import tempfile
 import threading
@@ -17,8 +18,8 @@ from snowflake.ml.feature_store import feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import (
+    batch_inference_job_specs,
     batch_inference_serialization,
-    batch_inference_specs,
 )
 from snowflake.ml.model._client.ops import deployment_step, param_utils
 from snowflake.ml.model._client.service import (
@@ -44,6 +45,46 @@ _UTF8_ENCODING = "utf-8"
 # excludes them from the output-mode preflight scan, and the SPCS container uses the
 # same convention to decide whether to clean up the input stage after the job runs.
 _BATCH_INFERENCE_RESERVED_INPUT_SUBDIR = "_snowflake_temporary"
+
+
+_StageLocationParts = tuple[
+    Optional[sql_identifier.SqlIdentifier],
+    Optional[sql_identifier.SqlIdentifier],
+    sql_identifier.SqlIdentifier,
+    str,
+]
+
+
+def _normalize_stage_location(
+    stage_path: str,
+    default_database: Optional[sql_identifier.SqlIdentifier],
+    default_schema: Optional[sql_identifier.SqlIdentifier],
+) -> _StageLocationParts:
+    """Split an ``@`` stage path into (database, schema, stage, path).
+
+    Database/schema/stage are returned as SqlIdentifiers so comparison is case- and quote-aware; a
+    missing database or schema falls back to the provided defaults (the session's current namespace,
+    which is what an unqualified stage resolves against at execution time). The path is case-sensitive,
+    canonicalized with ``posixpath.normpath`` (collapsing ``.`` / ``..`` / ``//``) and normalized to end
+    with ``/`` so prefix comparisons treat it as a directory.
+
+    Args:
+        stage_path: A stage path starting with ``@``.
+        default_database: Database used when the path omits one (may be None).
+        default_schema: Schema used when the path omits one (may be None).
+
+    Returns:
+        A tuple of (database, schema, stage, path).
+    """
+    database, schema, stage, path = identifier.parse_snowflake_stage_path(stage_path)
+    database_id = sql_identifier.SqlIdentifier(database) if database else default_database
+    schema_id = sql_identifier.SqlIdentifier(schema) if schema else default_schema
+    stage_id = sql_identifier.SqlIdentifier(stage)
+    if path:
+        path = posixpath.normpath(path)
+        if not path.endswith("/"):
+            path += "/"
+    return database_id, schema_id, stage_id, path
 
 
 @dataclasses.dataclass
@@ -163,7 +204,9 @@ class ServiceOperator:
             database_name=database_name,
             schema_name=schema_name,
         )
-        self._use_inlined_deployment_spec = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
+        self._use_inlined_deployment_spec = pc.PlatformCapabilities.get_instance(
+            session
+        ).is_inlined_deployment_spec_enabled()
         if self._use_inlined_deployment_spec:
             self._workspace = None
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec()
@@ -667,7 +710,7 @@ class ServiceOperator:
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
 
-    def _enforce_save_mode(self, output_mode: batch_inference_specs.SaveMode, output_stage_location: str) -> None:
+    def _enforce_save_mode(self, output_mode: batch_inference_job_specs.SaveMode, output_stage_location: str) -> None:
         """Enforce the save mode for the output stage location.
 
         Args:
@@ -675,25 +718,25 @@ class ServiceOperator:
             output_stage_location: The output stage location to check/clean.
 
         Raises:
-            FileExistsError: When ERROR mode is specified and files exist in the output location.
+            FileExistsError: When ERROR mode is specified and files exist in the output stage location.
             RuntimeError: When operations fail (checking files or removing files).
             ValueError: When an invalid SaveMode is specified.
         """
         list_results = self._stage_client.list_stage(output_stage_location)
 
-        if output_mode == batch_inference_specs.SaveMode.ERROR:
+        if output_mode == batch_inference_job_specs.SaveMode.ERROR:
             if len(list_results) > 0:
                 raise FileExistsError(
                     f"Output stage location '{output_stage_location}' is not empty. "
-                    f"Found {len(list_results)} existing files. When using ERROR mode, the output location "
+                    f"Found {len(list_results)} existing files. When using ERROR mode, the output stage location "
                     f"must be empty. Please clear the existing files or use OVERWRITE mode."
                 )
-        elif output_mode == batch_inference_specs.SaveMode.OVERWRITE:
+        elif output_mode == batch_inference_job_specs.SaveMode.OVERWRITE:
             if len(list_results) > 0:
                 warnings.warn(
                     f"Output stage location '{output_stage_location}' is not empty. "
                     f"Found {len(list_results)} existing files. OVERWRITE mode will remove all existing files "
-                    f"in the output location before running the batch inference job.",
+                    f"in the output stage location before running the batch inference job.",
                     stacklevel=2,
                 )
                 try:
@@ -705,7 +748,7 @@ class ServiceOperator:
                         f"the operation."
                     )
         else:
-            valid_modes = list(batch_inference_specs.SaveMode)
+            valid_modes = list(batch_inference_job_specs.SaveMode)
             raise ValueError(f"Invalid SaveMode: {output_mode}. Must be one of {valid_modes}")
 
     def _stream_service_logs(
@@ -1023,7 +1066,7 @@ class ServiceOperator:
         warehouse: sql_identifier.SqlIdentifier,
         image_repo_name: Optional[str],
         input_file_pattern: str,
-        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
+        column_handling: Optional[dict[str, batch_inference_job_specs.ColumnHandlingOptions]],
         params: Optional[dict[str, Any]],
         partition_columns: Optional[list[str]],
         signature_params: Optional[Sequence[core.BaseParamSpec]],
@@ -1180,27 +1223,35 @@ class ServiceOperator:
     def execute_inference_job_service(
         self,
         *,
-        X: dataframe.DataFrame,
+        X: Optional[dataframe.DataFrame] = None,
+        input_stage_location: Optional[str] = None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         compute_pool_name: sql_identifier.SqlIdentifier,
-        input_spec: Optional[batch_inference_specs.Input],
-        output_spec: batch_inference_specs.Output,
-        resources_spec: Optional[batch_inference_specs.Resources],
-        inference_spec: Optional[batch_inference_specs.Inference],
-        image_build_spec: Optional[batch_inference_specs.ImageBuild],
+        input_spec: Optional[batch_inference_job_specs.InputSpec],
+        output_spec: batch_inference_job_specs.OutputSpec,
+        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
+        inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
+        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
         function_name: Optional[str],
         job_name: Optional[str],
         replicas: Optional[int],
         async_: bool,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> job.MLJob[Any]:
-        """Materialize ``X``, build the YAML body, and run ``EXECUTE INFERENCE JOB SERVICE``.
+        """Build the YAML body and run ``EXECUTE INFERENCE JOB SERVICE``.
+
+        Exactly one input source is used: ``X`` (materialized as parquet under
+        ``<output_spec.stage_location>/_snowflake_temporary/<uuid>/`` before the
+        SQL command is issued) or ``input_stage_location`` (an existing stage
+        path read in place, with no materialization).
 
         Args:
-            X: Input DataFrame. Materialized as parquet under
-                ``<output_spec.stage_location>/_snowflake_temporary/<uuid>/``
-                before the SQL command is issued.
+            X: Optional input DataFrame. When provided it is materialized to a
+                reserved temporary subdirectory of the output stage. Mutually
+                exclusive with ``input_stage_location``.
+            input_stage_location: Optional existing stage path to read input
+                from directly. Mutually exclusive with ``X``.
             model_name: Model identifier; combined with this operator's database
                 and schema to form the ``MODEL`` clause FQN.
             version_name: Model version identifier for the ``VERSION`` clause.
@@ -1225,23 +1276,73 @@ class ServiceOperator:
             MLJob for the launched batch inference job.
 
         Raises:
-            Exception: Any exception raised by the underlying SQL call. The
-                staged input is best-effort removed before re-raising so
-                rejected launches do not orphan files in the reserved subdir.
+            ValueError: If the output stage or a supplied ``input_stage_location`` is not a
+                well-formed Snowflake stage path.
+            Exception: Any exception raised by the underlying SQL call. Input
+                staged from ``X`` is best-effort removed before re-raising so
+                rejected launches do not orphan files in the reserved subdir; a
+                user-supplied ``input_stage_location`` is never removed.
             RuntimeError: If staging ``X`` fails, or if the server response does
                 not contain a parseable job name and ``job_name`` was not
                 provided.
         """
+        # run_batch enforces exactly one input source for callers; assert here so any internal
+        # caller that violates it fails loudly rather than silently ignoring X.
+        assert (X is None) != (
+            input_stage_location is None
+        ), "exactly one of X or input_stage_location must be provided"
+
+        # Validate stage paths before they are interpolated into SQL / embedded in the spec body:
+        # both the output stage and a caller-supplied input stage must be well-formed Snowflake stage
+        # paths starting with '@' (@[db.][schema.]stage[/path]).
+        for label, stage_path in (
+            ("output_spec.stage_location", output_spec.stage_location),
+            ("input_stage_location", input_stage_location),
+        ):
+            if stage_path is not None:
+                if not stage_path.startswith("@"):
+                    raise ValueError(f"batch inference: {label} must be a stage path starting with '@': {stage_path}")
+                try:
+                    identifier.parse_snowflake_stage_path(stage_path)
+                except ValueError:
+                    raise ValueError(f"batch inference: {label} is not a valid Snowflake stage path: {stage_path}")
+
+        # A caller-supplied input must not live inside the output stage location: the server's output-mode
+        # preflight scans that location (and OVERWRITE removes it), which would consume or delete the input.
+        # Unqualified stage paths resolve against the session's current database/schema at execution time
+        # (the MODEL clause uses the model namespace, but the stage does not), so qualify both paths against
+        # the session namespace before comparing.
+        if input_stage_location is not None:
+            current_database = self._session.get_current_database()
+            current_schema = self._session.get_current_schema()
+            session_database = sql_identifier.SqlIdentifier(current_database) if current_database else None
+            session_schema = sql_identifier.SqlIdentifier(current_schema) if current_schema else None
+            output_parts = _normalize_stage_location(output_spec.stage_location, session_database, session_schema)
+            input_parts = _normalize_stage_location(input_stage_location, session_database, session_schema)
+            if output_parts[:3] == input_parts[:3] and input_parts[3].startswith(output_parts[3]):
+                raise ValueError(
+                    "batch inference: input_stage_location must not be inside output_spec.stage_location "
+                    f"({output_spec.stage_location}); that location is scanned and may be overwritten per the "
+                    "save mode. Use a separate stage or path for the input."
+                )
+
         # All pure argument transformations happen before any I/O so a malformed
         # input (e.g. an invalid job_name) fails with no side effects to clean up.
         output_stage_location = output_spec.stage_location
         if not output_stage_location.endswith("/"):
             output_stage_location += "/"
-        # Stage the materialized input under the reserved subdirectory so the server-side
-        # preflight skips it and the SPCS container cleans it up after the job. The UUID
-        # avoids collisions between concurrent calls into the same output stage.
-        input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR}/{uuid.uuid4().hex}/"
         normalized_output_spec = output_spec.model_copy(update={"stage_location": output_stage_location})
+
+        # Resolve the FROM path: a user-supplied stage path is read in place; an input DataFrame is
+        # materialized under the reserved subdirectory, with a UUID to avoid collisions between
+        # concurrent calls into the same output stage.
+        staged_input_to_cleanup: Optional[str] = None
+        if input_stage_location is not None:
+            from_stage_path = input_stage_location if input_stage_location.endswith("/") else input_stage_location + "/"
+        else:
+            assert X is not None
+            from_stage_path = f"{output_stage_location}{_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR}/{uuid.uuid4().hex}/"
+            staged_input_to_cleanup = from_stage_path
 
         spec_builder = inference_job_service_spec.InferenceJobServiceSpec()
         if input_spec is not None:
@@ -1273,12 +1374,13 @@ class ServiceOperator:
             )
 
         # I/O starts here.
-        try:
-            X.write.copy_into_location(  # type:ignore[call-overload]
-                location=input_stage_location, file_format_type="parquet", header=True, overwrite=True
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to process input data: {e}")
+        if X is not None:
+            try:
+                X.write.copy_into_location(  # type:ignore[call-overload]
+                    location=from_stage_path, file_format_type="parquet", header=True, overwrite=True
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to process input data: {e}")
 
         try:
             _, async_job_handle = self._service_client.execute_inference_job_service(
@@ -1290,17 +1392,21 @@ class ServiceOperator:
                 job_fqn=job_fqn,
                 async_=async_,
                 replicas=replicas,
-                from_stage_path=input_stage_location,
+                from_stage_path=from_stage_path,
                 statement_params=statement_params,
             )
             result = async_job_handle.result()
         except Exception:
-            # Server-side rejection leaves the staged input orphaned. Best-effort remove
-            # so files don't accumulate across failed launches.
-            try:
-                self._session.sql(f"REMOVE {input_stage_location}").collect(statement_params=statement_params)
-            except Exception as cleanup_err:
-                module_logger.warning(f"Failed to clean up staged input at {input_stage_location}: {cleanup_err}")
+            # Server-side rejection leaves input staged from X orphaned. Best-effort remove
+            # so files don't accumulate across failed launches. A user-supplied
+            # input_stage_location is owned by the caller and never removed.
+            if staged_input_to_cleanup is not None:
+                try:
+                    self._session.sql(f"REMOVE {staged_input_to_cleanup}").collect(statement_params=statement_params)
+                except Exception as cleanup_err:
+                    module_logger.warning(
+                        f"Failed to clean up staged input at {staged_input_to_cleanup}: {cleanup_err}"
+                    )
             raise
 
         if job_name is not None:

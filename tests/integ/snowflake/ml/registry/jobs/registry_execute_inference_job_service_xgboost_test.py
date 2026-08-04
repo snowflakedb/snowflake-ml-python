@@ -4,7 +4,7 @@ import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -50,13 +50,13 @@ class TestExecuteInferenceJobServiceXGBoostInteg(
                 else {"enable_explainability": False}
             ),
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(
                 gpu_requests=gpu_requests,
                 cpu_requests=cpu_requests,
                 memory_requests=memory_requests,
             ),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             job_name=job_name,
             replicas=2,
             expected_predictions=expected_predictions,

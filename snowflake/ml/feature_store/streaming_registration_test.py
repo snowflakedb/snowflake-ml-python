@@ -11,6 +11,7 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
+    FeatureViewStatus,
     FeatureViewVersion,
     OnlineConfig,
     OnlineStoreType,
@@ -1699,6 +1700,59 @@ class RunStreamingPostambleTest(absltest.TestCase):
         saved_meta = metadata_manager.save_streaming_metadata.call_args.kwargs["metadata"]
         self.assertEqual(saved_meta.backfill_start_time, "2024-06-01T00:00:00")
 
+    def test_backfill_table_round_trip(self) -> None:
+        """``StreamConfig.backfill_table`` rides through the postamble.
+
+        When the operator authored ``StreamConfig`` with a pre-expansion
+        FQN string for ``backfill_table``, the saved ``StreamingMetadata``
+        carries the same string so the read path can restore
+        ``StreamConfig.backfill_table`` losslessly on the round-trip.
+        """
+        backfill_df = _make_mock_backfill_df()
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=backfill_df,
+            backfill_table="MY_DB.MY_SCH.HISTORICAL_TXNS",
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+
+        run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=feature_view_name,
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+        )
+
+        saved_meta = metadata_manager.save_streaming_metadata.call_args.kwargs["metadata"]
+        self.assertEqual(saved_meta.backfill_table, "MY_DB.MY_SCH.HISTORICAL_TXNS")
+
     def test_postamble_renders_user_fn_inside_udtf(self) -> None:
         """The per-FV UDTF body embeds the user's transformation source verbatim.
 
@@ -2578,6 +2632,95 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             self.assertIn("something went wrong", str(cm.exception))
 
         fs._metadata_manager.get_streaming_metadata.assert_not_called()
+
+
+class StreamConfigReconstructionTest(absltest.TestCase):
+    """``StreamConfig._for_reconstruction`` builds a metadata-only instance.
+
+    The round-trip read path cannot re-validate the ``transformation_fn``
+    callable (the function source is recoverable but the live callable is
+    not) and the ``backfill_df`` cannot be re-executed from a fresh
+    session. This factory bypasses ``__post_init__`` so callers can
+    rehydrate the metadata fields (``stream_source``, ``backfill_table``,
+    ``backfill_start_time``).
+    """
+
+    def test_for_reconstruction_carries_backfill_table(self) -> None:
+        sc = StreamConfig._for_reconstruction(
+            stream_source="TXN_SOURCE",
+            backfill_table="MY_DB.MY_SCH.HISTORICAL_TXNS",
+        )
+        self.assertEqual(sc.stream_source, "TXN_SOURCE")
+        self.assertEqual(sc.backfill_table, "MY_DB.MY_SCH.HISTORICAL_TXNS")
+        self.assertIsNone(sc.transformation_fn)
+        self.assertIsNone(sc.backfill_df)
+        self.assertIsNone(sc.backfill_start_time)
+
+    def test_for_reconstruction_carries_backfill_start_time(self) -> None:
+        ts = datetime.datetime(2024, 6, 1)
+        sc = StreamConfig._for_reconstruction(
+            stream_source="TXN_SOURCE",
+            backfill_start_time=ts,
+        )
+        self.assertEqual(sc.backfill_start_time, ts)
+        self.assertIsNone(sc.backfill_table)
+
+    def test_for_reconstruction_skips_validation(self) -> None:
+        """Reconstruction does not validate ``transformation_fn`` because
+        the live callable is unavailable on the read path."""
+        sc = StreamConfig._for_reconstruction(stream_source="TXN_SOURCE")
+        self.assertIsNotNone(sc)
+
+    def test_stream_config_restored_with_backfill_table(self) -> None:
+        """``FeatureView._construct_feature_view`` accepts a metadata-only
+        ``stream_config`` and stamps it on the reconstructed FV.
+
+        Drives the same write/read shape the production read path
+        exercises: the ``stream_config`` argument is forwarded onto
+        ``FeatureView._stream_config`` so callers see the round-tripped
+        ``backfill_table``.
+        """
+        recon_sc = StreamConfig._for_reconstruction(
+            stream_source="TXN_SOURCE",
+            backfill_table="MY_DB.MY_SCH.HISTORICAL_TXNS",
+        )
+
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+
+        entity = Entity(name="user_entity", join_keys=["USER_ID"])
+
+        fv = FeatureView._construct_feature_view(
+            name=SqlIdentifier("TEST_FV"),
+            entities=[entity],
+            feature_df=mock_df,
+            timestamp_col="EVENT_TIME",
+            desc="reconstructed",
+            version="v1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq=None,
+            database="DB",
+            schema="SCH",
+            warehouse=None,
+            refresh_mode=None,
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            is_streaming=True,
+            stream_config=recon_sc,
+        )
+
+        self.assertIsNotNone(fv.stream_config)
+        assert fv.stream_config is not None  # for mypy
+        self.assertEqual(fv.stream_config.backfill_table, "MY_DB.MY_SCH.HISTORICAL_TXNS")
+        self.assertEqual(fv.stream_config.stream_source, "TXN_SOURCE")
 
 
 if __name__ == "__main__":

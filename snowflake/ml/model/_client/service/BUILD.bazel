@@ -52,7 +52,7 @@ py_library(
     name = "inference_job_service_spec",
     srcs = ["inference_job_service_spec.py"],
     deps = [
-        "//snowflake/ml/model/_client/model:batch_inference_specs",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
     ],
 )
 
@@ -66,6 +66,6 @@ py_test(
     deps = [
         ":inference_job_service_spec",
         "//snowflake/ml/model:inference_engine",
-        "//snowflake/ml/model/_client/model:batch_inference_specs",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
     ],
 )

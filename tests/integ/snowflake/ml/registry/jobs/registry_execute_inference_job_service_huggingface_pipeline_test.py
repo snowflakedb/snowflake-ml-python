@@ -7,7 +7,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import openai_signatures
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -126,7 +126,7 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineInteg(
             pip_requirements=pip_requirements,
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             prediction_assert_fn=check_res,
         )

@@ -4,7 +4,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, svm
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -37,8 +37,8 @@ class TestExecuteInferenceJobServiceSklearnInteg(
             pip_requirements=pip_requirements,
             options={"enable_explainability": False},
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
             replicas=1,

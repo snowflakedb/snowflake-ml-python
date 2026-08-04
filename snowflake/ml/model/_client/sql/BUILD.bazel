@@ -50,6 +50,7 @@ py_library(
     srcs = ["model_version.py"],
     deps = [
         ":_base",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/ops:param_utils",
@@ -66,6 +67,7 @@ py_test(
     ],
     deps = [
         ":model_version",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_model_composer/model_method:constants",
         "//snowflake/ml/test_utils:mock_data_frame",

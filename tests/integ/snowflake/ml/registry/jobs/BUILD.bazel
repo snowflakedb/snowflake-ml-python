@@ -26,7 +26,7 @@ py_library(
     srcs = ["registry_execute_inference_job_service_test_base.py"],
     deps = [
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/model/_client/model:batch_inference_specs",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_packager/model_env",
         "//tests/integ/snowflake/ml/registry:registry_spcs_test_base",

@@ -6,7 +6,7 @@ import tempfile
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -66,8 +66,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGE": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -88,8 +88,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow", "pytesseract"],
@@ -125,8 +125,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGE": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -151,8 +151,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],
@@ -186,8 +186,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -215,8 +215,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],
@@ -253,8 +253,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -280,8 +280,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],
@@ -315,8 +315,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -339,8 +339,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],
@@ -376,8 +376,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -412,8 +412,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],
@@ -447,8 +447,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -467,8 +467,8 @@ class TestExecuteInferenceJobServiceNewHFTasksInteg(
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
             job_name=job_name,
             replicas=1,
             pip_requirements=["pillow"],

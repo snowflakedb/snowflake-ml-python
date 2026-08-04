@@ -6,7 +6,6 @@ REQUIREMENTS = [
     "anyio>=3.5.0,<5",
     "cachetools>=3.1.1",
     "cloudpickle>=2.0.0",
-    "cryptography",
     "fsspec>=2024.6.1,<2026",
     "h2>=4.3.0,<5",
     "importlib_resources>=6.1.1, <7",

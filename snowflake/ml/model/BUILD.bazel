@@ -124,6 +124,7 @@ py_library(
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/batch",
+        "//snowflake/ml/model/batch_inference",
         "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],

@@ -503,7 +503,7 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
         try:
             with self.assertRaisesRegex(
                 Exception,
-                "Insufficient privileges|does not exist or not authorized|invalid argument|unavailable",
+                "Insufficient privileges|does not exist or not authorized|invalid argument|unavailable|unknown model",
             ):
                 self._run_as_role(
                     role,

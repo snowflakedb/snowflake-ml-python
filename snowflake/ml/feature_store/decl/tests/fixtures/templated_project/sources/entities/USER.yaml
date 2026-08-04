@@ -1,0 +1,6 @@
+kind: Entity
+name: USER
+description: 'env={{ env_suffix }}'
+join_keys:
+  - name: USER_ID
+    type: StringType

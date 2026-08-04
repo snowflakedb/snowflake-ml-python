@@ -1,0 +1,11 @@
+kind: BatchFeatureView
+name: MY_BATCH_FV_BATCH_DECL
+version: V1
+online: true
+target_lag: 1 minute
+entities:
+  - USER_ID
+sources:
+  - name: EVENTS_BATCH_DECL
+    source_type: Batch
+refresh_freq: 1 minute

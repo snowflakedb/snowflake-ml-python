@@ -1,0 +1,10 @@
+kind: BatchFeatureView
+name: FV_INLINE
+version: V1
+online: false
+entities:
+  - USER_ID
+sources:
+  - name: EVENTS_INLINE
+    source_type: Batch
+refresh_freq: 1 hour

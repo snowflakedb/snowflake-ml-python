@@ -26,6 +26,7 @@ from snowflake.ml.feature_store.feature_view import (
     _PG_IDENTIFIER_BYTE_LIMIT,
     _POSTGRES_ONLINE_MAX_COLUMN_LEN,
     _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN,
+    _POSTGRES_ONLINE_MAX_SCHEMA_LEN,
     _UDF_TRANSFORMED_TABLE_SUFFIX,
     FeatureView,
     FeatureViewStatus,
@@ -35,6 +36,7 @@ from snowflake.ml.feature_store.feature_view import (
     StorageConfig,
     StorageFormat,
     _FeatureViewMetadata,
+    validate_postgres_online_schema_length,
 )
 from snowflake.ml.feature_store.spec.enums import (
     FeatureAggregationMethod,
@@ -3272,6 +3274,15 @@ class PostgresOnlineIdentifierBudgetTest(parameterized.TestCase):
             OnlineConfig(enable=False, store_type=OnlineStoreType.POSTGRES),
         )
         fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_schema_at_max_len_passes(self) -> None:
+        schema = "s" * _POSTGRES_ONLINE_MAX_SCHEMA_LEN
+        validate_postgres_online_schema_length(schema)
+
+    def test_schema_over_limit_raises(self) -> None:
+        schema = "s" * (_POSTGRES_ONLINE_MAX_SCHEMA_LEN + 1)
+        with self.assertRaisesRegex(ValueError, "is too long for the Postgres online store"):
+            validate_postgres_online_schema_length(schema)
 
 
 if __name__ == "__main__":

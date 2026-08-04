@@ -3,10 +3,18 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "batch_inference_job_specs",
+    srcs = ["batch_inference_job_specs.py"],
+    deps = [
+        "//snowflake/ml/model:inference_engine",
+    ],
+)
+
+py_library(
     name = "batch_inference_specs",
     srcs = ["batch_inference_specs.py"],
     deps = [
-        "//snowflake/ml/model:inference_engine",
+        ":batch_inference_job_specs",
     ],
 )
 
@@ -14,7 +22,7 @@ py_library(
     name = "batch_inference_serialization",
     srcs = ["batch_inference_serialization.py"],
     deps = [
-        ":batch_inference_specs",
+        ":batch_inference_job_specs",
     ],
 )
 
@@ -38,6 +46,7 @@ py_test(
         "short_regress",
     ],
     deps = [
+        ":batch_inference_job_specs",
         ":batch_inference_specs",
         ":batch_inference_task",
     ],
@@ -52,6 +61,18 @@ py_test(
     ],
     deps = [
         ":batch_inference_specs",
+    ],
+)
+
+py_test(
+    name = "batch_inference_job_specs_test",
+    srcs = ["batch_inference_job_specs_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":batch_inference_job_specs",
         "//snowflake/ml/model:inference_engine",
     ],
 )
@@ -91,6 +112,7 @@ py_library(
     name = "model_version_impl",
     srcs = ["model_version_impl.py"],
     deps = [
+        ":batch_inference_job_specs",
         ":batch_inference_specs",
         ":inference_engine_utils",
         "//snowflake/ml/_internal:telemetry",
@@ -117,6 +139,7 @@ py_test(
         "short_regress",
     ],
     deps = [
+        ":batch_inference_job_specs",
         ":batch_inference_specs",
         ":inference_engine_utils",
         ":model_version_impl",

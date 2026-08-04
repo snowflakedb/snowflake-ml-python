@@ -1,6 +1,7 @@
 import os
 import pathlib
 import tempfile
+import warnings
 from typing import Any, cast
 from unittest import mock
 
@@ -19,6 +20,7 @@ from snowflake.ml.model import (
     type_hints,
 )
 from snowflake.ml.model._client.model import (
+    batch_inference_job_specs,
     batch_inference_specs,
     inference_engine_utils,
     model_version_impl,
@@ -2159,6 +2161,38 @@ class ModelVersionImplTest(absltest.TestCase):
                 # Should not raise - signature with ParamSpec is valid when in VALID_OPENAI_SIGNATURES
                 self.m_mv._check_huggingface_vllm_supported_model()
 
+    def test_run_batch_emits_deprecation_warning(self) -> None:
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(function_name="predict", warehouse="WH")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            self.m_mv.run_batch(input_df, compute_pool="POOL", output_spec=output_spec, job_spec=job_spec)
+
+        self.assertTrue(
+            any(
+                issubclass(w.category, DeprecationWarning) and "run_batch is deprecated" in str(w.message)
+                for w in caught
+            )
+        )
+
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
@@ -2249,10 +2283,10 @@ class ModelVersionImplTest(absltest.TestCase):
         )
 
         # Test column_handling dictionary
-        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+        test_column_handling: dict[str, batch_inference_job_specs.ColumnHandlingOptions] = {
             "image_col": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
             }
         }
 
@@ -2413,10 +2447,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test with both params and column_handling
         test_params = {"temperature": 0.7, "top_k": 50}
-        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+        test_column_handling: dict[str, batch_inference_job_specs.ColumnHandlingOptions] = {
             "image_col": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
             }
         }
 
@@ -3195,11 +3229,11 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_run_batch_v2_forwards_specs_and_resolved_function(self) -> None:
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
 
-        output_spec = batch_inference_specs.Output(stage_location="@output_stage")
-        input_spec = batch_inference_specs.Input(params={"k": "v"})
-        resources_spec = batch_inference_specs.Resources(cpu_requests="1")
-        inference_spec = batch_inference_specs.Inference(num_workers=2)
-        image_build_spec = batch_inference_specs.ImageBuild(image_repo="DB.SCHEMA.REPO")
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
+        input_spec = batch_inference_job_specs.InputSpec(params={"k": "v"})
+        resources_spec = batch_inference_job_specs.ResourcesSpec(cpu_requests="1")
+        inference_spec = batch_inference_job_specs.InferenceSpec(num_workers=2)
+        image_build_spec = batch_inference_job_specs.ImageBuildSpec(image_repo="DB.SCHEMA.REPO")
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
@@ -3233,6 +3267,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         mock_execute.assert_called_once_with(
             X=input_df,
+            input_stage_location=None,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
             version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
@@ -3252,7 +3287,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_run_batch_v2_minimal(self) -> None:
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
 
-        output_spec = batch_inference_specs.Output(stage_location="@output_stage/")
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
@@ -3274,6 +3309,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         kwargs = mock_execute.call_args.kwargs
         self.assertIs(kwargs["X"], input_df)
+        self.assertIsNone(kwargs["input_stage_location"])
         self.assertIs(kwargs["output_spec"], output_spec)
         self.assertTrue(kwargs["async_"])
         self.assertIsNone(kwargs["input_spec"])
@@ -3283,6 +3319,43 @@ class ModelVersionImplTest(absltest.TestCase):
         self.assertIsNone(kwargs["job_name"])
         self.assertIsNone(kwargs["replicas"])
         self.assertEqual(kwargs["function_name"], "predict")
+
+    def test_run_batch_v2_input_stage_location(self) -> None:
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            self.m_mv._run_batch_v2(
+                input_stage_location="@MY_DB.PUBLIC.MY_STAGE/input/", compute_pool="POOL", output_spec=output_spec
+            )
+
+        kwargs = mock_execute.call_args.kwargs
+        self.assertIsNone(kwargs["X"])
+        self.assertEqual(kwargs["input_stage_location"], "@MY_DB.PUBLIC.MY_STAGE/input/")
+
+    def test_run_batch_v2_requires_exactly_one_input_source(self) -> None:
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        with self.assertRaisesRegex(ValueError, "Exactly one of X or input_stage_location"):
+            self.m_mv._run_batch_v2(compute_pool="POOL", output_spec=output_spec)
+        with self.assertRaisesRegex(ValueError, "Exactly one of X or input_stage_location"):
+            self.m_mv._run_batch_v2(
+                input_df, input_stage_location="@stage/in/", compute_pool="POOL", output_spec=output_spec
+            )
 
 
 if __name__ == "__main__":

@@ -66,6 +66,34 @@ _PG_IDENTIFIER_BYTE_LIMIT = 63
 _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN = 45
 _POSTGRES_ONLINE_MAX_COLUMN_LEN = 30
 
+# The online-store schema is derived as "{schema}__{oft_id}", so its budget reserves room for the "__"
+# separator and a 19-digit (64-bit) oft_id, keeping the derived identifier within the limit (63 - 2 - 19).
+_POSTGRES_ONLINE_MAX_SCHEMA_LEN = 42
+
+
+def validate_postgres_online_schema_length(feature_store_schema: str) -> None:
+    """Reject a Feature Store schema too long for the Postgres online-store schema identifier.
+
+    The online store derives its schema as "{feature_store_schema}__{oft_id}" and must fit PostgreSQL's
+    63-byte identifier limit, so the budget reserves room for the "__" separator and the downstream-assigned
+    oft_id. Called from :func:`online_service.create_online_service`, before any feature view or feature
+    group is materialized.
+
+    Args:
+        feature_store_schema: The Feature Store schema name that will prefix the Postgres online-store
+            schema.
+
+    Raises:
+        ValueError: If the schema length exceeds the Postgres online-store budget.
+    """
+    if len(feature_store_schema) > _POSTGRES_ONLINE_MAX_SCHEMA_LEN:
+        raise ValueError(
+            f"feature store schema '{feature_store_schema}' is too long for the Postgres online store: "
+            f"it uses {len(feature_store_schema)} characters, but the limit is "
+            f"{_POSTGRES_ONLINE_MAX_SCHEMA_LEN}. Use a shorter Feature Store schema."
+        )
+
+
 _RESULT_SCAN_QUERY_PATTERN = re.compile(
     r".*FROM\s*TABLE\s*\(\s*RESULT_SCAN\s*\(.*",
     flags=re.DOTALL | re.IGNORECASE | re.X,

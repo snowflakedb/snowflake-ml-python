@@ -1,0 +1,10 @@
+kind: BatchSource
+name: EVENTS_FILE
+query_file: EVENTS_FILE.sql
+columns:
+  - name: USER_ID
+    type: StringType
+  - name: EVENT_TS
+    type: TimestampType
+  - name: METRIC_VAL
+    type: FloatType

@@ -27,7 +27,6 @@ from typing_extensions import Concatenate, ParamSpec
 
 import snowflake.ml.feature_store.feature_view as fv_mod
 import snowflake.ml.version as snowml_version
-from snowflake.ml import dataset
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     dataset_errors,
@@ -42,7 +41,10 @@ from snowflake.ml._internal.utils.sql_identifier import (
     parse_fully_qualified_name,
     to_sql_identifiers,
 )
-from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
+
+if TYPE_CHECKING:
+    from snowflake.ml import dataset
+
 from snowflake.ml.feature_store import (
     feature_group as fg_mod,
     feature_view_append_only_validation,
@@ -3783,6 +3785,11 @@ class FeatureStore:
             -------------------------------------------------------
 
         """
+        from snowflake.ml import (
+            dataset,  # lazy import — heavy deps (numpy/pandas/pyarrow)
+        )
+        from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
+
         if output_type not in {"table", "dataset"}:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -3904,6 +3911,10 @@ class FeatureStore:
             1.0
 
         """
+        from snowflake.ml.dataset.dataset_metadata import (
+            FeatureStoreMetadata,  # lazy import
+        )
+
         assert ds.selected_version is not None
         source_meta = ds.selected_version._get_metadata()
         if (

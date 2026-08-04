@@ -2,7 +2,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -73,8 +73,8 @@ class TestExecuteInferenceJobServiceFailureModeInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-                input_spec=batch_inference_specs.Input(params={"unknown_param": 0.5}),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(params={"unknown_param": 0.5}),
                 function_name="predict_with_params",
                 job_name=job_name,
             )
@@ -100,8 +100,8 @@ class TestExecuteInferenceJobServiceFailureModeInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-                input_spec=batch_inference_specs.Input(params={"max_tokens": "not_an_int"}),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(params={"max_tokens": "not_an_int"}),
                 function_name="predict_with_params",
                 job_name=job_name,
             )

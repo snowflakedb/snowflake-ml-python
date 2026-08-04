@@ -4,7 +4,7 @@ import tempfile
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface
 from snowflake.ml.model.openai_signatures import OPENAI_CHAT_SIGNATURE
@@ -133,15 +133,15 @@ class TestExecuteInferenceJobServiceMultiModalityVLLMHuggingFacePipelineInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             replicas=1,
             options={"cuda_version": "12.4"},
             signatures=OPENAI_CHAT_SIGNATURE,
             compute_pool="SYSTEM_COMPUTE_POOL_GPU",
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=InferenceEngine.VLLM,
                     engine_args_override=[
                         "--max-model-len=5000",
@@ -229,15 +229,15 @@ class TestExecuteInferenceJobServiceMultiModalityVLLMHuggingFacePipelineInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             replicas=1,
             options={"cuda_version": "12.4"},
             signatures=OPENAI_CHAT_SIGNATURE,
             compute_pool="SYSTEM_COMPUTE_POOL_GPU",
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=InferenceEngine.VLLM,
                     engine_args_override=[
                         "--max-model-len=18048",
@@ -335,14 +335,14 @@ class TestExecuteInferenceJobServiceMultiModalityVLLMHuggingFacePipelineInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1", memory_requests="16Gi"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1", memory_requests="16Gi"),
             job_name=job_name,
             replicas=3,
             options={"cuda_version": "12.4"},
             signatures=OPENAI_CHAT_SIGNATURE,
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=InferenceEngine.VLLM,
                     engine_args_override=[
                         "--max-model-len=18048",
@@ -374,13 +374,13 @@ class TestExecuteInferenceJobServiceMultiModalityVLLMHuggingFacePipelineInteg(
             model=model,
             X=dummy_df,
             options={"cuda_version": "12.4"},
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             compute_pool="SYSTEM_COMPUTE_POOL_GPU",
             signatures=OPENAI_CHAT_SIGNATURE,
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=InferenceEngine.VLLM,
                     engine_args_override=[
                         "--max-model-len=5000",
