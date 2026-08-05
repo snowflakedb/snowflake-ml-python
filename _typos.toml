@@ -6,6 +6,7 @@ extend-ignore-identifiers-re = [
 [default.extend-identifiers]
 LiteralNDArrayType = "LiteralNDArrayType"
 NDFrame = "NDFrame"
+RSOis = "RSOis"
 
 [default.extend-words]
 MAPE = "MAPE"
@@ -13,6 +14,7 @@ WRONLY = "WRONLY"
 fpr = "fpr"
 fwe = "fwe"
 gir = "gir"
+RSOis = "RSOis"
 
 [type.po]
 extend-glob = ["*.ipynb"]

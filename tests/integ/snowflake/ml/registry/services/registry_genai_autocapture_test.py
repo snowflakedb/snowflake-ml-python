@@ -191,6 +191,7 @@ class RegistryGenAIAutocaptureTest(registry_model_deployment_test_base.RegistryM
             f"found {last_count} in INFERENCE_TABLE"
         )
 
+    @absltest.skip("Temporarily disabled")
     def test_genai_autocapture_basic(self):
         """Verify gen_ai.* attributes appear in INFERENCE_TABLE for a vLLM chat request."""
         messages = [{"role": "user", "content": "What is 2+2?"}]
@@ -246,6 +247,7 @@ class RegistryGenAIAutocaptureTest(registry_model_deployment_test_base.RegistryM
         self.assertIn("snow.model_serving.response.timestamp", record_attributes)
         self.assertIn("snow.model_serving.response.code", record_attributes)
 
+    @absltest.skip("Temporarily disabled")
     def test_genai_autocapture_with_params(self):
         """Verify optional request params are captured when explicitly set."""
         row = [

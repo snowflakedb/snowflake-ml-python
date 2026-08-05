@@ -5,7 +5,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model.model_signature import core
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -102,8 +102,8 @@ class TestExecuteInferenceJobServiceCustomMultiModalityInteg(
 
         column_handling = {
             "AUDIO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
             }
         }
 
@@ -112,9 +112,9 @@ class TestExecuteInferenceJobServiceCustomMultiModalityInteg(
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_GPU",
             signatures={"predict": CustomTranscriber.signature()},
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             replicas=1,
             options={"cuda_version": "12.4"},

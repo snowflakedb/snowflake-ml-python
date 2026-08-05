@@ -6,7 +6,7 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn import datasets, linear_model
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -154,9 +154,9 @@ class RegistryExecuteInferenceJobServicePrivilegeTest(
             batch_job = mv_as_read._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-                inference_spec=batch_inference_specs.Inference(num_workers=1),
-                image_build_spec=batch_inference_specs.ImageBuild(
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
+                image_build_spec=batch_inference_job_specs.ImageBuildSpec(
                     image_repo=f"{self._test_db}.{self._test_schema}.{self._test_image_repo}",
                 ),
                 function_name="predict",

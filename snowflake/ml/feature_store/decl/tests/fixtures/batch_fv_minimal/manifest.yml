@@ -1,0 +1,9 @@
+manifest_version: 1
+type: feature_store
+default_target: DEV
+targets:
+  DEV:
+    account_identifier: ORG-ACCOUNT
+    database: BFV_DB
+    schema: BFV_SC
+    role: TESTROLE

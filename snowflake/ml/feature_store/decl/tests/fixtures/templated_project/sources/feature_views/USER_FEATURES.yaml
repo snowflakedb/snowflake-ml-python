@@ -1,0 +1,11 @@
+kind: BatchFeatureView
+name: USER_FEATURES
+version: V1
+online: false
+description: 'env={{ env_suffix }}'
+entities:
+  - USER_ID
+sources:
+  - name: USER_EVENTS
+    source_type: Batch
+refresh_freq: 1 hour

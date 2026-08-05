@@ -1211,7 +1211,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             entities=[self.user_entity],
             feature_df=feature_df,
             timestamp_col="EVENT_TIME",
-            refresh_freq="10 minutes",
+            refresh_freq="2 minutes",
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         fs.register_feature_view(fv, "v1")
@@ -1227,10 +1227,10 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         )
 
         fv_live = fs.get_feature_view(fv_name, "v1")
-        pdf_sp = fs.read_feature_view(
-            fv_live, keys=[[entity_key]], store_type=StoreType.ONLINE, as_pandas=False
-        ).to_pandas()
-        pdf_fast = fs.read_feature_view(fv_live, keys=[[entity_key]], store_type=StoreType.ONLINE, as_pandas=True)
+        # Retry both parity arms: a transient online-serving 404 can surface on a
+        # single measured read even after the warmup poll observed rows.
+        pdf_sp = self._read_online_with_retry(fs, fv_live, keys=[[entity_key]], as_pandas=False).to_pandas()
+        pdf_fast = self._read_online_with_retry(fs, fv_live, keys=[[entity_key]], as_pandas=True)
 
         self.assertIsInstance(pdf_fast, pd.DataFrame)
         self.assertEqual(list(pdf_fast.columns), list(pdf_sp.columns))

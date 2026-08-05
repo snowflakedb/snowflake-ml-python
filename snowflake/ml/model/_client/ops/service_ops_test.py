@@ -15,8 +15,8 @@ from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.model import (
+    batch_inference_job_specs,
     batch_inference_serialization,
-    batch_inference_specs,
 )
 from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
@@ -1796,7 +1796,7 @@ class ServiceOpsTest(parameterized.TestCase):
         mock_stage_client.list_stage.return_value = []
         self.m_ops._stage_client = mock_stage_client
 
-        self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+        self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.ERROR, "@test_stage/")
 
         mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
 
@@ -1810,7 +1810,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_ops._stage_client = mock_stage_client
 
         with self.assertRaises(FileExistsError) as cm:
-            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+            self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.ERROR, "@test_stage/")
 
         self.assertIn("Output stage location '@test_stage/' is not empty", str(cm.exception))
         self.assertIn("Found 2 existing files", str(cm.exception))
@@ -1824,7 +1824,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_ops._stage_client = mock_stage_client
 
         with self.assertRaises(Exception) as cm:
-            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+            self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.ERROR, "@test_stage/")
 
         self.assertIn("Stage not found", str(cm.exception))
 
@@ -1836,7 +1836,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_ops._stage_client = mock_stage_client
 
         with mock.patch("warnings.warn") as mock_warn:
-            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+            self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.OVERWRITE, "@test_stage/")
             mock_warn.assert_not_called()
 
         mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
@@ -1855,7 +1855,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_ops._session = mock_session
 
         with mock.patch("warnings.warn") as mock_warn:
-            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+            self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.OVERWRITE, "@test_stage/")
 
             mock_warn.assert_called_once()
             warning_message = mock_warn.call_args[0][0]
@@ -1882,7 +1882,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_ops._session = mock_session
 
         with self.assertRaises(RuntimeError) as cm:
-            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+            self.m_ops._enforce_save_mode(batch_inference_job_specs.SaveMode.OVERWRITE, "@test_stage/")
 
         self.assertIn("OVERWRITE was specified", str(cm.exception))
         self.assertIn("failed to remove existing files", str(cm.exception))
@@ -2177,10 +2177,10 @@ class ServiceOpsTest(parameterized.TestCase):
         import base64
         import json
 
-        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+        test_column_handling: dict[str, batch_inference_job_specs.ColumnHandlingOptions] = {
             "image_col": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
             }
         }
 
@@ -2776,8 +2776,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
-                input_spec=batch_inference_specs.Input(params={"k": "v"}),
-                output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out"),
+                input_spec=batch_inference_job_specs.InputSpec(params={"k": "v"}),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out"),
                 resources_spec=None,
                 inference_spec=None,
                 image_build_spec=None,
@@ -2805,6 +2805,124 @@ class ServiceOpsTest(parameterized.TestCase):
         self.assertEqual(call_kwargs["from_stage_path"], expected_input_stage)
         self.assertEqual(result.id, 'TEMP."test".JOB')
 
+    def test_execute_inference_job_service_input_stage_location_skips_materialization(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+            return_value=("query_id", m_async_job),
+        ) as mock_execute:
+            self.m_ops.execute_inference_job_service(
+                input_stage_location="@DB.SCHEMA.STAGE/input",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=None,
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name=None,
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+        from_stage_path = mock_execute.call_args.kwargs["from_stage_path"]
+        # Read in place: the user path flows through as the FROM path (only trailing-slash normalized),
+        # and no _snowflake_temporary/<uuid>/ staging target is created -- i.e. no COPY INTO materialization.
+        self.assertEqual(from_stage_path, "@DB.SCHEMA.STAGE/input/")
+        self.assertNotIn(service_ops._BATCH_INFERENCE_RESERVED_INPUT_SUBDIR, from_stage_path)
+
+    def test_execute_inference_job_service_rejects_bad_input_stage_location(self) -> None:
+        cases = [
+            # (input_stage_location, output_stage_location, expected error fragment)
+            ("DB.SCHEMA.STAGE/input", "@DB.SCHEMA.STAGE/out/", "must be a stage path starting with '@'"),
+            ("@", "@DB.SCHEMA.STAGE/out/", "not a valid Snowflake stage path"),
+            # input nested under the output stage location would be scanned/overwritten as output.
+            ("@DB.SCHEMA.STAGE/out/input/", "@DB.SCHEMA.STAGE/out/", "must not be inside output_spec.stage_location"),
+        ]
+        for input_loc, output_loc, err in cases:
+            with self.subTest(input_stage_location=input_loc):
+                with mock.patch.object(self.m_ops._service_client, "execute_inference_job_service") as mock_execute:
+                    with self.assertRaisesRegex(ValueError, err):
+                        self.m_ops.execute_inference_job_service(
+                            input_stage_location=input_loc,
+                            model_name=sql_identifier.SqlIdentifier("MODEL"),
+                            version_name=sql_identifier.SqlIdentifier("V1"),
+                            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                            input_spec=None,
+                            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_loc),
+                            resources_spec=None,
+                            inference_spec=None,
+                            image_build_spec=None,
+                            function_name=None,
+                            job_name=None,
+                            replicas=None,
+                            async_=True,
+                            statement_params=None,
+                        )
+                mock_execute.assert_not_called()
+
+    def test_execute_inference_job_service_overlap_uses_session_namespace(self) -> None:
+        # An unqualified input resolves against the session's current db/schema, so it overlaps a
+        # fully-qualified output on that same session stage (case-insensitive on identifiers).
+        with (
+            mock.patch.object(self.m_ops._session, "get_current_database", return_value="DB"),
+            mock.patch.object(self.m_ops._session, "get_current_schema", return_value="SCHEMA"),
+            mock.patch.object(self.m_ops._service_client, "execute_inference_job_service") as mock_execute,
+        ):
+            with self.assertRaisesRegex(ValueError, "must not be inside output_spec.stage_location"):
+                self.m_ops.execute_inference_job_service(
+                    input_stage_location="@stage/out/input/",
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name=None,
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+        mock_execute.assert_not_called()
+
+    def test_execute_inference_job_service_does_not_remove_user_stage_on_failure(self) -> None:
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                side_effect=RuntimeError("server rejected"),
+            ),
+            mock.patch.object(self.m_ops._session, "sql") as mock_sql,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "server rejected"):
+                self.m_ops.execute_inference_job_service(
+                    input_stage_location="@DB.SCHEMA.STAGE/input/",
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name=None,
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+        # The caller-owned stage must not be removed: no REMOVE statement is issued. (The operator's
+        # only REMOVE runs in the staged-input cleanup, which is skipped for a caller stage path.)
+        remove_calls = [c for c in mock_sql.call_args_list if c.args and str(c.args[0]).startswith("REMOVE")]
+        self.assertEqual(remove_calls, [])
+
     def test_execute_inference_job_service_parses_server_generated_name(self) -> None:
         m_async_job = self._create_mock_async_job()
         m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
@@ -2820,7 +2938,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
                 input_spec=None,
-                output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
                 resources_spec=None,
                 inference_spec=None,
                 image_build_spec=None,
@@ -2848,7 +2966,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
                     input_spec=None,
-                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
                     resources_spec=None,
                     inference_spec=None,
                     image_build_spec=None,
@@ -2873,7 +2991,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
                     input_spec=None,
-                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
                     resources_spec=None,
                     inference_spec=None,
                     image_build_spec=None,
@@ -2906,7 +3024,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
                     input_spec=None,
-                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
                     resources_spec=None,
                     inference_spec=None,
                     image_build_spec=None,
@@ -2935,7 +3053,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
                     input_spec=None,
-                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
                     resources_spec=None,
                     inference_spec=None,
                     image_build_spec=None,

@@ -1,18 +1,28 @@
 # Release History
 
-## 1.49.0
+## 1.50.0
 
 ### New Features
 
 ### Bug Fixes
 
-* Registry: Fixed a bug where logging a model with explainability enabled could fail with a data validation error
-  ("There is no non-null data in column ...") when a numeric input column was entirely null within the background
-  sample. The `explain` method now reuses the model's existing input signature instead of re-inferring it from the
-  sample.
+### Behavior Changes
 
-* Feature Store: Fixed a bug where `get_feature_view()` could return stale metadata after re-registering a feature
-  view with `overwrite=True`. Metadata reads now select the most recently written row.
+### Deprecations
+
+## 1.49.0 (2026-07-29)
+
+### New Features
+
+* Experiment Tracking: `ExperimentTracking` now captures best-effort source provenance (entry-point filename and any
+  surrounding git commit, branch, and remote URL) for each new run by default. Pass `capture_source_info=False` to
+  disable it. Collection is always non-fatal and never blocks run creation.
+
+### Bug Fixes
+
+* Registry: Fixed `ModelVersion.load()` failing with `Result for query <id> has expired` inside Snowflake Container
+  Runtime notebooks. Model file downloads now use the `session.file.get` FileOperation API (the same mechanism used
+  when logging a model) instead of a raw `GET` query, avoiding a dependency on `collect()` result sets.
 
 ### Behavior Changes
 
@@ -27,6 +37,11 @@
   disable it. Collection is always non-fatal and never blocks run creation.
 
 ### Bug Fixes
+
+* Registry: Fixed a bug where logging a model with explainability enabled could fail with a data validation error
+  ("There is no non-null data in column ...") when a numeric input column was entirely null within the background
+  sample. The `explain` method now reuses the model's existing input signature instead of re-inferring it from the
+  sample.
 
 ### Behavior Changes
 

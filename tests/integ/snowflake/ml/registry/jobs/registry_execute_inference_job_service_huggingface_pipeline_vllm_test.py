@@ -6,7 +6,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import inference_engine, openai_signatures
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -134,14 +134,14 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineVllmInteg(
             compute_pool=compute_pool,
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(
                 cpu_requests=cpu_requests,
                 gpu_requests=gpu_requests,
                 memory_requests=memory_requests,
             ),
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=inference_engine.InferenceEngine.VLLM,
                     engine_args_override=engine_args_override,
                 )
@@ -203,7 +203,7 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineVllmInteg(
         input_df = self.session.create_dataframe(x_df)
 
         # Pass inference parameters via Input
-        input_spec = batch_inference_specs.Input(
+        input_spec = batch_inference_job_specs.InputSpec(
             params={
                 "temperature": 0.0,
                 "max_completion_tokens": 4,
@@ -217,10 +217,10 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineVllmInteg(
             signatures=openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE,
             X=input_df,
             input_spec=input_spec,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
-            inference_spec=batch_inference_specs.Inference(
-                engine_options=batch_inference_specs.EngineOptions(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
+            inference_spec=batch_inference_job_specs.InferenceSpec(
+                engine_options=batch_inference_job_specs.EngineOptions(
                     engine=inference_engine.InferenceEngine.VLLM,
                     engine_args_override=[
                         "--gpu-memory-utilization=0.8",

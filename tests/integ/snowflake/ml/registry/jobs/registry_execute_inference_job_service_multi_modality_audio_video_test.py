@@ -5,7 +5,7 @@ import tempfile
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -58,17 +58,17 @@ class TestExecuteInferenceJobServiceMultiModalityAudioVideoInteg(
 
         column_handling = {
             "AUDIO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             replicas=1,
             options={"cuda_version": "12.4"},
@@ -96,8 +96,8 @@ class TestExecuteInferenceJobServiceMultiModalityAudioVideoInteg(
 
         column_handling = {
             "AUDIO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -119,9 +119,9 @@ class TestExecuteInferenceJobServiceMultiModalityAudioVideoInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             job_name=job_name,
             replicas=1,
             options={"cuda_version": "12.4"},
@@ -155,16 +155,16 @@ class TestExecuteInferenceJobServiceMultiModalityAudioVideoInteg(
 
         column_handling = {
             "VIDEO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(column_handling=column_handling),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             replicas=3,
             pip_requirements=["decord", "av", "pillow"],

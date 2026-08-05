@@ -115,6 +115,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
             self.skipTest("snowflake.core is not installed")
         super().setUp()
         self._dag_name = f"test_dag_{uuid.uuid4().hex[:8]}"
+        self._jobs_before_run: Optional[set[str]] = None
         self._model = TestModel(custom_model.ModelContext())
         self._mv = self._log_model(self._model, signatures=_TEST_MODEL_SIGNATURES)
 
@@ -191,16 +192,110 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
 
         dag_op.deploy(dag, mode="orReplace")
         self._apply_dag_task_image_overrides()
+        self._jobs_before_run = self._snapshot_jobs()
         dag_op.run(dag)
+
+    # A batch deploy creates several jobs in the schema: the inference job plus server-side
+    # ``MODEL_BUILD_<hash>`` / ``MODEL_LOGGING_<hash>`` sub-services.
+    _SUBSERVICE_PREFIXES = ("MODEL_BUILD_", "MODEL_LOGGING_")
+
+    def _list_jobs(self) -> Optional[list[str]]:
+        """Names of the jobs in the test schema, newest first, or None if they cannot be listed.
+
+        None and an empty list mean different things: the caller must not treat a failed lookup as
+        "no jobs exist", or it will attribute unrelated jobs to the current run.
+        """
+        try:
+            rows = self.session.sql(f"SHOW JOB SERVICES IN SCHEMA {self._test_db}.{self._test_schema}").collect()
+            return [str(row["name"]) for row in sorted(rows, key=lambda row: row["created_on"], reverse=True)]
+        except Exception:
+            logger.warning("Could not list the jobs in %s.%s", self._test_db, self._test_schema, exc_info=True)
+            return None
+
+    def _snapshot_jobs(self) -> Optional[set[str]]:
+        """Upper-cased names of the jobs that exist right now, or None if they cannot be listed.
+
+        Captured immediately before triggering a DAG run so failure diagnostics can be restricted to
+        the jobs that run created.
+        """
+        job_names = self._list_jobs()
+        return None if job_names is None else {job_name.upper() for job_name in job_names}
+
+    def _new_jobs(self) -> Optional[list[str]]:
+        """Names of the jobs created by the most recent DAG run, newest first.
+
+        Returns None when the jobs cannot be attributed to that run, either because listing them
+        failed now or because the pre-run snapshot failed.
+
+        Anchored to :meth:`_snapshot_jobs` rather than to timestamps alone, so a repeated execution
+        that fails before its inference job launches never reports a job belonging to an earlier
+        (possibly successful) run. Returns the inference job when it exists, otherwise the run's
+        build/logging sub-services, which is where the failure will be described.
+        """
+        job_names = self._list_jobs()
+        if job_names is None or self._jobs_before_run is None:
+            return None
+        new_job_names = [job_name for job_name in job_names if job_name.upper() not in self._jobs_before_run]
+        inference_jobs = [
+            job_name for job_name in new_job_names if not job_name.upper().startswith(self._SUBSERVICE_PREFIXES)
+        ]
+        if inference_jobs:
+            return inference_jobs[:1]
+        return new_job_names
+
+    def _dump_job_logs(self, job_name: str, *, limit: int) -> str:
+        """Best-effort main + proxy/model-inference container logs for one job."""
+        job_fqn = f"{self._test_db}.{self._test_schema}.{job_name}"
+        parts = [f"Job: {job_fqn}"]
+        try:
+            # Import the submodule, not the package: ``snowflake.ml.jobs`` resolves as a namespace
+            # package under Bazel, so package-level names are not importable here.
+            from snowflake.ml.jobs import job as ml_job
+
+            batch_job = ml_job.MLJob[Any](job_fqn, session=self.session)
+            parts.append(f"Last {limit} lines of job logs:\n{batch_job.get_logs(limit=limit)}")
+
+            containers = batch_job._service_spec.get("spec", {}).get("containers", [])
+            container_names = {c["name"] for c in containers}
+            for container_name in ("proxy", "model-inference"):
+                if len(containers) > 1 and container_name in container_names:
+                    try:
+                        container_logs = ml_job._get_logs(
+                            self.session, batch_job.id, limit=limit, container_name=container_name
+                        )
+                        parts.append(f"Last {limit} lines of {container_name} logs:\n{container_logs}")
+                    except Exception as e:
+                        parts.append(f"Failed to get {container_name} logs: {e}")
+        except Exception as e:
+            parts.append(f"(failed to fetch job logs: {e})")
+        return "\n\n".join(parts)
+
+    def _dump_run_logs(self, *, limit: int = 100) -> str:
+        """Best-effort logs for the jobs created by the most recent DAG run.
+
+        The DAG task launches the inference job inside Snowflake, so unlike direct ``run_batch`` tests
+        this one never receives an MLJob handle to read logs from. Discover the run's jobs instead so
+        DAG failures are debuggable from the test report.
+        """
+        job_names = self._new_jobs()
+        if job_names is None:
+            return "(unable to list the jobs in the test schema)"
+        if not job_names:
+            return "(this DAG run created no jobs)"
+        return "\n\n".join(self._dump_job_logs(job_name, limit=limit) for job_name in job_names)
+
+    def _assert_run_succeeded(self, run: "DAGRun") -> None:
+        """Assert the DAG run SUCCEEDED, dumping batch-inference service logs on failure."""
+        if run.state != "SUCCEEDED":
+            logs = self._dump_run_logs()
+            self.fail(
+                f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}\n\n{logs}"
+            )
 
     def _assert_dag_succeeded(self, dag: "DAG", base_stage_location: str) -> None:
         """Poll for DAG run success and verify a _SUCCESS output file exists under the stage."""
         run = self._poll_dag_run_completion(dag)
-        self.assertEqual(
-            run.state,
-            "SUCCEEDED",
-            f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}",
-        )
+        self._assert_run_succeeded(run)
 
         list_results = self.session.sql(f"LIST {base_stage_location}").collect()
         success_files = [row["name"] for row in list_results if row["name"].endswith("_SUCCESS")]
@@ -290,11 +385,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
         self._deploy_and_run_dag(dag)
 
         run = self._poll_dag_run_completion(dag)
-        self.assertEqual(
-            run.state,
-            "SUCCEEDED",
-            f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}",
-        )
+        self._assert_run_succeeded(run)
 
         rows = self.session.sql(f"SELECT return_value FROM {result_table}").collect()
         self.assertLen(rows, 1, f"Expected 1 row in result table, got {len(rows)}")
@@ -490,9 +581,10 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
         for i in range(num_runs):
             logger.info(f"Starting DAG run {i + 1}/{num_runs}")
             existing_run_ids = {r.run_id for r in dag_op.get_complete_dag_runs(dag, error_only=False)}
+            self._jobs_before_run = self._snapshot_jobs()
             dag_op.run(dag)
             run = self._poll_dag_run_completion(dag, exclude_run_ids=existing_run_ids)
-            self.assertEqual(run.state, "SUCCEEDED", f"Run {i + 1} failed: {run.first_error_message}")
+            self._assert_run_succeeded(run)
 
         list_results = self.session.sql(f"LIST {base_stage_location}").collect()
         success_files = [row["name"] for row in list_results if row["name"].endswith("_SUCCESS")]
@@ -623,6 +715,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
         self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
         self.session.sql(f"ALTER TASK {root_task_fqn} RESUME").collect()
 
+        self._jobs_before_run = self._snapshot_jobs()
         dag_op.run(dag)
         self._assert_dag_succeeded(dag, base_stage_location)
 

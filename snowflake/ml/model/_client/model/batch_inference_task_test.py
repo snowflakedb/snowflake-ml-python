@@ -339,7 +339,7 @@ class BatchInferenceTaskTest(absltest.TestCase):
         import base64
         import json
 
-        from snowflake.ml.model._client.model.batch_inference_specs import (
+        from snowflake.ml.model._client.model.batch_inference_job_specs import (
             FileEncoding,
             InputFormat,
         )

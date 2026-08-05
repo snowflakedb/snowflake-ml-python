@@ -1,45 +1,11 @@
-from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_serializer, model_validator
-from typing_extensions import TypedDict
+from pydantic import BaseModel, model_validator
 
-from snowflake.ml.model import inference_engine as inference_engine_module
-
-
-class SaveMode(str, Enum):
-    """Save mode options for batch inference output.
-
-    Determines the behavior when files already exist in the output location.
-
-    OVERWRITE: Remove existing files and write new results.
-
-    ERROR: Raise an error if files already exist in the output location.
-    """
-
-    OVERWRITE = "overwrite"
-    ERROR = "error"
-
-
-class InputFormat(str, Enum):
-    """The format of the input column data."""
-
-    FULL_STAGE_PATH = "full_stage_path"
-
-
-class FileEncoding(str, Enum):
-    """The encoding of the file content that will be passed to the custom model."""
-
-    RAW_BYTES = "raw_bytes"
-    BASE64 = "base64"
-    BASE64_DATA_URL = "base64_data_url"
-
-
-class ColumnHandlingOptions(TypedDict):
-    """Options for handling specific columns during run_batch for file I/O."""
-
-    input_format: InputFormat
-    convert_to: FileEncoding
+from snowflake.ml.model._client.model.batch_inference_job_specs import (
+    ColumnHandlingOptions,
+    SaveMode,
+)
 
 
 class InputSpec(BaseModel):
@@ -79,7 +45,7 @@ class OutputSpec(BaseModel):
     """Specification for batch inference output.
 
     Defines where the inference results should be written and how to handle
-    existing files at the output location. Exactly one of ``stage_location`` or
+    existing files at the output stage location. Exactly one of ``stage_location`` or
     ``base_stage_location`` must be provided.
 
     Attributes:
@@ -92,7 +58,7 @@ class OutputSpec(BaseModel):
             derives the output path as ``<base_stage_location>/<job_name>/``.
             Mutually exclusive with stage_location.
         mode (SaveMode): The save mode that determines behavior when files already exist
-            at the output location. Defaults to SaveMode.ERROR which raises an error
+            at the output stage location. Defaults to SaveMode.ERROR which raises an error
             if files exist. Can be set to SaveMode.OVERWRITE to replace existing files.
 
     Example:
@@ -185,67 +151,3 @@ class JobSpec(BaseModel):
         if self.job_name is not None and self.job_name_prefix is not None:
             raise ValueError("job_name and job_name_prefix are mutually exclusive. Please specify only one or neither.")
         return self
-
-
-# ----------------------------------------------------------------------------
-# Spec types for EXECUTE INFERENCE JOB SERVICE.
-#
-# These types mirror the YAML body 1:1 (`input` / `output` / `resources`
-# / `inference` / `image_build`).
-# ----------------------------------------------------------------------------
-
-
-class Input(BaseModel):
-    """Input block of the batch inference YAML body."""
-
-    params: Optional[dict[str, Any]] = None
-    column_handling: Optional[dict[str, ColumnHandlingOptions]] = None
-    partition_column: Optional[str] = None
-
-
-class Output(BaseModel):
-    """Output block of the batch inference YAML body.
-
-    ``stage_location`` is required and is treated as a base: results are written under a
-    per-job subdirectory, ``<stage_location>/<job_name>/``.
-    """
-
-    stage_location: str
-    mode: SaveMode = SaveMode.ERROR
-
-
-class Resources(BaseModel):
-    """Resources block of the batch inference YAML body."""
-
-    cpu_requests: Optional[str] = None
-    memory_requests: Optional[str] = None
-    gpu_requests: Optional[str] = None
-
-
-class EngineOptions(BaseModel):
-    """``inference.engine_options`` sub-block of the YAML body."""
-
-    engine: Optional[inference_engine_module.InferenceEngine] = None
-    engine_args_override: Optional[list[str]] = None
-
-    @field_serializer("engine")
-    def _serialize_engine(self, engine: Optional[inference_engine_module.InferenceEngine]) -> Optional[str]:
-        # The EXECUTE INFERENCE JOB SERVICE engine enum is upper-case
-        # (DEFAULT / VLLM / PYTHON_GENERIC), but the Python enum's value is
-        # lower-case. Emit the member name so the server accepts it.
-        return engine.name if engine is not None else None
-
-
-class Inference(BaseModel):
-    """Inference block of the batch inference YAML body."""
-
-    num_workers: Optional[int] = None
-    max_batch_rows: Optional[int] = None
-    engine_options: Optional[EngineOptions] = None
-
-
-class ImageBuild(BaseModel):
-    """Image-build block of the batch inference YAML body."""
-
-    image_repo: Optional[str] = None
-    force_rebuild: bool = False

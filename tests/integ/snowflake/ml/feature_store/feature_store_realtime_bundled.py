@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 from absl.testing import absltest
@@ -408,6 +408,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         *,
         keys: list[list[str]],
         request_context: Optional[pd.DataFrame] = None,
+        validate_fn: Optional[Callable[[pd.DataFrame], None]] = None,
         timeout: float = 600.0,
     ) -> pd.DataFrame:
         """Poll ``read_feature_view`` until the RTFV's OFT-backed upstream is ingested.
@@ -418,8 +419,13 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             keys: Entity tuples to read.
             request_context: Per-row request context (same length as ``keys``).
                 ``None`` for RTFVs registered without a RequestSource.
-            timeout: Maximum total wait, in seconds. Matches the FG bundle's
-                default of 300s and accounts for the Online Service refresh.
+            validate_fn: Optional ``callable(pdf) -> None`` invoked once rows are
+                returned. Raise ``AssertionError`` to keep polling; use this to
+                wait for the RTFV-computed column to converge instead of returning
+                a transiently stale value. Mirrors the FG bundle's
+                value-convergence loop.
+            timeout: Maximum total wait, in seconds. Accounts for the Online
+                Service refresh after registration.
 
         Returns:
             The pandas DataFrame from the first successful read.
@@ -434,7 +440,14 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
                     request_context=request_context,
                 )
                 if len(pdf) >= len(keys):
+                    if validate_fn is not None:
+                        validate_fn(pdf)
                     return pdf
+            except AssertionError as e:
+                # ``validate_fn`` rejected a transiently stale value (e.g. a
+                # not-yet-materialized RTFV-computed column). Keep polling.
+                last_err = f"{type(e).__name__}: {e}"
+                logger.info("RTFV read not yet converged: %s", last_err)
             except Exception as e:
                 # Broad catch: the read API unwraps to the original exception, and a
                 # transient online-serving 404 surfaces as RuntimeError, not ValueError.
@@ -442,7 +455,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
                 logger.info("RTFV read not yet ready: %s", last_err)
             time.sleep(5)
         self.fail(
-            f"read_feature_view({rtfv_live.name}/{rtfv_live.version}) returned no rows within "
+            f"read_feature_view({rtfv_live.name}/{rtfv_live.version}) did not converge within "
             f"{timeout}s; last_err={last_err!r}"
         )
 
@@ -569,6 +582,9 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         2500.0 = 1000.0 * 2.5.
         """
         upstream_name, _src, user_id = self._register_postgres_fv(suffix="RD1")
+        # Wait for the upstream BFV's OFT side to be online-readable before wiring
+        # it into an RTFV, so the RTFV wait budget covers RTFV propagation only.
+        self._poll_online_read(self.fs, upstream_name, "v1", keys=[[user_id]], desc="RTFV upstream BFV (RD1)")
         upstream = self.fs.get_feature_view(upstream_name, "v1")
 
         rtfv_name = f"RTFV_INTEG_RD1_{uuid.uuid4().hex[:8].upper()}"
@@ -590,10 +606,21 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             rtfv_live = self.fs.get_feature_view(rtfv_name, version)
 
             request_context = pd.DataFrame({"WEIGHT": [2.5]})
+
+            def _validate_weighted(pdf: pd.DataFrame) -> None:
+                # Keep polling until the RTFV-computed column converges to the
+                # expected value; a freshly registered RTFV can transiently
+                # return a stale/zero WEIGHTED_BALANCE before its compute_fn sees
+                # the ingested upstream row.
+                weighted_col = next((c for c in pdf.columns if c.upper() == "WEIGHTED_BALANCE"), None)
+                self.assertIsNotNone(weighted_col, "WEIGHTED_BALANCE column missing from RTFV read")
+                self.assertAlmostEqual(float(pdf.iloc[0][weighted_col]), 2500.0, places=4)
+
             pdf = self._wait_until_rtfv_read_returns_rows(
                 rtfv_live,
                 keys=[[user_id]],
                 request_context=request_context,
+                validate_fn=_validate_weighted,
             )
 
             self.assertIsInstance(pdf, pd.DataFrame)
@@ -615,6 +642,9 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         without any ``request_context`` argument.
         """
         upstream_name, _src, user_id = self._register_postgres_fv(suffix="RDN")
+        # Wait for the upstream BFV's OFT side to be online-readable before wiring
+        # it into an RTFV, so the RTFV wait budget covers RTFV propagation only.
+        self._poll_online_read(self.fs, upstream_name, "v1", keys=[[user_id]], desc="RTFV upstream BFV (RDN)")
         upstream = self.fs.get_feature_view(upstream_name, "v1")
 
         rtfv_name = f"RTFV_INTEG_RDN_{uuid.uuid4().hex[:8].upper()}"
@@ -635,7 +665,15 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             self.fs.register_feature_view(rtfv, version)
             rtfv_live = self.fs.get_feature_view(rtfv_name, version)
 
-            pdf = self._wait_until_rtfv_read_returns_rows(rtfv_live, keys=[[user_id]])
+            def _validate_doubled(pdf: pd.DataFrame) -> None:
+                # Keep polling until DOUBLED_BALANCE converges to the expected
+                # value; a freshly registered RTFV can transiently return a
+                # stale/zero value before its compute_fn sees the ingested row.
+                doubled_col = next((c for c in pdf.columns if c.upper() == "DOUBLED_BALANCE"), None)
+                self.assertIsNotNone(doubled_col, "DOUBLED_BALANCE column missing from RTFV read")
+                self.assertAlmostEqual(float(pdf.iloc[0][doubled_col]), 2000.0, places=4)
+
+            pdf = self._wait_until_rtfv_read_returns_rows(rtfv_live, keys=[[user_id]], validate_fn=_validate_doubled)
 
             self.assertIsInstance(pdf, pd.DataFrame)
             self.assertEqual(len(pdf), 1)

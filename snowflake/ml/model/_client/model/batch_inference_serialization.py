@@ -5,7 +5,9 @@ from typing import Any, Optional
 
 from pydantic import TypeAdapter
 
-from snowflake.ml.model._client.model.batch_inference_specs import ColumnHandlingOptions
+from snowflake.ml.model._client.model.batch_inference_job_specs import (
+    ColumnHandlingOptions,
+)
 
 _UTF8_ENCODING = "utf-8"
 

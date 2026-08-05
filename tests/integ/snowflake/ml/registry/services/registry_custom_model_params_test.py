@@ -23,6 +23,7 @@ Coverage matrix (2 deployments):
     - mv.run / multi_row_with_params: params applied consistently across all rows
 """
 
+import base64
 import datetime
 import logging
 import unittest
@@ -76,15 +77,20 @@ _DEFAULT_TIMESTAMP_STR = _format_timestamp(_DEFAULT_TIMESTAMP)
 # ---------------------------------------------------------------------------
 
 
-def _serialize_for_rest(params: dict[str, Any]) -> dict[str, Any]:
+def _serialize_for_rest(params: dict[str, Any], bytes_as_base64: bool = False) -> dict[str, Any]:
     """Convert native Python params to JSON-serializable format for REST payloads.
 
     bytes -> hex string, datetime -> ISO format string, everything else passed through.
+
+    When bytes_as_base64 is True, bytes are base64-encoded instead of hex. The arrow
+    request-parsing path (ENABLE_ARROW_IN_PROXY) expects BYTES params as base64 on the
+    split/records REST sources; the legacy path passed them through as an undecoded
+    string, so hex only round-tripped there.
     """
     result = {}
     for k, v in params.items():
         if isinstance(v, bytes):
-            result[k] = v.hex()
+            result[k] = base64.b64encode(v).decode() if bytes_as_base64 else v.hex()
         elif isinstance(v, datetime.datetime):
             result[k] = v.isoformat()
         else:
@@ -437,6 +443,30 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
     """
 
     # ===================================================================
+    # Mode detection
+    # ===================================================================
+
+    def _arrow_active(self) -> bool:
+        """Whether the inference proxy parses REST requests via the arrow path.
+
+        Arrow decodes BYTES params (base64 on split/records) into real bytes; the legacy
+        path passes them through as undecoded strings. The two paths return different
+        received_bytes values, so bytes subtests branch on this.
+
+        The account parameter uses a single underscore between SERVER and ENABLE; the
+        double-underscore SPCS_MODEL_INFERENCE_SERVER__ form is only the pushed-down
+        proxy env var. vLLM (which disables arrow even when the flag is on) is not a
+        concern here — this test only ever deploys plain custom models.
+        """
+        try:
+            rows = self.session.sql(
+                "SHOW PARAMETERS LIKE 'SPCS_MODEL_INFERENCE_SERVER_ENABLE_ARROW_IN_PROXY' IN ACCOUNT"
+            ).collect()
+        except Exception:
+            return False
+        return bool(rows) and str(rows[0].value).lower() == "true"
+
+    # ===================================================================
     # Signatures
     # ===================================================================
 
@@ -730,14 +760,22 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
 
     def _test_rest_split(self, endpoint: str) -> None:
         base = {"dataframe_split": {"index": [0], "columns": ["value"], "data": [[10.0]]}}
+        arrow = self._arrow_active()
 
         with self.subTest("rest_split / full"):
-            payload = {**base, "params": _serialize_for_rest(_FULL_PARAMS)}
+            payload = {**base, "params": _serialize_for_rest(_FULL_PARAMS, bytes_as_base64=arrow)}
             response = self._assert_rest_ok(endpoint, payload, label="split/full")
             row = self._parse_rest_rows(response)[0]
-            self._check_all_data_types(row, _to_raw_expected(_FULL_EXPECTED), "split/full")
+            # Arrow decodes the base64 bytes_param → model hex-uppercases (_FULL_EXPECTED).
+            # Legacy path passes the hex string through unchanged → lowercase.
+            expected = _FULL_EXPECTED if arrow else _to_raw_expected(_FULL_EXPECTED)
+            self._check_all_data_types(row, expected, "split/full")
 
         with self.subTest("rest_split / partial"):
+            # SNOW-3045092: under arrow, omitting a BYTES param 400s because the proxy
+            # double-base64-decodes the resolved model.yaml default. Skip until fixed.
+            if arrow:
+                self.skipTest("SNOW-3045092: arrow proxy double-decodes omitted BYTES default")
             payload = {**base, "params": _serialize_for_rest(_PARTIAL_PARAMS)}
             response = self._assert_rest_ok(endpoint, payload, label="split/partial")
             row = self._parse_rest_rows(response)[0]
@@ -747,6 +785,9 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             )
 
         with self.subTest("rest_split / default"):
+            # SNOW-3045092: see rest_split / partial — omitted BYTES default 400s under arrow.
+            if arrow:
+                self.skipTest("SNOW-3045092: arrow proxy double-decodes omitted BYTES default")
             response = self._assert_rest_ok(endpoint, base, label="split/default")
             row = self._parse_rest_rows(response)[0]
             self._check_all_data_types(
@@ -779,7 +820,7 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
 
         with self.subTest("rest_split / extra_cols"):
             # Extra column WITH extra_columns key → server should accept and ignore
-            rest_params = _serialize_for_rest(_FULL_PARAMS)
+            rest_params = _serialize_for_rest(_FULL_PARAMS, bytes_as_base64=arrow)
             response = self._assert_rest_ok(
                 endpoint,
                 {
@@ -790,7 +831,8 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 label="split/extra_cols",
             )
             row = self._parse_rest_rows(response)[0]
-            self._check_all_data_types(row, _to_raw_expected(_FULL_EXPECTED), "split/extra_cols")
+            expected = _FULL_EXPECTED if arrow else _to_raw_expected(_FULL_EXPECTED)
+            self._check_all_data_types(row, expected, "split/extra_cols")
 
     # ===================================================================
     # REST records subtests
@@ -798,14 +840,22 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
 
     def _test_rest_records(self, endpoint: str) -> None:
         base: dict[str, Any] = {"dataframe_records": [{"value": 10.0}]}
+        arrow = self._arrow_active()
 
         with self.subTest("rest_records / full"):
-            payload = {**base, "params": _serialize_for_rest(_FULL_PARAMS)}
+            payload = {**base, "params": _serialize_for_rest(_FULL_PARAMS, bytes_as_base64=arrow)}
             response = self._assert_rest_ok(endpoint, payload, label="records/full")
             row = self._parse_rest_rows(response)[0]
-            self._check_all_data_types(row, _to_raw_expected(_FULL_EXPECTED), "records/full")
+            # Arrow decodes the base64 bytes_param → model hex-uppercases (_FULL_EXPECTED).
+            # Legacy path passes the hex string through unchanged → lowercase.
+            expected = _FULL_EXPECTED if arrow else _to_raw_expected(_FULL_EXPECTED)
+            self._check_all_data_types(row, expected, "records/full")
 
         with self.subTest("rest_records / partial"):
+            # SNOW-3045092: under arrow, omitting a BYTES param 400s because the proxy
+            # double-base64-decodes the resolved model.yaml default. Skip until fixed.
+            if arrow:
+                self.skipTest("SNOW-3045092: arrow proxy double-decodes omitted BYTES default")
             payload = {**base, "params": _serialize_for_rest(_PARTIAL_PARAMS)}
             response = self._assert_rest_ok(endpoint, payload, label="records/partial")
             row = self._parse_rest_rows(response)[0]
@@ -815,6 +865,9 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             )
 
         with self.subTest("rest_records / default"):
+            # SNOW-3045092: see rest_records / partial — omitted BYTES default 400s under arrow.
+            if arrow:
+                self.skipTest("SNOW-3045092: arrow proxy double-decodes omitted BYTES default")
             response = self._assert_rest_ok(endpoint, base, label="records/default")
             row = self._parse_rest_rows(response)[0]
             self._check_all_data_types(
@@ -847,7 +900,7 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
 
         with self.subTest("rest_records / extra_cols"):
             # Extra column WITH extra_columns key → server should accept and ignore
-            rest_params = _serialize_for_rest(_FULL_PARAMS)
+            rest_params = _serialize_for_rest(_FULL_PARAMS, bytes_as_base64=arrow)
             response = self._assert_rest_ok(
                 endpoint,
                 {
@@ -858,7 +911,8 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 label="records/extra_cols",
             )
             row = self._parse_rest_rows(response)[0]
-            self._check_all_data_types(row, _to_raw_expected(_FULL_EXPECTED), "records/extra_cols")
+            expected = _FULL_EXPECTED if arrow else _to_raw_expected(_FULL_EXPECTED)
+            self._check_all_data_types(row, expected, "records/extra_cols")
 
     # ===================================================================
     # Wide: mv.run subtests
@@ -911,6 +965,10 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
 
     def test_wide_format_params(self) -> None:
         """Deploy ModelWithManyFeatures once, then run subtests across the mv.run wide path."""
+        # SNOW-3045092: the arrow request path does not yet support the wide (500+ feature) format.
+        # Deployment itself smoke-tests via mv.run, which 400s under arrow, so skip the whole test.
+        if self._arrow_active():
+            self.skipTest("SNOW-3045092: wide (500+ feature) format unsupported under arrow")
         mv, endpoint = self._deploy_wide()
 
         with self.subTest("mv_run_wide"):

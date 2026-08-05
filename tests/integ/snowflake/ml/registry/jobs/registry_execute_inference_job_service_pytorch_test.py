@@ -3,7 +3,7 @@ import torch
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._signatures import pytorch_handler
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -42,13 +42,13 @@ class TestExecuteInferenceJobServicePyTorchInteg(
             model=model,
             sample_input_data=x_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(
                 gpu_requests=gpu_requests,
                 cpu_requests=cpu_requests,
                 memory_requests=memory_requests,
             ),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="forward",
             job_name=job_name,
             replicas=2,
@@ -95,9 +95,9 @@ class TestExecuteInferenceJobServicePyTorchInteg(
             sample_input_data=x_df,
             signatures={"forward": sig},
             X=input_df,
-            input_spec=batch_inference_specs.Input(params={"scale": 2.0}),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            input_spec=batch_inference_job_specs.InputSpec(params={"scale": 2.0}),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="forward",
             job_name=job_name,
             replicas=1,
@@ -151,9 +151,9 @@ class TestExecuteInferenceJobServicePyTorchInteg(
             sample_input_data=x_df,
             signatures={"forward": sig},
             X=input_df,
-            input_spec=batch_inference_specs.Input(params={"scale": 2.0}),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            input_spec=batch_inference_job_specs.InputSpec(params={"scale": 2.0}),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="forward",
             job_name=job_name,
             replicas=1,

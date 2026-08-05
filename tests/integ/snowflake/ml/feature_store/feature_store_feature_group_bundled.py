@@ -1059,6 +1059,8 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                 )
 
             fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            # Wait for OFS catalog propagation (404 → 200) before the bounded retry read.
+            self._wait_until_fg_read_returns_rows(fg_live, seeded_user_id)
             # Schema-only smoke: data may be empty before the SFV backfill lands in the OFT.
             pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
             pdf_cols = {_normalize_column_name(c) for c in pdf.columns}
@@ -1094,6 +1096,8 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                 )
 
             fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            # Wait for OFS catalog propagation (404 → 200) before the bounded retry read.
+            self._wait_until_fg_read_returns_rows(fg_live, seeded_user_id)
             # Schema-only smoke: data may be empty before the BFV tile DT backfills.
             pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
             pdf_cols = {_normalize_column_name(c) for c in pdf.columns}
@@ -1146,23 +1150,36 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             value = None
             count_value = None
             keys_value = None
+            last_err: Optional[str] = None
+            # Poll for the full deadline: OFS catalog skew (404) and tile backfill can
+            # both exceed ``_read_feature_group_with_retry``'s ~30s budget. Do not nest
+            # that helper here — it raises after 6 attempts and aborts this loop early.
             while time.time() < deadline:
-                pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
-                if len(pdf) > 0:
-                    sum_col = next((c for c in pdf.columns if sum_col_token in _normalize_column_name(c)), None)
-                    count_col = next((c for c in pdf.columns if count_col_token in _normalize_column_name(c)), None)
-                    keys_col = next((c for c in pdf.columns if keys_col_token in _normalize_column_name(c)), None)
-                    candidate = pdf.iloc[0][sum_col] if sum_col is not None else None
-                    count_candidate = pdf.iloc[0][count_col] if count_col is not None else None
-                    keys_candidate = pdf.iloc[0][keys_col] if keys_col is not None else None
-                    # ``x != x`` detects float NaN without importing math; arrays
-                    # are object-dtype so this only trips on a scalar-null cell.
-                    is_nan = isinstance(candidate, float) and candidate != candidate
-                    if candidate is not None and not is_nan:
-                        value = candidate
-                        count_value = count_candidate
-                        keys_value = keys_candidate
-                        break
+                try:
+                    pdf = self.fs.read_feature_group(fg_live, keys=[[seeded_user_id]])
+                    if len(pdf) > 0:
+                        sum_col = next((c for c in pdf.columns if sum_col_token in _normalize_column_name(c)), None)
+                        count_col = next((c for c in pdf.columns if count_col_token in _normalize_column_name(c)), None)
+                        keys_col = next((c for c in pdf.columns if keys_col_token in _normalize_column_name(c)), None)
+                        candidate = pdf.iloc[0][sum_col] if sum_col is not None else None
+                        count_candidate = pdf.iloc[0][count_col] if count_col is not None else None
+                        keys_candidate = pdf.iloc[0][keys_col] if keys_col is not None else None
+                        # ``x != x`` detects float NaN without importing math; arrays
+                        # are object-dtype so this only trips on a scalar-null cell.
+                        is_nan = isinstance(candidate, float) and candidate != candidate
+                        if candidate is not None and not is_nan:
+                            value = candidate
+                            count_value = count_candidate
+                            keys_value = keys_candidate
+                            break
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    logger.warning(
+                        "read_feature_group(%s/%s) secondary-key poll transient error: %s",
+                        fg_live.name,
+                        fg_live.version,
+                        last_err,
+                    )
                 time.sleep(5)
 
             self.assertIsNotNone(pdf, "read_feature_group never returned a DataFrame for the secondary-key FG.")
@@ -1182,7 +1199,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.assertIsNotNone(
                 value,
                 f"secondary-key value column '{sum_col_token}' did not materialize a non-null value "
-                f"within 600s; cannot verify the array-shape regression guard.",
+                f"within 600s; cannot verify the array-shape regression guard. last_err={last_err!r}",
             )
             # The secondary-key value columns come back as arrays (one element per
             # AD_ID bucket), never bare scalars. ``list(...)`` accepts

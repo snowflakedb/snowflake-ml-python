@@ -28,7 +28,7 @@ from absl.testing import absltest
 from packaging import version
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -165,8 +165,8 @@ class TestExecuteInferenceJobServiceBackwardsCompatNoParams(
             signatures={"predict": sig},
             pip_requirements=[f"snowflake-ml-python=={snowml_version}"],
             options={"embed_local_ml_library": False},
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
             replicas=1,
@@ -242,9 +242,9 @@ class TestExecuteInferenceJobServiceBackwardsCompatWithParams(
         )
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
         input_spec = (
-            batch_inference_specs.Input(params=input_spec_params)
+            batch_inference_job_specs.InputSpec(params=input_spec_params)
             if input_spec_params
-            else batch_inference_specs.Input()
+            else batch_inference_job_specs.InputSpec()
         )
 
         self._test_registry_execute_inference_job_service(
@@ -254,8 +254,8 @@ class TestExecuteInferenceJobServiceBackwardsCompatWithParams(
             pip_requirements=[f"snowflake-ml-python=={snowml_version}"],
             options={"embed_local_ml_library": False},
             input_spec=input_spec,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
             replicas=1,

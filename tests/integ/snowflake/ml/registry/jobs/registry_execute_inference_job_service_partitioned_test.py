@@ -11,7 +11,7 @@ from sklearn.linear_model import LinearRegression
 
 from snowflake import snowpark
 from snowflake.ml.model import custom_model, model_signature, openai_signatures
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -381,7 +381,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
             model=model,
             sample_input_data=sample_input_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_batch",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -446,8 +446,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_stateful",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -502,7 +502,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_expanded",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -557,8 +557,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_reduced",
             job_name=job_name,
             additional_dependencies=["scikit-learn"],
@@ -601,8 +601,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_equal",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -648,8 +648,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_expanded",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -699,9 +699,9 @@ class TestExecuteInferenceJobServicePartitionedInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-                image_build_spec=batch_inference_specs.ImageBuild(
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                image_build_spec=batch_inference_job_specs.ImageBuildSpec(
                     image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
                 ),
                 function_name="predict_equal_with_partition_col",
@@ -746,8 +746,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL", params=override_params),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL", params=override_params),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_stateful_with_params",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -791,8 +791,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL", params=override_params),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL", params=override_params),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="predict_expanded_with_params",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION"},
@@ -846,8 +846,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                input_spec=batch_inference_specs.Input(partition_column="messages"),
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="messages"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
                 job_name=job_name,
             )
 
@@ -884,8 +884,8 @@ class TestExecuteInferenceJobServicePartitionedInteg(
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
                 function_name="predict",
                 job_name=job_name,
             )
@@ -929,9 +929,9 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
-            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
             function_name="predict_stateful_gpu",
             job_name=job_name,
             options={"function_type": "TABLE_FUNCTION", "cuda_version": model_env.DEFAULT_CUDA_VERSION},

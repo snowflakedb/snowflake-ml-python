@@ -3,7 +3,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -50,9 +50,9 @@ class TestExecuteInferenceJobServiceModelingInteg(
             model=regr,
             sample_input_data=test_features,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=num_workers),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
             function_name="predict",
             job_name=job_name,
             replicas=replicas,
@@ -91,9 +91,9 @@ class TestExecuteInferenceJobServiceModelingInteg(
             model=regr,
             sample_input_data=test_features,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=num_workers),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
             function_name="predict",
             job_name=job_name,
             replicas=replicas,
@@ -132,9 +132,9 @@ class TestExecuteInferenceJobServiceModelingInteg(
             model=regr,
             sample_input_data=test_features,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=num_workers),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
             function_name="predict",
             job_name=job_name,
             replicas=replicas,
@@ -221,9 +221,9 @@ class TestExecuteInferenceJobServiceModelingInteg(
             model=pipeline,
             sample_input_data=test_features,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=num_workers),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
             function_name="predict",
             job_name=job_name,
             replicas=replicas,
@@ -303,8 +303,8 @@ class TestExecuteInferenceJobServiceModelingInteg(
             model=pipeline,
             sample_input_data=test_features,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            inference_spec=batch_inference_specs.Inference(num_workers=num_workers),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
             function_name="transform",
             job_name=job_name,
             replicas=replicas,

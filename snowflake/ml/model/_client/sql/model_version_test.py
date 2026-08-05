@@ -6,11 +6,19 @@ from unittest import mock
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.sql import model_version as model_version_sql
 from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.snowpark import DataFrame, Row, Session, functions as F, types as spt
+from snowflake.snowpark import (
+    DataFrame,
+    Row,
+    Session,
+    file_operation,
+    functions as F,
+    types as spt,
+)
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
@@ -296,14 +304,13 @@ class ModelVersionSQLTest(absltest.TestCase):
 
     def test_get_file(self) -> None:
         m_statement_params = {"test": "1"}
-        m_df = mock_data_frame.MockDataFrame(
-            collect_result=[Row(file="946964364/MANIFEST.yml", size=419, status="DOWNLOADED", message="")],
-            collect_statement_params=m_statement_params,
-        )
         path = pathlib.Path("/tmp").resolve().as_posix()
-        self.m_session.add_mock_sql(
-            f"""GET 'snow://model/TEMP."test".MODEL/versions/v1/model.yaml' 'file://{path}'""", copy.deepcopy(m_df)
-        )
+        m_file_get_result = [
+            file_operation.GetResult(file="946964364/MANIFEST.yml", size="419", status="DOWNLOADED", message="")
+        ]
+
+        self.m_session.file = mock.MagicMock()
+        self.m_session.file.get.return_value = m_file_get_result
         c_session = cast(Session, self.m_session)
         res = model_version_sql.ModelVersionSQLClient(
             c_session,
@@ -318,11 +325,13 @@ class ModelVersionSQLTest(absltest.TestCase):
             target_path=pathlib.Path("/tmp"),
             statement_params=m_statement_params,
         )
+        self.m_session.file.get.assert_called_once_with(
+            'snow://model/TEMP."test".MODEL/versions/v1/model.yaml', path, statement_params=m_statement_params
+        )
         self.assertEqual(res, pathlib.Path("/tmp/model.yaml"))
 
-        self.m_session.add_mock_sql(
-            f"""GET 'snow://model/TEMP."test".MODEL/versions/v1/model.yaml' 'file://{path}'""", copy.deepcopy(m_df)
-        )
+        self.m_session.file = mock.MagicMock()
+        self.m_session.file.get.return_value = m_file_get_result
         c_session = cast(Session, self.m_session)
         res = model_version_sql.ModelVersionSQLClient(
             c_session,
@@ -337,6 +346,29 @@ class ModelVersionSQLTest(absltest.TestCase):
             target_path=pathlib.Path("/tmp"),
             statement_params=m_statement_params,
         )
+        self.m_session.file.get.assert_called_once_with(
+            'snow://model/TEMP."test".MODEL/versions/v1/model.yaml', path, statement_params=m_statement_params
+        )
+
+    def test_get_file_unexpected_file_count(self) -> None:
+        m_statement_params = {"test": "1"}
+        self.m_session.file = mock.MagicMock()
+        self.m_session.file.get.return_value = []
+        c_session = cast(Session, self.m_session)
+        with self.assertRaisesRegex(exceptions.SnowflakeMLException, "Expected to download exactly one file"):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).get_file(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                file_path=pathlib.PurePosixPath("model.yaml"),
+                target_path=pathlib.Path("/tmp"),
+                statement_params=m_statement_params,
+            )
 
     def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}

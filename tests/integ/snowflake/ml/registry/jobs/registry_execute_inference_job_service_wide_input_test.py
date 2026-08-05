@@ -3,7 +3,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -54,7 +54,7 @@ class TestExecuteInferenceJobServiceWideInputInteg(
             model=wide_model,
             sample_input_data=train_df,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             expected_predictions=expected_predictions,
         )

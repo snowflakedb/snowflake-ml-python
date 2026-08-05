@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 import yaml
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 
 
 class InferenceJobServiceSpec:
@@ -22,27 +22,29 @@ class InferenceJobServiceSpec:
         self._inference = None
         self._image_build = None
 
-    def add_input_spec(self, input_spec: batch_inference_specs.Input) -> "InferenceJobServiceSpec":
+    def add_input_spec(self, input_spec: batch_inference_job_specs.InputSpec) -> "InferenceJobServiceSpec":
         # ``params`` and ``column_handling`` are emitted as raw dicts; the
         # server handles encoding for both.
         self._input = input_spec.model_dump(mode="json", exclude_none=True)
         return self
 
-    def add_output_spec(self, output_spec: batch_inference_specs.Output) -> "InferenceJobServiceSpec":
+    def add_output_spec(self, output_spec: batch_inference_job_specs.OutputSpec) -> "InferenceJobServiceSpec":
         self._output = output_spec.model_dump(mode="json", exclude_none=True)
         return self
 
-    def add_resources_spec(self, resources_spec: batch_inference_specs.Resources) -> "InferenceJobServiceSpec":
+    def add_resources_spec(self, resources_spec: batch_inference_job_specs.ResourcesSpec) -> "InferenceJobServiceSpec":
         dumped = resources_spec.model_dump(mode="json", exclude_none=True)
         self._resources = dumped if dumped else None
         return self
 
-    def add_inference_spec(self, inference_spec: batch_inference_specs.Inference) -> "InferenceJobServiceSpec":
+    def add_inference_spec(self, inference_spec: batch_inference_job_specs.InferenceSpec) -> "InferenceJobServiceSpec":
         dumped = inference_spec.model_dump(mode="json", exclude_none=True)
         self._inference = dumped if dumped else None
         return self
 
-    def add_image_build_spec(self, image_build_spec: batch_inference_specs.ImageBuild) -> "InferenceJobServiceSpec":
+    def add_image_build_spec(
+        self, image_build_spec: batch_inference_job_specs.ImageBuildSpec
+    ) -> "InferenceJobServiceSpec":
         self._image_build = image_build_spec.model_dump(mode="json", exclude_none=True)
         return self
 

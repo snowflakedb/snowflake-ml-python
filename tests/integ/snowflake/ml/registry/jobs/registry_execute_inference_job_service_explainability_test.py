@@ -9,7 +9,7 @@ from packaging import version as pkg_version
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
 )
@@ -55,7 +55,7 @@ class RegistryExecuteInferenceJobServiceExplainabilityTest(
             signatures=sig,
             X=input_df,
             expected_predictions=expected_predictions,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             function_name="explain",
             job_name=job_name,
         )

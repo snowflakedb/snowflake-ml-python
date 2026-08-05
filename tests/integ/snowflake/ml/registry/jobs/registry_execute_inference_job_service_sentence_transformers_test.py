@@ -7,7 +7,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from packaging import version as pkg_version
 
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     _encode_sentences_with_nulls,
@@ -96,9 +96,9 @@ class TestExecuteInferenceJobServiceSentenceTransformerInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests=gpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests=gpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="encode",
             job_name=job_name,
             replicas=1,
@@ -135,9 +135,9 @@ class TestExecuteInferenceJobServiceSentenceTransformerInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=["sentence-transformers"],
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests=None),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests=None),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="encode",
             job_name=job_name,
             replicas=1,
@@ -190,9 +190,9 @@ class TestExecuteInferenceJobServiceSentenceTransformerInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(gpu_requests=gpu_requests),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests=gpu_requests),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="encode",
             job_name=job_name,
             replicas=1,

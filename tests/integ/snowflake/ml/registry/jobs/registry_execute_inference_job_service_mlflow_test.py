@@ -5,7 +5,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._signatures import numpy_handler, snowpark_handler
 from tests.integ.snowflake.ml.registry.jobs import (
     registry_execute_inference_job_service_test_base,
@@ -84,12 +84,12 @@ class TestExecuteInferenceJobServiceMlflowInteg(
         self._test_registry_execute_inference_job_service(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
             X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            resources_spec=batch_inference_specs.Resources(
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=batch_inference_job_specs.ResourcesSpec(
                 cpu_requests=cpu_requests,
                 memory_requests=memory_requests,
             ),
-            inference_spec=batch_inference_specs.Inference(num_workers=1),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
             replicas=2,

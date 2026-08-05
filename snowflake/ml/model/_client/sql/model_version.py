@@ -4,6 +4,7 @@ import textwrap
 from typing import Any, Optional
 from urllib.parse import ParseResult
 
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import (
     identifier,
     query_result_checker,
@@ -295,7 +296,6 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             scheme="snow", netloc="model", path=stage_location, params="", query="", fragment=""
         ).geturl()
         local_location = target_path.resolve().as_posix()
-        local_location_url = f"file://{local_location}"
 
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             options = {"parallel": 10}
@@ -303,11 +303,15 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             cursor._download(stage_location_url, str(target_path), options)
             cursor.fetchall()
         else:
-            query_result_checker.SqlResultValidator(
-                self._session,
-                f"GET {_normalize_url_for_sql(stage_location_url)} {_normalize_url_for_sql(local_location_url)}",
-                statement_params=statement_params,
-            ).has_dimensions(expected_rows=1).validate()
+            get_results = self._session.file.get(stage_location_url, local_location, statement_params=statement_params)
+            if len(get_results) != 1:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_READ_FAILED,
+                    original_exception=ValueError(
+                        f"Expected to download exactly one file from {stage_location_url}, "
+                        f"but got {len(get_results)}."
+                    ),
+                )
         return target_path / file_path.name
 
     def show_functions(
