@@ -418,3 +418,7 @@ tasks/todo.md
 
 # Claude worktrees
 .claude/worktrees/
+
+# Feature Store load-test artifacts (experimental/fs-benchmark)
+snowflake/ml/experimental/fs-benchmark/results/
+snowflake/ml/experimental/fs-benchmark/scripts/benchmark_lib/__pycache__/

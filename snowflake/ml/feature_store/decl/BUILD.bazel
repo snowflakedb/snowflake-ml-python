@@ -266,3 +266,172 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [":decl_lib_loader"],
 )
+
+# ---------------------------------------------------------------------------
+# Library — planner tier (layer 2 of the import-DAG)
+#
+# Invariants (validation rules + structural-fingerprint / full-spec hashing),
+# the dependency graph (extraction, topological sort, cycle detection), and the
+# planner (full-spec-diff plan generation with fingerprint fallback).  Depends
+# only on the loader tier; the wheel-isolation contract (pinned by
+# ``tests/test_wheel_isolation.py``) forbids reaching into higher layers
+# (state/queries/exporter, imperative_executor/api/service).
+# ---------------------------------------------------------------------------
+py_library(
+    name = "decl_lib_planner",
+    srcs = [
+        "dependencies.py",
+        "invariants.py",
+        "planner.py",
+    ],
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_loader"],
+)
+
+# Golden SPECIFICATION JSON fixtures consumed by the planner re-validation
+# tests via ``Path(__file__).parent / "golden_specs"``.
+filegroup(
+    name = "decl_golden_specs",
+    srcs = glob(["tests/golden_specs/**"]),
+)
+
+# ---------------------------------------------------------------------------
+# Unit tests — planner tier
+# ---------------------------------------------------------------------------
+py_test(
+    name = "invariants_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_invariants.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_invariants.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "invariants_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_invariants_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_invariants_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "invariants_source_diff_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_invariants_source_diff.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_invariants_source_diff.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "dependencies_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_dependencies.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_dependencies.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "dependencies_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_dependencies_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_dependencies_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "planner_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "planner_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "planner_revalidate_golden_describe_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_revalidate_golden_describe.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_planner_revalidate_golden_describe.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "planner_revalidate_identical_spec_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_revalidate_identical_spec.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_planner_revalidate_identical_spec.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "object_hashing_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_object_hashing.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_object_hashing.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
+    name = "loader_spec_fallback_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_loader_spec_fallback.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_loader_spec_fallback.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)

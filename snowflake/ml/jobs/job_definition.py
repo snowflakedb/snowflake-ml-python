@@ -102,6 +102,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         database: Optional[str] = None,
         schema: Optional[str] = None,
         payload: Optional[payload_utils.JobPayload] = None,
+        artifact_repositories: Optional[list[str]] = None,
     ) -> None:
         self.source = source
         self.compute_pool = identifier.resolve_identifier(compute_pool)
@@ -122,6 +123,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         self.runtime_environment = runtime_environment
         self.overwrite = overwrite
         self.payload = payload
+        self.artifact_repositories = artifact_repositories
 
         self._is_registered = False
 
@@ -197,6 +199,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             spec_overrides=self.spec_overrides,
             runtime=self.runtime_environment if self.runtime_environment else None,
             enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
+            artifact_repositories=self.artifact_repositories if self.artifact_repositories else None,
         )
 
         self.job_options = type_utils.JobOptions(
@@ -304,6 +307,9 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         target_instances = kwargs.pop("target_instances", 1)
         min_instances = kwargs.pop("min_instances", target_instances)
         pip_requirements = kwargs.pop("pip_requirements", None)
+        artifact_repositories = kwargs.pop("artifact_repositories", None)
+        if artifact_repositories is not None:
+            logger.warning("'artifact_repositories' is in public preview since 1.50.0.")
         external_access_integrations = kwargs.pop("external_access_integrations", None)
         env_vars = kwargs.pop("env_vars", None)
         spec_overrides = kwargs.pop("spec_overrides", None)
@@ -368,6 +374,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             database=database,
             schema=schema,
             payload=payload,
+            artifact_repositories=artifact_repositories,
         )
 
     @classmethod

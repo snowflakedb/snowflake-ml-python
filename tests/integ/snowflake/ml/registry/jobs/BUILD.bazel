@@ -94,6 +94,30 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_task_v2_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_task_v2_test.py"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/batch_inference",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_task_v2_vllm_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_task_v2_vllm_test.py"],
+    optional_dependencies = ["transformers"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/batch_inference",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_task_vllm_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_task_vllm_test.py"],

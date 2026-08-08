@@ -29,6 +29,63 @@ QMARK_RESERVED_TOKEN = "<QMARK_RESERVED_TOKEN>"
 QMARK_PARAMETER_TOKEN = "'|| ? ||'"
 
 
+def build_execute_inference_job_service_sql(
+    *,
+    yaml_body: str,
+    compute_pool_name: sql_identifier.SqlIdentifier,
+    model_fqn: str,
+    version: Optional[sql_identifier.SqlIdentifier],
+    function_name: Optional[str],
+    job_fqn: Optional[str],
+    async_: bool,
+    replicas: Optional[int],
+    from_source: str,
+) -> str:
+    """Build the text of an ``EXECUTE INFERENCE JOB SERVICE`` command.
+
+    Args:
+        yaml_body: Batch inference YAML body. Inlined as a single-quoted
+            SQL literal with embedded single quotes escaped. The server
+            does not accept bind parameters in the ``WITH SPECIFICATION``
+            clause, and dollar-quoting would collide with any ``$$`` that
+            appears inside user-supplied content.
+        compute_pool_name: Compute pool identifier for ``IN COMPUTE POOL``.
+        model_fqn: Fully qualified model name for ``MODEL =``.
+        version: Optional model version for ``VERSION =``.
+        function_name: Optional model function for ``FUNCTION = '...'``. This is the
+            model's target method, not the upper-cased SQL function name; the server
+            accepts either spelling but only the target method resolves at run time.
+        job_fqn: Optional fully qualified job name for ``NAME =``. When omitted the
+            server generates a name.
+        async_: ``ASYNC = TRUE`` if true, ``ASYNC = FALSE`` if false.
+        replicas: Optional integer for ``REPLICAS =``.
+        from_source: Rendered ``FROM`` source: either a stage path starting with ``@``
+            and ending in ``/``, or a parenthesized subquery.
+
+    Returns:
+        The command text.
+    """
+    escaped_yaml = snowpark_utils.escape_single_quotes(yaml_body)  # type: ignore[no-untyped-call]
+    clauses = [
+        "EXECUTE INFERENCE JOB SERVICE",
+        f"IN COMPUTE POOL {compute_pool_name.identifier()}",
+        f"WITH SPECIFICATION '{escaped_yaml}'",
+        f"FROM {from_source}",
+        f"MODEL = {model_fqn}",
+    ]
+    if version is not None:
+        clauses.append(f"VERSION = {version.identifier()}")
+    if function_name is not None:
+        escaped_fn = function_name.replace("'", "''")
+        clauses.append(f"FUNCTION = '{escaped_fn}'")
+    if job_fqn is not None:
+        clauses.append(f"NAME = {job_fqn}")
+    clauses.append(f"ASYNC = {'TRUE' if async_ else 'FALSE'}")
+    if replicas is not None:
+        clauses.append(f"REPLICAS = {replicas}")
+    return "\n".join(clauses)
+
+
 class ServiceStatus(enum.Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
@@ -152,25 +209,17 @@ class ServiceSQLClient(_base._BaseSQLClient):
         Returns:
             Tuple of (query id, AsyncJob) for the submitted SQL.
         """
-        escaped_yaml = snowpark_utils.escape_single_quotes(yaml_body)  # type: ignore[no-untyped-call]
-        clauses = [
-            "EXECUTE INFERENCE JOB SERVICE",
-            f"IN COMPUTE POOL {compute_pool_name.identifier()}",
-            f"WITH SPECIFICATION '{escaped_yaml}'",
-            f"FROM {from_stage_path}",
-            f"MODEL = {model_fqn}",
-        ]
-        if version is not None:
-            clauses.append(f"VERSION = {version.identifier()}")
-        if function_name is not None:
-            escaped_fn = function_name.replace("'", "''")
-            clauses.append(f"FUNCTION = '{escaped_fn}'")
-        if job_fqn is not None:
-            clauses.append(f"NAME = {job_fqn}")
-        clauses.append(f"ASYNC = {'TRUE' if async_ else 'FALSE'}")
-        if replicas is not None:
-            clauses.append(f"REPLICAS = {replicas}")
-        sql_str = "\n".join(clauses)
+        sql_str = build_execute_inference_job_service_sql(
+            yaml_body=yaml_body,
+            compute_pool_name=compute_pool_name,
+            model_fqn=model_fqn,
+            version=version,
+            function_name=function_name,
+            job_fqn=job_fqn,
+            async_=async_,
+            replicas=replicas,
+            from_source=from_stage_path,
+        )
         logger.info(f"Executing inference job service: {sql_str}")
         async_job = self._session.sql(sql_str).collect(block=False, statement_params=statement_params)
         assert isinstance(async_job, snowpark.AsyncJob)

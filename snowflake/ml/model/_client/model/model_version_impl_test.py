@@ -3357,6 +3357,70 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_df, input_stage_location="@stage/in/", compute_pool="POOL", output_spec=output_spec
             )
 
+    def _partitioned_function_info(
+        self, *, function_type: str = "TABLE_FUNCTION", is_partitioned: bool = True
+    ) -> dict[str, Any]:
+        return {
+            "target_method": "predict",
+            "target_method_function_type": function_type,
+            "signature": _DUMMY_SIG["predict"],
+            "is_partitioned": is_partitioned,
+        }
+
+    def test_run_batch_v2_rejects_partition_column_for_huggingface_pipeline(self) -> None:
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        input_spec = batch_inference_job_specs.InputSpec(partition_column="REGION")
+
+        with mock.patch.object(
+            self.m_mv,
+            "_get_model_spec",
+            return_value={"model_type": huggingface.TransformersPipelineHandler.HANDLER_TYPE},
+        ):
+            with self.assertRaisesRegex(ValueError, "not supported for HuggingFace pipeline models"):
+                self.m_mv._run_batch_v2(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                )
+
+    def test_run_batch_v2_rejects_partition_column_for_function_type(self) -> None:
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        input_spec = batch_inference_job_specs.InputSpec(partition_column="REGION")
+
+        with (
+            mock.patch.object(self.m_mv, "_get_model_spec", return_value={"model_type": "custom"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value=self._partitioned_function_info(function_type="FUNCTION", is_partitioned=False),
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "not supported for FUNCTION type methods"):
+                self.m_mv._run_batch_v2(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                )
+
+    def test_run_batch_v2_rejects_partition_column_colliding_with_model_output(self) -> None:
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        # _DUMMY_SIG["predict"] has a single output named "output".
+        input_spec = batch_inference_job_specs.InputSpec(partition_column="output")
+
+        with (
+            mock.patch.object(self.m_mv, "_get_model_spec", return_value={"model_type": "custom"}),
+            mock.patch.object(self.m_mv, "_get_function_info", return_value=self._partitioned_function_info()),
+        ):
+            with self.assertRaisesRegex(ValueError, r"Partitioned model output includes the partition column\(s\)"):
+                self.m_mv._run_batch_v2(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                )
+
 
 if __name__ == "__main__":
     absltest.main()

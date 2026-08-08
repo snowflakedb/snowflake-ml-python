@@ -106,7 +106,11 @@ class DBManager:
         prefix: str = _COMMON_PREFIX,
         db_name: Optional[str] = None,
     ) -> str:
-        schema_name = f"{prefix}_{uuid4().hex.upper()}"
+        # Use 16 hex chars (64 bits) instead of a full uuid. With the default
+        # prefix this yields ``snowml_test_<16hex>`` (29 chars), which fits the
+        # Postgres online store's 42-char Feature Store schema limit. Full uuids
+        # produce 45-char names and cause create_online_service to fail.
+        schema_name = f"{prefix}_{uuid4().hex[:16].upper()}"
         return self.create_schema(schema_name, db_name=db_name)
 
     def use_schema(

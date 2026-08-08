@@ -68,6 +68,8 @@ build --action_env=HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.sno
 build --action_env=HF_TOKEN
 
 build --test_env=SNOWFLAKE_PAT
+build --test_env=PRIVATE_PYPI_USERNAME
+build --test_env=PRIVATE_PYPI_PASSWORD
 
 # Below are auto-generated settings, do not modify them directly
 

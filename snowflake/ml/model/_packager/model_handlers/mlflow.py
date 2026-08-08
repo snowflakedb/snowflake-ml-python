@@ -1,8 +1,10 @@
+import contextlib
 import logging
 import os
 import pathlib
 import tempfile
 import warnings
+from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
 
 import numpy as np
@@ -21,7 +23,6 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import mlflow
@@ -61,8 +62,30 @@ def _ensure_serializable_objects(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+@contextlib.contextmanager
+def _sqlite_tracking_backend() -> Generator[str, None, None]:
+    """Point MLflow's tracking backend at a throwaway SQLite store, restoring the previous URI on exit.
+
+    Yields:
+        The id of a temporary experiment backed by the SQLite store.
+    """
+    import mlflow
+
+    previous_uri = mlflow.get_tracking_uri()
+    with tempfile.TemporaryDirectory() as tracking_dir:
+        db_path = os.path.join(tracking_dir, "mlflow.db")
+        artifact_root = pathlib.Path(tracking_dir, "artifacts").as_uri()
+        mlflow.set_tracking_uri(f"sqlite:///{db_path}")
+        try:
+            experiment_id = mlflow.create_experiment("snowflake_ml_mlflow_relog", artifact_location=artifact_root)
+            yield experiment_id
+        finally:
+            mlflow.set_tracking_uri(previous_uri)
+
+
 def _re_log_to_mlflow_run(
     model: "mlflow.pyfunc.PyFuncModel",
+    experiment_id: str,
 ) -> "mlflow.pyfunc.PyFuncModel":
     """Re-log a locally-saved MLflow model into a proper MLflow tracking run.
 
@@ -76,6 +99,7 @@ def _re_log_to_mlflow_run(
     Args:
         model: An mlflow.pyfunc.PyFuncModel whose metadata is missing tracking
             run information (no ``artifact_path`` or ``run_id``).
+        experiment_id: Id of the experiment (in the active tracking store) to create the run under.
 
     Returns:
         A new mlflow.pyfunc.PyFuncModel backed by a real MLflow tracking run.
@@ -101,7 +125,7 @@ def _re_log_to_mlflow_run(
     loader_module = importlib.import_module(loader_module_name)
 
     artifact_path = "model"
-    with mlflow.start_run() as run:
+    with mlflow.start_run(experiment_id=experiment_id) as run:
         logger.warning(
             "Model was created with save_model() and lacks tracking metadata. Auto re-logging the model",
         )
@@ -221,94 +245,108 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
             # entirely, so get_model_info() raises AttributeError.
             needs_re_log = True
 
-        if needs_re_log:
-            model = _re_log_to_mlflow_run(model)
-            model_info = model.metadata.get_model_info()
+        # A re-logged model's URIs resolve only while their SQLite backend is active, so keep it open
+        # across dependency parsing and artifact download below. Non-re-logged models never enter it.
+        with contextlib.ExitStack() as tracking_stack:
+            if needs_re_log:
+                experiment_id = tracking_stack.enter_context(_sqlite_tracking_backend())
+                model = _re_log_to_mlflow_run(model, experiment_id)
+                model_info = model.metadata.get_model_info()
 
-        user_model_uri = kwargs.get("model_uri")
-        # For artifact download, always use the tracked model_info URI when re-logged
-        # (it has the correct MLflow artifact structure). Fall back to user-supplied URI
-        # or model_info URI for non-re-logged models.
-        if needs_re_log:
-            artifact_uri = model_info.model_uri
-        else:
-            artifact_uri = user_model_uri or model_info.model_uri
-        # For dependency parsing, prefer user-supplied URI since re-logged models
-        # may not preserve the original conda environment.
-        deps_uri = user_model_uri or model_info.model_uri
-
-        pyfunc_flavor_info = model_info.flavors.get(mlflow.pyfunc.FLAVOR_NAME, None)
-        if pyfunc_flavor_info is None:
-            raise ValueError("Cannot save MLFlow model that does not have PyFunc flavor.")
-
-        # Port MLFlow signature
-        if not is_sub_model:
-            if model_meta.signatures:
-                handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
+            user_model_uri = kwargs.get("model_uri")
+            # For artifact download, always use the tracked model_info URI when re-logged
+            # (it has the correct MLflow artifact structure). Fall back to user-supplied URI
+            # or model_info URI for non-re-logged models.
+            if needs_re_log:
+                artifact_uri = model_info.model_uri
             else:
-                handlers_utils.validate_target_methods(model, cls.DEFAULT_TARGET_METHODS)
-                model_meta.signatures = {
-                    cls._DEFAULT_TARGET_METHOD: model_signature.ModelSignature.from_mlflow_sig(model_info.signature)
-                }
+                artifact_uri = user_model_uri or model_info.model_uri
+            # For dependency parsing, prefer user-supplied URI since re-logged models
+            # may not preserve the original conda environment.
+            deps_uri = user_model_uri or model_info.model_uri
 
-        # Port MLFlow metadata
-        mlflow_model_metadata = model_info.metadata
-        if mlflow_model_metadata and not kwargs.get("ignore_mlflow_metadata", False):
-            if not model_meta.metadata:
-                model_meta.metadata = {}
-            model_meta.metadata.update(mlflow_model_metadata)
+            pyfunc_flavor_info = model_info.flavors.get(mlflow.pyfunc.FLAVOR_NAME, None)
+            if pyfunc_flavor_info is None:
+                raise ValueError("Cannot save MLFlow model that does not have PyFunc flavor.")
 
-        # Port MLFlow dependencies
-        if kwargs.get("ignore_mlflow_dependencies", False):
+            # Port MLFlow signature
+            if not is_sub_model:
+                if model_meta.signatures:
+                    handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
+                else:
+                    handlers_utils.validate_target_methods(model, cls.DEFAULT_TARGET_METHODS)
+                    model_meta.signatures = {
+                        cls._DEFAULT_TARGET_METHOD: model_signature.ModelSignature.from_mlflow_sig(model_info.signature)
+                    }
+
+            # Port MLFlow metadata
+            mlflow_model_metadata = model_info.metadata
+            if mlflow_model_metadata and not kwargs.get("ignore_mlflow_metadata", False):
+                if not model_meta.metadata:
+                    model_meta.metadata = {}
+                model_meta.metadata.update(mlflow_model_metadata)
+
+            # Port MLFlow dependencies
+            if kwargs.get("ignore_mlflow_dependencies", False):
+                model_meta.env.include_if_absent(
+                    [model_env.ModelDependency(requirement="mlflow", pip_name="mlflow")], check_local_version=True
+                )
+            else:
+                model_meta.env = _parse_mlflow_env(deps_uri, model_meta.env)
+
+            # setuptools removed the bundled `pkg_resources` module in 82.0.0 (81.x only deprecated
+            # it). Loading an MLflow model pulls in opentelemetry (via mlflow's tracing subsystem),
+            # whose older releases still do `from pkg_resources import ...` at import time, so a
+            # resolved environment with setuptools >= 82 fails to load the model. Pin below that
+            # boundary to keep it available.
             model_meta.env.include_if_absent(
-                [model_env.ModelDependency(requirement="mlflow", pip_name="mlflow")], check_local_version=True
+                [model_env.ModelDependency(requirement="setuptools<82", pip_name="setuptools")],
+                check_local_version=False,
             )
-        else:
-            model_meta.env = _parse_mlflow_env(deps_uri, model_meta.env)
 
-        # NOTE: This pip_requirements + artifact_repository_map validation logic mirrors
-        # ModelParameterReconciler._validate_pip_requirements_warehouse_compatibility in
-        # snowflake/ml/registry/_manager/model_parameter_reconciler.py — keep them in sync.
-        # This handles the MLflow-specific case where pip requirements are parsed from the
-        # MLflow model's conda.yaml and not explicitly provided by the user.
-        if model_meta.env.pip_requirements and not model_meta.env.artifact_repository_map:
-            if not model_meta.env.target_platforms:
-                warnings.warn(
-                    "MLflow model has pip requirements that require `artifact_repository_map` to run in a "
-                    "Snowflake Warehouse. Without `artifact_repository_map`, this model will only be runnable "
-                    "in Snowpark Container Services. See "
-                    "https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
-                    f"Detected pip requirements: {model_meta.env.pip_requirements}",
-                    category=UserWarning,
-                    stacklevel=2,
-                )
-            elif model_meta.env.targets_warehouse:
-                raise exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=ValueError(
+            # NOTE: This pip_requirements + artifact_repository_map validation logic mirrors
+            # ModelParameterReconciler._validate_pip_requirements_warehouse_compatibility in
+            # snowflake/ml/registry/_manager/model_parameter_reconciler.py — keep them in sync.
+            # This handles the MLflow-specific case where pip requirements are parsed from the
+            # MLflow model's conda.yaml and not explicitly provided by the user.
+            if model_meta.env.pip_requirements and not model_meta.env.artifact_repository_map:
+                if not model_meta.env.target_platforms:
+                    warnings.warn(
                         "MLflow model has pip requirements that require `artifact_repository_map` to run in a "
-                        "Snowflake Warehouse. Either provide an `artifact_repository_map` or set "
-                        '`target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`. '
-                        "See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
-                        f"Detected pip requirements: {model_meta.env.pip_requirements}."
-                    ),
-                )
+                        "Snowflake Warehouse. Without `artifact_repository_map`, this model will only be runnable "
+                        "in Snowpark Container Services. See "
+                        "https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
+                        f"Detected pip requirements: {model_meta.env.pip_requirements}",
+                        category=UserWarning,
+                        stacklevel=2,
+                    )
+                elif model_meta.env.targets_warehouse:
+                    raise exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ARGUMENT,
+                        original_exception=ValueError(
+                            "MLflow model has pip requirements that require `artifact_repository_map` to run in a "
+                            "Snowflake Warehouse. Either provide an `artifact_repository_map` or set "
+                            '`target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`. '
+                            "See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
+                            f"Detected pip requirements: {model_meta.env.pip_requirements}."
+                        ),
+                    )
 
-        model_blob_path = os.path.join(model_blobs_dir_path, name)
+            model_blob_path = os.path.join(model_blobs_dir_path, name)
 
-        os.makedirs(model_blob_path, exist_ok=True)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            try:
-                local_path = mlflow.artifacts.download_artifacts(artifact_uri, dst_path=tmpdir)
-            except (mlflow.MlflowException, OSError):
-                raise ValueError("Cannot load MLFlow model artifacts.")
+            os.makedirs(model_blob_path, exist_ok=True)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                try:
+                    local_path = mlflow.artifacts.download_artifacts(artifact_uri, dst_path=tmpdir)
+                except (mlflow.MlflowException, OSError):
+                    raise ValueError("Cannot load MLFlow model artifacts.")
 
-            file_utils.copy_file_or_tree(local_path, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
+                file_utils.copy_file_or_tree(local_path, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
-        # MLflow 3.x may return file:// URIs for artifact_path; extract just the last path component
-        artifact_path = model_info.artifact_path
-        if artifact_path.startswith("file://"):
-            artifact_path = artifact_path.rstrip("/").split("/")[-1]
+                # Persist the relative dir name that load_model uses to rebuild the on-disk path.
+                # Derive it from the downloaded dir, not model_info.artifact_path, which is relative
+                # in MLflow 2.x but an absolute path in 3.x.
+                artifact_path = os.path.basename(os.path.abspath(local_path))
 
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
@@ -340,18 +378,8 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         model_artifact_path = model_blob_options["artifact_path"]
         model_blob_filename = model_blob_metadata.path
 
-        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            return mlflow.pyfunc.load_model(os.path.join(model_blob_path, model_blob_filename, model_artifact_path))
-
-        # This is to make sure the loaded model can be saved again.
-        with mlflow.start_run() as run:
-            mlflow.log_artifacts(
-                os.path.join(model_blob_path, model_blob_filename, model_artifact_path),
-                artifact_path=model_artifact_path,
-            )
-            m = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/{model_artifact_path}")
-            m.metadata.run_id = run.info.run_id
-        return m
+        # Load directly from the on-disk artifacts; no MLflow tracking backend is used.
+        return mlflow.pyfunc.load_model(os.path.join(model_blob_path, model_blob_filename, model_artifact_path))
 
     @classmethod
     def convert_as_custom_model(

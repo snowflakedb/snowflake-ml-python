@@ -1104,6 +1104,72 @@ class ModelEnvTest(absltest.TestCase):
 
             self.assertListEqual(env.pip_requirements, ["python-package"])
 
+    def test_load_from_conda_file_ingests_pip_for_spcs_only_target(self) -> None:
+        # Pip requirements are genuine model dependencies and must be captured even when the model
+        # only targets Snowpark Container Services. The Warehouse-compatibility warning, however, is
+        # specific to Warehouse targets and must not fire for an SPCS-only model.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(os.path.join(tmpdir, "conda.yml"))
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "name": "snow-env",
+                        "channels": ["https://repo.anaconda.com/pkgs/snowflake", "nodefaults"],
+                        "dependencies": [
+                            "python=3.10",
+                            {"pip": ["mlflow==3.13.0", "numpy==1.22.4"]},
+                        ],
+                    },
+                )
+
+            env = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                env.load_from_conda_file(env_file_path)
+
+                pip_warnings = [
+                    warning
+                    for warning in w
+                    if "Found dependencies specified as pip requirements" in str(warning.message)
+                ]
+                self.assertEqual(len(pip_warnings), 0)
+
+            self.assertListEqual(env.pip_requirements, ["mlflow==3.13.0", "numpy==1.22.4"])
+
+    def test_load_from_pip_file_ingests_pip_for_spcs_only_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pip_file_path = pathlib.Path(os.path.join(tmpdir, "requirements.txt"))
+            with open(pip_file_path, "w", encoding="utf-8") as f:
+                f.writelines(["mlflow==3.13.0\n", "numpy==1.22.4\n"])
+
+            env = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                env.load_from_pip_file(pip_file_path)
+
+                pip_warnings = [
+                    warning
+                    for warning in w
+                    if "Found dependencies specified as pip requirements" in str(warning.message)
+                ]
+                self.assertEqual(len(pip_warnings), 0)
+
+            self.assertListEqual(env.pip_requirements, ["mlflow==3.13.0", "numpy==1.22.4"])
+
+    def test_load_from_pip_file_ignores_duplicate_pip_requirement(self) -> None:
+        # A pip requirement that is already present must be ingested idempotently rather than raising.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pip_file_path = pathlib.Path(os.path.join(tmpdir, "requirements.txt"))
+            with open(pip_file_path, "w", encoding="utf-8") as f:
+                f.writelines(["cloudpickle==3.1.1\n"])
+
+            env = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+            env.pip_requirements = ["cloudpickle==3.1.1"]
+            env.load_from_pip_file(pip_file_path)
+
+            self.assertListEqual(env.pip_requirements, ["cloudpickle==3.1.1"])
+
     def test_save_and_load(self) -> None:
         def check_env_equality(this: model_env.ModelEnv, that: model_env.ModelEnv) -> bool:
             return all(

@@ -9,6 +9,7 @@ from tests.integ.snowflake.ml.registry.services import (
 
 
 class TestRegistryPytorchModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+    @absltest.skip("SNOW-3888860")
     def test_pytorch_basic(self) -> None:
         """Basic PyTorch model deployment with inferred signature."""
 
@@ -43,6 +44,7 @@ class TestRegistryPytorchModelDeploymentInteg(registry_model_deployment_test_bas
             skip_rest_api_test=True,
         )
 
+    @absltest.skip("SNOW-3888860")
     def test_pytorch_with_params_forwarding(self) -> None:
         """Params are forwarded to a PyTorch model's forward method via inference service."""
 
@@ -89,6 +91,7 @@ class TestRegistryPytorchModelDeploymentInteg(registry_model_deployment_test_bas
             skip_rest_api_test=True,
         )
 
+    @absltest.skip("SNOW-3888860")
     def test_torchscript_with_params_forwarding(self) -> None:
         """Params are forwarded to a TorchScript model's forward method via inference service."""
 

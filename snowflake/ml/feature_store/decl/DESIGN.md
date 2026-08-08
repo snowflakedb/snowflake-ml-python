@@ -43,7 +43,7 @@ Enforced by `tests/test_wheel_isolation.py::TestNarrowedSpecIsolation`.
 | `compiler.py` / `spec_compiler.py` | Authoring format → `FROM SPECIFICATION` JSON |
 | `templating.py` | Jinja2 template rendering with StrictUndefined |
 | `serializer.py` | `to_dict()`, `to_yaml()`, `to_json()` for all spec types |
-| `invariants.py` | Validation; hashes (`_full_spec_hash`, `_structural_fingerprint_hash`, `_fg_content_hash`) |
+| `invariants.py` | Validation; hashes (`_full_spec_hash`, `structural_fingerprint_hash`, `fg_content_hash`) |
 | `planner.py` | Diffs `SpecBatch` vs `AppliedState` → `Plan` (ordered `PlanOp` list) |
 | `state.py` | Builds `AppliedState` from raw `SHOW`/`DESCRIBE` rows and imperative FS rows |
 | `exporter.py` | Reconstructs authoring YAML from `AppliedState` (`snow feature init`) |
@@ -70,7 +70,7 @@ All `FeatureStore` / `FeatureView` / `Entity` imports are lazy (inside functions
 ### `planner.py`
 
 Uses `_full_spec_hash` when `applied.from_specification=True`, falling back to
-`_structural_fingerprint_hash`. Both strip volatile metadata keys before hashing to prevent
+`structural_fingerprint_hash`. Both strip volatile metadata keys before hashing to prevent
 phantom `RECREATE` ops on a clean round-trip.
 
 Source ops use a four-way decision: `NO_CHANGE` (virtual override for sources whose FVs
@@ -79,7 +79,7 @@ are unchanged), `CREATE_SOURCE`, `UPDATE_SOURCE` (desc-only, non-destructive), o
 
 ### `state.py`
 
-All names are uppercased to match the planner's `_spec_key` normalisation. `Datasource`
+All names are uppercased to match the planner's `spec_key` normalisation. `Datasource`
 applied state merges two paths: runtime-registered `StreamingSource` rows (authoritative,
 beat FV-derived on key collision) and FV-derived entries from `DESCRIBE` spec output.
 

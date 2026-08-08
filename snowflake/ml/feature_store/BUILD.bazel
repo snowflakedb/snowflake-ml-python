@@ -405,3 +405,15 @@ py_test(
         ":feature_store_lib",
     ],
 )
+
+py_test(
+    name = "feature_store_drift_test",
+    srcs = ["feature_store_drift_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)

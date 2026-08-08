@@ -24,6 +24,23 @@ from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 logger = logging.getLogger(__name__)
 
+_DEPLOYMENT_TEST_WRAPPER_FUNCTIONS = frozenset(
+    {
+        "_test_registry_model_deployment",
+        "_test_registry_batch_inference",
+        "_test_registry_model_target_platforms",
+        "_deploy_model_service",
+    }
+)
+
+
+def _get_deployment_test_caller_name() -> str:
+    """Return the test method name, skipping deployment helper wrappers."""
+    for frame_info in inspect.stack()[1:]:
+        if frame_info.function not in _DEPLOYMENT_TEST_WRAPPER_FUNCTIONS:
+            return frame_info.function
+    return inspect.stack()[1].function
+
 
 class RestInferencePayloadFormat(enum.Enum):
     """JSON request body layout for ingress calls in registry deployment integ tests.
@@ -42,7 +59,6 @@ class RestInferencePayloadFormat(enum.Enum):
 
 
 class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
-
     # Session parameter names used to override the images.
     _BUILDER_SESSION_PARAM = "SPCS_MODEL_BUILD_CONTAINER_URL"
 
@@ -110,6 +126,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
         num_workers: Optional[int] = None,
+        min_instances: int = 0,
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = True,
@@ -125,6 +142,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         python_version: Optional[str] = None,
         conda_dependencies: Optional[list[str]] = None,
         feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
     ) -> ModelVersion:
         # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
         # Pass an empty list to skip conda dependencies (for pip-only tests).
@@ -136,7 +154,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             conda_dependencies.extend(additional_dependencies)
 
         # Get the name of the caller as the model name
-        name = f"model_{inspect.stack()[1].function}"
+        name = f"model_{_get_deployment_test_caller_name()}"
         version = f"ver_{self._run_id}"
 
         # Default embed_local_ml_library to True because target_platforms=SNOWPARK_CONTAINER_SERVICES
@@ -155,6 +173,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             options=options,
             signatures=signatures,
             python_version=python_version,
+            artifact_repository_map=artifact_repository_map,
         )
 
         return self._deploy_model_service(
@@ -164,6 +183,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             gpu_requests=gpu_requests,
             service_compute_pool=service_compute_pool,
             num_workers=num_workers,
+            min_instances=min_instances,
             max_instances=max_instances,
             max_batch_rows=max_batch_rows,
             cpu_requests=cpu_requests,
@@ -200,9 +220,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
         feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
     ) -> ModelVersion:
-
         if service_name is None:
-            service_name = f"service_{inspect.stack()[1].function}_{self._run_id}"
+            service_name = f"service_{_get_deployment_test_caller_name()}_{self._run_id}"
         if service_compute_pool is None:
             service_compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
@@ -343,7 +362,13 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         deadline = time.time() + timeout_s
         last_status = "<unknown>"
         while time.time() < deadline:
-            last_status = str(mv.list_services().loc[0, "status"])
+            services = mv.list_services()
+            if services.empty:
+                # The newly created service may not be reflected yet in the model version's
+                # service list right after `create_service()` returns; treat as still PENDING.
+                last_status = "PENDING"
+            else:
+                last_status = str(services.loc[0, "status"])
             if last_status != "PENDING":
                 if last_status != expected_status:
                     raise AssertionError(f"Inference service did not reach {expected_status}: status={last_status!r}")
@@ -355,7 +380,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     def _ensure_ingress_url(mv: ModelVersion, *, timeout_s: float = 600.0) -> str:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            endpoint = mv.list_services().loc[0, "inference_endpoint"]
+            services = mv.list_services()
+            endpoint = None if services.empty else services.loc[0, "inference_endpoint"]
             if endpoint is not None:
                 return str(endpoint)
             time.sleep(10)

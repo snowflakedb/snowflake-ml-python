@@ -2949,6 +2949,27 @@ def build_oft_warehouse_clause(
     return ""
 
 
+def build_enable_view_change_tracking_sql(fully_qualified_view_name: str) -> str:
+    """Build ``ALTER VIEW ... SET CHANGE_TRACKING = TRUE`` for an OFT source view.
+
+    An Online Feature Table can only resolve to an incremental refresh when the
+    object it reads from exposes change tracking. Managed feature views are
+    backed by a Dynamic Table (change tracking is inherent to an incremental DT
+    and cannot be enabled on a FULL one), but static/external feature views are
+    backed by a plain View that has change tracking disabled by default. Without
+    it the backend silently downgrades the OFT to a FULL refresh. This statement
+    is a no-op when change tracking is already enabled.
+
+    Args:
+        fully_qualified_view_name: ``DB.SCHEMA.VIEW`` the Online Feature Table
+            reads from.
+
+    Returns:
+        The ``ALTER VIEW ... SET CHANGE_TRACKING = TRUE`` SQL.
+    """
+    return f"ALTER VIEW {fully_qualified_view_name} SET CHANGE_TRACKING = TRUE"
+
+
 def build_oft_create_sql(
     *,
     fully_qualified_oft_name: str,

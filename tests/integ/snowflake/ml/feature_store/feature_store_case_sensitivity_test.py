@@ -2,8 +2,8 @@ from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml._internal.utils.identifier import resolve_identifier
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
@@ -169,14 +169,16 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
     # Covered APIs:
     #   1. FeatureStore
     def test_feature_store_database_names(self) -> None:
-        db_name_1 = "FS_INTEG_TEST_DB_NAME_TEST"
-        self._session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name_1}").collect()
+        unique_id = uuid4().hex.upper()
+        db_name = f"FS_INTEG_TEST_DB_NAME_TEST_{unique_id}"
+        self._session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}").collect()
+        self._test_databases.append(db_name)
         current_schema = create_random_schema(self._session, "TEST_DB_NAMES", database=self.test_db)
 
         with self.assertRaisesRegex(ValueError, "Database .* does not exist."):
             FeatureStore(
                 self._session,
-                '"fs_integ_test_db_name_test"',
+                f'"fs_integ_test_db_name_test_{unique_id.lower()}"',
                 current_schema,
                 default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -184,13 +186,11 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
 
         FeatureStore(
             self._session,
-            "fs_integ_test_db_name_test",
+            f"fs_integ_test_db_name_test_{unique_id}",
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
-
-        self._session.sql(f"DROP DATABASE IF EXISTS {db_name_1}").collect()
 
     # Covered APIs:
     #   1. FeatureStore
