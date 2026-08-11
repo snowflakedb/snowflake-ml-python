@@ -87,6 +87,185 @@ def _normalize_stage_location(
     return database_id, schema_id, stage_id, path
 
 
+def validate_batch_inference_stage_locations(
+    *,
+    session: snowpark.Session,
+    output_stage_location: str,
+    input_stage_location: Optional[str],
+) -> None:
+    """Reject malformed stage paths, and an input path nested inside the output location.
+
+    Args:
+        session: Session whose current namespace unqualified paths resolve against.
+        output_stage_location: The output stage path.
+        input_stage_location: Optional caller-supplied input stage path.
+
+    Raises:
+        ValueError: If either path is not a well-formed Snowflake stage path, or if the
+            input path lies inside the output location.
+    """
+    # Both the output stage and a caller-supplied input stage must be well-formed Snowflake stage
+    # paths starting with '@' (@[db.][schema.]stage[/path]).
+    for label, stage_path in (
+        ("output_spec.stage_location", output_stage_location),
+        ("input_stage_location", input_stage_location),
+    ):
+        if stage_path is not None:
+            if not stage_path.startswith("@"):
+                raise ValueError(f"batch inference: {label} must be a stage path starting with '@': {stage_path}")
+            try:
+                identifier.parse_snowflake_stage_path(stage_path)
+            except ValueError:
+                raise ValueError(f"batch inference: {label} is not a valid Snowflake stage path: {stage_path}")
+
+    # A caller-supplied input must not live inside the output stage location: the server's output-mode
+    # preflight scans that location (and OVERWRITE removes it), which would consume or delete the input.
+    # Unqualified stage paths resolve against the session's current database/schema at execution time
+    # (the MODEL clause uses the model namespace, but the stage does not), so qualify both paths against
+    # the session namespace before comparing.
+    if input_stage_location is not None:
+        current_database = session.get_current_database()
+        current_schema = session.get_current_schema()
+        session_database = sql_identifier.SqlIdentifier(current_database) if current_database else None
+        session_schema = sql_identifier.SqlIdentifier(current_schema) if current_schema else None
+        output_parts = _normalize_stage_location(output_stage_location, session_database, session_schema)
+        input_parts = _normalize_stage_location(input_stage_location, session_database, session_schema)
+        if output_parts[:3] == input_parts[:3] and input_parts[3].startswith(output_parts[3]):
+            raise ValueError(
+                "batch inference: input_stage_location must not be inside output_spec.stage_location "
+                f"({output_stage_location}); that location is scanned and may be overwritten per the "
+                "save mode. Use a separate stage or path for the input."
+            )
+
+
+def normalize_output_stage_location(
+    output_spec: batch_inference_job_specs.OutputSpec,
+) -> batch_inference_job_specs.OutputSpec:
+    """Return a copy of the output spec whose ``stage_location`` ends with ``/``.
+
+    Args:
+        output_spec: The output block to normalize.
+
+    Returns:
+        A copy with a slash-terminated ``stage_location``.
+    """
+    output_stage_location = output_spec.stage_location
+    if not output_stage_location.endswith("/"):
+        output_stage_location += "/"
+    return output_spec.model_copy(update={"stage_location": output_stage_location})
+
+
+def build_inference_job_service_yaml(
+    *,
+    input_spec: Optional[batch_inference_job_specs.InputSpec],
+    output_spec: batch_inference_job_specs.OutputSpec,
+    resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
+    inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
+    image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
+) -> str:
+    """Assemble the ``WITH SPECIFICATION`` YAML body from the spec blocks.
+
+    Args:
+        input_spec: Optional input block.
+        output_spec: Required output block, already slash-normalized.
+        resources_spec: Optional resources block.
+        inference_spec: Optional inference block.
+        image_build_spec: Optional image build block.
+
+    Returns:
+        The YAML body.
+    """
+    spec_builder = inference_job_service_spec.InferenceJobServiceSpec()
+    if input_spec is not None:
+        spec_builder.add_input_spec(input_spec)
+    spec_builder.add_output_spec(output_spec)
+    if resources_spec is not None:
+        spec_builder.add_resources_spec(resources_spec)
+    if inference_spec is not None:
+        spec_builder.add_inference_spec(inference_spec)
+    if image_build_spec is not None:
+        spec_builder.add_image_build_spec(image_build_spec)
+    return spec_builder.save()
+
+
+def build_batch_inference_task_definition(
+    *,
+    session: snowpark.Session,
+    model_fqn: str,
+    version_name: str,
+    compute_pool: str,
+    function_name: str,
+    query: Optional[str],
+    input_stage_location: Optional[str],
+    input_spec: Optional[batch_inference_job_specs.InputSpec],
+    output_spec: batch_inference_job_specs.OutputSpec,
+    resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
+    inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
+    image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
+    replicas: Optional[int],
+) -> str:
+    """Build the ``EXECUTE INFERENCE JOB SERVICE`` text used as a task definition.
+
+    ``NAME`` is omitted so the server names each run, and ``ASYNC = FALSE`` so the task step
+    completes when the job does.
+
+    Args:
+        session: Session whose current namespace unqualified stage paths resolve against.
+        model_fqn: Fully qualified model name.
+        version_name: Model version.
+        compute_pool: Compute pool for the job and the image build.
+        function_name: The model's target method.
+        query: SQL query producing the input rows. Exactly one of ``query`` or
+            ``input_stage_location`` must be provided.
+        input_stage_location: Existing stage path holding the input data.
+        input_spec: Optional input block.
+        output_spec: Required output block.
+        resources_spec: Optional resources block.
+        inference_spec: Optional inference block.
+        image_build_spec: Optional image build block.
+        replicas: Optional ``REPLICAS`` value.
+
+    Returns:
+        The command text.
+    """
+    assert (query is None) != (
+        input_stage_location is None
+    ), "exactly one of query or input_stage_location must be provided"
+
+    validate_batch_inference_stage_locations(
+        session=session,
+        output_stage_location=output_spec.stage_location,
+        input_stage_location=input_stage_location,
+    )
+    normalized_output_spec = normalize_output_stage_location(output_spec)
+
+    if query is not None:
+        from_source = f"({query})"
+    else:
+        assert input_stage_location is not None
+        from_source = input_stage_location if input_stage_location.endswith("/") else input_stage_location + "/"
+
+    yaml_body = build_inference_job_service_yaml(
+        input_spec=input_spec,
+        output_spec=normalized_output_spec,
+        resources_spec=resources_spec,
+        inference_spec=inference_spec,
+        image_build_spec=image_build_spec,
+    )
+
+    return service_sql.build_execute_inference_job_service_sql(
+        yaml_body=yaml_body,
+        compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
+        model_fqn=model_fqn,
+        version=sql_identifier.SqlIdentifier(version_name),
+        function_name=function_name,
+        job_fqn=None,
+        async_=False,
+        replicas=replicas,
+        from_source=from_source,
+    )
+
+
 @dataclasses.dataclass
 class ServiceLogInfo:
     database_name: Optional[sql_identifier.SqlIdentifier]
@@ -1276,12 +1455,11 @@ class ServiceOperator:
             MLJob for the launched batch inference job.
 
         Raises:
-            ValueError: If the output stage or a supplied ``input_stage_location`` is not a
-                well-formed Snowflake stage path.
-            Exception: Any exception raised by the underlying SQL call. Input
-                staged from ``X`` is best-effort removed before re-raising so
-                rejected launches do not orphan files in the reserved subdir; a
-                user-supplied ``input_stage_location`` is never removed.
+            Exception: Any exception raised by stage-path validation or by the
+                underlying SQL call. Input staged from ``X`` is best-effort removed
+                before re-raising so rejected launches do not orphan files in the
+                reserved subdir; a user-supplied ``input_stage_location`` is never
+                removed.
             RuntimeError: If staging ``X`` fails, or if the server response does
                 not contain a parseable job name and ``job_name`` was not
                 provided.
@@ -1292,46 +1470,17 @@ class ServiceOperator:
             input_stage_location is None
         ), "exactly one of X or input_stage_location must be provided"
 
-        # Validate stage paths before they are interpolated into SQL / embedded in the spec body:
-        # both the output stage and a caller-supplied input stage must be well-formed Snowflake stage
-        # paths starting with '@' (@[db.][schema.]stage[/path]).
-        for label, stage_path in (
-            ("output_spec.stage_location", output_spec.stage_location),
-            ("input_stage_location", input_stage_location),
-        ):
-            if stage_path is not None:
-                if not stage_path.startswith("@"):
-                    raise ValueError(f"batch inference: {label} must be a stage path starting with '@': {stage_path}")
-                try:
-                    identifier.parse_snowflake_stage_path(stage_path)
-                except ValueError:
-                    raise ValueError(f"batch inference: {label} is not a valid Snowflake stage path: {stage_path}")
-
-        # A caller-supplied input must not live inside the output stage location: the server's output-mode
-        # preflight scans that location (and OVERWRITE removes it), which would consume or delete the input.
-        # Unqualified stage paths resolve against the session's current database/schema at execution time
-        # (the MODEL clause uses the model namespace, but the stage does not), so qualify both paths against
-        # the session namespace before comparing.
-        if input_stage_location is not None:
-            current_database = self._session.get_current_database()
-            current_schema = self._session.get_current_schema()
-            session_database = sql_identifier.SqlIdentifier(current_database) if current_database else None
-            session_schema = sql_identifier.SqlIdentifier(current_schema) if current_schema else None
-            output_parts = _normalize_stage_location(output_spec.stage_location, session_database, session_schema)
-            input_parts = _normalize_stage_location(input_stage_location, session_database, session_schema)
-            if output_parts[:3] == input_parts[:3] and input_parts[3].startswith(output_parts[3]):
-                raise ValueError(
-                    "batch inference: input_stage_location must not be inside output_spec.stage_location "
-                    f"({output_spec.stage_location}); that location is scanned and may be overwritten per the "
-                    "save mode. Use a separate stage or path for the input."
-                )
+        # Validate stage paths before they are interpolated into SQL / embedded in the spec body.
+        validate_batch_inference_stage_locations(
+            session=self._session,
+            output_stage_location=output_spec.stage_location,
+            input_stage_location=input_stage_location,
+        )
 
         # All pure argument transformations happen before any I/O so a malformed
         # input (e.g. an invalid job_name) fails with no side effects to clean up.
-        output_stage_location = output_spec.stage_location
-        if not output_stage_location.endswith("/"):
-            output_stage_location += "/"
-        normalized_output_spec = output_spec.model_copy(update={"stage_location": output_stage_location})
+        normalized_output_spec = normalize_output_stage_location(output_spec)
+        output_stage_location = normalized_output_spec.stage_location
 
         # Resolve the FROM path: a user-supplied stage path is read in place; an input DataFrame is
         # materialized under the reserved subdirectory, with a UUID to avoid collisions between
@@ -1344,17 +1493,13 @@ class ServiceOperator:
             from_stage_path = f"{output_stage_location}{_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR}/{uuid.uuid4().hex}/"
             staged_input_to_cleanup = from_stage_path
 
-        spec_builder = inference_job_service_spec.InferenceJobServiceSpec()
-        if input_spec is not None:
-            spec_builder.add_input_spec(input_spec)
-        spec_builder.add_output_spec(normalized_output_spec)
-        if resources_spec is not None:
-            spec_builder.add_resources_spec(resources_spec)
-        if inference_spec is not None:
-            spec_builder.add_inference_spec(inference_spec)
-        if image_build_spec is not None:
-            spec_builder.add_image_build_spec(image_build_spec)
-        yaml_body = spec_builder.save()
+        yaml_body = build_inference_job_service_yaml(
+            input_spec=input_spec,
+            output_spec=normalized_output_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+        )
 
         model_fqn = identifier.get_schema_level_object_identifier(
             self._database_name.identifier(), self._schema_name.identifier(), model_name.identifier()

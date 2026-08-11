@@ -267,6 +267,12 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
     # path is unaffected (DB names come from the runner).
     _ONLINE_SERVICE_BACKED = True
 
+    # register_feature_view immediately re-reads the just-created Dynamic Table, which can
+    # race the multi-replica OFS catalog. ~20s (5 * 4s) is enough budget for one lagging
+    # replica to converge. Only the narrow catalog-skew signatures are retried.
+    _REGISTER_RETRIES = 5
+    _REGISTER_BACKOFF_SEC = 4.0
+
     @classmethod
     def _init_from_module_state(cls) -> None:
         """Populate class attrs from the module-level runner state."""
@@ -436,7 +442,33 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         self._orig_register_stream_source = self.fs.register_stream_source
 
         def _register_feature_view_tracked(*args: Any, **kwargs: Any) -> Any:
-            registered = self._orig_register_feature_view(*args, **kwargs)
+            last_err: Optional[Exception] = None
+            for attempt in range(self._REGISTER_RETRIES):
+                try:
+                    registered = self._orig_register_feature_view(*args, **kwargs)
+                    break
+                except Exception as e:
+                    # register_feature_view re-reads the just-created Dynamic Table (SHOW then DESC),
+                    # which can race the multi-replica OFS catalog. Retry only those two skew
+                    # signatures so genuine failures still surface immediately.
+                    message = str(e)
+                    is_catalog_skew = "does not exist or not authorized" in message or (
+                        "Failed to find FeatureView" in message and ": []" in message
+                    )
+                    if not is_catalog_skew:
+                        raise
+                    last_err = e
+                    logger.warning(
+                        "register_feature_view retry %d/%d on transient catalog skew: %s: %s",
+                        attempt + 1,
+                        self._REGISTER_RETRIES,
+                        type(e).__name__,
+                        e,
+                    )
+                    time.sleep(self._REGISTER_BACKOFF_SEC)
+            else:
+                assert last_err is not None
+                raise last_err
             name_id = SqlIdentifier(str(registered.name), case_sensitive=True).identifier()
             self._tracked_feature_view_keys.append((name_id, str(registered.version)))
             return registered
@@ -533,11 +565,15 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         Returns:
             None when online read returns rows and ``validate_fn`` passes (if set).
         """
-        fv_live = fs.get_feature_view(fv_name, version)
+        # get_feature_view is fetched inside the loop: right after registration it can race the
+        # multi-replica OFS catalog (SHOW/DESC on a lagging replica), so tolerate that skew here too.
+        fv_live: Optional[FeatureView] = None
         deadline = time.time() + timeout
         last_err: Optional[str] = None
         while time.time() < deadline:
             try:
+                if fv_live is None:
+                    fv_live = fs.get_feature_view(fv_name, version)
                 # Postgres-backed online reads now default to pandas.DataFrame; force as_pandas=True so
                 # this helper returns the same type regardless of online_config.store_type.
                 pdf = fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=True)

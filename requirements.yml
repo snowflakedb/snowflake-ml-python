@@ -149,8 +149,8 @@
   dev_version: 0.46.0
   version_requirements: '>=0.46.0,<1'
 - name: mlflow
-  dev_version: 2.16.2
-  version_requirements: '>=2.16.0, <3'
+  dev_version: 3.13.0
+  version_requirements: '>=2.16.0, <4'
   requirements_extra_tags:
     - mlflow
     - llm
@@ -250,6 +250,10 @@
   requirements_extra_tags:
     - transformers
     - llm
+- name: setuptools
+  # Dev/test env only: keep setuptools < 82 so `pkg_resources` (needed by mlflow's opentelemetry
+  # import) stays available.
+  dev_version: 80.10.2
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
   dev_version: 3.18.0

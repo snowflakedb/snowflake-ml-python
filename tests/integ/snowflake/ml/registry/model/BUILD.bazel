@@ -407,12 +407,25 @@ py_test(
     imports = ["."],
     tags = [
         "feature:model_registry",
-        "short_regress",
     ],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model:custom_model",
         "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
+    ],
+)
+
+py_test(
+    name = "registry_external_test_pypi_artifact_repository_test",
+    srcs = ["registry_external_test_pypi_artifact_repository_test.py"],
+    imports = ["."],
+    tags = [
+        "feature:model_registry",
+    ],
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model:custom_model",
+        "//tests/integ/snowflake/ml/registry:artifact_repository_integ_util",
     ],
 )
 

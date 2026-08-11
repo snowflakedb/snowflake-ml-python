@@ -1,6 +1,24 @@
 # Release History
 
-## 1.50.0
+## 1.51.0
+
+### New Features
+
+* ML Jobs: `artifact_repositories` now accepts a list of repositories, allowing multiple artifact
+  repositories to be specified for a job.
+* Registry: Added support for logging and running MLflow 3.x models.
+
+### Bug Fixes
+
+* Registry: Fixed a bug where an MLflow model logged with
+  `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]` could drop its pip dependencies, leaving the
+  deployed model missing required packages.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.50.0 (2026-08-03)
 
 ### New Features
 

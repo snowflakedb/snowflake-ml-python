@@ -649,6 +649,258 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate, desc="batch static")
 
+    def test_batch_static_fv_spec_oft_enables_source_view_change_tracking(self) -> None:
+        """Static batch (view-backed) POSTGRES FV enables CHANGE_TRACKING on its source view.
+
+        A spec-backed OFT can only resolve to an incremental refresh when the object it reads from
+        exposes change tracking. Static FVs are backed by a plain View (change tracking off by
+        default), so without this the backend silently downgrades the OFT to a FULL refresh.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_STATIC_CT_FV_{s}"
+        entity_key = f"U_STATIC_CT_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_STATIC_CT_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+        self._session.sql(f"INSERT INTO {table_name} VALUES ({entity_key!r}, 12.5)").collect()
+        feature_df = self._session.table(table_name)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self.assertIsNone(registered.refresh_freq)
+
+        # Deterministic assertion: the client should have enabled change tracking on the source
+        # View as part of OFT creation. This depends only on the client emitting the ALTER VIEW.
+        source_view_name = registered.fully_qualified_name()
+        view_rows = self._session.sql(
+            f"SHOW VIEWS LIKE '%{fv_name.upper()}%' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreaterEqual(len(view_rows), 1)
+        self.assertTrue(
+            all(row["change_tracking"] == "ON" for row in view_rows),
+            f"expected CHANGE_TRACKING=ON on source view {source_view_name}, got "
+            f"{[(row['name'], row['change_tracking']) for row in view_rows]}",
+        )
+
+        # The OFT should not be downgraded to FULL now that the source view exposes change tracking.
+        # With the default AUTO mode the backend resolves to INCREMENTAL.
+        list_result = fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.NAME == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 1)
+        online_config = json.loads(fv_rows[0]["ONLINE_CONFIG"])
+        self.assertEqual(online_config["refresh_mode"], "INCREMENTAL")
+
+    def test_batch_static_fv_explicit_incremental_enables_change_tracking(self) -> None:
+        """Static FV with explicit INCREMENTAL refresh_mode enables change tracking and OFT is INCREMENTAL."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_STATIC_INCR_FV_{s}"
+        entity_key = f"U_STATIC_INCR_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_STATIC_INCR_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+        self._session.sql(f"INSERT INTO {table_name} VALUES ({entity_key!r}, 42.0)").collect()
+        feature_df = self._session.table(table_name)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            refresh_mode="INCREMENTAL",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self.assertIsNone(registered.refresh_freq)
+
+        view_rows = self._session.sql(
+            f"SHOW VIEWS LIKE '%{fv_name.upper()}%' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreaterEqual(len(view_rows), 1)
+        self.assertTrue(
+            all(row["change_tracking"] == "ON" for row in view_rows),
+            f"expected CHANGE_TRACKING=ON for INCREMENTAL refresh_mode, got "
+            f"{[(row['name'], row['change_tracking']) for row in view_rows]}",
+        )
+
+        list_result = fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.NAME == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 1)
+        online_cfg = json.loads(fv_rows[0]["ONLINE_CONFIG"])
+        self.assertEqual(online_cfg["refresh_mode"], "INCREMENTAL")
+
+    def test_batch_static_fv_explicit_full_skips_change_tracking(self) -> None:
+        """Static FV with explicit FULL refresh_mode does not enable change tracking."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_STATIC_FULL_FV_{s}"
+        entity_key = f"U_STATIC_FULL_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_STATIC_FULL_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+        self._session.sql(f"INSERT INTO {table_name} VALUES ({entity_key!r}, 55.0)").collect()
+        feature_df = self._session.table(table_name)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            refresh_mode="FULL",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+
+        view_rows = self._session.sql(
+            f"SHOW VIEWS LIKE '%{fv_name.upper()}%' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreaterEqual(len(view_rows), 1)
+        self.assertTrue(
+            all(row["change_tracking"] == "OFF" for row in view_rows),
+            f"expected CHANGE_TRACKING=OFF for FULL refresh_mode, got "
+            f"{[(row['name'], row['change_tracking']) for row in view_rows]}",
+        )
+
+        list_result = fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.NAME == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 1)
+        online_cfg = json.loads(fv_rows[0]["ONLINE_CONFIG"])
+        self.assertEqual(online_cfg["refresh_mode"], "FULL")
+
+    def _run_managed_fv_refresh_mode_test(self, input_refresh_mode: str, expected_oft_refresh_mode: str) -> None:
+        """Helper: register a managed (DT-backed) FV with the given refresh_mode and verify the
+        OFT resolves to the expected refresh mode.
+
+        Args:
+            input_refresh_mode: The refresh_mode to set on the FeatureView.
+            expected_oft_refresh_mode: The expected resolved refresh_mode on the OFT.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_MANAGED_{input_refresh_mode}_FV_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_MANAGED_{input_refresh_mode}_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+        self._session.sql(f"INSERT INTO {table_name} VALUES ('user1', 99.0)").collect()
+        feature_df = self._session.table(table_name)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            refresh_freq="1h",
+            refresh_mode=input_refresh_mode,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+
+        list_result = fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.NAME == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 1)
+        online_cfg = json.loads(fv_rows[0]["ONLINE_CONFIG"])
+        self.assertEqual(online_cfg["refresh_mode"], expected_oft_refresh_mode)
+
+    def test_batch_managed_fv_full_refresh_resolves_to_full(self) -> None:
+        """A managed FV with FULL refresh mode resolves the OFT to FULL."""
+        self._run_managed_fv_refresh_mode_test("FULL", "FULL")
+
+    def test_batch_managed_fv_auto_refresh_resolves_to_incremental(self) -> None:
+        """A managed FV with AUTO refresh mode resolves the OFT to INCREMENTAL."""
+        self._run_managed_fv_refresh_mode_test("AUTO", "INCREMENTAL")
+
+    def test_batch_managed_fv_incremental_refresh_resolves_to_incremental(self) -> None:
+        """A managed FV with INCREMENTAL refresh mode resolves the OFT to INCREMENTAL."""
+        self._run_managed_fv_refresh_mode_test("INCREMENTAL", "INCREMENTAL")
+
+    def test_batch_static_fv_auto_refresh_change_tracking_failure_resolves_to_full(self) -> None:
+        """Static FV with AUTO refresh_mode falls back to FULL when change tracking cannot be enabled.
+
+        Uses a non-incrementalizable source: a view on top of another view that contains an
+        aggregation (AVG). Snowflake cannot enable change tracking on a view built on an
+        aggregated view, so the ALTER VIEW SET CHANGE_TRACKING = TRUE fails and the OFT
+        gracefully falls back to FULL refresh.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        schema_path = f"{self.test_db}.{fs._config.schema.identifier()}"
+
+        base_table = f"{schema_path}.CT_FAIL_BASE_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {base_table} (
+                USER_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+        self._session.sql(f"INSERT INTO {base_table} VALUES ('u1', 10.0), ('u1', 20.0)").collect()
+
+        agg_view = f"{schema_path}.CT_FAIL_AGG_V_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE VIEW {agg_view} AS
+                SELECT USER_ID, AVG(AMOUNT) AS AVG_AMOUNT FROM {base_table} GROUP BY USER_ID
+        """
+        ).collect()
+
+        outer_view = f"{schema_path}.CT_FAIL_OUTER_V_{s}"
+        self._session.sql(f"CREATE OR REPLACE VIEW {outer_view} AS SELECT * FROM {agg_view}").collect()
+
+        feature_df = self._session.table(outer_view)
+        fv = FeatureView(
+            name=f"BATCH_STATIC_AUTO_CT_FAIL_{s}",
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            refresh_mode="AUTO",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+
+        fv_name = f"BATCH_STATIC_AUTO_CT_FAIL_{s}"
+        list_result = fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.NAME == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 1)
+        online_cfg = json.loads(fv_rows[0]["ONLINE_CONFIG"])
+        self.assertEqual(online_cfg["refresh_mode"], "FULL")
+
     # =========================================================================
     # E2E: Multi-entity batch FV — registration -> online read
     # =========================================================================

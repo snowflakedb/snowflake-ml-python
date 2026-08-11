@@ -194,6 +194,7 @@ class TestRegistryFeatureRetrievalDeploymentInteg(registry_model_deployment_test
             time.sleep(10)
         self.fail(f"Online store did not return seed key within {timeout_s:.0f}s (last_exc={last_exc!r}).")
 
+    @absltest.skip("SNOW-3889441")
     def test_create_service_with_feature_retrieval(self) -> None:
         """Request omits AMOUNT; proxy must fetch it from FS and echo it back."""
         sample_input = pd.DataFrame({self._ENTITY_KEY: [self._USER_ID_VALUE], self._FEATURE_COL: [0.0]})

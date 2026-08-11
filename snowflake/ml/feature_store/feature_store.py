@@ -49,6 +49,7 @@ from snowflake.ml.feature_store import (
     feature_group as fg_mod,
     feature_view_append_only_validation,
     feature_view_refresh_freq,
+    interval_utils,
     online_service,
     online_service_http_client,
     realtime_dataset as rtfv_dataset,
@@ -447,6 +448,59 @@ class _FeatureStoreConfig:
     @property
     def full_schema_path(self) -> str:
         return f"{self.database}.{self.schema}"
+
+
+def _canonicalize_operational_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a canonicalized copy of an FV operational-field payload (Plan section A4).
+
+    Closes Bug 2 (``UPDATE_FV`` operational drift on tiled online BFVs) by
+    coercing two fields to a single representation that the diff logic in
+    ``decl/invariants.py`` and ``decl/planner.py`` consumes symmetrically:
+
+    * ``online_store_type`` — lowercased and whitespace-stripped.  Snowflake
+      ``DESCRIBE … TYPE = SPECIFICATION`` returns mixed-case enum values
+      with surrounding whitespace; the local compile emits the lowercase
+      form.  Without canonicalization the diff observes cosmetic drift on
+      a clean re-plan.
+    * ``target_lag_sec`` — always an ``int`` computed from the deployed
+      string form (``payload["target_lag"]``) via
+      :func:`interval_utils.interval_to_seconds`.  The OFT may return
+      either ``"5 minutes"`` or ``"300 SECONDS"`` for the same value;
+      diffing on seconds (not strings) makes the comparison stable.
+
+    The helper is pure: the input ``payload`` is not mutated.  Absent or
+    ``None`` keys are preserved as-is so callers can chain this through a
+    pipeline of canonicalizers without re-introducing fields.
+
+    The ``"DOWNSTREAM"`` sentinel (CRON-task target_lag) is silently
+    skipped: the planner recovers the cron expression via the companion
+    Task, and ``interval_to_seconds`` would otherwise crash trying to
+    parse it.
+
+    Args:
+        payload: Operational-field dictionary, typically the
+            ``spec_payload["spec"]`` shape that ``decl/`` consumes.
+
+    Returns:
+        A new dict (caller's payload is not mutated) with
+        ``online_store_type`` and ``target_lag_sec`` in canonical form.
+    """
+    out = dict(payload)
+
+    if "online_store_type" in out:
+        value = out["online_store_type"]
+        if isinstance(value, str):
+            out["online_store_type"] = value.strip().lower()
+
+    if "target_lag" in out and out["target_lag"] is not None:
+        target_lag_str = str(out["target_lag"])
+        if target_lag_str.strip().upper() != "DOWNSTREAM":
+            try:
+                out["target_lag_sec"] = int(interval_utils.interval_to_seconds(target_lag_str))
+            except (KeyError, ValueError, TypeError):
+                pass
+
+    return out
 
 
 def switch_warehouse(
@@ -862,7 +916,12 @@ class FeatureStore:
 
         return self.get_entity(entity.name)
 
-    def update_entity(self, name: str, *, desc: Optional[str] = None) -> Optional[Entity]:
+    def update_entity(
+        self,
+        name: str,
+        *,
+        desc: Optional[str] = None,
+    ) -> Optional[Entity]:
         """Update a registered entity with provided information.
 
         Args:
@@ -910,9 +969,9 @@ class FeatureStore:
             return None
 
         new_desc = desc if desc is not None else found_rows[0]["DESC"]
+        full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
 
         try:
-            full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
             self._session.sql(f"ALTER TAG {full_name} SET COMMENT = {_sql_string_literal(new_desc)}").collect(
                 statement_params=self._telemetry_stmp
             )
@@ -7921,12 +7980,6 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
         source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
 
-        # Surface the authored source-ref list (JSON-encoded) when a
-        # ``FV_SOURCE_REFS`` row exists; otherwise leave the column null.
-        # Verbose-only: goes into output_values_extra alongside backup_source.
-        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
-        source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
-
         backup_source: Optional[str] = None
         if fv_metadata.is_append_only:
             append_only_meta = self._metadata_manager.get_append_only_metadata(name, version)
@@ -8104,11 +8157,6 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             if agg_metadata and agg_metadata.feature_aggregation_method
             else (FeatureAggregationMethod.TILES if is_tiled else None)
         )
-
-        # Rehydrate the authored source-ref list onto the reconstructed
-        # FV when a ``FV_SOURCE_REFS`` row was persisted at register time.
-        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name.identifier(), version)
-        restored_source_refs = source_refs_meta.sources if source_refs_meta is not None else None
 
         # Rehydrate the authored source-ref list onto the reconstructed
         # FV when a ``FV_SOURCE_REFS`` row was persisted at register time.
@@ -8511,6 +8559,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         else:
             source_clause = f"FROM {source_table_name}"
 
+        # A view-backed source only lets the OFT refresh incrementally when it has change tracking
+        # enabled; otherwise the backend silently downgrades the OFT to a FULL refresh. Enable it
+        # before issuing the CREATE so the refresh mode is derived correctly.
+        self._enable_source_view_change_tracking_for_incremental_oft(feature_view, source_table_name)
+
         # Create online feature table
         try:
             query = fv_mod.build_oft_create_sql(
@@ -8535,6 +8588,88 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             ) from e
 
         return online_table_name
+
+    def _enable_source_view_change_tracking_for_incremental_oft(
+        self,
+        feature_view: FeatureView,
+        fully_qualified_source_name: str,
+    ) -> None:
+        """Enable change tracking on a POSTGRES-backed OFT's source view so it can refresh incrementally.
+
+        The backend derives a spec-backed (POSTGRES) Online Feature Table's refresh mode from its
+        source object. When that source is a plain View (static/external feature views), change
+        tracking is off by default and the OFT silently falls back to a FULL refresh — an explicit
+        ``INCREMENTAL`` request even errors. Enabling change tracking on the view lets the OFT
+        resolve to an incremental refresh.
+
+        This targets the object the OFT actually reads from at refresh time, and is a no-op
+        otherwise:
+
+        - Managed feature views are backed by a Dynamic Table (change tracking is inherent to an
+          incremental DT and cannot be enabled on a FULL one), so their OFT never reads from a
+          plain view.
+        - Streaming feature views may be backed offline by a view (a non-aggregated SFV with
+          ``refresh_freq is None`` materializes as a View), but their OFT is spec-backed by the
+          UDF-transformed table / stream source (``FROM SPECIFICATION``) and refreshes
+          continuously — it does not read from that offline view, so enabling change tracking on
+          it would not affect the OFT.
+        - Realtime feature views have no offline view at all.
+        - HYBRID_TABLE-backed OFTs are out of scope. This targets the spec-backed refresh-mode
+          derivation used by POSTGRES OFTs, and enabling change tracking has real side effects
+          (it cascades to the view's base tables and requires ``OWNERSHIP`` on them), so we do not
+          newly impose it on the legacy HYBRID_TABLE path — its behavior is left unchanged.
+
+        It is also skipped when the refresh mode is not one that benefits from change tracking
+        (i.e., only AUTO, INCREMENTAL, and the default None proceed; FULL and unknown/future
+        modes are conservatively skipped).
+
+        Args:
+            feature_view: The FeatureView backing the online feature table.
+            fully_qualified_source_name: ``DB.SCHEMA.SOURCE`` object the OFT reads from.
+
+        Raises:
+            SnowflakeMLException: If enabling change tracking fails and the refresh mode is
+                explicitly ``INCREMENTAL``. For ``AUTO`` or unset modes the failure is logged
+                as a warning and the OFT falls back to FULL refresh.
+        """
+        # Only POSTGRES-backed OFTs whose source is a plain View need this. The offline object is a
+        # View exactly when refresh_freq is None (managed FVs are DT-backed); streaming/realtime FVs
+        # are excluded because their OFT does not read from an offline view. HYBRID_TABLE is out of
+        # scope: enabling change tracking has base-table side effects we don't impose on the legacy path.
+        online_config = feature_view.online_config
+        oft_reads_from_source_view = (
+            online_config is not None
+            and online_config.store_type == OnlineStoreType.POSTGRES
+            and feature_view.refresh_freq is None
+            and not feature_view.is_streaming
+            and not feature_view.is_realtime_feature_view
+        )
+        if not oft_reads_from_source_view:
+            return
+
+        refresh_mode = feature_view.refresh_mode
+        if refresh_mode is not None and refresh_mode.upper() not in ("AUTO", "INCREMENTAL"):
+            return
+
+        try:
+            self._session.sql(fv_mod.build_enable_view_change_tracking_sql(fully_qualified_source_name)).collect(
+                statement_params=self._telemetry_stmp
+            )
+        except SnowparkSQLException as e:
+            if refresh_mode is not None and refresh_mode.upper() == "INCREMENTAL":
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.SNOWML_CREATE_FAILED,
+                    original_exception=RuntimeError(
+                        f"Failed to enable change tracking on source view {fully_qualified_source_name}, "
+                        f"which the online feature table requires to refresh incrementally: {e}"
+                    ),
+                ) from e
+            logger.warning(
+                "Could not enable change tracking on source view %s; "
+                "the online feature table will use FULL refresh: %s",
+                fully_qualified_source_name,
+                e,
+            )
 
     def _build_batch_feature_view_spec(
         self,

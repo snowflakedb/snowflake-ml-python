@@ -408,8 +408,8 @@ class ModelEnv:
                         stacklevel=2,
                     )
 
-        if pip_requirements_list and self.targets_warehouse:
-            if not self.artifact_repository_map:
+        if pip_requirements_list:
+            if self.targets_warehouse and not self.artifact_repository_map:
                 self._warn_once(
                     (
                         "Found dependencies specified as pip requirements."
@@ -424,7 +424,10 @@ class ModelEnv:
                     for channel_dependency in itertools.chain(*self._conda_dependencies.values())
                 ):
                     continue
-                env_utils.append_requirement_list(self._pip_requirements, pip_dependency)
+                try:
+                    env_utils.append_requirement_list(self._pip_requirements, pip_dependency)
+                except env_utils.DuplicateDependencyError:
+                    pass
 
         if python_version:
             self.python_version = python_version
@@ -435,8 +438,8 @@ class ModelEnv:
     def load_from_pip_file(self, pip_requirements_path: pathlib.Path) -> None:
         pip_requirements_list = env_utils.load_requirements_file(pip_requirements_path)
 
-        if pip_requirements_list and self.targets_warehouse:
-            if not self.artifact_repository_map:
+        if pip_requirements_list:
+            if self.targets_warehouse and not self.artifact_repository_map:
                 self._warn_once(
                     (
                         "Found dependencies specified as pip requirements."
@@ -451,7 +454,10 @@ class ModelEnv:
                     for channel_dependency in itertools.chain(*self._conda_dependencies.values())
                 ):
                     continue
-                env_utils.append_requirement_list(self._pip_requirements, pip_dependency)
+                try:
+                    env_utils.append_requirement_list(self._pip_requirements, pip_dependency)
+                except env_utils.DuplicateDependencyError:
+                    pass
 
     def load_from_dict(self, base_dir: pathlib.Path, env_dict: model_meta_schema.ModelEnvDict) -> None:
         conda_path = env_dict.get("conda")

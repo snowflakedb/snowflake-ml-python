@@ -964,6 +964,56 @@ class ModelVersion(lineage_node.LineageNode):
         if (X is None) == (input_stage_location is None):
             raise ValueError("Exactly one of X or input_stage_location must be provided.")
 
+        target_function_info = self._validate_batch_inference_request(
+            input_spec=input_spec,
+            resources_spec=resources_spec,
+            function_name=function_name,
+            statement_params=statement_params,
+        )
+
+        return self._service_ops.execute_inference_job_service(
+            X=X,
+            input_stage_location=input_stage_location,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
+            input_spec=input_spec,
+            output_spec=output_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+            function_name=target_function_info["target_method"],
+            job_name=job_name,
+            replicas=replicas,
+            async_=async_,
+            statement_params=statement_params,
+        )
+
+    def _validate_batch_inference_request(
+        self,
+        *,
+        input_spec: Optional[batch_inference_job_specs.InputSpec],
+        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
+        function_name: Optional[str],
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> model_manifest_schema.ModelFunctionInfo:
+        """Resolve the target function and reject unsupported batch inference requests.
+
+        Args:
+            input_spec: Optional input block; its ``partition_column`` drives the partitioning rules.
+            resources_spec: Optional resources block; its ``gpu_requests`` drives the GPU check.
+            function_name: Optional model function name. Resolved against the model's function list
+                when omitted.
+            statement_params: Optional statement params for telemetry.
+
+        Returns:
+            The resolved function info.
+
+        Raises:
+            ValueError: If ``partition_column`` is supplied for a HuggingFace pipeline model or a
+                FUNCTION-type method, or if the partition column collides with a partitioned model
+                output.
+        """
         effective_input_spec = input_spec if input_spec is not None else batch_inference_job_specs.InputSpec()
         partition_columns = (
             [effective_input_spec.partition_column] if effective_input_spec.partition_column is not None else None
@@ -1004,23 +1054,7 @@ class ModelVersion(lineage_node.LineageNode):
                     f"and re-register the model."
                 )
 
-        return self._service_ops.execute_inference_job_service(
-            X=X,
-            input_stage_location=input_stage_location,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
-            input_spec=input_spec,
-            output_spec=output_spec,
-            resources_spec=resources_spec,
-            inference_spec=inference_spec,
-            image_build_spec=image_build_spec,
-            function_name=target_function_info["target_method"],
-            job_name=job_name,
-            replicas=replicas,
-            async_=async_,
-            statement_params=statement_params,
-        )
+        return target_function_info
 
     def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
         functions: list[model_manifest_schema.ModelFunctionInfo] = self._functions

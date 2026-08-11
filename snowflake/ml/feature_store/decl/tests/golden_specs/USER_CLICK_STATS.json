@@ -1,0 +1,203 @@
+{
+  "kind": "StreamingFeatureView",
+  "metadata": {
+    "client_version": "1.30.0",
+    "database": "JKEW_DB",
+    "internal_data_version": "1",
+    "name": "USER_CLICK_STATS",
+    "oft_id": "766522814722066",
+    "schema": "JKEW_SCHEMA",
+    "spec_format_version": "1",
+    "version": "V1"
+  },
+  "offline_configs": [
+    {
+      "columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TIMESTAMP",
+          "type": "TimestampType"
+        },
+        {
+          "name": "IS_CONVERSION",
+          "type": "BooleanType"
+        },
+        {
+          "name": "ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "USER_CLICK_STATS$v1$UDF_TRANSFORMED",
+      "table_type": "UDFTransformed"
+    },
+    {
+      "columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TILE_START",
+          "type": "TimestampType"
+        },
+        {
+          "name": "_PARTIAL_SUM_ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_MAX_IS_CONVERSION",
+          "type": "BooleanType"
+        },
+        {
+          "name": "_PARTIAL_COUNT_ENGAGEMENT_SCORE",
+          "type": "LongType"
+        },
+        {
+          "name": "_PARTIAL_MIN_ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_MIN_IS_CONVERSION",
+          "type": "BooleanType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "USER_CLICK_STATS$v1",
+      "table_type": "Tiled"
+    }
+  ],
+  "online_store_type": "postgres",
+  "spec": {
+    "feature_aggregation_method": "tiles",
+    "feature_granularity_sec": 300,
+    "features": [
+      {
+        "function": "sum",
+        "output_column": {
+          "name": "TOTAL_ENGAGEMENT_1H",
+          "type": "DoubleType"
+        },
+        "source_column": {
+          "name": "ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "max",
+        "output_column": {
+          "name": "HAS_CONVERSION_24H",
+          "type": "BooleanType"
+        },
+        "source_column": {
+          "name": "IS_CONVERSION",
+          "type": "BooleanType"
+        },
+        "window_sec": 86400
+      },
+      {
+        "function": "count",
+        "output_column": {
+          "name": "EVENT_COUNT_1H",
+          "type": "LongType"
+        },
+        "source_column": {
+          "name": "ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "min",
+        "output_column": {
+          "name": "MIN_ENGAGEMENT_1H",
+          "type": "DoubleType"
+        },
+        "source_column": {
+          "name": "ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "min",
+        "output_column": {
+          "name": "ALL_CONVERSION_24H",
+          "type": "BooleanType"
+        },
+        "source_column": {
+          "name": "IS_CONVERSION",
+          "type": "BooleanType"
+        },
+        "window_sec": 86400
+      }
+    ],
+    "ordered_entity_column_names": [
+      "USER_ID"
+    ],
+    "sources": [
+      {
+        "columns": [
+          {
+            "name": "USER_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "SESSION_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "PAGE_URL",
+            "type": "StringType"
+          },
+          {
+            "name": "EVENT_TYPE",
+            "type": "StringType"
+          },
+          {
+            "name": "TIMESTAMP",
+            "type": "TimestampType"
+          },
+          {
+            "name": "TIME_ON_PAGE_SECONDS",
+            "type": "DoubleType"
+          }
+        ],
+        "name": "CLICKSTREAM_EVENTS",
+        "source_type": "Stream"
+      }
+    ],
+    "timestamp_field": "TIMESTAMP",
+    "udf": {
+      "engine": "pandas",
+      "function_definition": "def compute_engagement_metrics(clickstream: pd.DataFrame) -> pd.DataFrame:\n    \"\"\"Compute engagement metrics from click stream events.\"\"\"\n    df = clickstream.copy()\n\n    conversion_events = [\"purchase\", \"signup\", \"subscribe\", \"checkout_complete\"]\n    df[\"IS_CONVERSION\"] = df[\"EVENT_TYPE\"].isin(conversion_events)\n\n    event_weights = {\n        \"page_view\": 1.0, \"click\": 2.0, \"scroll\": 0.5,\n        \"form_start\": 3.0, \"form_submit\": 5.0, \"add_to_cart\": 4.0,\n        \"purchase\": 10.0, \"signup\": 8.0,\n    }\n    df[\"ENGAGEMENT_SCORE\"] = df[\"EVENT_TYPE\"].map(event_weights).fillna(1.0)\n\n    return df[[\"USER_ID\", \"TIMESTAMP\", \"IS_CONVERSION\", \"ENGAGEMENT_SCORE\"]]\n",
+      "name": "compute_engagement_metrics",
+      "output_columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TIMESTAMP",
+          "type": "TimestampType"
+        },
+        {
+          "name": "IS_CONVERSION",
+          "type": "BooleanType"
+        },
+        {
+          "name": "ENGAGEMENT_SCORE",
+          "type": "DoubleType"
+        }
+      ]
+    }
+  }
+}

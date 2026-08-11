@@ -52,6 +52,30 @@ py_test(
     ],
 )
 
+py_library(
+    name = "batch_inference_task_v2",
+    srcs = ["batch_inference_task_v2.py"],
+    deps = [
+        ":batch_inference_job_specs",
+        ":model_version_impl",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/model/_client/ops:service_ops",
+    ],
+)
+
+py_test(
+    name = "batch_inference_task_v2_test",
+    srcs = ["batch_inference_task_v2_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":batch_inference_job_specs",
+        ":batch_inference_task_v2",
+    ],
+)
+
 py_test(
     name = "batch_inference_specs_test",
     srcs = ["batch_inference_specs_test.py"],

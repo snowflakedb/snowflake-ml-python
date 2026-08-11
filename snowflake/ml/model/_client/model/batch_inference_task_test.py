@@ -57,6 +57,22 @@ class BatchInferenceTaskTest(absltest.TestCase):
             stage_location="@MY_DB.MY_SCHEMA.MY_STAGE",
         )
 
+    def test_deprecation_warning(self) -> None:
+        from snowflake.ml.model._client.model.batch_inference_task import (
+            BatchInferenceTask,
+        )
+
+        with self._make_dag():
+            with self.assertWarnsRegex(DeprecationWarning, "batch_inference.BatchInferenceTask instead"):
+                BatchInferenceTask(
+                    "batch_inference",
+                    model_version=self._create_mock_model_version(),
+                    X=self._create_mock_dataframe(),
+                    compute_pool="CPU_POOL",
+                    output_spec=OutputSpec(stage_location="@MY_DB.MY_SCHEMA.MY_STAGE/o/"),
+                    job_spec=JobSpec(warehouse="MY_WH"),
+                )
+
     def test_constructor_stores_parameters(self) -> None:
         mv = self._create_mock_model_version()
         df = self._create_mock_dataframe()

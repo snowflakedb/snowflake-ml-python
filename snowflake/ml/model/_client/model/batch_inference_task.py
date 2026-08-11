@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional
 
 import yaml
@@ -31,6 +32,11 @@ class BatchInferenceTask(DAGTask):
     Construct it inside a ``with DAG(...)`` block (or pass ``dag=`` explicitly) and
     chain it with other tasks using ``>>``. Requires the ``snowflake.core`` package
     to be installed.
+
+    .. deprecated::
+        The backend this task uses will be removed in a future release. For new work, use
+        :class:`snowflake.ml.model.batch_inference.BatchInferenceTask`, which runs on the
+        updated batch inference backend.
     """
 
     @telemetry.send_api_usage_telemetry(
@@ -58,6 +64,13 @@ class BatchInferenceTask(DAGTask):
         inference_engine_options: Optional[dict[str, Any]] = None,
         **dagtask_kwargs: Any,
     ) -> None:
+        warnings.warn(
+            "snowflake.ml.model.batch.BatchInferenceTask is deprecated: the batch inference backend it "
+            "currently uses will be removed in a future release. Use "
+            "snowflake.ml.model.batch_inference.BatchInferenceTask instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not _HAS_SNOWFLAKE_CORE:
             raise ImportError(
                 "BatchInferenceTask requires the `snowflake.core` package. "

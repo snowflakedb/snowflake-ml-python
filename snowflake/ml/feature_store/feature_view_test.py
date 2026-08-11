@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from absl.testing import absltest, parameterized
 
+from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.entity import Entity
@@ -45,6 +46,7 @@ from snowflake.ml.feature_store.spec.enums import (
     TableType,
 )
 from snowflake.snowpark import Row
+from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     BinaryType,
     BooleanType,
@@ -1358,7 +1360,9 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         # SQL construction is in module-level ``feature_view.build_oft_*``;
         # only the tag wrapper needs binding to the mock FeatureStore.
         mock_fs._tag_oft = FeatureStore._tag_oft.__get__(mock_fs)
-
+        mock_fs._enable_source_view_change_tracking_for_incremental_oft = (
+            FeatureStore._enable_source_view_change_tracking_for_incremental_oft.__get__(mock_fs)
+        )
         mock_fs._session = MagicMock()
         if postgres_online_service_running:
             status_json = json.dumps(
@@ -1406,8 +1410,13 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         feature_granularity: Optional[str] = None,
         aggregation_secondary_keys: Optional[list[str]] = None,
         features: Optional[list[Feature]] = None,
+        refresh_freq: Optional[str] = "1h",
+        refresh_mode: Optional[str] = "AUTO",
     ) -> FeatureView:
-        """Create a non-tiled FeatureView with mocked DataFrame."""
+        """Create a non-tiled FeatureView with mocked DataFrame.
+
+        ``refresh_freq=None`` produces a static/external (view-backed) FeatureView.
+        """
         if column_types is None:
             column_types = [DoubleType()] * len(columns)
         schema = StructType([StructField(c, t) for c, t in zip(columns, column_types)])
@@ -1422,7 +1431,8 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             entities=[entity],
             feature_df=mock_df,
             timestamp_col=timestamp_col,
-            refresh_freq="1h",
+            refresh_freq=refresh_freq,
+            refresh_mode=refresh_mode,
             online_config=OnlineConfig(enable=True, target_lag="30s", store_type=store_type),
             feature_granularity=feature_granularity,
             aggregation_secondary_keys=aggregation_secondary_keys,
@@ -1467,6 +1477,251 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
 
         query = fs._session.sql.call_args_list[0][0][0]
         self.assertIn("CREATE OR REPLACE ONLINE FEATURE TABLE", query)
+
+    # ------------------------------------------------------------------ #
+    # Source-view change tracking (incremental OFT refresh)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _change_tracking_sqls(mock_fs: MagicMock) -> list[str]:
+        return [
+            call[0][0]
+            for call in mock_fs._session.sql.call_args_list
+            if isinstance(call[0][0], str) and "CHANGE_TRACKING" in call[0][0].upper()
+        ]
+
+    def test_view_backed_fv_enables_change_tracking_for_incremental_oft(self) -> None:
+        """A static (view-backed) POSTGRES FV enables change tracking on its source view so the OFT
+        can resolve to an incremental refresh."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        change_tracking_sqls = self._change_tracking_sqls(fs)
+        self.assertEqual(
+            change_tracking_sqls,
+            ["ALTER VIEW TEST_DB.TEST_SCHEMA.DT_NAME SET CHANGE_TRACKING = TRUE"],
+        )
+        # The ALTER VIEW must precede the CREATE so the backend derives the refresh mode correctly.
+        alter_idx = next(
+            i for i, c in enumerate(fs._session.sql.call_args_list) if "CHANGE_TRACKING" in str(c[0][0]).upper()
+        )
+        create_idx = next(
+            i for i, c in enumerate(fs._session.sql.call_args_list) if "ONLINE FEATURE TABLE" in str(c[0][0]).upper()
+        )
+        self.assertLess(alter_idx, create_idx)
+
+    def test_managed_fv_does_not_enable_change_tracking(self) -> None:
+        """A managed (DT-backed) FV never issues ALTER VIEW ... CHANGE_TRACKING: change tracking is
+        inherent to an incremental Dynamic Table and cannot be set on a FULL one."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq="1h",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(self._change_tracking_sqls(fs), [])
+
+    def test_view_backed_fv_auto_refresh_enables_change_tracking(self) -> None:
+        """A static POSTGRES FV with AUTO refresh enables change tracking so the backend can
+        resolve to INCREMENTAL instead of silently downgrading to FULL."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode="AUTO",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(
+            self._change_tracking_sqls(fs),
+            ["ALTER VIEW TEST_DB.TEST_SCHEMA.DT_NAME SET CHANGE_TRACKING = TRUE"],
+        )
+
+    def test_view_backed_fv_no_refresh_mode_enables_change_tracking(self) -> None:
+        """A static POSTGRES FV with refresh_mode=None (unset) enables change tracking — the
+        backend defaults to AUTO which benefits from it."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode=None,
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(
+            self._change_tracking_sqls(fs),
+            ["ALTER VIEW TEST_DB.TEST_SCHEMA.DT_NAME SET CHANGE_TRACKING = TRUE"],
+        )
+
+    def test_view_backed_fv_full_refresh_skips_change_tracking(self) -> None:
+        """A static POSTGRES FV that explicitly requests a FULL refresh does not enable change tracking."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode="FULL",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(self._change_tracking_sqls(fs), [])
+
+    def test_view_backed_fv_unknown_refresh_mode_skips_change_tracking(self) -> None:
+        """An unrecognized refresh mode is treated conservatively — change tracking is not enabled."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode="CONTINUOUS",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(self._change_tracking_sqls(fs), [])
+
+    def test_managed_fv_auto_refresh_with_full_dt_does_not_fail(self) -> None:
+        """A managed (DT-backed) FV with AUTO refresh mode works even when the underlying DT uses
+        FULL refresh — GS resolves AUTO for the OFT and change tracking is not attempted on the DT."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq="1h",
+            refresh_mode="AUTO",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(self._change_tracking_sqls(fs), [])
+        create_sql = self._first_online_feature_table_sql(fs)
+        self.assertIn("REFRESH_MODE='AUTO'", create_sql)
+
+    def test_view_backed_fv_auto_refresh_change_tracking_failure_does_not_fail(self) -> None:
+        """A view-backed FV with AUTO refresh mode does not fail when enabling change tracking
+        errors — the OFT creation proceeds and GS resolves the refresh to FULL."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode="AUTO",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        original_side_effect = fs._session.sql.side_effect
+
+        def sql_side_effect_change_tracking_fails(query: str, *args: object, **kwargs: object) -> Any:
+            if "CHANGE_TRACKING" in query.upper():
+                mock_result = MagicMock()
+                mock_result.collect.side_effect = SnowparkSQLException("Insufficient privileges")
+                return mock_result
+            if original_side_effect is not None:
+                return original_side_effect(query, *args, **kwargs)
+            return MagicMock()
+
+        fs._session.sql.side_effect = sql_side_effect_change_tracking_fails
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        create_sql = self._first_online_feature_table_sql(fs)
+        self.assertIn("REFRESH_MODE='AUTO'", create_sql)
+
+    def test_view_backed_fv_incremental_refresh_change_tracking_failure_raises(self) -> None:
+        """A view-backed FV with explicit INCREMENTAL refresh mode raises when enabling change
+        tracking fails — the user explicitly requested INCREMENTAL and it cannot be fulfilled."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+            refresh_freq=None,
+            refresh_mode="INCREMENTAL",
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+        )
+
+        original_side_effect = fs._session.sql.side_effect
+
+        def sql_side_effect_change_tracking_fails(query: str, *args: object, **kwargs: object) -> Any:
+            if "CHANGE_TRACKING" in query.upper():
+                mock_result = MagicMock()
+                mock_result.collect.side_effect = SnowparkSQLException("Insufficient privileges")
+                return mock_result
+            if original_side_effect is not None:
+                return original_side_effect(query, *args, **kwargs)
+            return MagicMock()
+
+        fs._session.sql.side_effect = sql_side_effect_change_tracking_fails
+
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException):
+            fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+    def test_hybrid_table_view_backed_fv_does_not_enable_change_tracking(self) -> None:
+        """A static (view-backed) HYBRID_TABLE FV is out of scope: change tracking targets the
+        spec-backed POSTGRES refresh-mode derivation, and enabling it has base-table side effects
+        we don't impose on the legacy HYBRID_TABLE path."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "AMOUNT"],
+            column_types=[StringType(), DoubleType()],
+            store_type=OnlineStoreType.HYBRID_TABLE,
+            refresh_freq=None,
+        )
+        fs = self._make_mock_feature_store()
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        self.assertEqual(self._change_tracking_sqls(fs), [])
 
     # ------------------------------------------------------------------ #
     # POSTGRES path

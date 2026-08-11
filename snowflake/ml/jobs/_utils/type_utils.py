@@ -148,3 +148,4 @@ class SpecOptions:
     spec_overrides: Optional[dict[str, Any]] = None
     runtime: Optional[str] = None
     enable_stage_mount_v2: Optional[bool] = True
+    artifact_repositories: Optional[list[str]] = None

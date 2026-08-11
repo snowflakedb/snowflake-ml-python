@@ -1,0 +1,86 @@
+{
+  "kind": "BatchFeatureView",
+  "metadata": {
+    "client_version": "1.30.0",
+    "database": "JKEW_DB",
+    "internal_data_version": "1",
+    "name": "USER_PROFILE_INFO_BATCH",
+    "oft_id": "766522814722186",
+    "schema": "JKEW_SCHEMA",
+    "spec_format_version": "1",
+    "version": "V1"
+  },
+  "offline_configs": [
+    {
+      "columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "UPDATED_AT",
+          "type": "TimestampType"
+        },
+        {
+          "length": 16777216,
+          "name": "CITY",
+          "type": "StringType"
+        },
+        {
+          "name": "COUNTRY",
+          "type": "StringType"
+        },
+        {
+          "name": "IS_PREMIUM",
+          "type": "BooleanType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "USER_PROFILE_INFO_BATCH$v1",
+      "table_type": "BatchSource"
+    }
+  ],
+  "online_store_type": "postgres",
+  "spec": {
+    "features": [
+      {
+        "output_column": {
+          "name": "CITY",
+          "type": "StringType"
+        },
+        "source_column": {
+          "name": "CITY",
+          "type": "StringType"
+        }
+      },
+      {
+        "output_column": {
+          "name": "COUNTRY",
+          "type": "StringType"
+        },
+        "source_column": {
+          "name": "COUNTRY",
+          "type": "StringType"
+        }
+      },
+      {
+        "output_column": {
+          "name": "IS_PREMIUM",
+          "type": "BooleanType"
+        },
+        "source_column": {
+          "name": "IS_PREMIUM",
+          "type": "BooleanType"
+        }
+      }
+    ],
+    "ordered_entity_column_names": [
+      "USER_ID"
+    ],
+    "sources": [],
+    "target_lag_sec": 10,
+    "timestamp_field": "UPDATED_AT"
+  }
+}

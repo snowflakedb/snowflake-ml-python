@@ -29,3 +29,13 @@ py_library(
         "//snowflake/ml/_internal:platform_capabilities",
     ],
 )
+
+py_library(
+    name = "artifact_repository_integ_util",
+    testonly = True,
+    srcs = ["artifact_repository_integ_util.py"],
+    visibility = [
+        "//ci/type_check/runner:__pkg__",
+        "//tests/integ/snowflake/ml/registry:__subpackages__",
+    ],
+)

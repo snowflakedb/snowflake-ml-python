@@ -1,7 +1,8 @@
 import os
+import shutil
 import tempfile
-import uuid
 import warnings
+from typing import cast
 from unittest import mock
 
 import mlflow
@@ -9,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 from absl.testing import absltest
+from packaging import requirements
 from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal.exceptions import exceptions
@@ -19,6 +21,12 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers import mlflow as mlflow_handler
+from snowflake.ml.model._packager.model_meta import model_meta_schema
+
+# MLflow 3.x deprecates the local ./mlruns file-store tracking backend by default. These tests
+# create throwaway file-store tracking runs as fixtures, so opt in for the test process. The
+# handler does not rely on this: it routes its own internal runs through a temporary SQLite backend.
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
 
 class MLFlowHandlerTest(absltest.TestCase):
@@ -104,7 +112,8 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert pk.model
             assert pk.meta
             assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
-            self.assertNotEqual(pk.model.metadata.run_id, run_id)
+            # load_model reads the on-disk artifacts directly, so the model keeps its own run_id.
+            self.assertEqual(pk.model.metadata.run_id, run_id)
 
             model_packager.ModelPackager(os.path.join(tmpdir, "model1_again")).save(
                 name="model1_again", model=mlflow_pyfunc_model, options={"relax_version": False}
@@ -153,6 +162,87 @@ class MLFlowHandlerTest(absltest.TestCase):
             X_df = pd.DataFrame(X_test)
             np.testing.assert_allclose(np.expand_dims(predictions, axis=1), predict_method(X_df).to_numpy())
 
+    def test_mlflow_model_artifact_path_is_relative(self) -> None:
+        # MLflow 3.x support: the persisted artifact_path must be a relative dir name, since
+        # load_model rebuilds the path from it and both Warehouse/SPCS reject non-relative paths.
+        db = datasets.load_diabetes(as_frame=True)
+        X_train, _, y_train, _ = model_selection.train_test_split(db.data, db.target)
+        rf = ensemble.RandomForestRegressor(n_estimators=10, max_depth=3, max_features=3)
+        rf.fit(X_train, y_train)
+        with mlflow.start_run() as run:
+            signature = mlflow.models.signature.infer_signature(X_train, rf.predict(X_train))
+            mlflow.sklearn.log_model(rf, "model", signature=signature)
+            run_id = run.info.run_id
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.save(name="model1", model=mlflow_pyfunc_model, options={"relax_version": False})
+            assert pk.meta
+            blob_options = cast(model_meta_schema.MLFlowModelBlobOptions, pk.meta.models["model1"].options)
+            artifact_path = blob_options["artifact_path"]
+            self.assertFalse(
+                os.path.isabs(artifact_path), f"stored artifact_path must be relative, got: {artifact_path!r}"
+            )
+            self.assertNotIn("/", artifact_path, f"stored artifact_path must be a single name, got: {artifact_path!r}")
+            # A relative artifact_path must let load() reconstruct the model without error.
+            pk_reload = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk_reload.load()
+            assert isinstance(pk_reload.model, mlflow.pyfunc.PyFuncModel)
+
+    def test_sqlite_tracking_backend_sets_and_restores(self) -> None:
+        # The handler routes its internal re-log runs through a temporary SQLite tracking backend
+        # and must restore the caller's tracking URI afterward, without touching MLFLOW_ALLOW_FILE_STORE.
+        env_var = "MLFLOW_ALLOW_FILE_STORE"
+        previous_uri = mlflow.get_tracking_uri()
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(env_var, None)
+            with mlflow_handler._sqlite_tracking_backend() as experiment_id:
+                self.assertTrue(mlflow.get_tracking_uri().startswith("sqlite:///"))
+                self.assertIsNotNone(experiment_id)
+                self.assertNotIn(env_var, os.environ)
+            self.assertEqual(mlflow.get_tracking_uri(), previous_uri)
+            self.assertNotIn(env_var, os.environ)
+
+    def test_mlflow_save_model_relog_uses_sqlite_backend(self) -> None:
+        # A save_model() model has no backing run, so save() must re-log it through the temporary
+        # SQLite tracking backend. load_model reads artifacts directly and opens no run.
+        db = datasets.load_diabetes(as_frame=True)
+        X_train, _, y_train, _ = model_selection.train_test_split(db.data, db.target)
+        rf = ensemble.RandomForestRegressor(n_estimators=10, max_depth=3, max_features=3)
+        rf.fit(X_train, y_train)
+        signature = mlflow.models.signature.infer_signature(X_train, rf.predict(X_train))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "saved_model")
+            mlflow.sklearn.save_model(rf, save_path, signature=signature)
+            mlflow_pyfunc_model = mlflow.pyfunc.load_model(save_path)
+
+            with mock.patch.object(
+                mlflow_handler,
+                "_sqlite_tracking_backend",
+                wraps=mlflow_handler._sqlite_tracking_backend,
+            ) as sqlite_backend:
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.save(
+                    name="model1",
+                    model=mlflow_pyfunc_model,
+                    options={"relax_version": False, "ignore_mlflow_dependencies": True},
+                )
+                assert pk.meta
+                blob_options = cast(model_meta_schema.MLFlowModelBlobOptions, pk.meta.models["model1"].options)
+                self.assertFalse(os.path.isabs(blob_options["artifact_path"]))
+                # save_model models have no backing run, so save() must re-log via the SQLite backend.
+                save_time_backend_calls = sqlite_backend.call_count
+                self.assertGreaterEqual(save_time_backend_calls, 1)
+
+                pk_reload = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk_reload.load()
+                self.assertIsInstance(pk_reload.model, mlflow.pyfunc.PyFuncModel)
+                # load_model loads directly from disk without opening a run, so no extra backend call.
+                self.assertEqual(sqlite_backend.call_count, save_time_backend_calls)
+
     def test_mlflow_model_df_inputs(self) -> None:
         db = datasets.load_diabetes(as_frame=True)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
@@ -182,7 +272,8 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert pk.model
             assert pk.meta
             assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
-            self.assertNotEqual(pk.model.metadata.run_id, run_id)
+            # load_model reads the on-disk artifacts directly, so the model keeps its own run_id.
+            self.assertEqual(pk.model.metadata.run_id, run_id)
 
             np.testing.assert_allclose(predictions, pk.model.predict(X_test))
 
@@ -216,13 +307,18 @@ class MLFlowHandlerTest(absltest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             local_path = mlflow.artifacts.download_artifacts(f"runs:/{run_id}/model", dst_path=tmpdir)
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(local_path)
-            mlflow_pyfunc_model.metadata.run_id = uuid.uuid4().hex.lower()
 
+            # A model_uri that does not resolve to any downloadable artifacts must surface a clear error.
+            # Note: under MLflow 3.x, models resolve via ``models:/<id>`` URIs rather than the run id, so
+            # a missing artifact location (not a stale run id) is what makes artifacts unreachable.
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model artifacts."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",
                     model=mlflow_pyfunc_model,
-                    options={"ignore_mlflow_dependencies": True},
+                    options={
+                        "model_uri": os.path.join(tmpdir, "nonexistent_model_dir"),
+                        "ignore_mlflow_dependencies": True,
+                    },
                 )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
@@ -248,9 +344,20 @@ class MLFlowHandlerTest(absltest.TestCase):
                     },
                 )
 
+            # A model whose artifacts are present but whose dependency files (conda.yaml,
+            # python_env.yaml, requirements.txt) are missing must surface a clear dependency error.
+            model_without_deps = os.path.join(tmpdir, "model_without_deps")
+            shutil.copytree(local_path, model_without_deps)
+            for dependency_file in ("conda.yaml", "python_env.yaml", "requirements.txt"):
+                dependency_path = os.path.join(model_without_deps, dependency_file)
+                if os.path.exists(dependency_path):
+                    os.remove(dependency_path)
+
             with self.assertRaisesRegex(ValueError, "Cannot load MLFlow model dependencies."):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                    name="model1", model=mlflow_pyfunc_model, options={"relax_version": False}
+                    name="model1",
+                    model=mlflow_pyfunc_model,
+                    options={"model_uri": model_without_deps, "relax_version": False},
                 )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model2"))
@@ -269,7 +376,8 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert pk.model
             assert pk.meta
             assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
-            self.assertNotEqual(pk.model.metadata.run_id, run_id)
+            # load_model reads the on-disk artifacts directly, so the model keeps its own run_id.
+            self.assertEqual(pk.model.metadata.run_id, run_id)
 
             np.testing.assert_allclose(predictions, pk.model.predict(X_test))
 
@@ -342,6 +450,39 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
 
             np.testing.assert_allclose(predictions, pk.model.predict(X_test))
+
+    def test_mlflow_model_env_declares_setuptools_that_provides_pkg_resources(self) -> None:
+        # setuptools removed the bundled `pkg_resources` module in 82.0.0 (81.x only deprecated it).
+        # Loading an MLflow model imports opentelemetry (via mlflow's tracing subsystem), whose older
+        # releases import `pkg_resources` at import time, so the deployment environment must resolve a
+        # setuptools that still provides it. Assert the handler declares a spec that excludes 82.0.0+.
+        first_setuptools_release_without_pkg_resources = "82.0.0"
+        last_setuptools_release_with_pkg_resources = "81.0.0"
+
+        db = datasets.load_diabetes(as_frame=True)
+        X_train, _, y_train, _ = model_selection.train_test_split(db.data, db.target)
+        rf = ensemble.RandomForestRegressor(n_estimators=10, max_depth=3, max_features=3)
+        rf.fit(X_train, y_train)
+        signature = mlflow.models.signature.infer_signature(X_train, rf.predict(X_train))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "saved_model")
+            mlflow.sklearn.save_model(rf, save_path, signature=signature)
+            mlflow_pyfunc_model = mlflow.pyfunc.load_model(save_path)
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.save(name="model1", model=mlflow_pyfunc_model, options={"relax_version": False})
+            assert pk.meta
+
+            setuptools_dependencies = [
+                requirements.Requirement(dep.split("::")[-1])
+                for dep in pk.meta.env.conda_dependencies
+                if requirements.Requirement(dep.split("::")[-1]).name == "setuptools"
+            ]
+            self.assertLen(setuptools_dependencies, 1, "setuptools must be declared exactly once in conda dependencies")
+            setuptools_specifier = setuptools_dependencies[0].specifier
+            self.assertFalse(setuptools_specifier.contains(first_setuptools_release_without_pkg_resources))
+            self.assertTrue(setuptools_specifier.contains(last_setuptools_release_with_pkg_resources))
 
     def test_mlflow_python_model_from_save_model(self) -> None:
         """PythonModel subclasses saved via mlflow.pyfunc.save_model() and loaded

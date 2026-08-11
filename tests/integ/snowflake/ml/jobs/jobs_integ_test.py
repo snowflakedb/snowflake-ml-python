@@ -1544,6 +1544,23 @@ class JobManagerTest(JobTestBase):
         finally:
             self.dbm.drop_compute_pool(compute_name, if_exists=True)
 
+    def test_job_with_artifact_repositories(self) -> None:
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            artifact_repositories=["snowflake.snowpark.pypi_shared_repository"],
+            pip_requirements=["catboost"],
+        )
+        def test_function() -> None:
+            import catboost
+
+            print(f"catboost version: {catboost.__version__}")
+
+        job = test_function()
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        self.assertRegex(job.get_logs(verbose=True), r"catboost version: \d+\.\d+")
+
 
 if __name__ == "__main__":
     absltest.main()
