@@ -6,6 +6,7 @@ from typing import Any, Optional
 from unittest.mock import patch
 from uuid import uuid4
 
+import pandas as pd
 from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
 
@@ -1190,6 +1191,158 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         finally:
             # Cleanup
             self._session.sql(f"DROP TABLE IF EXISTS {gap_table}").collect()
+
+    def test_null_handling_tiled_aggregations(self) -> None:
+        """NULL handling across tiled aggregations: an all-NULL key stays NULL/zero, a key with a single
+        valued tile has that value drive every aggregation, and adding a NULL to a populated tile then
+        recomputing leaves the window aggregate unchanged. One feature view serves all keys."""
+        fs = self._create_feature_store()
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.events_null_handling_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, amount FLOAT, category VARCHAR(64))
+            """
+        ).collect()
+        # Three hourly tiles (00:00, 01:00, 02:00) per key, two events each:
+        #   user 1 -> every event NULL, so every tile is NULL.
+        #   user 2 -> tiles 00:00/01:00 all-NULL; tile 02:00 holds a NULL plus one real value.
+        #   user 3 -> every event valued (a NULL is added to its 01:00 tile later).
+        self._session.sql(
+            f"""INSERT INTO {table} (user_id, event_ts, amount, category)
+                VALUES
+                (1, '2024-01-01 00:15:00', NULL, NULL),
+                (1, '2024-01-01 00:45:00', NULL, NULL),
+                (1, '2024-01-01 01:15:00', NULL, NULL),
+                (1, '2024-01-01 01:45:00', NULL, NULL),
+                (1, '2024-01-01 02:15:00', NULL, NULL),
+                (1, '2024-01-01 02:45:00', NULL, NULL),
+                (2, '2024-01-01 00:15:00', NULL, NULL),
+                (2, '2024-01-01 00:45:00', NULL, NULL),
+                (2, '2024-01-01 01:15:00', NULL, NULL),
+                (2, '2024-01-01 01:45:00', NULL, NULL),
+                (2, '2024-01-01 02:15:00', NULL, NULL),
+                (2, '2024-01-01 02:45:00', 42.0, 'cat1'),
+                (3, '2024-01-01 00:15:00', 10.0, 'cat1'),
+                (3, '2024-01-01 00:45:00', 20.0, 'cat1'),
+                (3, '2024-01-01 01:15:00', 30.0, 'cat1'),
+                (3, '2024-01-01 01:45:00', 40.0, 'cat1'),
+                (3, '2024-01-01 02:15:00', 50.0, 'cat1'),
+                (3, '2024-01-01 02:45:00', 60.0, 'cat1')
+            """
+        ).collect()
+        try:
+            # One feature per user-facing aggregation function.
+            features = [
+                Feature.sum("amount", "3h").alias("f_sum"),
+                Feature.count("amount", "3h").alias("f_count"),
+                Feature.avg("amount", "3h").alias("f_avg"),
+                Feature.min("amount", "3h").alias("f_min"),
+                Feature.max("amount", "3h").alias("f_max"),
+                Feature.stddev("amount", "3h").alias("f_stddev"),
+                Feature.var("amount", "3h").alias("f_var"),
+                Feature.approx_count_distinct("category", "3h").alias("f_acd"),
+                Feature.approx_percentile("amount", "3h", percentile=0.5).alias("f_pct"),
+                Feature.last_n("category", "3h", n=3).alias("f_last_n"),
+                Feature.first_n("category", "3h", n=3).alias("f_first_n"),
+                Feature.last_distinct_n("category", "3h", n=3).alias("f_last_distinct_n"),
+                Feature.first_distinct_n("category", "3h", n=3).alias("f_first_distinct_n"),
+            ]
+            sql = f"SELECT user_id, event_ts, amount, category FROM {table}"
+            fv = FeatureView(
+                name="null_handling",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            # query_ts 03:00 with a 3h window -> complete tiles 00:00, 01:00, 02:00.
+            spine_df = self._session.create_dataframe(
+                [
+                    (1, datetime(2024, 1, 1, 3, 0, 0)),
+                    (2, datetime(2024, 1, 1, 3, 0, 0)),
+                    (3, datetime(2024, 1, 1, 3, 0, 0)),
+                ],
+                schema=["user_id", "query_ts"],
+            )
+
+            def read_rows() -> "pd.DataFrame":
+                return (
+                    fs.generate_training_set(
+                        spine_df=spine_df,
+                        features=[registered_fv],
+                        spine_timestamp_col="query_ts",
+                        join_method="cte",
+                    )
+                    .to_pandas()
+                    .set_index("USER_ID")
+                )
+
+            scalar_null_cols = ("F_SUM", "F_AVG", "F_MIN", "F_MAX", "F_STDDEV", "F_VAR", "F_PCT")
+            list_cols = ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N")
+
+            def assert_all_null(query_result: "pd.Series[Any]") -> None:
+                # Over an all-NULL window every scalar and list aggregation is NULL; only COUNT and
+                # APPROX_COUNT_DISTINCT report 0.
+                for column in scalar_null_cols + list_cols:
+                    self.assertTrue(
+                        pd.isna(query_result[column]), f"expected NULL {column}, got {query_result[column]!r}"
+                    )
+                self.assertEqual(int(query_result["F_COUNT"]), 0)
+                self.assertEqual(int(query_result["F_ACD"]), 0)
+
+            def assert_single_value(query_result: "pd.Series[Any]") -> None:
+                # The single non-NULL event (42.0 / 'cat1') drives every aggregation.
+                for column in ("F_SUM", "F_AVG", "F_MIN", "F_MAX", "F_PCT"):
+                    self.assertEqual(float(query_result[column]), 42.0)
+                self.assertEqual(float(query_result["F_STDDEV"]), 0.0)  # single value -> population std 0
+                self.assertEqual(float(query_result["F_VAR"]), 0.0)
+                self.assertEqual(int(query_result["F_COUNT"]), 1)
+                self.assertEqual(int(query_result["F_ACD"]), 1)
+                for column in list_cols:
+                    self.assertEqual(json.loads(query_result[column]), ["cat1"])
+
+            def assert_all_valued(query_result: "pd.Series[Any]") -> None:
+                # Six valued events (amounts 10-60, all category 'cat1') across three tiles.
+                self.assertEqual(float(query_result["F_SUM"]), 210.0)
+                self.assertEqual(int(query_result["F_COUNT"]), 6)
+                self.assertEqual(float(query_result["F_AVG"]), 35.0)
+                self.assertEqual(float(query_result["F_MIN"]), 10.0)
+                self.assertEqual(float(query_result["F_MAX"]), 60.0)
+                self.assertAlmostEqual(float(query_result["F_VAR"]), 291.6667, places=1)
+                self.assertAlmostEqual(float(query_result["F_STDDEV"]), 17.0783, places=1)
+                self.assertEqual(int(query_result["F_ACD"]), 1)
+                self.assertGreaterEqual(float(query_result["F_PCT"]), 10.0)  # approx median of [10..60]
+                self.assertLessEqual(float(query_result["F_PCT"]), 60.0)
+                for column in ("F_LAST_N", "F_FIRST_N"):
+                    self.assertEqual(json.loads(query_result[column]), ["cat1", "cat1", "cat1"])
+                for column in ("F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+                    self.assertEqual(json.loads(query_result[column]), ["cat1"])
+
+            rows = read_rows()
+            assert_all_null(rows.loc[1])
+            assert_single_value(rows.loc[2])
+            assert_all_valued(rows.loc[3])
+
+            # Add a NULL event to user 3's 01:00 tile (which already holds values) and
+            # recompute the tiles; the NULL is skipped, so user 3's aggregate is unchanged.
+            self._session.sql(
+                f"""INSERT INTO {table} (user_id, event_ts, amount, category)
+                    VALUES
+                    (3, '2024-01-01 01:30:00', NULL, NULL)
+                """
+            ).collect()
+            fs.refresh_feature_view(registered_fv)
+
+            assert_all_valued(read_rows().loc[3])
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {table}").collect()
 
     def test_count_aggregation_values(self) -> None:
         """Test COUNT aggregation produces correct values."""

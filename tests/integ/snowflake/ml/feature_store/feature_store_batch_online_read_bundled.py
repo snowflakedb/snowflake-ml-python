@@ -902,6 +902,141 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.assertEqual(online_cfg["refresh_mode"], "FULL")
 
     # =========================================================================
+    # E2E: Batch tiled NULL-handling parity — online read of all-NULL data
+    # =========================================================================
+
+    def _build_all_aggregation_features(self, *, numeric_col: str, category_col: str, window: str, n: int = 3) -> list:
+        """Build one feature per aggregation the Postgres online store supports (aliases uppercase to match columns)."""
+        return [
+            Feature.sum(numeric_col, window).alias("F_SUM"),
+            Feature.count(numeric_col, window).alias("F_COUNT"),
+            Feature.avg(numeric_col, window).alias("F_AVG"),
+            Feature.min(numeric_col, window).alias("F_MIN"),
+            Feature.max(numeric_col, window).alias("F_MAX"),
+            # STDDEV online serving is pending Quake PR 424: SnowML sends the function token "std" while the
+            # online engine matches "stddev". Re-enable once an image including that PR is deployed.
+            # TODO: uncomment after the next Quake release (PR 424).
+            # Feature.stddev(numeric_col, window).alias("F_STDDEV"),
+            Feature.approx_count_distinct(category_col, window).alias("F_ACD"),
+            Feature.last_n(category_col, window, n=n).alias("F_LAST_N"),
+            Feature.first_n(category_col, window, n=n).alias("F_FIRST_N"),
+            Feature.last_distinct_n(category_col, window, n=n).alias("F_LAST_DISTINCT_N"),
+            Feature.first_distinct_n(category_col, window, n=n).alias("F_FIRST_DISTINCT_N"),
+        ]
+
+    @staticmethod
+    def _online_list(value) -> list:
+        """Normalize an online list-aggregation column (JSON string or array) to a Python list."""
+        if isinstance(value, str):
+            return json.loads(value)
+        return list(value)
+
+    def test_batch_tiled_null_handling_online_read(self) -> None:
+        """Tiled online read of NULL data: an all-NULL key follows the NULL/zero contract while a key whose
+        only value lives in one tile has that value drive every aggregation. One FV serves both keys."""
+        import pandas as pd
+
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_TILED_NULL_{s}"
+        key_all_null = f"U_NULL_ALL_{s}"
+        key_one_value = f"U_NULL_ONE_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_NULL_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR, EVENT_TIME TIMESTAMP_NTZ, AMOUNT FLOAT, CATEGORY VARCHAR
+            )
+        """
+        ).collect()
+        # Anchor to UTC day boundaries so every 1d tile lands inside the online 4d window.
+        utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+        yesterday = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
+        two_days_ago = f"DATEADD('day', -2, DATE_TRUNC('day', {utc_now_ntz}))"
+        three_days_ago = f"DATEADD('day', -3, DATE_TRUNC('day', {utc_now_ntz}))"
+        # key_all_null: two tiles, two all-NULL events each -> every tile NULL.
+        # key_one_value: two all-NULL tiles plus one tile holding a NULL and a single real value.
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} (USER_ID, EVENT_TIME, AMOUNT, CATEGORY) VALUES
+                ({key_all_null!r}, DATEADD('hour', 1, {two_days_ago}), NULL, NULL),
+                ({key_all_null!r}, DATEADD('hour', 2, {two_days_ago}), NULL, NULL),
+                ({key_all_null!r}, DATEADD('hour', 1, {yesterday}), NULL, NULL),
+                ({key_all_null!r}, DATEADD('hour', 2, {yesterday}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 1, {three_days_ago}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 2, {three_days_ago}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 1, {two_days_ago}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 2, {two_days_ago}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 1, {yesterday}), NULL, NULL),
+                ({key_one_value!r}, DATEADD('hour', 2, {yesterday}), 42.0, 'cat1')
+        """
+        ).collect()
+
+        features = self._build_all_aggregation_features(numeric_col="AMOUNT", category_col="CATEGORY", window="4d")
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self._session.table(table_name),
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.is_tiled)
+        self.assertTrue(registered.online)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate_all_null(pdf):
+            row = pdf.iloc[0]
+            self.assertTrue(pd.isna(row["F_SUM"]), f"F_SUM={row['F_SUM']!r}")
+            self.assert_long_feature(row["F_COUNT"], expected=0, msg="count")
+            self.assertTrue(pd.isna(row["F_AVG"]), f"F_AVG={row['F_AVG']!r}")
+            self.assertTrue(pd.isna(row["F_MIN"]), f"F_MIN={row['F_MIN']!r}")
+            self.assertTrue(pd.isna(row["F_MAX"]), f"F_MAX={row['F_MAX']!r}")
+            # TODO: uncomment after the next Quake release (PR 424).
+            # self.assertTrue(pd.isna(row["F_STDDEV"]), f"F_STDDEV={row['F_STDDEV']!r}")
+            # Expected result (offline is the source of truth): for an all-NULL key offline serving returns 0
+            # for approx_count_distinct and NULL for the list aggregations, so aligned online serving must
+            # match. Re-enable these offline-parity assertions once a Quake image including PR 424 (which
+            # aligns approx_count_distinct and the list aggregations with offline) is deployed:
+            # TODO: uncomment after the next Quake release (PR 424).
+            # self.assertEqual(int(row["F_ACD"]), 0, f"F_ACD={row['F_ACD']!r}")
+            # for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+            #     self.assertTrue(pd.isna(row[col]), f"{col}={row[col]!r}")
+            # Current tiles-only online serving instead returns NULL approx_count_distinct and empty-array list
+            # aggregations for an all-NULL key. NOTE: once the PR 424 image is deployed the two assertions below
+            # become incorrect and must be deleted (replaced by the offline-parity assertions above).
+            self.assertTrue(pd.isna(row["F_ACD"]), f"F_ACD={row['F_ACD']!r}")
+            for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+                self.assertEqual(self._online_list(row[col]), [], f"{col}={row[col]!r}")
+
+        def _validate_one_value(pdf):
+            row = pdf.iloc[0]
+            # The single non-NULL value drives every aggregation.
+            self.assertAlmostEqual(float(row["F_SUM"]), 42.0, places=2)
+            self.assert_long_feature(row["F_COUNT"], expected=1, msg="count")
+            self.assertAlmostEqual(float(row["F_AVG"]), 42.0, places=2)
+            self.assertAlmostEqual(float(row["F_MIN"]), 42.0, places=2)
+            self.assertAlmostEqual(float(row["F_MAX"]), 42.0, places=2)
+            # TODO: uncomment after the next Quake release (PR 424).
+            # self.assertAlmostEqual(float(row["F_STDDEV"]), 0.0, places=2)  # single value -> population std 0
+            self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
+            for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+                self.assertEqual(self._online_list(row[col]), ["cat1"], f"{col}={row[col]!r}")
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[key_one_value]], validate_fn=_validate_one_value, desc="tiled null all-but-one"
+        )
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[key_all_null]], validate_fn=_validate_all_null, desc="tiled null all events"
+        )
+
+    # =========================================================================
     # E2E: Multi-entity batch FV — registration -> online read
     # =========================================================================
 
@@ -1469,39 +1604,94 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         fs.register_feature_view(fv, "v1")
         self._wait_offline_dt_rows(fs, fv_name, "v1")
 
+        # Online reads drop timestamp_col (EVENT_TIME) from the schema.
+        compared_cols = ("USER_ID", "SCORE", "RANK", "PRICE", "IS_ACTIVE")
+
         def _validate_snowpark(pdf):
-            # Online reads drop timestamp_col (EVENT_TIME) from the schema.
-            for col in ("USER_ID", "SCORE", "RANK", "PRICE", "IS_ACTIVE"):
+            # Require every compared column to be present AND non-null so the warmup poll waits for
+            # the online row to be fully materialized before the measured parity reads run. A
+            # transient null would otherwise flip pandas dtype inference (bool -> object, float ->
+            # nan) and flake the dtype/value parity assertions below.
+            for col in compared_cols:
                 self.assertIn(col, pdf.columns)
+                self.assertFalse(
+                    bool(pd.isna(pdf.iloc[0][col])),
+                    f"online value for {col} not yet materialized (null)",
+                )
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate_snowpark, desc="as_pandas parity warmup"
         )
 
         fv_live = fs.get_feature_view(fv_name, "v1")
-        # Retry both parity arms: a transient online-serving 404 can surface on a
-        # single measured read even after the warmup poll observed rows.
-        pdf_sp = self._read_online_with_retry(fs, fv_live, keys=[[entity_key]], as_pandas=False).to_pandas()
-        pdf_fast = self._read_online_with_retry(fs, fv_live, keys=[[entity_key]], as_pandas=True)
+        # Retry both parity arms: a transient online-serving 404 can surface on a single measured
+        # read even after the warmup poll observed rows. require_non_null_cols also retries when the
+        # online row is present but a value is still null, so both arms observe the same
+        # fully-materialized row (a transient null flips dtype inference and skews the SCORE value).
+        non_null_cols = list(compared_cols)
+        pdf_sp = self._read_online_with_retry(
+            fs, fv_live, keys=[[entity_key]], as_pandas=False, require_non_null_cols=non_null_cols
+        ).to_pandas()
+        pdf_fast = self._read_online_with_retry(
+            fs, fv_live, keys=[[entity_key]], as_pandas=True, require_non_null_cols=non_null_cols
+        )
 
-        self.assertIsInstance(pdf_fast, pd.DataFrame)
-        self.assertEqual(list(pdf_fast.columns), list(pdf_sp.columns))
-        # NUMBER columns: fast path keeps Decimal (object), Snowpark Arrow downcasts to narrow numeric.
-        decimal_skew_cols = {"RANK", "PRICE"}
-        for col in pdf_sp.columns:
-            if col in decimal_skew_cols:
-                continue
-            self.assertEqual(
-                pdf_fast[col].dtype.kind,
-                pdf_sp[col].dtype.kind,
-                f"dtype-kind mismatch on {col}: fast={pdf_fast[col].dtype} vs sp={pdf_sp[col].dtype}",
+        def _log_parity_diagnostics() -> None:
+            # Domain-only diagnostics so a future failure shows whether the online value was still
+            # null (a materialization race) or the two read paths genuinely diverged on type/value.
+            logging.error(
+                "as_pandas parity mismatch for %s/v1 key=%s\n"
+                "  fast row=%r\n  fast dtypes=%s\n"
+                "  snowpark row=%r\n  snowpark dtypes=%s",
+                fv_name,
+                entity_key,
+                pdf_fast.iloc[0].to_dict(),
+                pdf_fast.dtypes.to_dict(),
+                pdf_sp.iloc[0].to_dict(),
+                pdf_sp.dtypes.to_dict(),
             )
-        self.assertEqual(pdf_fast.iloc[0]["USER_ID"], pdf_sp.iloc[0]["USER_ID"])
-        self.assertAlmostEqual(float(pdf_fast.iloc[0]["SCORE"]), float(pdf_sp.iloc[0]["SCORE"]), places=5)
-        self.assertEqual(int(pdf_fast.iloc[0]["RANK"]), int(pdf_sp.iloc[0]["RANK"]))
-        # Snowpark Arrow rounds NUMBER(10,2) to a narrow int; compare via float+round.
-        self.assertEqual(round(float(pdf_fast.iloc[0]["PRICE"])), round(float(pdf_sp.iloc[0]["PRICE"])))
-        self.assertEqual(bool(pdf_fast.iloc[0]["IS_ACTIVE"]), bool(pdf_sp.iloc[0]["IS_ACTIVE"]))
+            try:
+                offline_pdf = fs.read_feature_view(fv_live, store_type=StoreType.OFFLINE).to_pandas()
+                offline_row = offline_pdf.iloc[0].to_dict() if len(offline_pdf) else "<no offline rows>"
+                logging.error("  offline row=%r", offline_row)
+            except Exception:
+                logging.error("  offline row unavailable", exc_info=True)
+            try:
+                logging.error("  online service status=%r", fs.get_online_service_status())
+            except Exception:
+                logging.error("  online service status unavailable", exc_info=True)
+
+        try:
+            self.assertIsInstance(pdf_fast, pd.DataFrame)
+            self.assertEqual(list(pdf_fast.columns), list(pdf_sp.columns))
+            # Both arms are gated on non-null values above; assert it explicitly so any residual
+            # race surfaces as "value still null" rather than a confusing nan/dtype-kind failure.
+            for col in compared_cols:
+                self.assertFalse(
+                    bool(pd.isna(pdf_fast.iloc[0][col])), f"fast-path value for {col} still null after retries"
+                )
+                self.assertFalse(
+                    bool(pd.isna(pdf_sp.iloc[0][col])), f"snowpark value for {col} still null after retries"
+                )
+            # NUMBER columns: fast path keeps Decimal (object), Snowpark Arrow downcasts to narrow numeric.
+            decimal_skew_cols = {"RANK", "PRICE"}
+            for col in pdf_sp.columns:
+                if col in decimal_skew_cols:
+                    continue
+                self.assertEqual(
+                    pdf_fast[col].dtype.kind,
+                    pdf_sp[col].dtype.kind,
+                    f"dtype-kind mismatch on {col}: fast={pdf_fast[col].dtype} vs sp={pdf_sp[col].dtype}",
+                )
+            self.assertEqual(pdf_fast.iloc[0]["USER_ID"], pdf_sp.iloc[0]["USER_ID"])
+            self.assertAlmostEqual(float(pdf_fast.iloc[0]["SCORE"]), float(pdf_sp.iloc[0]["SCORE"]), places=5)
+            self.assertEqual(int(pdf_fast.iloc[0]["RANK"]), int(pdf_sp.iloc[0]["RANK"]))
+            # Snowpark Arrow rounds NUMBER(10,2) to a narrow int; compare via float+round.
+            self.assertEqual(round(float(pdf_fast.iloc[0]["PRICE"])), round(float(pdf_sp.iloc[0]["PRICE"])))
+            self.assertEqual(bool(pdf_fast.iloc[0]["IS_ACTIVE"]), bool(pdf_sp.iloc[0]["IS_ACTIVE"]))
+        except AssertionError:
+            _log_parity_diagnostics()
+            raise
 
     # =========================================================================
     # Schema validation: unsupported column type

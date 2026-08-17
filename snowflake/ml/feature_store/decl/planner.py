@@ -11,6 +11,8 @@ from typing import Any
 from snowflake.ml.feature_store.decl.dependencies import topological_sort
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
+    _full_spec_hash,
+    _normalize_applied_bfv_for_hash,
     batch_feature_view_structural_equivalent,
     compute_local_spec_hash,
     compute_source_diff_kind,
@@ -732,7 +734,24 @@ def generate_plan(
         else:
             current_hash = structural_fingerprint_hash(data)
 
-        if current_hash == applied.content_hash:
+        # For BatchFeatureView, re-compute the applied hash against a
+        # normalised copy of the applied payload so Snowflake-resolved
+        # refresh_mode (INCREMENTAL / FULL) does not produce a spurious hash
+        # mismatch when the operator never authored the field.
+        applied_compare_hash = applied.content_hash
+        if used_full_spec and kind == "BatchFeatureView" and isinstance(applied.spec_payload, dict):
+            from snowflake.ml.feature_store.decl.spec_compiler import (  # noqa: PLC0415
+                compile_to_spec,
+            )
+
+            try:
+                local_compiled = compile_to_spec(data, db_for_compile, sch_for_compile)
+                applied_normalized = _normalize_applied_bfv_for_hash(applied.spec_payload, local_compiled)
+                applied_compare_hash = _full_spec_hash(applied_normalized)
+            except Exception:  # noqa: BLE001 — defensive fallback
+                pass
+
+        if current_hash == applied_compare_hash:
             # Kind-agnostic operational-drift fast path (B6 + B7).  Structural
             # fingerprint matches, but the operator may have edited an
             # in-place knob — description (L3), refresh cadence (L4),

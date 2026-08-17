@@ -449,5 +449,110 @@ class TestNoMissingVersionOnDegradedSpecWithVersion:
         )
 
 
+# ---------------------------------------------------------------------------
+# refresh_mode: AUTO — must propagate as a validation error, not SpecBase fallback
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshModeAutoPropagatesToCaller:
+    """Pin that ``refresh_mode: AUTO`` produces an actionable ``ValidationError``
+    instead of silently falling back to bare ``SpecBase``.
+
+    Root cause of the MY_ADV_BFV_DECL apply crash
+    (``plans/bug_adv_bfv_no_resolvable_source.md``):
+
+    1. ``MY_ADV_BFV_DECL.yaml`` contained ``refresh_mode: AUTO``.
+    2. ``AUTO`` is not in the supported Literal.
+    3. Pydantic raised ``ValidationError: Input should be 'FULL' or
+       'INCREMENTAL'`` — a generic literal error message that did NOT
+       match the ``_dict_to_spec`` allowlist.
+    4. The loader silently degraded to a bare ``SpecBase`` with only
+       ``{kind, name, version, database, schema}`` — no ``sources``,
+       ``entities``, or ``features``.
+    5. The planner wrote a sparse payload into the plan file.
+    6. At apply time ``_build_feature_df`` read ``payload.get("sources", []) == []``
+       and raised ``"FeatureView ... has no resolvable source"``.
+
+    The fix: a custom validator on ``FeatureView`` raises with a message
+    containing ``"is not valid on"`` so ``_dict_to_spec`` propagates the
+    error to the caller rather than swallowing it.
+    """
+
+    def test_refresh_mode_auto_raises_validation_error_from_model(self) -> None:
+        from pydantic import ValidationError
+
+        from snowflake.ml.feature_store.decl.spec_models import BatchFeatureView
+
+        with pytest.raises(ValidationError, match="is not valid on"):
+            BatchFeatureView.model_validate(
+                {
+                    "kind": "BatchFeatureView",
+                    "name": "MY_ADV_BFV_DECL",
+                    "version": "V1",
+                    "refresh_mode": "AUTO",
+                }
+            )
+
+    def test_refresh_mode_auto_propagates_through_dict_to_spec(self) -> None:
+        """``_dict_to_spec`` must re-raise, not swallow, the AUTO error."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="is not valid on"):
+            _dict_to_spec(
+                {
+                    "kind": "BatchFeatureView",
+                    "name": "MY_ADV_BFV_DECL",
+                    "version": "V1",
+                    "refresh_mode": "AUTO",
+                }
+            )
+
+    def test_refresh_mode_auto_does_not_produce_specbase_fallback(self) -> None:
+        """Confirm that the SpecBase fallback is NOT triggered for AUTO."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            result = _dict_to_spec(
+                {
+                    "kind": "BatchFeatureView",
+                    "name": "MY_ADV_BFV_DECL",
+                    "version": "V1",
+                    "sources": [{"name": "SRC", "source_type": "Batch"}],
+                    "refresh_mode": "AUTO",
+                }
+            )
+            assert not isinstance(result, SpecBase), (
+                "SpecBase fallback must not occur for refresh_mode: AUTO — "
+                "a sparse payload without sources causes a confusing "
+                "'no resolvable source' crash at apply time"
+            )
+
+    def test_unknown_refresh_mode_also_propagates(self) -> None:
+        """Any unrecognised refresh_mode value should propagate, not fall back."""
+        from pydantic import ValidationError
+
+        from snowflake.ml.feature_store.decl.spec_models import FeatureView
+
+        with pytest.raises(ValidationError, match="is not valid on"):
+            FeatureView.model_validate(
+                {
+                    "kind": "BatchFeatureView",
+                    "name": "FV1",
+                    "version": "V1",
+                    "refresh_mode": "INCREMENTAL_MAYBE",
+                }
+            )
+
+    def test_valid_refresh_modes_are_still_accepted(self) -> None:
+        """'FULL' and 'INCREMENTAL' remain valid; None (omitted) is also valid."""
+        from snowflake.ml.feature_store.decl.spec_models import FeatureView
+
+        for mode in ("FULL", "INCREMENTAL", None):
+            fv = FeatureView.model_validate(
+                {"kind": "BatchFeatureView", "name": "FV1", "version": "V1", "refresh_mode": mode}
+            )
+            assert fv.refresh_mode == mode
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

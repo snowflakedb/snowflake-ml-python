@@ -432,6 +432,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         """
         deadline = time.time() + timeout
         last_err: Optional[str] = None
+        last_pdf_repr: Optional[str] = None
         while time.time() < deadline:
             try:
                 pdf = self.fs.read_feature_view(
@@ -439,6 +440,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
                     keys=keys,
                     request_context=request_context,
                 )
+                last_pdf_repr = pdf.to_dict(orient="records") if isinstance(pdf, pd.DataFrame) else repr(pdf)
                 if len(pdf) >= len(keys):
                     if validate_fn is not None:
                         validate_fn(pdf)
@@ -456,7 +458,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             time.sleep(5)
         self.fail(
             f"read_feature_view({rtfv_live.name}/{rtfv_live.version}) did not converge within "
-            f"{timeout}s; last_err={last_err!r}"
+            f"{timeout}s; last_err={last_err!r}; last_read={last_pdf_repr!r}"
         )
 
     def _make_request_source(self) -> RequestSource:
@@ -694,6 +696,15 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             suffix="RD2",
             rows=list(zip(user_ids, balances)),
         )
+        # Wait for every upstream row's OFT side to be online-readable before wiring
+        # it into an RTFV, so the RTFV wait budget covers RTFV propagation only.
+        self._poll_online_read(
+            self.fs,
+            upstream_name,
+            "v1",
+            keys=[[uid] for uid in user_ids],
+            desc="RTFV upstream BFV (RD2)",
+        )
         upstream = self.fs.get_feature_view(upstream_name, "v1")
 
         rtfv_name = f"RTFV_INTEG_RD2_{s}"
@@ -718,10 +729,30 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
 
             request_context = pd.DataFrame({"WEIGHT": weights})
             keys = [[uid] for uid in user_ids]
+
+            def _validate_all_rows(pdf: pd.DataFrame) -> None:
+                # Keep polling until every row's WEIGHTED_BALANCE converges to its
+                # expected value; a freshly registered RTFV can transiently return
+                # a stale/zero value for a user whose upstream row has not yet
+                # propagated to the online feature table.
+                user_col = next((c for c in pdf.columns if c.upper() == "USER_ID"), None)
+                weighted_col = next((c for c in pdf.columns if c.upper() == "WEIGHTED_BALANCE"), None)
+                self.assertIsNotNone(user_col, "USER_ID column missing from RTFV read")
+                self.assertIsNotNone(weighted_col, "WEIGHTED_BALANCE column missing from RTFV read")
+                observed = {row[user_col]: float(row[weighted_col]) for _, row in pdf.iterrows()}
+                for uid, expected_value in expected.items():
+                    self.assertAlmostEqual(
+                        observed.get(uid),
+                        expected_value,
+                        places=4,
+                        msg=f"WEIGHTED_BALANCE for {uid} was {observed.get(uid)!r}, expected {expected_value}",
+                    )
+
             pdf = self._wait_until_rtfv_read_returns_rows(
                 rtfv_live,
                 keys=keys,
                 request_context=request_context,
+                validate_fn=_validate_all_rows,
             )
 
             self.assertEqual(len(pdf), 4)

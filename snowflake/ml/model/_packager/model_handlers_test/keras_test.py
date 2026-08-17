@@ -111,6 +111,9 @@ class KerasHandlerTest(parameterized.TestCase):
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
+                # keras' torch backend converts predictions through a path that trips numpy 2.x's
+                # "__array__ ... copy keyword" DeprecationWarning; it originates in the backend, not model loading.
+                warnings.filterwarnings("ignore", message=".*__array__ implementation doesn't accept a copy keyword.*")
 
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.load()

@@ -310,12 +310,12 @@ class TestSubclassesExposeFullFieldSurface:
             sources=[SourceRef(name="src", source_type="Batch")],
             warehouse="MY_WH",
             cluster_by=["USER_ID"],
-            refresh_mode="AUTO",
+            refresh_mode="INCREMENTAL",
             initialize="ON_CREATE",
         )
         assert fv.warehouse == "MY_WH"
         assert fv.cluster_by == ["USER_ID"]
-        assert fv.refresh_mode == "AUTO"
+        assert fv.refresh_mode == "INCREMENTAL"
         assert fv.initialize == "ON_CREATE"
 
 

@@ -1,11 +1,13 @@
 """Unit tests for FeatureStore stream source CRUD methods."""
 
+import warnings
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store import online_service
 from snowflake.ml.feature_store.stream_source import StreamSource, _schema_to_dict
 from snowflake.snowpark.types import (
     DoubleType,
@@ -62,6 +64,8 @@ def _create_feature_store_with_mocks() -> Any:
     fs._telemetry_stmp = {}
     fs._default_iceberg_external_volume = None
     fs._asof_join_enabled = None
+    fs._online_service_access = None
+    fs._online_http_client = MagicMock()
     return fs
 
 
@@ -449,6 +453,96 @@ class StreamSourceCRUDIntegrationTest(absltest.TestCase):
         # Remove reference, then delete succeeds
         fs._metadata_manager.get_stream_source_ref_count.return_value = 0
         fs.delete_stream_source("txn_events")
+
+
+class StreamIngestEndpointCachingTest(absltest.TestCase):
+    """Tests for caching the Online Service ingest endpoint on the StreamSource."""
+
+    def _make_valid_record(self, ss: StreamSource) -> dict[str, Any]:
+        """Build a record whose keys exactly match the StreamSource schema field names."""
+        return {f.name: 1 for f in ss.schema.fields}
+
+    def test_get_stream_source_hydrates_ingest_url(self) -> None:
+        """``get_stream_source`` caches the ingest endpoint URL when the service is RUNNING."""
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_stream_source_metadata.return_value = _make_metadata()
+
+        stub_status = MagicMock()
+        stub_status.status = "RUNNING"
+        with patch.object(online_service, "fetch_online_service_status", return_value=stub_status), patch.object(
+            online_service, "endpoint_url", return_value="https://i.example/svc"
+        ) as m_ep:
+            ss = fs.get_stream_source("txn_events")
+
+        self.assertEqual(ss._postgres_online_ingest_url, "https://i.example/svc")
+        # Hydration must resolve the "ingest" endpoint specifically.
+        self.assertEqual(m_ep.call_args.args[1], "ingest")
+
+    def test_stream_ingest_uses_cached_url_no_gs_call(self) -> None:
+        """When the StreamSource carries a cached URL, ``stream_ingest`` skips the GS status call."""
+        fs = _create_feature_store_with_mocks()
+        ss = _make_stream_source()
+        ss._postgres_online_ingest_url = "https://cached.example/svc"
+        row = self._make_valid_record(ss)
+
+        with patch.object(
+            online_service, "assert_online_service_running_with_ingest_endpoint"
+        ) as m_assert, patch.object(online_service, "stream_ingest_records", return_value=1) as m_ingest:
+            n = fs.stream_ingest(ss, [row])
+
+        m_assert.assert_not_called()
+        self.assertEqual(n, 1)
+        # stream_ingest_records(session, ingest_base, stream_name, rows, ...)
+        self.assertEqual(m_ingest.call_args.args[1], "https://cached.example/svc")
+
+    def test_stream_ingest_falls_back_when_not_hydrated(self) -> None:
+        """A StreamSource without a cached URL falls back to the live status fetch."""
+        fs = _create_feature_store_with_mocks()
+        ss = _make_stream_source()
+        self.assertIsNone(ss._postgres_online_ingest_url)
+        row = self._make_valid_record(ss)
+
+        stub_status = MagicMock()
+        with patch.object(
+            online_service, "assert_online_service_running_with_ingest_endpoint", return_value=stub_status
+        ) as m_assert, patch.object(
+            online_service, "endpoint_url", return_value="https://live.example/svc"
+        ), patch.object(
+            online_service, "stream_ingest_records", return_value=2
+        ) as m_ingest:
+            n = fs.stream_ingest(ss, [row])
+
+        m_assert.assert_called_once()
+        self.assertEqual(n, 2)
+        self.assertEqual(m_ingest.call_args.args[1], "https://live.example/svc")
+
+    def test_get_stream_source_hydration_failure_no_warning(self) -> None:
+        """A hydration failure leaves the cached URL as ``None`` and emits no UserWarning."""
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_stream_source_metadata.return_value = _make_metadata()
+
+        with patch.object(online_service, "fetch_online_service_status", side_effect=RuntimeError("boom")):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                ss = fs.get_stream_source("txn_events")
+
+        self.assertIsNone(ss._postgres_online_ingest_url)
+        user_warnings = [w for w in caught if issubclass(w.category, UserWarning)]
+        self.assertEqual(user_warnings, [])
+
+    def test_resolve_query_url_still_delegates_to_shared_helper(self) -> None:
+        """The refactored query-URL resolver still resolves the ``query`` endpoint."""
+        fs = _create_feature_store_with_mocks()
+
+        stub_status = MagicMock()
+        stub_status.status = "RUNNING"
+        with patch.object(online_service, "fetch_online_service_status", return_value=stub_status), patch.object(
+            online_service, "endpoint_url", return_value="https://q.example/svc"
+        ) as m_ep:
+            url = fs._resolve_postgres_online_query_url(log_label="unit")
+
+        self.assertEqual(url, "https://q.example/svc")
+        self.assertEqual(m_ep.call_args.args[1], "query")
 
 
 if __name__ == "__main__":

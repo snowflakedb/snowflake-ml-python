@@ -673,7 +673,7 @@ def _batch_fv_advanced_fixture() -> tuple[dict[str, Any], dict[str, Any]]:
         "refresh_freq": "5 minutes",
         "warehouse": "MY_WAREHOUSE",
         "cluster_by": ["USER_ID"],
-        "refresh_mode": "AUTO",
+        "refresh_mode": "INCREMENTAL",
         "initialize": "ON_CREATE",
         "aggregation_secondary_keys": ["SESSION_ID"],
         "features": [
@@ -717,7 +717,7 @@ def _batch_fv_advanced_fixture() -> tuple[dict[str, Any], dict[str, Any]]:
             "feature_aggregation_method": "tiles",
             "target_lag_sec": 300,
             "cluster_by": ["USER_ID"],
-            "refresh_mode": "AUTO",
+            "refresh_mode": "INCREMENTAL",
             "initialize": "ON_CREATE",
             "aggregation_secondary_keys": ["SESSION_ID"],
         },
@@ -1358,8 +1358,8 @@ _EDIT_ROWS: list[
         _batch_fv_advanced_fixture,
         _fv_change_refresh_mode,
         True,
-        "refresh_mode != AUTO bumps the hash; AUTO is the snowml-core default "
-        "and stripped by _strip_default_operational_fields.",
+        "refresh_mode != INCREMENTAL bumps the hash; both INCREMENTAL and FULL are "
+        "explicit authored strategies preserved in the hash.",
     ),
     (
         "BatchFeatureView_advanced:initialize_change",
@@ -1969,7 +1969,7 @@ def _bfv_tiled_via_source_refs() -> dict[str, Any]:
             "feature_aggregation_method": "tiles",
             "target_lag_sec": 300,
             "cluster_by": ["USER_ID"],
-            "refresh_mode": "AUTO",
+            "refresh_mode": "INCREMENTAL",
             "initialize": "ON_CREATE",
             "aggregation_secondary_keys": ["SESSION_ID"],
         },
@@ -2018,7 +2018,7 @@ def _bfv_tiled_via_legacy_dt_text() -> dict[str, Any]:
             "feature_aggregation_method": "tiles",
             "target_lag_sec": 300,
             "cluster_by": ["USER_ID"],
-            "refresh_mode": "AUTO",
+            "refresh_mode": "INCREMENTAL",
             "initialize": "ON_CREATE",
             "aggregation_secondary_keys": ["SESSION_ID"],
         },

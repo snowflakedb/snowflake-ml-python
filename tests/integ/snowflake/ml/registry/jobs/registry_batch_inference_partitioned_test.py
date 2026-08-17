@@ -933,6 +933,7 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
                 job_spec=JobSpec(job_name=job_name, function_name="predict"),
             )
 
+    @absltest.skip("AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'")
     def test_gpu_xgboost_with_partition_column(self) -> None:
         """GPU stateful model: XGBoost with partition column and GPU requests."""
         input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)

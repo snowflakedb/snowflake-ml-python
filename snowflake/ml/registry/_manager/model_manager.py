@@ -35,6 +35,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Query-level custom_tags so telemetry can distinguish log_model SQL paths.
+MODEL_LOG_PATH_TAG = "model_log_path"
+MODEL_LOG_PATH_LIVE_COMMIT = "live_commit"
+MODEL_LOG_PATH_FROM_STAGE = "from_stage"
+MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK = "live_commit_fallback"
+
 
 def _validate_user_model_save_options(
     model: type_hints.SupportedModelType,
@@ -248,8 +254,13 @@ class ModelManager:
         checkout_model_name_id = model_name_id
         checkout_version_name_id: Optional[sql_identifier.SqlIdentifier] = None
         rename_model_to_id: Optional[sql_identifier.SqlIdentifier] = None
+        attempted_hidden_live_commit = False
 
         if use_hidden_live_commit:
+            attempted_hidden_live_commit = True
+            statement_params = telemetry.add_statement_params_custom_tags(
+                statement_params, {MODEL_LOG_PATH_TAG: MODEL_LOG_PATH_LIVE_COMMIT}
+            )
             model_action = model_ops.ModelAction.ALTER if model_exists else model_ops.ModelAction.CREATE
             live_version_name_id = live_commit_naming.generate_live_version_name()
             checkout_version_name_id = live_version_name_id
@@ -281,6 +292,14 @@ class ModelManager:
                 checkout_model_name_id = model_name_id
                 checkout_version_name_id = None
                 rename_model_to_id = None
+
+        if not use_hidden_live_commit:
+            model_log_path = (
+                MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK if attempted_hidden_live_commit else MODEL_LOG_PATH_FROM_STAGE
+            )
+            statement_params = telemetry.add_statement_params_custom_tags(
+                statement_params, {MODEL_LOG_PATH_TAG: model_log_path}
+            )
 
         if use_hidden_live_commit:
             assert checkout_version_name_id is not None

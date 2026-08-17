@@ -1,6 +1,16 @@
 # Release History
 
-## 1.51.0
+## 1.52.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.51.0 (2026-08-12)
 
 ### New Features
 
@@ -15,6 +25,9 @@
   deployed model missing required packages.
 
 ### Behavior Changes
+
+* Feature Store: `stream_ingest` now reuses the Online Service ingest endpoint cached on the
+  `StreamSource` by `get_stream_source`, avoiding a per-call server status round-trip.
 
 ### Deprecations
 

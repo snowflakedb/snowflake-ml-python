@@ -18,6 +18,7 @@ Requires ``SNOWFLAKE_PAT`` (same token as the Online Service Query API), e.g.
 """
 
 import datetime
+import json
 import uuid
 
 import pandas as pd
@@ -55,6 +56,21 @@ def _category_transform(df: pd.DataFrame) -> pd.DataFrame:
 
 
 _category_transform.__module__ = "__main__"
+
+
+def _amount_category_transform(df: pd.DataFrame) -> pd.DataFrame:
+    """Transform for the all-aggregation streaming FV: selects USER_ID, EVENT_TIME, AMOUNT, CATEGORY."""
+    return df[["USER_ID", "EVENT_TIME", "AMOUNT", "CATEGORY"]]
+
+
+_amount_category_transform.__module__ = "__main__"
+
+
+def _as_list(value: object) -> list:
+    """Normalize a list-aggregation column (JSON string or array) to a Python list."""
+    if isinstance(value, str):
+        return json.loads(value)
+    return list(value)
 
 
 def _multi_entity_transform(df: pd.DataFrame) -> pd.DataFrame:
@@ -281,6 +297,149 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             keys=[[ingested_key]],
             validate_fn=_validate_continuous,
             desc="stream ingest continuous tiled",
+        )
+
+    def test_stream_ingest_continuous_null_head_tail_events_skipped(self) -> None:
+        """Continuous FV: NULL events at the window edges are skipped; interior valued events drive the aggregate."""
+        from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
+
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_INGEST_CONT_{s}"
+
+        fs.register_stream_source(
+            StreamSource(
+                name=stream,
+                schema=StructType(
+                    [
+                        StructField("USER_ID", StringType()),
+                        StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+                        StructField("AMOUNT", DoubleType()),
+                        StructField("CATEGORY", StringType()),
+                    ]
+                ),
+                desc="Amount + category events stream for continuous null test",
+            )
+        )
+        backfill_table = f"{self.test_db}.{fs._config.schema.identifier()}.BACKFILL_CONT_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {backfill_table} (
+                USER_ID VARCHAR, EVENT_TIME TIMESTAMP_NTZ, AMOUNT FLOAT, CATEGORY VARCHAR
+            )
+        """
+        ).collect()
+        self._session.sql(
+            f"INSERT INTO {backfill_table} VALUES ('probe_row', '2024-01-01 00:00:00', 0.0, 'probe_cat')"
+        ).collect()
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=_amount_category_transform,
+            backfill_df=self._session.table(backfill_table),
+        )
+        features = [
+            Feature.sum("AMOUNT", "2d").alias("F_SUM"),
+            Feature.count("AMOUNT", "2d").alias("F_COUNT"),
+            Feature.avg("AMOUNT", "2d").alias("F_AVG"),
+            Feature.min("AMOUNT", "2d").alias("F_MIN"),
+            Feature.max("AMOUNT", "2d").alias("F_MAX"),
+            # STDDEV online serving is pending Quake PR 424: SnowML sends the function token "std" while the
+            # online engine matches "stddev". Re-enable once an image including that PR is deployed.
+            # TODO: uncomment after the next Quake release (PR 424).
+            # Feature.stddev("AMOUNT", "2d").alias("F_STDDEV"),
+            Feature.approx_count_distinct("CATEGORY", "2d").alias("F_ACD"),
+            Feature.last_n("CATEGORY", "2d", n=3).alias("F_LAST_N"),
+            Feature.first_n("CATEGORY", "2d", n=3).alias("F_FIRST_N"),
+            Feature.last_distinct_n("CATEGORY", "2d", n=3).alias("F_LAST_DISTINCT_N"),
+            Feature.first_distinct_n("CATEGORY", "2d", n=3).alias("F_FIRST_DISTINCT_N"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertEqual(registered.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+
+        ingested_key = f"U_CONT_NULL_{s}"
+        now = datetime.datetime.utcnow()
+        yesterday_noon = datetime.datetime.combine((now - datetime.timedelta(days=1)).date(), datetime.time(12, 0))
+        # NULL head/tail events (NULL amount and category) bracket three interior valued
+        # events; only the interior events contribute to any aggregation.
+        ingest_rows = [
+            {
+                "USER_ID": ingested_key,
+                "AMOUNT": None,
+                "CATEGORY": None,
+                "EVENT_TIME": now - datetime.timedelta(hours=44),
+            },
+            {"USER_ID": ingested_key, "AMOUNT": 100.0, "CATEGORY": "cat1", "EVENT_TIME": yesterday_noon},
+            {
+                "USER_ID": ingested_key,
+                "AMOUNT": 200.0,
+                "CATEGORY": "cat1",
+                "EVENT_TIME": yesterday_noon + datetime.timedelta(hours=1),
+            },
+            {
+                "USER_ID": ingested_key,
+                "AMOUNT": 300.0,
+                "CATEGORY": "cat1",
+                "EVENT_TIME": yesterday_noon + datetime.timedelta(hours=2),
+            },
+            {
+                "USER_ID": ingested_key,
+                "AMOUNT": None,
+                "CATEGORY": None,
+                "EVENT_TIME": now - datetime.timedelta(minutes=10),
+            },
+        ]
+        self._stream_ingest_with_retry(fs, stream, ingest_rows)
+
+        def _validate_null_edges(pdf):
+            row = pdf.iloc[0]
+            # Only the three interior valued events (amounts 100/200/300, category 'cat1')
+            # count; the NULL head/tail events contribute nothing to any aggregation.
+            self.assertAlmostEqual(float(row["F_SUM"]), 600.0, places=2)
+            self.assertAlmostEqual(float(row["F_COUNT"]), 3.0, places=2)
+            self.assertAlmostEqual(float(row["F_AVG"]), 200.0, places=2)
+            self.assertAlmostEqual(float(row["F_MIN"]), 100.0, places=2)
+            self.assertAlmostEqual(float(row["F_MAX"]), 300.0, places=2)
+            # TODO: uncomment after the next Quake release (PR 424).
+            # self.assertAlmostEqual(float(row["F_STDDEV"]), 81.6497, places=1)
+            self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
+            self.assertEqual(_as_list(row["F_LAST_N"]), ["cat1", "cat1", "cat1"], f"last_n={row['F_LAST_N']!r}")
+            self.assertEqual(_as_list(row["F_FIRST_N"]), ["cat1", "cat1", "cat1"], f"first_n={row['F_FIRST_N']!r}")
+            self.assertEqual(
+                _as_list(row["F_LAST_DISTINCT_N"]), ["cat1"], f"last_distinct_n={row['F_LAST_DISTINCT_N']!r}"
+            )
+            self.assertEqual(
+                _as_list(row["F_FIRST_DISTINCT_N"]), ["cat1"], f"first_distinct_n={row['F_FIRST_DISTINCT_N']!r}"
+            )
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[ingested_key]],
+            validate_fn=_validate_null_edges,
+            desc="continuous null head/tail",
         )
 
     def test_stream_ingest_tiled_approx_count_distinct_online_read(self) -> None:

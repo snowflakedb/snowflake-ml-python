@@ -426,6 +426,7 @@ class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
         for row in result:
             self.assertIsNotNone(row["E"])
 
+    @absltest.skip("Invalid pip requirement : --extra-index-url https://download.pytorch.org/whl/cu124.")
     def test_ai_embed_any_value_aggregate(self) -> None:
         """B6: AI_EMBED inside ANY_VALUE with GROUP BY — one vector per category."""
         service_name = self._service_name

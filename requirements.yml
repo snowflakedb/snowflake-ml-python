@@ -254,6 +254,8 @@
   # Dev/test env only: keep setuptools < 82 so `pkg_resources` (needed by mlflow's opentelemetry
   # import) stays available.
   dev_version: 80.10.2
+  tags:
+    - build_test_env
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
   dev_version: 3.18.0

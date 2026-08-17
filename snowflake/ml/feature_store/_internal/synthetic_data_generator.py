@@ -5,7 +5,7 @@ import sched
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import (
@@ -83,7 +83,7 @@ class SyntheticDataGenerator:
                 if isinstance(field.datatype, TimestampType):
                     row.append(time.time())
                 elif isinstance(field.datatype, _IntegralType):
-                    row.append(random.randint(cast(int, stats.min_val), cast(int, stats.max_val)))
+                    row.append(random.randint(int(stats.min_val), int(stats.max_val)))
                 elif isinstance(field.datatype, _FractionalType):
                     row.append(random.uniform(stats.min_val, stats.max_val))
                 else:

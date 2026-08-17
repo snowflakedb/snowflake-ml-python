@@ -614,18 +614,22 @@ _RUNTIME_STAMPED_SPEC_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# snowml-core stamps these operational defaults onto every BatchFV at
-# create time even when the authoring YAML does not author them.  The
-# applied-state side recovers them from the deployed DT text via
-# :func:`state._inject_advanced_bfv_fields_from_dt_text` while the
-# local-compile side leaves them unset, breaking the hash round-trip.
-# Strip the keys from both sides when the deployed value matches the
-# snowml-core default so an unedited round-trip emits ``NO_CHANGE``.
-# An operator who authors a non-default value keeps the key in the
-# hash (and any edit lands as ``RECREATE_FV`` as before).
+# snowml-core stamps ``initialize`` onto every BatchFV at create time even
+# when the authoring YAML does not author it.  The applied-state side recovers
+# it from the deployed DT text via
+# :func:`state._inject_batch_fv_fields_from_list_row` while the local-compile
+# side leaves it unset, breaking the hash round-trip.  Strip the key from
+# both sides when the deployed value matches the snowml-core default so an
+# unedited round-trip emits ``NO_CHANGE``.  An operator who authors a
+# non-default value keeps the key in the hash.
+#
+# ``refresh_mode`` is intentionally excluded: Snowflake resolves it to
+# INCREMENTAL or FULL, not AUTO, so there is no symmetric default to strip.
+# Applied-side refresh_mode is handled asymmetrically in
+# :func:`_normalize_applied_bfv_for_hash` and
+# :func:`batch_feature_view_structural_equivalent`.
 _BFV_OPERATIONAL_DEFAULTS: dict[str, str] = {
     "initialize": "ON_CREATE",
-    "refresh_mode": "AUTO",
 }
 
 # Snowflake's type system on the deployed offline / online tables widens
@@ -644,11 +648,14 @@ _BFV_TYPE_PROMOTION: dict[str, str] = {
 def _strip_default_operational_fields(inner: dict[str, Any]) -> None:
     """Drop snowml-core operational defaults from a BatchFV inner spec.
 
-    Both ``initialize`` and ``refresh_mode`` are stamped by snowml-core
-    at create time and recovered by the applied-state DT-text parsers,
-    but the local-compile side only emits them when the operator
-    authored them.  Strip the keys when their value matches the
-    documented snowml-core default so the two sides hash identically.
+    ``initialize`` is stamped by snowml-core at create time and recovered by
+    the applied-state DT-text parsers, but the local-compile side only emits
+    it when the operator authored it.  Strip the key when its value matches
+    the documented snowml-core default so the two sides hash identically.
+
+    ``refresh_mode`` is intentionally not stripped here: Snowflake resolves it
+    to INCREMENTAL or FULL (never AUTO), so applied-side normalisation is
+    asymmetric via :func:`_normalize_applied_bfv_for_hash`.
 
     Args:
         inner: The ``spec`` sub-dict of a BatchFV spec_payload (mutated in
@@ -659,6 +666,38 @@ def _strip_default_operational_fields(inner: dict[str, Any]) -> None:
     for key, default in _BFV_OPERATIONAL_DEFAULTS.items():
         if inner.get(key) == default:
             inner.pop(key, None)
+
+
+def _normalize_applied_bfv_for_hash(
+    applied_payload: dict[str, Any],
+    local_compiled: dict[str, Any],
+) -> dict[str, Any]:
+    """Strip Snowflake-resolved fields from applied payload when not authored locally.
+
+    ``refresh_mode`` is stamped by Snowflake's DT engine (INCREMENTAL / FULL)
+    even when the operator never specified it. The local compiled spec omits the
+    key in that case. Strip it from the applied payload before hashing so the two
+    hashes converge on an unspecified-refresh_mode round-trip.
+
+    Must only be called on applied payloads, not local specs.
+
+    Args:
+        applied_payload: Full ``AppliedObject.spec_payload``.
+        local_compiled: Output of ``compile_to_spec`` for the local authoring dict.
+
+    Returns:
+        A normalised deep copy of ``applied_payload``.
+    """
+    import json as _json
+
+    local_spec = local_compiled.get("spec")
+    local_inner: dict[str, Any] = local_spec if isinstance(local_spec, dict) else {}
+    payload: dict[str, Any] = _json.loads(_json.dumps(applied_payload))
+    applied_spec = payload.get("spec")
+    inner = applied_spec if isinstance(applied_spec, dict) else None
+    if inner is not None and "refresh_mode" not in local_inner:
+        inner.pop("refresh_mode", None)
+    return payload
 
 
 def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
@@ -2047,7 +2086,7 @@ def batch_feature_view_structural_equivalent(
     _ri = applied_payload.get("spec")
     remote_inner = _ri if isinstance(_ri, dict) else {}
 
-    def _project(inner: dict[str, Any]) -> dict[str, Any]:
+    def _project(inner: dict[str, Any], ref_inner: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Project the FV inner spec onto its semantic-stable subset.
 
         Mirrors the BatchFV parity normalisation in
@@ -2059,8 +2098,18 @@ def batch_feature_view_structural_equivalent(
         ``features`` always disagree with the local-compile shape and
         every BatchFV edit falls through to ``RECREATE_FV``.
 
+        When ``ref_inner`` is provided (the local/authored side), strip
+        ``refresh_mode`` from the projection when the operator did not
+        author it.  Snowflake always stamps INCREMENTAL or FULL on the DT
+        even when the operator never specified a value; without this strip
+        a Snowflake-resolved ``refresh_mode`` on the applied side creates a
+        spurious structural diff.
+
         Args:
             inner: The FV inner spec block (``spec`` payload) to project.
+            ref_inner: When projecting the applied side, pass the local
+                inner spec so asymmetric normalisation can fire.  Omit
+                (``None``) when projecting the local side.
 
         Returns:
             A copy of *inner* restricted to the structurally-stable
@@ -2076,10 +2125,12 @@ def batch_feature_view_structural_equivalent(
             block["sources"] = _normalise_fv_sources_for_hash(block.get("sources"))
         if "features" in block and isinstance(block["features"], list):
             block["features"] = [f for f in block["features"] if not _is_auto_derived_feature(f)]
+        if ref_inner is not None and "refresh_mode" not in ref_inner:
+            block.pop("refresh_mode", None)
         return block
 
     return json.dumps(_project(local_inner), sort_keys=True, default=str) == json.dumps(
-        _project(remote_inner), sort_keys=True, default=str
+        _project(remote_inner, ref_inner=local_inner), sort_keys=True, default=str
     )
 
 

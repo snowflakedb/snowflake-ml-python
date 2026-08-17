@@ -476,5 +476,32 @@ class TestFeatureViewAggregationMethod:
         assert d["feature_aggregation_method"] is None
 
 
+class TestBatchFeatureViewRefreshModeRestriction:
+    """``refresh_mode: AUTO`` must be rejected after restricting the Literal.
+
+    ``AUTO`` is not a meaningful declarative authoring choice — Snowflake
+    resolves it to ``INCREMENTAL`` or ``FULL`` and the operator cannot
+    predict which.  Valid values are ``INCREMENTAL``, ``FULL``, or ``None``
+    (omit the field entirely).
+    """
+
+    def test_refresh_mode_auto_raises_validation_error(self) -> None:
+        """``refresh_mode: AUTO`` must raise ``ValidationError``."""
+        with pytest.raises(ValidationError):
+            FeatureView.model_validate({"kind": "BatchFeatureView", "name": "MY_BFV", "refresh_mode": "AUTO"})
+
+    def test_refresh_mode_incremental_is_accepted(self) -> None:
+        fv = FeatureView.model_validate({"kind": "BatchFeatureView", "name": "MY_BFV", "refresh_mode": "INCREMENTAL"})
+        assert fv.refresh_mode == "INCREMENTAL"
+
+    def test_refresh_mode_full_is_accepted(self) -> None:
+        fv = FeatureView.model_validate({"kind": "BatchFeatureView", "name": "MY_BFV", "refresh_mode": "FULL"})
+        assert fv.refresh_mode == "FULL"
+
+    def test_refresh_mode_none_accepted(self) -> None:
+        fv = FeatureView.model_validate({"kind": "BatchFeatureView", "name": "MY_BFV"})
+        assert fv.refresh_mode is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

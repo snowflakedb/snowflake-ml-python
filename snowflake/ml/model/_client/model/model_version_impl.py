@@ -1229,7 +1229,8 @@ class ModelVersion(lineage_node.LineageNode):
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INSUFFICIENT_PRIVILEGES,
                 original_exception=RuntimeError(
-                    f"model registry: cannot {operation} this model — only the model's owner role is permitted."
+                    f"model registry: cannot {operation} this model — only the model's owner role is permitted. "
+                    "You may use export() instead."
                 ),
             )
 

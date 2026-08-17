@@ -4,13 +4,13 @@ import json
 import os
 import tempfile
 from importlib import metadata as importlib_metadata
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar, Union, cast
 from unittest import mock
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
-from packaging import requirements
+from packaging import requirements, version as pkg_version
 
 from snowflake.ml.model import (
     model_signature,
@@ -31,6 +31,35 @@ from snowflake.ml.model.models import huggingface as hf_base, huggingface_pipeli
 
 if TYPE_CHECKING:
     import transformers
+
+
+def _transformers_supports_deprecated_pipeline_tasks() -> bool:
+    """Whether transformers.pipeline still supports the task aliases removed in transformers 5.x.
+
+    transformers 5.x removed several pipeline task aliases (summarization, question-answering,
+    text2text-generation, translation, ...). Tests that instantiate those pipelines only apply when a
+    transformers version that still provides them is installed. The handler continues to support these tasks
+    for the transformers 4.x range we allow; it pins transformers<5 for models that use them.
+    """
+    try:
+        return pkg_version.Version(importlib_metadata.version("transformers")) < pkg_version.Version("5")
+    except importlib_metadata.PackageNotFoundError:
+        return False
+
+
+_DEPRECATED_TASK_SKIP_REASON = (
+    "summarization/question-answering/text2text-generation/translation pipeline tasks were removed in "
+    "transformers 5.x"
+)
+
+_TestMethodT = TypeVar("_TestMethodT", bound=Callable[..., Any])
+
+
+def _skip_if_deprecated_pipeline_tasks_removed(test_method: _TestMethodT) -> _TestMethodT:
+    # absltest.skipUnless is untyped, so applying it directly would make the decorated test method untyped
+    # under mypy strict (disallow_untyped_decorators). Wrapping it in this typed decorator keeps the methods typed.
+    decorator = absltest.skipUnless(_transformers_supports_deprecated_pipeline_tasks(), _DEPRECATED_TASK_SKIP_REASON)
+    return decorator(test_method)  # type: ignore[no-any-return]
 
 
 class HuggingFacePipelineHandlerTest(parameterized.TestCase):
@@ -79,7 +108,9 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         )
 
     def _check_loaded_pipeline_object(self, original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-        self.assertEqual(original.framework, loaded.framework)
+        # transformers 5.x removed the `framework` attribute from Pipeline objects; getattr keeps this robust
+        # across the transformers 4.x/5.x range we support.
+        self.assertEqual(getattr(original, "framework", None), getattr(loaded, "framework", None))
         self.assertEqual(original.task, loaded.task)
         self.assertEqual(original._batch_size, loaded._batch_size)
         self.assertEqual(original._num_workers, loaded._num_workers)
@@ -624,6 +655,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             check_gpu=False,  # Model being used does not support accelerate.
         )
 
+    @_skip_if_deprecated_pipeline_tasks_removed
     def test_question_answering_pipeline(
         self,
     ) -> None:
@@ -706,6 +738,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             check_gpu=False,  # Model being used does not support accelerate.
         )
 
+    @_skip_if_deprecated_pipeline_tasks_removed
     def test_summarization_pipeline(
         self,
     ) -> None:
@@ -1248,6 +1281,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             res = pk.model(x_df.copy(deep=True), max_completion_tokens=10, temperature=0.5)
             self._check_openai_chat_response(res)
 
+    @_skip_if_deprecated_pipeline_tasks_removed
     def test_text2text_generation_pipeline(
         self,
     ) -> None:
@@ -1286,6 +1320,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
                 check_udf_res_fn=check_udf_res,
             )
 
+    @_skip_if_deprecated_pipeline_tasks_removed
     def test_translation_pipeline(
         self,
     ) -> None:

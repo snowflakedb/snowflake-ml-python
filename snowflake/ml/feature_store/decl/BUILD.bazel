@@ -335,6 +335,18 @@ py_test(
 )
 
 py_test(
+    name = "refresh_mode_normalization_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_refresh_mode_normalization.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_refresh_mode_normalization.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+py_test(
     name = "dependencies_test",
     srcs = [
         "tests/__init__.py",
@@ -387,6 +399,7 @@ py_test(
     srcs = [
         "tests/__init__.py",
         "tests/test_planner_revalidate_golden_describe.py",
+        "tests/test_planner_revalidate_identical_spec.py",
     ],
     data = [
         ":decl_golden_specs",
@@ -434,4 +447,184 @@ py_test(
     main = "tests/test_loader_spec_fallback.py",
     tags = ["feature:feature_store"],
     deps = [":decl_lib_planner"],
+)
+
+# ---------------------------------------------------------------------------
+# Library — state tier (layer 3 of the import-DAG)
+#
+# Applied-state parsing (``state.py``: ``FeatureView`` / ``Entity`` /
+# ``Datasource`` / ``FeatureGroup`` reconstruction from raw rows), the SQL
+# string factories (``queries.py``: OFT ``SHOW`` + per-OFT ``DESCRIBE …
+# TYPE = SPECIFICATION``), and the YAML exporter (``exporter.py``: spec →
+# authoring-format round-trip with UDF / datasource siblings).  ``state.py``
+# imports ``decl.invariants`` (structural-fingerprint / full-spec hashing) so
+# the tier depends on ``:decl_lib_planner`` rather than ``:decl_lib_loader``
+# directly; ``exporter.py`` imports ``decl.state``.  The wheel-isolation
+# contract (pinned by ``tests/test_wheel_isolation.py``) forbids reaching into
+# the higher layer (imperative_executor/api/service).
+# ---------------------------------------------------------------------------
+py_library(
+    name = "decl_lib_state",
+    srcs = [
+        "exporter.py",
+        "queries.py",
+        "state.py",
+    ],
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_planner"],
+)
+
+# ---------------------------------------------------------------------------
+# Unit tests — state tier
+# ---------------------------------------------------------------------------
+py_test(
+    name = "queries_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_queries.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_queries.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "state_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_state_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_state_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "state_stream_source_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_state_stream_source.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_state_stream_source.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "state_inject_refresh_freq_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_state_inject_refresh_freq.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_state_inject_refresh_freq.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "exporter_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_exporter_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_exporter_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "offline_bfv_state_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_offline_bfv_state.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_offline_bfv_state.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "advanced_bvt_fields_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_fields.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_fields.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "entity_description_diff_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_entity_description_diff.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_entity_description_diff.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "field_rename_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_field_rename.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_field_rename.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+py_test(
+    name = "no_regex_in_decl_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_no_regex_in_decl.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_no_regex_in_decl.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib_state"],
+)
+
+# The two planner-side tests exercise the planner against state-tier
+# applied-state objects, so they need both libraries in deps.
+py_test(
+    name = "planner_offline_bfv_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_offline_bfv.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_offline_bfv.py",
+    tags = ["feature:feature_store"],
+    deps = [
+        ":decl_lib_planner",
+        ":decl_lib_state",
+    ],
+)
+
+py_test(
+    name = "planner_stream_source_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_stream_source.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_stream_source.py",
+    tags = ["feature:feature_store"],
+    deps = [
+        ":decl_lib_planner",
+        ":decl_lib_state",
+    ],
 )
