@@ -596,6 +596,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         retries: int = 6,
         backoff_sec: float = 5.0,
         as_pandas: bool = True,
+        require_non_null_cols: Optional[list[str]] = None,
     ) -> Any:
         """Read ONLINE with bounded retry against transient online-serving skew.
 
@@ -614,6 +615,12 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             as_pandas: When ``True`` return a ``pandas.DataFrame``; when ``False``
                 return the Snowpark ``DataFrame`` so parity tests can retry the
                 ``.to_pandas()`` arm as well.
+            require_non_null_cols: When set, a read that returns no rows or leaves
+                any of these columns null is treated as not-yet-materialized and
+                retried. Lets parity tests observe a fully-materialized online row
+                (a transient null flips pandas dtype inference and flakes parity
+                assertions). The completeness check materializes the Snowpark arm
+                to pandas for inspection but still returns the original result.
 
         Returns:
             The result of the first successful read. When ``as_pandas`` is
@@ -626,7 +633,20 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         last_err: Optional[Exception] = None
         for _ in range(retries):
             try:
-                return fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=as_pandas)
+                result = fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=as_pandas)
+                if require_non_null_cols:
+                    pdf = result if as_pandas else result.to_pandas()
+                    unmaterialized = [
+                        col
+                        for col in require_non_null_cols
+                        if len(pdf) == 0 or col not in pdf.columns or bool(pd.isna(pdf.iloc[0][col]))
+                    ]
+                    if unmaterialized:
+                        # Row present but not fully materialized yet; treat as retryable skew.
+                        last_err = RuntimeError(f"online values not yet materialized (null): {unmaterialized}")
+                        time.sleep(backoff_sec)
+                        continue
+                return result
             except Exception as e:
                 last_err = e
                 time.sleep(backoff_sec)

@@ -3218,7 +3218,9 @@ class FeatureStore:
                 original_exception=ValueError(f"Cannot find StreamSource with name: {name_id}."),
             )
 
-        return StreamSource._from_dict(metadata)
+        stream_source = StreamSource._from_dict(metadata)
+        self._hydrate_stream_source_online_service(stream_source)
+        return stream_source
 
     @dispatch_decorator()
     def stream_ingest(
@@ -3259,20 +3261,26 @@ class FeatureStore:
             src = self.get_stream_source(str(stream_source))
             stream_name_wire = src.name.resolved()
 
-        stmp = self._telemetry_stmp if statement_params is None else statement_params
-        st = online_service.assert_online_service_running_with_ingest_endpoint(
-            self._session,
-            self._config.database,
-            self._config.schema,
-            statement_params=stmp,
-        )
-        ingest_url = online_service.endpoint_url(st, "ingest", access=self._online_service_access)
-        if not ingest_url:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("Online Service returned no ingest endpoint."),
+        # Reuse the ingest endpoint cached on the StreamSource by get_stream_source to
+        # skip the per-call GS status lookup. Fall back to a live status fetch when the
+        # URL is absent (manually constructed StreamSource, or hydrated before the
+        # Online Service was RUNNING).
+        ingest_base = getattr(src, "_postgres_online_ingest_url", None)
+        if not ingest_base:
+            stmp = self._telemetry_stmp if statement_params is None else statement_params
+            st = online_service.assert_online_service_running_with_ingest_endpoint(
+                self._session,
+                self._config.database,
+                self._config.schema,
+                statement_params=stmp,
             )
-        ingest_base = ingest_url
+            ingest_url = online_service.endpoint_url(st, "ingest", access=self._online_service_access)
+            if not ingest_url:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError("Online Service returned no ingest endpoint."),
+                )
+            ingest_base = ingest_url
 
         expected_cols = _stream_source_schema_field_names(src.schema)
         rows = _normalize_stream_ingest_records(records)
@@ -8320,21 +8328,28 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
             return fv
 
-    def _resolve_postgres_online_query_url(self, *, log_label: str) -> Optional[str]:
-        """Fetch the Postgres OFT query endpoint URL or warn and return ``None``.
+    def _resolve_postgres_online_endpoint_url(
+        self, endpoint_name: str, *, log_label: str, warn: bool = True
+    ) -> Optional[str]:
+        """Fetch a Postgres OFT Online Service endpoint URL or return ``None``.
 
         Failures (status not RUNNING, missing endpoint URL, transient
-        SYSTEM$ errors) are downgraded to ``UserWarning`` so callers can
-        still construct the target object and see the "Online Service not
-        RUNNING" error on first read.
+        SYSTEM$ errors) are downgraded to a return value of ``None`` so callers
+        can still construct the target object and surface the "Online Service
+        not RUNNING" error at use time. When ``warn`` is ``True`` these
+        failures also emit a ``UserWarning``.
 
         Args:
+            endpoint_name: Endpoint to resolve (``"query"`` or ``"ingest"``).
             log_label: Caller name embedded in the warning log
-                (e.g. ``"get_feature_view"``, ``"get_feature_group"``).
+                (e.g. ``"get_feature_view"``, ``"get_stream_source"``).
+            warn: When ``True``, emit a ``UserWarning`` on failure. Callers that
+                have their own use-time fallback (e.g. ``stream_ingest``) pass
+                ``False`` to avoid spurious warnings during metadata reads.
 
         Returns:
-            The query endpoint URL when the Online Service is RUNNING or
-            UPDATING and advertises a ``query`` endpoint; ``None`` otherwise.
+            The endpoint URL when the Online Service is RUNNING or UPDATING and
+            advertises the named endpoint; ``None`` otherwise.
         """
         try:
             st = online_service.fetch_online_service_status(
@@ -8345,29 +8360,61 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             )
         except Exception as ex:
             logger.warning("Could not fetch Online Service status during %s: %s", log_label, ex)
+            if warn:
+                warnings.warn(
+                    online_service.online_service_not_ready_message(),
+                    category=UserWarning,
+                    stacklevel=4,
+                )
+            return None
+        endpoint = online_service.endpoint_url(st, endpoint_name, access=self._online_service_access)
+        # UPDATING (redeploy in progress) still serves endpoints, so accept it too.
+        if st.status in ("RUNNING", "UPDATING") and endpoint:
+            # Temporary: SYSTEM$ may return host-only URLs until server sends full https URLs.
+            return endpoint
+        if warn:
             warnings.warn(
                 online_service.online_service_not_ready_message(),
                 category=UserWarning,
                 stacklevel=4,
             )
-            return None
-        query_url = online_service.endpoint_url(st, "query", access=self._online_service_access)
-        # UPDATING (redeploy in progress) still serves the query endpoint, so accept it too.
-        if st.status in ("RUNNING", "UPDATING") and query_url:
-            # Temporary: SYSTEM$ may return host-only query URLs until server sends full https URLs.
-            return query_url
-        warnings.warn(
-            online_service.online_service_not_ready_message(),
-            category=UserWarning,
-            stacklevel=4,
-        )
         return None
+
+    def _resolve_postgres_online_query_url(self, *, log_label: str) -> Optional[str]:
+        """Resolve the Postgres OFT ``query`` endpoint URL (thin wrapper).
+
+        Args:
+            log_label: Caller name embedded in the warning log
+                (e.g. ``"get_feature_view"``, ``"get_feature_group"``).
+
+        Returns:
+            The query endpoint URL when the Online Service is RUNNING or
+            UPDATING and advertises a ``query`` endpoint; ``None`` otherwise.
+        """
+        return self._resolve_postgres_online_endpoint_url("query", log_label=log_label)
 
     def _hydrate_postgres_online_service(self, fv: FeatureView) -> None:
         """Set ``_postgres_online_query_url`` and warn when Postgres online reads are not ready."""
         if not fv.online or fv.online_config is None or fv.online_config.store_type != OnlineStoreType.POSTGRES:
             return
         fv._postgres_online_query_url = self._resolve_postgres_online_query_url(log_label="get_feature_view")
+
+    def _hydrate_stream_source_online_service(self, stream_source: StreamSource) -> None:
+        """Cache the Online Service ingest endpoint URL on a StreamSource for reuse.
+
+        Best-effort: resolves the ``ingest`` endpoint without emitting a
+        ``UserWarning`` (``warn=False``) because ``get_stream_source`` is a
+        metadata read that also backs ``register_stream_source``; a not-yet-RUNNING
+        service should not warn here. ``stream_ingest`` surfaces a clear,
+        actionable error at ingest time via its live fallback when the URL is
+        unavailable.
+
+        Args:
+            stream_source: The StreamSource whose ingest URL should be populated.
+        """
+        stream_source._postgres_online_ingest_url = self._resolve_postgres_online_endpoint_url(
+            "ingest", log_label="get_stream_source", warn=False
+        )
 
     def _hydrate_fg_postgres_online_service(self, fg: FeatureGroup) -> None:
         """Set ``FeatureGroup._postgres_online_query_url`` for read-time use.

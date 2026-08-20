@@ -274,7 +274,7 @@ class FeatureView(SpecBase):
     # land in Phases 3-6 as each field's TDD pass ships.
     warehouse: Optional[str] = None
     cluster_by: Optional[list[str]] = None
-    refresh_mode: Optional[Literal["AUTO", "FULL", "INCREMENTAL"]] = None
+    refresh_mode: Optional[str] = None
     # Promoted from ``backfill.initialize`` to first-class top-level in
     # Phase 4 of the advanced BFV plan.  The legacy nested form is still
     # accepted by ``compile_to_spec`` (back-compat alias); when both are
@@ -603,6 +603,33 @@ class FeatureView(SpecBase):
                     "cadence, or set ``online: true`` if you intended the "
                     "value as Online Feature Table TARGET_LAG."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_unsupported_refresh_mode(self) -> "FeatureView":
+        """Reject unsupported ``refresh_mode`` values with an actionable message.
+
+        ``refresh_mode`` accepts only ``"FULL"`` or ``"INCREMENTAL"``.  Any other
+        value (e.g. ``"AUTO"``) must produce a propagated ``ValidationError``
+        whose message contains ``"is not valid on"`` so that
+        ``loader._dict_to_spec`` re-raises it rather than falling back to the
+        sparse ``SpecBase`` fallback.  Omitting the field entirely is the
+        correct way to let Snowflake choose the refresh strategy automatically.
+
+        Returns:
+            ``self`` when ``refresh_mode`` is ``None``, ``"FULL"``, or
+            ``"INCREMENTAL"``.
+
+        Raises:
+            ValueError: When ``refresh_mode`` is set to any other value.
+        """
+        rm = self.refresh_mode
+        if rm is not None and str(rm).upper() not in ("FULL", "INCREMENTAL"):
+            raise ValueError(
+                f"refresh_mode '{rm}' is not valid on FeatureView; "
+                "omit the field to let Snowflake choose automatically, "
+                "or set it to 'FULL' or 'INCREMENTAL' to pin a refresh strategy."
+            )
         return self
 
 

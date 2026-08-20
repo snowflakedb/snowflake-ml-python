@@ -179,6 +179,9 @@ class StreamSource:
         self.schema: StructType = schema
         self.owner: Optional[str] = None
         self.desc: str = desc
+        # Runtime-only cache of the Online Service ingest endpoint URL, populated by
+        # FeatureStore.get_stream_source. Not persisted to metadata.
+        self._postgres_online_ingest_url: Optional[str] = None
 
     def _validate(self, name: str, schema: StructType) -> None:
         if len(name) > _STREAM_SOURCE_NAME_LENGTH_LIMIT:

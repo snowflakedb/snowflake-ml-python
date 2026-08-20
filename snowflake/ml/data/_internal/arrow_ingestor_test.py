@@ -18,7 +18,7 @@ class ArrowIngestorTest(absltest.TestCase):
             {"col1": np.array([2]), "col2": np.array([12]), "col3": np.array(["abc"], dtype="object")},
             {"col1": np.array([3]), "col2": np.array([13]), "col3": np.array(["m"], dtype="object")},
             {"col1": np.array([4]), "col2": np.array([14]), "col3": np.array(["mn"], dtype="object")},
-            {"col1": np.array([5]), "col2": np.array([np.NaN]), "col3": np.array(["mnm"], dtype="object")},
+            {"col1": np.array([5]), "col2": np.array([np.nan]), "col3": np.array(["mnm"], dtype="object")},
             {"col1": np.array([6]), "col2": np.array([16]), "col3": np.array(["mnmn"], dtype="object")},
         ]
         files = [self._file0.name, self._file1.name, self._file2.name]
@@ -34,7 +34,7 @@ class ArrowIngestorTest(absltest.TestCase):
         expected_res = [
             {"col1": np.array([0, 1]), "col2": np.array([10, 11]), "col3": np.array(["a", "ab"], dtype="object")},
             {"col1": np.array([2, 3]), "col2": np.array([12, 13]), "col3": np.array(["abc", "m"], dtype="object")},
-            {"col1": np.array([4, 5]), "col2": np.array([14, np.NaN]), "col3": np.array(["mn", "mnm"], dtype="object")},
+            {"col1": np.array([4, 5]), "col2": np.array([14, np.nan]), "col3": np.array(["mn", "mnm"], dtype="object")},
         ]
         files = [self._file0.name, self._file1.name, self._file2.name]
         batch_producer = arrow_ingestor.ArrowIngestor(None, files, format="parquet")  # type: ignore[arg-type]
@@ -50,7 +50,7 @@ class ArrowIngestorTest(absltest.TestCase):
         """Test if the parquet parser could generate random ordered result with shuffle=True."""
         expected_res = [
             {"col1": np.array([6]), "col2": np.array([16]), "col3": np.array(["mnmn"], dtype="object")},
-            {"col1": np.array([5]), "col2": np.array([np.NaN]), "col3": np.array(["mnm"], dtype="object")},
+            {"col1": np.array([5]), "col2": np.array([np.nan]), "col3": np.array(["mnm"], dtype="object")},
             {"col1": np.array([3]), "col2": np.array([13]), "col3": np.array(["m"], dtype="object")},
             {"col1": np.array([4]), "col2": np.array([14]), "col3": np.array(["mn"], dtype="object")},
             {"col1": np.array([1]), "col2": np.array([11]), "col3": np.array(["ab"], dtype="object")},
@@ -71,7 +71,7 @@ class ArrowIngestorTest(absltest.TestCase):
         expected_res = [
             {"col1": np.array([0, 1]), "col2": np.array([10, 11]), "col3": np.array(["a", "ab"], dtype="object")},
             {"col1": np.array([2, 3]), "col2": np.array([12, 13]), "col3": np.array(["abc", "m"], dtype="object")},
-            {"col1": np.array([4, 5]), "col2": np.array([14, np.NaN]), "col3": np.array(["mn", "mnm"], dtype="object")},
+            {"col1": np.array([4, 5]), "col2": np.array([14, np.nan]), "col3": np.array(["mn", "mnm"], dtype="object")},
             {"col1": np.array([6]), "col2": np.array([16]), "col3": np.array(["mnmn"], dtype="object")},
         ]
         files = [self._file0.name, self._file1.name, self._file2.name]

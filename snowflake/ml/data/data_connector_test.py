@@ -32,7 +32,7 @@ class DataConnectorTest(parameterized.TestCase):
         expected_res = [
             {"col1": np.array([[0], [1]]), "col2": np.array([[10], [11]]), "col3": ["a", "ab"]},
             {"col1": np.array([[2], [3]]), "col2": np.array([[12], [13]]), "col3": ["abc", "m"]},
-            {"col1": np.array([[4], [5]]), "col2": np.array([[14], [np.NaN]]), "col3": ["mn", "mnm"]},
+            {"col1": np.array([[4], [5]]), "col2": np.array([[14], [np.nan]]), "col3": ["mn", "mnm"]},
         ]
         dp = self._sut.to_torch_datapipe(batch_size=2, shuffle=False, drop_last_batch=True)
         count = 0
@@ -104,7 +104,7 @@ class DataConnectorTest(parameterized.TestCase):
         expected_res = [
             {"col1": np.array([[0], [1]]), "col2": np.array([[10], [11]]), "col3": ["a", "ab"]},
             {"col1": np.array([[2], [3]]), "col2": np.array([[12], [13]]), "col3": ["abc", "m"]},
-            {"col1": np.array([[4], [5]]), "col2": np.array([[14], [np.NaN]]), "col3": ["mn", "mnm"]},
+            {"col1": np.array([[4], [5]]), "col2": np.array([[14], [np.nan]]), "col3": ["mn", "mnm"]},
         ]
         ds = self._sut.to_torch_dataset(batch_size=2, shuffle=False, drop_last_batch=True)
         count = 0
@@ -154,7 +154,7 @@ class DataConnectorTest(parameterized.TestCase):
             },
             {
                 "col1": np.array([5]),
-                "col2": np.array([np.NaN]),
+                "col2": np.array([np.nan]),
                 "col3": np.array(["mnm"], dtype="object"),
             },
             {
@@ -194,7 +194,7 @@ class DataConnectorTest(parameterized.TestCase):
             },
             {
                 "col1": torch.tensor([[3, 300], [4, 400], [5, 500]]),
-                "col2": torch.tensor([[13.0], [14.0], [np.NaN]], dtype=torch.float64),
+                "col2": torch.tensor([[13.0], [14.0], [np.nan]], dtype=torch.float64),
                 "col3": ["m", "mn", "mnm"],
             },
         ]
@@ -234,7 +234,7 @@ class DataConnectorTest(parameterized.TestCase):
             {"col1": np.array([2, 3]), "col2": np.array([12, 13]), "col3": np.array([b"abc", b"m"], dtype="object")},
             {
                 "col1": np.array([4, 5]),
-                "col2": np.array([14, np.NaN]),
+                "col2": np.array([14, np.nan]),
                 "col3": np.array([b"mn", b"mnm"], dtype="object"),
             },
         ]

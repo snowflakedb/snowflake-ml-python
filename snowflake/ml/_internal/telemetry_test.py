@@ -718,9 +718,11 @@ class TelemetryTest(parameterized.TestCase):
 
         # Test adding custom tags works
         self.assertNotIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, statement_params)
+        original_statement_params = dict(statement_params)
         result = utils_telemetry.add_statement_params_custom_tags(statement_params, custom_tags)
         self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, result)
         self.assertEqual(result.get(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value), custom_tags)
+        self.assertEqual(statement_params, original_statement_params)
 
         # Test overwriting tag works
         statement_params[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value] = {"test": "BAD"}

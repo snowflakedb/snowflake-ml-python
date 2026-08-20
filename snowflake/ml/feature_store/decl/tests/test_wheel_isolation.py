@@ -2,8 +2,9 @@
 
 Verifies that:
 1. No source file in ``decl/`` (excluding ``tests/``) imports from forbidden
-   packages (``snowflake.ml.feature_store.spec``, ``snowflake.snowpark``,
-   ``snowflake.connector``).
+   packages (``snowflake.ml.feature_store.spec.models`` /
+   ``snowflake.ml.feature_store.spec.builder``, ``snowflake.connector``).
+   ``snowflake.snowpark`` is permitted (see DEVELOPMENT_STANDARDS.md).
 2. The built wheel contains only ``snowflake/ml/feature_store/decl/`` files
    (plus dist-info metadata).
 3. The wheel does NOT contain namespace ``__init__.py`` files for
@@ -34,11 +35,13 @@ _WHEEL_GLOB = sorted((_DECL_ROOT.parent / "decl_wheel" / "dist").glob("snowflake
 # ``interval_utils`` owns duration parsing
 # (``parse_interval`` / ``interval_to_seconds`` / the ``"lifetime"``
 # sentinel).  ``spec.models`` and ``spec.builder`` remain forbidden
-# because they import from ``snowflake.snowpark.types``.
+# because they pull in heavy SnowML-core spec/builder machinery that must
+# stay out of the lightweight planning path.  ``snowflake.snowpark`` is
+# permitted per DEVELOPMENT_STANDARDS.md (Snowpark is an accepted
+# dependency of the ``decl/`` package).
 _FORBIDDEN_PREFIXES = (
     "snowflake.ml.feature_store.spec.builder",
     "snowflake.ml.feature_store.spec.models",
-    "snowflake.snowpark",
     "snowflake.connector",
 )
 
@@ -111,9 +114,10 @@ def test_no_forbidden_imports(source_file: pathlib.Path) -> None:
 
 
 class TestNarrowedSpecIsolation:
-    """The wheel-isolation rule was narrowed to permit ``spec.enums``
-    (stdlib-only) while continuing to block ``spec.models`` and
-    ``spec.builder`` (which both pull snowpark).
+    """The wheel-isolation rule permits ``spec.enums`` (stdlib-only) and
+    ``snowflake.snowpark`` while continuing to block ``spec.models`` and
+    ``spec.builder`` (which pull in heavy SnowML-core spec/builder
+    machinery) and ``snowflake.connector``.
     """
 
     def test_spec_enums_is_permitted(self) -> None:
@@ -137,17 +141,22 @@ class TestNarrowedSpecIsolation:
         imp = "snowflake.ml.feature_store.spec.models"
         assert any(
             imp.startswith(p) for p in _FORBIDDEN_PREFIXES
-        ), f"'{imp}' must remain forbidden — it imports snowpark types"
+        ), f"'{imp}' must remain forbidden — it pulls heavy SnowML-core spec machinery"
 
     def test_spec_builder_remains_forbidden(self) -> None:
         imp = "snowflake.ml.feature_store.spec.builder"
         assert any(
             imp.startswith(p) for p in _FORBIDDEN_PREFIXES
-        ), f"'{imp}' must remain forbidden — it imports snowpark types"
+        ), f"'{imp}' must remain forbidden — it pulls heavy SnowML-core builder machinery"
 
-    def test_snowpark_remains_forbidden(self) -> None:
+    def test_snowpark_is_permitted(self) -> None:
+        # Snowpark is now an accepted dependency of the decl/ package
+        # (DEVELOPMENT_STANDARDS.md); importing it must not be flagged.
         for imp in ("snowflake.snowpark", "snowflake.snowpark.types"):
-            assert any(imp.startswith(p) for p in _FORBIDDEN_PREFIXES), f"'{imp}' must remain forbidden"
+            for prefix in _FORBIDDEN_PREFIXES:
+                assert not imp.startswith(
+                    prefix
+                ), f"'{imp}' should be permitted but matched forbidden prefix '{prefix}'"
 
     def test_connector_remains_forbidden(self) -> None:
         for imp in ("snowflake.connector", "snowflake.connector.cursor"):

@@ -7,14 +7,14 @@ import pyarrow.parquet as pq
 
 _DATA0 = {"col1": [0], "col2": [10], "col3": ["a"]}
 _DATA1 = {"col1": [1, 2], "col2": [11, 12], "col3": ["ab", "abc"]}
-_DATA2 = {"col1": [3, 4, 5, 6], "col2": [13, 14, np.NaN, 16], "col3": ["m", "mn", "mnm", "mnmn"]}
+_DATA2 = {"col1": [3, 4, 5, 6], "col2": [13, 14, np.nan, 16], "col3": ["m", "mn", "mnm", "mnmn"]}
 
 
 _DATA3 = {"col1": [[0, 100]], "col2": [10], "col3": ["a"]}
 _DATA4 = {"col1": [[1, 110], [2, 200]], "col2": [11, 12], "col3": ["ab", "abc"]}
 _DATA5 = {
     "col1": [[3, 300], [4, 400], [5, 500], [6, 600]],
-    "col2": [13, 14, np.NaN, 16],
+    "col2": [13, 14, np.nan, 16],
     "col3": ["m", "mn", "mnm", "mnmn"],
 }
 

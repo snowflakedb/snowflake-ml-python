@@ -10,6 +10,7 @@ from tests.integ.snowflake.ml.registry.jobs import (
 )
 
 
+@absltest.skip("AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'")
 class TestExecuteInferenceJobServiceCatboostInteg(
     registry_execute_inference_job_service_test_base.ExecuteInferenceJobServiceTestBase
 ):

@@ -82,6 +82,10 @@ are unchanged), `CREATE_SOURCE`, `UPDATE_SOURCE` (desc-only, non-destructive), o
 All names are uppercased to match the planner's `spec_key` normalisation. `Datasource`
 applied state merges two paths: runtime-registered `StreamingSource` rows (authoritative,
 beat FV-derived on key collision) and FV-derived entries from `DESCRIBE` spec output.
+`cluster_by` column identifiers recovered from `list_feature_views()` rows are normalised
+through `identifier.resolve_identifier()` (via `_resolve_cluster_column`), so a quoted
+identifier with an internal quote (`"FOO""BAR"`) resolves to its canonical form instead of
+the mangled `FOO""BAR` a naive `.strip('"')` would yield.
 
 ### `api.py`
 

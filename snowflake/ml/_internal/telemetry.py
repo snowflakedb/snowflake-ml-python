@@ -300,7 +300,7 @@ def add_statement_params_custom_tags(
     """
     if not statement_params:
         return {}
-    existing_custom_tags: dict[str, Any] = statement_params.pop(TelemetryField.KEY_CUSTOM_TAGS.value, {})
+    existing_custom_tags: dict[str, Any] = dict(statement_params.get(TelemetryField.KEY_CUSTOM_TAGS.value, {}))
     existing_custom_tags.update(custom_tags)
     # NOTE: This can be done with | operator after upgrade from py3.8
     return {

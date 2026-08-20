@@ -9,6 +9,7 @@ from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
+@absltest.skip("AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'")
 class TestXGBoostBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},

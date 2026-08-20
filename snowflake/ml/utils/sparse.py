@@ -40,11 +40,16 @@ def _pandas_to_sparse_pandas(pandas_df: pd.DataFrame, sparse_cols: list[str]) ->
                 indices[key].append(row_i)
                 vals[key].append(value)
 
+        # numpy 2.x stores a str dtype as a fixed-width array, which casts the SparseArray fill value (nan) into a
+        # truncated string (e.g. "nan"). Use object dtype for non-numeric values so the fill stays nan.
+        sparse_array_dtype = object if dtype is str else dtype
         for col_i in range(array_length or 0):
             # for each index create a SparseArray column. For now use sequential number as suffix for column name
             col_name_index = col_name + "_" + str(col_i)
             pandas_df[col_name_index] = pandas_arrays.SparseArray(
-                vals[col_i], pandas_sparse.make_sparse_index(num_rows, indices[col_i], "integer"), dtype=dtype
+                vals[col_i],
+                pandas_sparse.make_sparse_index(num_rows, indices[col_i], "integer"),
+                dtype=sparse_array_dtype,
             )
 
         del pandas_df[col_name]
