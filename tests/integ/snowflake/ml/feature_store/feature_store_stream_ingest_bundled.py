@@ -154,6 +154,67 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             fs, fv_name, "v1", keys=[[ingested_key]], validate_fn=_validate, desc="stream ingest passthrough"
         )
 
+    @absltest.skip(  # type: ignore[misc]
+        "Pending online-store (Quake) support for non-finite floats: the store must accept the "
+        "'inf'/'-inf' string tokens on ingest and echo them on query. Un-skip once that image ships."
+    )
+    def test_stream_ingest_inf_score_online_read(self) -> None:
+        """+Inf and -Inf round-trip through streaming ingest and online read."""
+        # TODO: uncomment (remove the @absltest.skip above) after the next Quake release adds
+        # non-finite float support.
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_INGEST_INF_{s}"
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_minimal_probe_backfill_table(fs, s)
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+
+        pos_key = f"U_PINF_{s}"
+        neg_key = f"U_NINF_{s}"
+        self._stream_ingest_with_retry(
+            fs,
+            stream,
+            [
+                {"USER_ID": pos_key, "AMOUNT": float("inf"), "EVENT_TIME": datetime.datetime(2024, 6, 1, 12, 0, 0)},
+                {"USER_ID": neg_key, "AMOUNT": float("-inf"), "EVENT_TIME": datetime.datetime(2024, 6, 1, 12, 0, 0)},
+            ],
+        )
+
+        def _validate_pos(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), float("inf"))
+
+        def _validate_neg(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), float("-inf"))
+
+        self._poll_online_read(fs, fv_name, "v1", keys=[[pos_key]], validate_fn=_validate_pos, desc="stream +Inf")
+        self._poll_online_read(fs, fv_name, "v1", keys=[[neg_key]], validate_fn=_validate_neg, desc="stream -Inf")
+
     def test_stream_ingest_tiled_fv_spec_oft_online_read(self) -> None:
         """Tiled streaming FV: ingest multiple raw rows; online read returns tile aggregates for that key."""
         fs = self._create_feature_store()

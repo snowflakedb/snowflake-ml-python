@@ -239,7 +239,7 @@ def resolve_entrypoint(
     if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
         raise ValueError(
             "Unsupported entrypoint type:"
-            f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
+            f" supported={','.join(sorted(_SUPPORTED_ENTRYPOINT_EXTENSIONS))} got={entrypoint.suffix}"
         )
 
     return type_utils.PayloadEntrypoint(

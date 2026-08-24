@@ -1,7 +1,6 @@
 # DO NOT EDIT!
 # Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
 
---extra-index-url https://pypi.org/simple
 absl-py==1.4.0
 altair==5.5.0
 anyio==4.2.0

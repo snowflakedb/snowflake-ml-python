@@ -4,7 +4,17 @@ import os
 import time
 from functools import cached_property
 from pathlib import PurePosixPath
-from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overload
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
 
 import yaml
 
@@ -12,7 +22,12 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
-from snowflake.ml.jobs._interop import results as interop_result, utils as interop_utils
+from snowflake.ml.jobs._interop import (
+    data_utils,
+    exception_utils,
+    results as interop_result,
+    utils as interop_utils,
+)
 from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, type_utils
 from snowflake.snowpark import Row, context as sp_context
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -21,6 +36,15 @@ _PROJECT = "MLJob"
 TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "CANCELLED", "INTERNAL_ERROR", "DELETED"}
 RAY_DASHBOARD_ENDPOINT_NAME = "ray-dashboard-endpoint"
 JOB_RUNNING_STATUS = "RUNNING"
+# Launch backends whose jobs have no single result-bearing instance: result() reduces
+# per-instance records into a DistributedResult instead of reading one head result.
+_DISTRIBUTED_RESULT_BACKENDS = {constants.LAUNCH_BACKEND_PASSTHROUGH}
+
+# Per-instance records upload to the stage asynchronously (SPCS visibility lag), so a written
+# record may not be readable immediately. reduce retries missing records up to this timeout
+# before treating an instance as lost.
+_INSTANCE_RECORD_TIMEOUT_SECONDS = 30
+_INSTANCE_RECORD_POLL_INTERVAL_SECONDS = 2
 
 T = TypeVar("T")
 
@@ -40,6 +64,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
         self._status: type_utils.JOB_STATUS = "PENDING"
         self._result: Optional[interop_result.ExecutionResult] = None
+        self._distributed_result: Optional[interop_result.DistributedResult] = None
 
     @cached_property
     def _service_info(self) -> type_utils.ServiceInfo:
@@ -60,6 +85,11 @@ class MLJob(Generic[T], SerializableSessionMixin):
             return int(self._container_spec["env"].get(constants.MIN_INSTANCES_ENV_VAR, 1))
         except (TypeError, ValueError):
             return 1
+
+    @cached_property
+    def _has_distributed_result(self) -> bool:
+        """Whether this job's result is per-instance records to reduce, not a single head result."""
+        return self._container_spec.get("env", {}).get(constants.LAUNCH_BACKEND_ENV_VAR) in _DISTRIBUTED_RESULT_BACKENDS
 
     @property
     def id(self) -> str:
@@ -353,6 +383,52 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
         return cast(T, self._result.get_value())
 
+    @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
+    def distributed_result(self, timeout: float = -1) -> interop_result.DistributedResult:
+        """
+        Block until completion, then return the structured per-instance summary of a distributed run.
+
+        This is the result API for distributed jobs (e.g. submitted with ``parallel=True``), which
+        have no single head result. On full success it returns a :class:`DistributedResult`
+        (``success``, per-instance ``exit_codes``, ``failed_instance``, instance 0's ``return_value``).
+        On any instance failure it raises :class:`DistributedJobError`, which carries that same
+        :class:`DistributedResult` as ``.result`` and the earliest-failing instance's reconstructed
+        exception as its cause. ``result()`` remains the single-head API.
+
+        Args:
+            timeout: The maximum time to wait in seconds. Negative values are treated as no timeout.
+
+        Returns:
+            DistributedResult: The reduced per-instance result, on full success.  # noqa: DAR401
+
+        Raises:
+            NotImplementedError: If the job was not launched with a distributed backend (e.g.
+                ``parallel=True``); single-head jobs have no per-instance result — use :meth:`result`.
+            DistributedJobError: If any instance did not exit 0. Carries the DistributedResult
+                (``.result``) with per-instance ``exit_codes`` / ``failed_instance``.  # noqa: DAR402
+            RuntimeError: If the job's per-instance records could not be retrieved.
+            TimeoutError: If the job does not complete within the specified timeout.  # noqa: DAR402
+        """
+        if not self._has_distributed_result:
+            raise NotImplementedError(
+                "distributed_result() is only available for distributed jobs "
+                "(e.g. submitted with parallel=True); use result() for single-head jobs."
+            )
+        if self._distributed_result is None:
+            self.wait(timeout)
+            try:
+                self._distributed_result = _reduce_distributed_result(
+                    self._session, self.id, self._result_path, self._transform_path
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to retrieve result for job, error: {e!r}") from e
+        distributed_result = self._distributed_result
+        if not distributed_result.success:
+            raise interop_result.DistributedJobError.from_result(distributed_result) from _rebuild_failure_exception(
+                self._session, self._result_path, distributed_result.failed_instance
+            )
+        return distributed_result
+
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def cancel(self) -> None:
         """
@@ -506,6 +582,225 @@ def _get_logs(
         end_idx = len(full_log)
 
     return full_log[start_idx:end_idx].strip()
+
+
+def _get_service_instances(session: snowpark.Session, job_id: str) -> list[dict[str, Any]]:
+    """Return the control-plane instance set ``[{instance_id:int, start_time}]`` via SHOW SERVICE INSTANCES.
+
+    This is the authoritative set of instances the job has; the reduce left-joins per-instance records onto it.
+
+    Args:
+        session: The Snowpark session to use.
+        job_id: The fully-qualified job (service) ID.
+
+    Returns:
+        One dict per instance: ``{"instance_id": int, "start_time": <value>}``.
+    """
+    rows = query_helper.run_query(session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,))
+    instances = []
+    for row in rows:
+        # snowpark Row has no dict-style .get(); go through as_dict() for safe key access.
+        row_dict = row.as_dict()
+        if row_dict.get("instance_id") is None:
+            continue
+        instances.append({"instance_id": int(row_dict["instance_id"]), "start_time": row_dict.get("start_time")})
+    return instances
+
+
+def _read_instance_record(session: snowpark.Session, result_path: str, instance_id: int) -> Optional[dict[str, Any]]:
+    """Read one per-instance record from the stage; ``None`` if absent/unreadable.
+
+    Absent means the instance never wrote its finally-block record (killed/OOM) → lost.
+
+    Args:
+        session: The Snowpark session to use.
+        result_path: The job's result file stage path; records live in an ``instances/`` dir beside it.
+        instance_id: The instance whose record to read.
+
+    Returns:
+        The parsed record dict, or ``None`` if the record is absent or unreadable.
+    """
+    # Per-instance records live in an "instances/" directory alongside the result file.
+    path = (PurePosixPath(result_path).parent / "instances" / f"{instance_id}.json").as_posix()
+    try:
+        with data_utils.open_stream(path, "r", session=session) as stream:
+            return cast(dict[str, Any], json.load(stream))
+    except Exception as e:
+        logger.debug(f"could not read record for instance {instance_id}: {e!r}")
+        return None
+
+
+def _read_all_records_with_retry(
+    session: snowpark.Session, result_path: str, instances: list[dict[str, Any]]
+) -> dict[int, Optional[dict[str, Any]]]:
+    """Read every instance's record, retrying missing ones until visible or timeout.
+
+    Absorbs SPCS stage visibility lag: a written record may not be readable immediately. Returns
+    as soon as all records are present (successful jobs pay no extra latency); a record still
+    missing after the timeout is treated as lost (``None``) — best-effort, since we cannot tell
+    "not yet visible" from "never written" (killed).
+
+    Args:
+        session: The Snowpark session to use.
+        result_path: The job's result file stage path.
+        instances: The control-plane instance set to read records for.
+
+    Returns:
+        instance_id -> record dict, or ``None`` for any instance still missing after the timeout (lost).
+    """
+    deadline = time.monotonic() + _INSTANCE_RECORD_TIMEOUT_SECONDS
+    records: dict[int, Optional[dict[str, Any]]] = {}
+    missing = {inst["instance_id"] for inst in instances}
+    while missing:
+        for instance_id in list(missing):
+            rec = _read_instance_record(session, result_path, instance_id)
+            if rec is not None:
+                records[instance_id] = rec
+                missing.discard(instance_id)
+        if not missing or time.monotonic() >= deadline:
+            break
+        logger.debug(f"waiting for {len(missing)} instance record(s) {sorted(missing)}; retrying")
+        time.sleep(_INSTANCE_RECORD_POLL_INTERVAL_SECONDS)
+    if missing:
+        logger.info(
+            f"{len(missing)} instance record(s) not found after {_INSTANCE_RECORD_TIMEOUT_SECONDS}s; "
+            f"treating as lost: {sorted(missing)}"
+        )
+    for instance_id in missing:
+        records[instance_id] = None
+    return records
+
+
+def _earliest_failed_instance(
+    instances: list[dict[str, Any]],
+    records: dict[int, Optional[dict[str, Any]]],
+    exit_codes: dict[int, Optional[int]],
+) -> Optional[int]:
+    """Return the failed instance that ended earliest, or None if none failed.
+
+    Best-effort hint, not a guarantee: ordering uses each instance's record ended_at (subject to
+    clock skew across instances), falling back to the control-plane start_time when a failure has
+    no record.
+
+    Args:
+        instances: The control-plane instance set.
+        records: instance_id -> record dict, or ``None`` if the instance is lost.
+        exit_codes: instance_id -> exit code, or ``None`` if the instance is lost.
+
+    Returns:
+        The earliest-failing instance id, or ``None`` if every instance succeeded.
+    """
+    failed = [inst for inst in instances if exit_codes[inst["instance_id"]] != 0]
+    if not failed:
+        return None
+    # Bind the record to a local so it narrows past the None check (mypy won't narrow a repeated
+    # subscript expression). Cast the instance id to int so the return type stays int, not Any.
+    with_ended: list[tuple[Any, int]] = []
+    for inst in failed:
+        rec = records[inst["instance_id"]]
+        if rec is not None and rec.get("ended_at") is not None:
+            with_ended.append((rec["ended_at"], int(inst["instance_id"])))
+    if with_ended:
+        return min(with_ended)[1]
+    return int(
+        min(failed, key=lambda inst: (inst["start_time"] is None, inst["start_time"], inst["instance_id"]))[
+            "instance_id"
+        ]
+    )
+
+
+def _load_instance0_value_or_none(
+    session: snowpark.Session, result_path: str, path_transform: Callable[[str], str]
+) -> Any:
+    """Instance 0's return value on success; ``None`` if no value file (e.g. subprocess entrypoint)."""
+    try:
+        loaded = interop_utils.load(result_path, session=session, path_transform=path_transform)
+        return loaded.get_value()
+    except Exception as e:
+        # No value file is expected (subprocess entrypoints don't produce one). Log so a real
+        # read error isn't silently swallowed into a None return value.
+        logger.debug(f"could not load instance 0 return value: {e!r}")
+        return None
+
+
+def _rebuild_failure_exception(
+    session: snowpark.Session, result_path: str, failed_instance: Optional[int]
+) -> BaseException:
+    """Rebuild the earliest-failing instance's exception, for use as ``distributed_result()``'s raised cause.
+
+    Reads that instance's per-instance record and reconstructs from its string metadata (the same
+    build_exception path the classic loader uses). Falls back to a generic ``RemoteError`` when the
+    instance recorded no exception metadata — either it wrote no record (killed/lost) or it exited
+    non-zero without a reconstructable exception (e.g. a result-save failure).
+
+    Args:
+        session: The Snowpark session to use.
+        result_path: The job's result file stage path.
+        failed_instance: The instance to rebuild the exception for; ``None`` yields a generic error.
+
+    Returns:
+        The reconstructed exception, or a generic ``RemoteError`` when no metadata is available.
+    """
+    rec = _read_instance_record(session, result_path, failed_instance) if failed_instance is not None else None
+    exc = rec.get("exc") if rec else None
+    if isinstance(exc, dict):
+        return exception_utils.build_exception(
+            type_str=exc.get("type", ""),
+            message=exc.get("message", ""),
+            traceback=exc.get("traceback", ""),
+            original_repr=exc.get("repr"),
+        )
+    # exc is absent for two distinct cases; give each an accurate hint rather than guessing a reason.
+    if rec is None:
+        detail = "wrote no result record (likely killed or OOM before it could report)"
+    else:
+        detail = f"exited with code {rec.get('exit_code')} but recorded no reconstructable exception"
+    return exception_utils.RemoteError(
+        f"Instance {failed_instance} {detail}; see job.get_logs(instance_id={failed_instance})."
+    )
+
+
+def _reduce_distributed_result(
+    session: snowpark.Session, job_id: str, result_path: str, path_transform: Callable[[str], str]
+) -> interop_result.DistributedResult:
+    """Reduce per-instance stage records + control-plane state into a DistributedResult.
+
+    LEFT-JOINs each instance's record (``instances/<id>.json``) onto the authoritative
+    control-plane instance set, retrying missing records to absorb stage visibility lag. A record
+    still missing after retry is treated as lost (exit code ``None``) — best-effort.
+
+    Args:
+        session: The Snowpark session to use.
+        job_id: The fully-qualified job (service) ID.
+        result_path: The job's result file stage path.
+        path_transform: Maps a container path to its stage path (used to load instance 0's value).
+
+    Returns:
+        The aggregated :class:`DistributedResult`.
+
+    Raises:
+        RuntimeError: If the control plane returns no usable instances (couldn't read job state).
+    """
+    instances = _get_service_instances(session, job_id)
+    if not instances:
+        raise RuntimeError(f"Couldn't retrieve instance state for job {job_id}")
+    records = _read_all_records_with_retry(session, result_path, instances)
+
+    exit_codes: dict[int, Optional[int]] = {}
+    for inst in instances:
+        rec = records[inst["instance_id"]]
+        exit_codes[inst["instance_id"]] = rec.get("exit_code") if rec is not None else None
+
+    success = all(code == 0 for code in exit_codes.values())
+    failed_instance = None if success else _earliest_failed_instance(instances, records, exit_codes)
+    # return_value is the run's Python return value (instance 0), which only exists on success.
+    return_value = _load_instance0_value_or_none(session, result_path, path_transform) if success else None
+    return interop_result.DistributedResult(
+        success=success,
+        exit_codes=exit_codes,
+        failed_instance=failed_instance,
+        return_value=return_value,
+    )
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])

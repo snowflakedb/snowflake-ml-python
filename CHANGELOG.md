@@ -1,12 +1,52 @@
 # Release History
 
-## 1.52.0
+## 1.53.0
+
+### New Features
+
+* ML Jobs: `submit_file`, `submit_directory`, and `submit_from_stage` accept a `parallel` kwarg (default `False`).
+  With `parallel=True`, the entrypoint is executed directly on every instance with the job topology injected into the
+  environment (`SNOWFLAKE_JOB_INDEX`, `SNOWFLAKE_JOBS_COUNT`, `MLRS_HEAD_IP`, `MLRS_RDZV_PORT`, `MLRS_NODE_IPS`).
+  Not supported for callable (`@remote`) payloads.
+
+* ML Jobs: added `MLJob.distributed_result()`, the result API for distributed (e.g. `parallel=True`) jobs, which
+  have no single head result. On full success it returns a `DistributedResult` (`success`, per-instance `exit_codes`,
+  `failed_instance`, and instance 0's `return_value`); if any instance failed it raises `DistributedJobError`, which
+  carries that `DistributedResult` as `.result` and the earliest-failing instance's reconstructed exception as its
+  cause. `DistributedResult` and `DistributedJobError` are exported from `snowflake.ml.jobs`.
+
+* ML Jobs: `submit_file`, `submit_directory`, and `submit_from_stage` accept a `preflight` kwarg, supported only
+  together with `parallel=True`. It takes the name of a check level, run on every instance before the entrypoint:
+  `"wiring"` checks the rendezvous plus a small collective, and `"reference"` additionally times a short synthetic
+  DDP step and reports its step times from instance 0. If a requested check fails, the job aborts without running
+  the entrypoint and the failure surfaces through `distributed_result()`. A check that does not apply to the job
+  (`"reference"` on a CPU pool or a single instance) is reported as skipped and the job continues. Covers only the
+  PyTorch c10d rendezvous backend.
+
+* Feature Store: Iceberg-backed feature views can enable online storage when using the Postgres online store
+  (`OnlineConfig(store_type=OnlineStoreType.POSTGRES)`). Online storage with Iceberg remains unsupported for
+  other store types.
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Feature Store: `register_feature_view` now records `FV_SOURCE_REFS` metadata for managed batch
+  feature views (derived from the `feature_df` schema) when the caller does not supply
+  `source_refs`. Streaming and realtime feature views are unaffected.
+
+### Deprecations
+
+## 1.52.0 (2026-08-20)
 
 ### New Features
 
 ### Bug Fixes
 
 ### Behavior Changes
+
+* Feature Store: `stream_ingest` now reuses the Online Service ingest endpoint cached on the
+  `StreamSource` by `get_stream_source`, avoiding a per-call server status round-trip.
 
 ### Deprecations
 
@@ -25,9 +65,6 @@
   deployed model missing required packages.
 
 ### Behavior Changes
-
-* Feature Store: `stream_ingest` now reuses the Online Service ingest endpoint cached on the
-  `StreamSource` by `get_stream_source`, avoiding a per-call server status round-trip.
 
 ### Deprecations
 

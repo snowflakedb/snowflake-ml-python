@@ -582,6 +582,7 @@ class ModelVersion(lineage_node.LineageNode):
                 strict_input_validation=strict_input_validation,
                 statement_params=statement_params,
                 params=params,
+                is_object_output=target_function_info["is_object_output"],
             )
 
         if self._model_spec is None:
@@ -629,6 +630,7 @@ class ModelVersion(lineage_node.LineageNode):
             is_partitioned=target_function_info["is_partitioned"],
             explain_case_sensitive=explain_case_sensitive,
             params=params,
+            is_object_output=target_function_info["is_object_output"],
         )
 
     def _determine_explain_case_sensitivity(

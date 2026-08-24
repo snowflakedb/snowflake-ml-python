@@ -11,6 +11,7 @@ import hashlib
 import json
 from typing import Any, Literal, Optional
 
+from snowflake.ml.feature_store.decl.compiler import canonicalize_sql_for_hash
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
 from snowflake.ml.feature_store.decl.types import (
     AppliedObject,
@@ -253,7 +254,7 @@ def _structural_fingerprint(data: dict[str, Any], include_version: bool = True) 
                     {
                         "name": "",
                         "table": "",
-                        "query": str(src_query),
+                        "query": canonicalize_sql_for_hash(str(src_query)),
                     }
                 )
             else:
@@ -261,7 +262,7 @@ def _structural_fingerprint(data: dict[str, Any], include_version: bool = True) 
                     {
                         "name": src_name,
                         "table": src_table,
-                        "query": str(src_query),
+                        "query": canonicalize_sql_for_hash(str(src_query)),
                     }
                 )
         if fp_sources:
@@ -548,6 +549,16 @@ def compute_source_diff_kind(
     # else: applied side has no authoritative columns → both sides
     # omit ``columns`` from the hash so a clean replan does not
     # force ``RECREATE_SOURCE`` (Bug 1 regression pin).
+
+    # Query canonicalization (PR A — A2).  A query-backed BatchSource
+    # binds on its SQL body; a comment / keyword-case / whitespace-only
+    # edit is cosmetic and must NOT surface as ``recreate`` (which would
+    # drop the companion ``$SNAPSHOTS`` for append-only BFVs).  Both
+    # sides run through the same canonicaliser so they converge.
+    for _stripped in (stripped_local, stripped_applied):
+        _q = _stripped.get("query")
+        if isinstance(_q, str) and _q.strip():
+            _stripped["query"] = canonicalize_sql_for_hash(_q)
 
     local_hash = _source_structural_hash(stripped_local)
     applied_hash = _source_structural_hash(stripped_applied)
@@ -1040,7 +1051,7 @@ def _normalise_fv_sources_for_hash(sources: Any) -> list[dict[str, str]]:
         if isinstance(table, str) and table.strip():
             binding = table.strip().upper()
         elif isinstance(query, str) and query.strip():
-            binding = "QUERY:" + query.strip()
+            binding = "QUERY:" + canonicalize_sql_for_hash(query)
         elif isinstance(name, str) and name.strip():
             binding = name.strip().upper()
         if not binding:
@@ -1317,6 +1328,119 @@ def _result(
         message=message,
         object_name=object_name,
     )
+
+
+def _source_column_name(entry: dict[str, Any]) -> str:
+    """Return the source-column name from a feature dict, or ``""``.
+
+    Args:
+        entry: A single ``features[]`` dict.
+
+    Returns:
+        The column name, or empty string when absent.
+    """
+    raw = entry.get("source_column", "")
+    if isinstance(raw, dict):
+        return str(raw.get("name") or "").strip()
+    return str(raw or "").strip()
+
+
+def _feature_agg_label(entry: dict[str, Any], index: int) -> str:
+    """Human-readable label for an aggregation feature in error messages.
+
+    Args:
+        entry: A single ``features[]`` dict.
+        index: Position in ``features`` used when no output name is set.
+
+    Returns:
+        ``output_column.name`` when present, otherwise ``#{index}``.
+    """
+    raw = entry.get("output_column")
+    if isinstance(raw, dict):
+        name = str(raw.get("name") or "").strip()
+    else:
+        name = str(raw or "").strip()
+    return name if name else f"#{index}"
+
+
+def _check_feature_aggregations(spec: dict[str, Any]) -> list[ValidationResult]:
+    """Require complete aggregation rows on FeatureView ``features``.
+
+    A row that carries ``function`` or ``window`` / ``window_sec`` is an
+    aggregation and must have all three of ``function``, a source-column
+    name, and integer ``window_sec``. Incomplete rows used to be dropped
+    silently at apply time, so the deployed view could have fewer
+    features than the spec declared.
+
+    Rows with none of those keys (DESCRIBE 1:1 passthrough) are skipped.
+
+    Args:
+        spec: Normalized FeatureView spec dict (``model_to_dict`` shape).
+
+    Returns:
+        ERROR results for incomplete aggregation rows; empty when none.
+    """
+    kind = spec.get("kind", "")
+    if "FeatureView" not in str(kind):
+        return []
+
+    results: list[ValidationResult] = []
+    fv_name = spec.get("name", "") or ""
+    for index, entry in enumerate(spec.get("features") or []):
+        if not isinstance(entry, dict):
+            continue
+        function_name = entry.get("function")
+        window_sec = entry.get("window_sec")
+        has_window_sec = isinstance(window_sec, int)
+        raw_window = entry.get("window")
+        has_raw_window = raw_window is not None
+        if not function_name and not has_window_sec and not has_raw_window:
+            continue
+
+        label = _feature_agg_label(entry, index)
+        prefix = f"{fv_name}: aggregation {label}"
+
+        if not function_name:
+            results.append(
+                _result(
+                    "ERROR",
+                    "FEATURE_INCOMPLETE",
+                    f"{prefix} requires ``function``.",
+                    fv_name,
+                )
+            )
+        if not _source_column_name(entry):
+            results.append(
+                _result(
+                    "ERROR",
+                    "FEATURE_INCOMPLETE",
+                    f"{prefix} requires ``source_column``.",
+                    fv_name,
+                )
+            )
+        if not has_window_sec:
+            if has_raw_window:
+                results.append(
+                    _result(
+                        "ERROR",
+                        "FEATURE_INCOMPLETE",
+                        f"{prefix} has unusable ``window: {raw_window!r}``. "
+                        "Use a duration with a unit (``5m``, ``1h``); bare "
+                        "numbers like ``300`` and fractional values like "
+                        "``1.5m`` are rejected.",
+                        fv_name,
+                    )
+                )
+            else:
+                results.append(
+                    _result(
+                        "ERROR",
+                        "FEATURE_INCOMPLETE",
+                        f"{prefix} requires ``window`` (e.g. ``5m``) or ``window_sec``.",
+                        fv_name,
+                    )
+                )
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -2547,6 +2671,11 @@ def validate_specs(
         # the public ``validate_specs`` signature.
         key = spec_key(data, database=target_database, schema=target_schema)
         applied = applied_state.objects.get(key)
+
+        # Authoring completeness is independent of applied state: an
+        # incomplete aggregation must fail even on a no-op re-plan.
+        if "FeatureView" in str(data.get("kind", "")):
+            results.extend(_check_feature_aggregations(data))
 
         # 1. Idempotency — check first; if up-to-date, skip remaining checks.
         is_up_to_date, idem_results = _check_idempotency(

@@ -360,5 +360,58 @@ class TestComputeSourceDiffKindSignature:
         assert compute_source_diff_kind(local, applied) == expected
 
 
+# ---------------------------------------------------------------------------
+# Query-backed BatchSource: SQL canonicalization (PR A — A2)
+# ---------------------------------------------------------------------------
+
+
+def _batch_source(*, query: str, description: str = "orders rollup") -> dict[str, Any]:
+    """Local YAML-shape payload for a query-backed BatchSource."""
+    return {
+        "kind": "BatchSource",
+        "name": "ORDERS",
+        "query": query,
+        "description": description,
+    }
+
+
+def _applied_batch_datasource(*, query: str, desc: str = "orders rollup") -> dict[str, Any]:
+    """Applied Datasource row for a query-backed BatchSource (DT-recovered)."""
+    return {
+        "kind": "Datasource",
+        "name": "ORDERS",
+        "source_type": "Batch",
+        "query": query,
+        "description": desc,
+    }
+
+
+class TestComputeSourceDiffKindQueryCanonicalization:
+    """A comment / keyword-case / whitespace-only change to a query-backed
+    ``BatchSource`` must NOT surface as ``recreate`` — the SQL is
+    canonicalized before structural hashing so cosmetic edits are
+    ``no_change`` while a genuine query change is still ``recreate``."""
+
+    def test_comment_only_change_is_no_change(self) -> None:
+        local = _batch_source(query="SELECT id, amount FROM orders -- v2 edited")
+        applied = _applied_batch_datasource(query="SELECT id, amount FROM orders")
+        assert compute_source_diff_kind(local, applied) == "no_change"
+
+    def test_keyword_case_only_change_is_no_change(self) -> None:
+        local = _batch_source(query="select id, amount from orders")
+        applied = _applied_batch_datasource(query="SELECT id, amount FROM orders")
+        assert compute_source_diff_kind(local, applied) == "no_change"
+
+    def test_whitespace_only_change_is_no_change(self) -> None:
+        local = _batch_source(query="SELECT id,\n   amount\nFROM orders")
+        applied = _applied_batch_datasource(query="SELECT id, amount FROM orders")
+        assert compute_source_diff_kind(local, applied) == "no_change"
+
+    def test_semantic_query_change_is_recreate(self) -> None:
+        local = _batch_source(query="SELECT id, amount, tax FROM orders")
+        applied = _applied_batch_datasource(query="SELECT id, amount FROM orders")
+        assert compute_source_diff_kind(local, applied) == "recreate"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

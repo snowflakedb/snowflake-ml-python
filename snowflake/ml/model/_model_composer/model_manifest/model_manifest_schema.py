@@ -66,6 +66,9 @@ class ModelFunctionInfo(TypedDict):
         target_method_function_type: target method function type (FUNCTION or TABLE_FUNCTION).
         signature: The signature of the model method.
         is_partitioned: Whether the function is partitioned.
+        is_object_output: Whether the function returns a single packed OBJECT that must be unpacked into the
+            signature output columns client-side. True for legacy models, multi-output functions, and single
+            OBJECT outputs. False when the function returns a single native (non-OBJECT) value directly.
     """
 
     name: Required[str]
@@ -73,6 +76,7 @@ class ModelFunctionInfo(TypedDict):
     target_method_function_type: Required[str]
     signature: Required[model_signature.ModelSignature]
     is_partitioned: Required[bool]
+    is_object_output: Required[bool]
 
 
 class ModelFunctionInfoDict(TypedDict):

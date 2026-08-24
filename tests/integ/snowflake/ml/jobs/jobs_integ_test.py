@@ -220,7 +220,8 @@ class JobManagerTest(JobTestBase):
         self.assertIn("hello world", job.get_logs(verbose=True))
         self.assertIn("ray", job.get_logs(verbose=True))
         self.assertIn(constants.LOG_START_MSG, job.get_logs(verbose=True))
-        self.assertIn(constants.LOG_END_MSG, job.get_logs(verbose=True))
+        # Match the marker only: session-close logs can split the multi-line LOG_END_MSG banner.
+        self.assertIn("ML job finished", job.get_logs(verbose=True))
 
         # Check job for non-verbose mode
         self.assertIn("hello world", job.get_logs(verbose=False))

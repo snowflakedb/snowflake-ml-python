@@ -77,6 +77,8 @@ def _validate_spec_overrides(spec_overrides: Any) -> None:
 
 JOB_ID_PREFIX = "MLJOB_"
 _PROJECT = "MLJob"
+# Preflight levels, shallow to deep: each level also runs the ones before it.
+_PREFLIGHT_LEVELS = ("wiring", "reference")
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +92,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         name: Optional[str] = None,
         target_instances: int = 1,
         min_instances: Optional[int] = None,
+        parallel: bool = False,
+        preflight: Optional[str] = None,
         external_access_integrations: Optional[list[str]] = None,
         env_vars: Optional[dict[str, str]] = None,
         spec_overrides: Optional[dict[str, Any]] = None,
@@ -116,6 +120,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         self.name = name
         self.target_instances = target_instances
         self.min_instances = min_instances or target_instances
+        self.parallel = parallel
+        self.preflight = preflight
         self.external_access_integrations = external_access_integrations
         self.env_vars = env_vars
         self.spec_overrides = spec_overrides
@@ -187,6 +193,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         combined_env_vars = {
             **uploaded_payload.env_vars,
             constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "true",
+            # Inject the native launch backend when parallel execution is requested
+            **({constants.LAUNCH_BACKEND_ENV_VAR: constants.LAUNCH_BACKEND_PASSTHROUGH} if self.parallel else {}),
+            # Run the requested preflight level before the entrypoint
+            **({constants.PREFLIGHT_ENV_VAR: "true"} if self.preflight else {}),
+            **({constants.PREFLIGHT_REFERENCE_STEP_ENV_VAR: "true"} if self.preflight == "reference" else {}),
             **(self.env_vars or {}),
         }
         self.entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]
@@ -306,6 +317,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         entrypoint = kwargs.pop("entrypoint", None)
         target_instances = kwargs.pop("target_instances", 1)
         min_instances = kwargs.pop("min_instances", target_instances)
+        parallel = kwargs.pop("parallel", False)
+        preflight = kwargs.pop("preflight", None)
         pip_requirements = kwargs.pop("pip_requirements", None)
         artifact_repositories = kwargs.pop("artifact_repositories", None)
         if artifact_repositories is not None:
@@ -340,6 +353,23 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             raise ValueError("target_instances must be greater than 0.")
         if not (0 < min_instances <= target_instances):
             raise ValueError("min_instances must be greater than 0 and less than or equal to target_instances.")
+        if not isinstance(parallel, bool):
+            raise ValueError("parallel must be a boolean.")
+        if parallel and callable(source):
+            # A callable payload's contract is its return value, which is undefined when every instance runs it.
+            raise ValueError(
+                "parallel=True is not supported for callable payloads (@remote). Use submit_file, "
+                "submit_directory, or submit_from_stage with a script entrypoint."
+            )
+        if preflight is not None:
+            # Level names are matched case-insensitively.
+            preflight = preflight.strip().lower() if isinstance(preflight, str) else preflight
+            if preflight not in _PREFLIGHT_LEVELS:
+                raise ValueError(
+                    f"preflight must be one of {_PREFLIGHT_LEVELS}; omit it (or pass None) to skip the check."
+                )
+            if not parallel:
+                raise ValueError("preflight is only supported for distributed jobs; pass parallel=True.")
 
         if name:
             parsed_database, parsed_schema, parsed_name = identifier.parse_schema_level_object_identifier(name)
@@ -362,6 +392,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             name=name,
             target_instances=target_instances,
             min_instances=min_instances,
+            parallel=parallel,
+            preflight=preflight,
             external_access_integrations=external_access_integrations,
             env_vars=env_vars,
             spec_overrides=spec_overrides,
@@ -418,6 +450,12 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 target_instances (int): The number of nodes in the job. Defaults to 1.
                 min_instances (int): The minimum number of nodes required to start the job.
                     If none specified, defaults to target_instances.
+                parallel (bool): Whether to run the entrypoint directly on every node rather than only
+                    on the head. Defaults to False.
+                preflight (str): Multi-node check to run before the entrypoint. Set to "wiring" to check
+                    the rendezvous plus a small collective, or "reference" to also time a synthetic DDP
+                    step (needs a GPU pool, skipped otherwise). A failure aborts the job and surfaces via
+                    distributed_result(). Requires parallel=True.
                 pip_requirements (list[str]): A list of pip requirements for the job.
                 external_access_integrations (list[str]): A list of external access integrations.
                 env_vars (dict): Environment variables to set in container.

@@ -234,16 +234,20 @@ class TestSourceFilesCompile:
 class TestModulesImportable:
     """All public decl modules must be importable without errors."""
 
-    # Scoped to the loader-tier modules introduced with the package's first
-    # layer of the import-DAG.  Modules from higher layers are added to this
-    # list by the change that introduces them.
     _MODULES = [
+        "snowflake.ml.feature_store.decl.api",
         "snowflake.ml.feature_store.decl.compiler",
+        "snowflake.ml.feature_store.decl.dependencies",
         "snowflake.ml.feature_store.decl.enums",
         "snowflake.ml.feature_store.decl.errors",
+        "snowflake.ml.feature_store.decl.exporter",
+        "snowflake.ml.feature_store.decl.invariants",
         "snowflake.ml.feature_store.decl.loader",
+        "snowflake.ml.feature_store.decl.planner",
         "snowflake.ml.feature_store.decl.serializer",
+        "snowflake.ml.feature_store.decl.service",
         "snowflake.ml.feature_store.decl.spec_models",
+        "snowflake.ml.feature_store.decl.state",
         "snowflake.ml.feature_store.decl.templating",
         "snowflake.ml.feature_store.decl.types",
     ]

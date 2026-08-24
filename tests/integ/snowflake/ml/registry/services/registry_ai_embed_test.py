@@ -15,6 +15,7 @@ from absl.testing import absltest
 
 import snowflake.snowpark.exceptions
 from tests.integ.snowflake.ml.registry.services import registry_aisql_byom_test_base
+from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,12 @@ class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
             version_name=version_name,
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
             options={"embed_local_ml_library": True},
+            # Adding a conda dependency forces the conda build path, which routes
+            # torch through conda (not pip). This avoids --extra-index-url being
+            # written to requirements.txt, which SPCS rejects as a non-PEP-508 line.
+            conda_dependencies=[
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ],
         )
 
         logger.info("Creating SPCS service %s on pool %s ...", service_name, pool_name)

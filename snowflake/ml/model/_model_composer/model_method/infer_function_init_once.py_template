@@ -90,7 +90,7 @@ def load_model():
 
 # Actual function
 @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input={{ wide_input }})
-def {{ function_name }}(df: pd.DataFrame) -> dict:
+def {{ function_name }}(df: pd.DataFrame){% if not single_output %} -> dict{% endif %}:
     if runner is None:
         load_model()
     df.columns = input_cols + param_cols
@@ -111,4 +111,9 @@ def {{ function_name }}(df: pd.DataFrame) -> dict:
             method_params[col] = val
 
     predictions_df = runner(input_df, **method_params)
+{%- if single_output %}
+    # Single, non-OBJECT output: return the value directly so the function's native return type is preserved.
+    return predictions_df.replace({pd.NA: None, np.nan: None}).iloc[:, 0]
+{%- else %}
     return predictions_df.replace({pd.NA: None, np.nan: None}).to_dict("records")
+{%- endif %}

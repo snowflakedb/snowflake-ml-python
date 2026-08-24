@@ -228,6 +228,11 @@ def submit_file(
             min_instances (int): The minimum number of nodes required to start the job.
                 If none specified, defaults to target_instances. If set, the job
                 will not start until the minimum number of nodes is available.
+            parallel (bool): Whether to run the entrypoint directly on every node rather than only
+                on the head. Defaults to False.
+            preflight (str): Multi-node check to run before the entrypoint. Set to "wiring" to check the rendezvous
+                plus a small collective, or "reference" to also time a synthetic DDP step (needs a GPU pool, skipped
+                otherwise). A failure aborts the job and surfaces via distributed_result(). Requires parallel=True.
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
@@ -293,6 +298,11 @@ def submit_directory(
             min_instances (int): The minimum number of nodes required to start the job.
                 If none specified, defaults to target_instances. If set, the job
                 will not start until the minimum number of nodes is available.
+            parallel (bool): Whether to run the entrypoint directly on every node rather than only
+                on the head. Defaults to False.
+            preflight (str): Multi-node check to run before the entrypoint. Set to "wiring" to check the rendezvous
+                plus a small collective, or "reference" to also time a synthetic DDP step (needs a GPU pool, skipped
+                otherwise). A failure aborts the job and surfaces via distributed_result(). Requires parallel=True.
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
@@ -360,6 +370,11 @@ def submit_from_stage(
             min_instances (int): The minimum number of nodes required to start the job.
                 If none specified, defaults to target_instances. If set, the job
                 will not start until the minimum number of nodes is available.
+            parallel (bool): Whether to run the entrypoint directly on every node rather than only
+                on the head. Defaults to False.
+            preflight (str): Multi-node check to run before the entrypoint. Set to "wiring" to check the rendezvous
+                plus a small collective, or "reference" to also time a synthetic DDP step (needs a GPU pool, skipped
+                otherwise). A failure aborts the job and surfaces via distributed_result(). Requires parallel=True.
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.

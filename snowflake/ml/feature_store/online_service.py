@@ -7,6 +7,7 @@ as well as reading online features and ingesting records for streaming feature v
 from __future__ import annotations
 
 import datetime
+import decimal
 import json
 import logging
 import os
@@ -411,6 +412,10 @@ def _json_serialize_value(value: Any) -> Any:
         # NaN -> None. NB: NaN is the only float for which ``v != v`` holds.
         if value != value:
             return None
+        if value == float("inf"):
+            return "inf"
+        if value == float("-inf"):
+            return "-inf"
         return value
     if isinstance(value, str):
         return value
@@ -1196,7 +1201,7 @@ def _parse_query_batch_response(
             ``batch_size``, or feature metadata is missing.
     """
     try:
-        data = json.loads(raw.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"), parse_float=decimal.Decimal)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INTERNAL_SNOWML_ERROR,

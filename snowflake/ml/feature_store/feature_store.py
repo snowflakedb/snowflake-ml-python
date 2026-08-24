@@ -93,10 +93,12 @@ from snowflake.ml.feature_store.spec.enums import (
     ENTITY_TAG_PREFIX,
     FeatureAggregationMethod,
     FeatureViewKind,
+    SourceType,
     TableType,
 )
 from snowflake.ml.feature_store.spec.models import (
     FeatureViewSpec,
+    _columns_from_tiled_struct_type,
     validate_spec_oft_offline_table_schema,
     validate_spec_oft_tiled_offline_table_schema,
 )
@@ -176,6 +178,11 @@ def _validate_stream_ingest_record_keys(expected: list[str], row: dict[str, Any]
                 f"expected={expected!r}, missing={sorted(exp_set - keys)!r}, extra={sorted(keys - exp_set)!r}."
             ),
         )
+
+
+# Timezone names that place the session on the same time grid as UTC, so reading
+# through them carries no tile-boundary alignment risk.
+_UTC_TIMEZONE_NAMES = frozenset({"UTC", "ETC/UTC", "ETC/GMT", "GMT", "UCT", "UNIVERSAL", "ZULU"})
 
 
 def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
@@ -353,6 +360,85 @@ def _initialization_warehouse_clause(feature_view: FeatureView) -> str:
     """
     iw = feature_view.initialization_warehouse
     return f"\n                INITIALIZATION_WAREHOUSE = {iw}" if iw is not None else ""
+
+
+def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> Optional[list[dict[str, Any]]]:
+    """Record the batch FV's raw input columns so it can be recovered as code.
+
+    Background: a feature view can be registered two ways. The declarative
+    flow authors it as YAML/spec (which names its upstream *sources* and their
+    columns), while ``register_feature_view`` registers it imperatively from a
+    Snowpark ``feature_df`` and usually names no sources at all. Later,
+    ``snow feature init`` reverse-engineers deployed FVs back into that
+    declarative spec so they can be managed as code. For a tiled batch FV that
+    round-trip needs the *pre-aggregation* input schema (the columns the
+    ``feature_df`` read before aggregation). That schema cannot be read back
+    from the deployed object: the backing Dynamic Table only stores the
+    post-aggregation result (renamed/aggregated columns, plus internal
+    ``ArrayType`` tile columns). With nothing to compare against, recovery
+    guesses wrong, the planner sees a "changed" FV, and rebuilds it
+    (``RECREATE_FV``). This function captures the raw ``feature_df`` schema at
+    registration time and stores it as a source-ref so recovery reproduces the
+    same spec and the planner reports ``NO_CHANGE``.
+
+    What gets stored, and why each field:
+
+    - ``columns``: the whole point — the raw input schema recovery can't
+      otherwise reconstruct.
+    - ``source_type``: hard-coded to ``Batch`` because this path only runs for
+      managed batch FVs (streaming/realtime bail out above), so there is no
+      other value it could take. It is a fixed label for the stored entry, not
+      something derived from a real source object (we don't have one here).
+    - ``name``: a synthetic ``<FV>__SOURCE`` rather than the bare FV name.
+      Source names and FV names live in the same namespace during recovery, so
+      naming this after the FV would make the FV look like it depends on
+      itself.
+    - ``table``/``query`` are deliberately absent. When recovery diffs a
+      source it identifies it by its binding — ``table``, else ``query``, else
+      ``name`` — never by ``columns``. That binding is recovered independently
+      from the Dynamic Table's ``FROM`` clause. This entry therefore contributes
+      only columns and carries no binding of its own, so it can never disagree
+      with (or override) the recovered one. The row is immutable once written,
+      so getting this shape right at registration time is what matters.
+
+    Best-effort: schema reads are wrapped so a failure only skips the stamp
+    (worst case, the old ``RECREATE_FV`` behavior) and never breaks
+    registration.
+
+    Args:
+        feature_view: The feature view being registered.
+
+    Returns:
+        A one-element source-ref list
+        ``[{"name": "<FV>__SOURCE", "source_type": "Batch", "columns": [...]}]``
+        derived from ``feature_view.feature_df.schema``, or ``None`` when the
+        FV is not a managed batch FV, has no feature DataFrame, exposes no
+        columns, or its schema cannot be read.
+    """
+    if feature_view.is_streaming or feature_view.is_realtime_feature_view:
+        return None
+    feature_df = feature_view.feature_df
+    if feature_df is None:
+        return None
+    try:
+        # ``_columns_from_tiled_struct_type`` (not the scalar converter) so
+        # ArrayType/Binary tile columns serialize instead of raising.
+        columns = [col.model_dump(exclude_none=True) for col in _columns_from_tiled_struct_type(feature_df.schema)]
+    except Exception:
+        # Never let best-effort source-ref capture break registration.
+        return None
+    if not columns:
+        return None
+    # Columns only, no ``table``/``query`` binding — see the merge contract in
+    # the docstring. The ``<FV>__SOURCE`` name is synthetic so it can't be
+    # confused with the feature view itself.
+    return [
+        {
+            "name": f"{feature_view.name.resolved()}__SOURCE",
+            "source_type": SourceType.BATCH.value,
+            "columns": columns,
+        }
+    ]
 
 
 # ``list_feature_views`` output schemas. Row builders always populate the verbose
@@ -1249,14 +1335,19 @@ class FeatureStore:
                     feature_view.name, version, agg_metadata, descs, fv_metadata_config=fv_meta_config
                 )
 
-            # Persist the authored source-ref list when the caller
-            # supplied one; callers that leave ``source_refs`` unset skip
-            # the metadata write and no ``FV_SOURCE_REFS`` row is created.
-            if feature_view.source_refs:
+            # Persist the source-ref list. Prefer the caller-supplied list;
+            # otherwise auto-stamp one derived from the raw ``feature_df``
+            # schema (managed batch FVs) so imperatively-registered FVs carry
+            # FV_SOURCE_REFS and recover cleanly during declarative
+            # ``snow feature init`` instead of triggering a one-time
+            # RECREATE_FV. Streaming/realtime FVs and un-derivable schemas fall
+            # through with no row, preserving prior behavior for them.
+            source_refs = feature_view.source_refs or _derive_source_refs_from_feature_df(feature_view)
+            if source_refs:
                 self._metadata_manager.save_feature_view_source_refs(
                     feature_view.name,
                     version,
-                    FvSourceRefsMetadata(sources=list(feature_view.source_refs)),
+                    FvSourceRefsMetadata(sources=list(source_refs)),
                 )
 
             # Step 4: Save rollup metadata for PIT-correct training queries
@@ -1910,6 +2001,9 @@ class FeatureStore:
                         "Snowpark DataFrame instead if you accept the full-scan cost."
                     ),
                 )
+            # TODO(okharatsidi): add a persistent FV-level "timezone" parameter. For now, we warn
+            # the user about potentially inaccurate results.
+            self._warn_on_non_utc_session_timezone(feature_view)
             return self._read_from_offline_store(feature_view, keys, feature_names)
         else:
             raise snowml_exceptions.SnowflakeMLException(
@@ -5023,6 +5117,52 @@ class FeatureStore:
 
         query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
         return self._session.sql(query)
+
+    def _get_session_timezone(self) -> Optional[str]:
+        """Read the timezone configured for the current session.
+
+        Returns:
+            The configured timezone name, or ``None`` when it cannot be determined.
+        """
+        try:
+            rows = self._session.sql("SHOW PARAMETERS LIKE 'TIMEZONE' IN SESSION").collect()
+        except Exception as e:
+            logger.debug("feature store: could not determine the session timezone: %s", e)
+            return None
+
+        if not rows:
+            return None
+        row = rows[0]
+        for key in ("value", "VALUE"):
+            if key in row:
+                raw = row[key]
+                return str(raw) if raw is not None else None
+        return None
+
+    def _warn_on_non_utc_session_timezone(self, feature_view: FeatureView) -> None:
+        """Warn before an offline read of a tiled Postgres-backed feature view from a non-UTC session.
+
+        Args:
+            feature_view: The feature view about to be read from the offline store.
+        """
+        if not feature_view.is_tiled:
+            return
+        online_config = feature_view.online_config
+        if online_config is None or online_config.store_type != OnlineStoreType.POSTGRES:
+            return
+
+        session_timezone = self._get_session_timezone()
+        if session_timezone is None or session_timezone.strip().upper() in _UTC_TIMEZONE_NAMES:
+            return
+
+        warnings.warn(
+            f"feature store: the current session timezone is '{session_timezone}', not UTC. Aggregation "
+            "window boundaries are resolved in the session timezone while tile boundaries are bucketed in "
+            "the UTC timezone, so feature values may be inaccurate. Set the session timezone to UTC "
+            "(ALTER SESSION SET TIMEZONE = 'UTC') for consistent results.",
+            stacklevel=3,
+            category=UserWarning,
+        )
 
     def _read_tiled_fv_at_current_time(
         self,

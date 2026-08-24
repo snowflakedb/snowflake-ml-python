@@ -332,6 +332,140 @@ class ModelMethodTest(parameterized.TestCase):
                 },
             )
 
+    def test_model_method_single_output_native_type(self) -> None:
+        """When the capability is enabled, a single non-OBJECT output is declared with its native SQL type
+        and the generated function returns the value directly."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["outputs"], [{"type": "FLOAT"}])
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_6.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+    def test_model_method_single_output_native_type_disabled(self) -> None:
+        """Without the capability, a single non-OBJECT output stays packed as OBJECT (default behavior)."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: False}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+
+    def test_model_method_multi_output_stays_object(self) -> None:
+        """Multiple outputs stay packed as a single OBJECT even when the capability is enabled."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        multi_output_sig = {
+            "predict": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input")],
+                outputs=[
+                    model_signature.FeatureSpec(name="out1", dtype=model_signature.DataType.FLOAT),
+                    model_signature.FeatureSpec(name="out2", dtype=model_signature.DataType.INT64),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=multi_output_sig
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+
+    def test_model_method_single_object_output_stays_object(self) -> None:
+        """A single OBJECT-typed output stays packed (no native unwrap), even when the capability is enabled."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        object_output_sig = {
+            "predict": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input")],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.OBJECT)],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=object_output_sig
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(-1,)),),
+        (model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.TIMESTAMP_NTZ),),
+    )
+    def test_model_method_spcs_unsupported_single_output_stays_object(
+        self, output_feature: model_signature.FeatureSpec
+    ) -> None:
+        """ARRAY and TIMESTAMP_* single outputs stay packed as OBJECT even when the capability is enabled, because
+        the SPCS serving path cannot carry them natively yet (SNOW-3031938)."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        sig = {
+            "predict": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input")],
+                outputs=[output_feature],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+
     def test_model_method_model_init_once_true(self) -> None:
         """model_init_once=True selects the init_once template regardless of model type."""
         fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))

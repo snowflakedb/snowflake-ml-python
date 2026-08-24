@@ -1,5 +1,6 @@
 """Unit tests for online_service helpers."""
 
+import decimal
 import json
 import os
 from typing import Any, Optional
@@ -1400,6 +1401,42 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(online_service._json_serialize_value(np.float64(1.5)), 1.5)
         self.assertIsInstance(online_service._json_serialize_value(np.float64(1.5)), float)
         self.assertIs(online_service._json_serialize_value(np.bool_(True)), True)
+
+    def test_json_serialize_value_serializes_non_finite_floats(self) -> None:
+        """±Inf serializes to Snowflake's 'inf'/'-inf' string tokens; NaN stays None."""
+        import numpy as np
+
+        self.assertEqual(online_service._json_serialize_value(float("inf")), "inf")
+        self.assertEqual(online_service._json_serialize_value(float("-inf")), "-inf")
+        self.assertIsNone(online_service._json_serialize_value(float("nan")))
+
+        # numpy non-finite floats surface from DataFrame.to_dict and must behave identically.
+        self.assertEqual(online_service._json_serialize_value(np.float64("inf")), "inf")
+        self.assertEqual(online_service._json_serialize_value(np.float64("-inf")), "-inf")
+
+        # The resulting value must round-trip through the standard (strict) JSON encoder.
+        self.assertEqual(
+            json.dumps({"SCORE": online_service._json_serialize_value(float("inf"))}),
+            '{"SCORE": "inf"}',
+        )
+
+    def test_parse_query_batch_response_preserves_decimal_precision(self) -> None:
+        """High-precision NUMBER literals must not be truncated by float coercion on parse."""
+        # A NUMBER(38,37)-style value with more significant digits than float64 can hold.
+        high_precision = "0.1234567890123456789012345678901234567"
+        raw = (
+            '{"request_id": "r1", "status": "success",'
+            ' "results": [{"features": [' + high_precision + "]}],"
+            ' "metadata": {"features": [{"name": "balance"}]}}'
+        ).encode("utf-8")
+
+        _data, results, _names, _meta = online_service._parse_query_batch_response(raw, 1)
+
+        value = results[0]["features"][0]
+        self.assertIsInstance(value, decimal.Decimal)
+        self.assertEqual(value, decimal.Decimal(high_precision))
+        # Guard against regressing to float coercion, which would silently truncate the value.
+        self.assertNotEqual(value, float(high_precision))
 
 
 if __name__ == "__main__":

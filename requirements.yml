@@ -366,8 +366,6 @@
   dev_version_conda: 2.6.1
 
 # Below are pip only external packages
-- name_pypi: --extra-index-url https://pypi.org/simple
-  dev_version_pypi: ''
 - name_pypi: accelerate
   dev_version_pypi: 0.26.0
   requirements_extra_tags:

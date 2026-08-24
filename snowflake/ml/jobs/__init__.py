@@ -1,4 +1,5 @@
 from snowflake.ml.jobs._interop.exception_utils import install_exception_display_hooks
+from snowflake.ml.jobs._interop.results import DistributedJobError, DistributedResult
 from snowflake.ml.jobs._utils.type_utils import JOB_STATUS
 from snowflake.ml.jobs.decorators import remote
 from snowflake.ml.jobs.job import MLJob
@@ -26,4 +27,6 @@ __all__ = [
     "JOB_STATUS",
     "submit_from_stage",
     "MLJobDefinition",
+    "DistributedResult",
+    "DistributedJobError",
 ]

@@ -99,6 +99,25 @@ class ManagerTest(parameterized.TestCase):
             msg=f"delete_job executed a REMOVE built from an invalid stage path: {remove_statements}",
         )
 
+    @parameterized.parameters(  # type: ignore[misc]
+        (jobs.submit_file, {"file_path": "entry.py"}),
+        (jobs.submit_directory, {"dir_path": "src", "entrypoint": "entry.py"}),
+        (jobs.submit_from_stage, {"source": "@stage/src", "entrypoint": "entry.py"}),
+    )
+    def test_parallel_reaches_job_definition(self, submit_fn: Any, extra_kwargs: dict[str, Any]) -> None:
+        """parallel=True must reach MLJobDefinition._create through the submit_* kwargs passthrough."""
+        session = MagicMock()
+        with patch.object(job_definition.MLJobDefinition, "_create") as mock_create:
+            submit_fn(
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                parallel=True,
+                session=session,
+                **extra_kwargs,
+            )
+        _, call_kwargs = mock_create.call_args
+        self.assertIs(call_kwargs.get("parallel"), True)
+
 
 if __name__ == "__main__":
     absltest.main()

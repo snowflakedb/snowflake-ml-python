@@ -1769,9 +1769,62 @@ class ModelOpsTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 params=None,
+                unpack_object=True,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
+
+    def test_invoke_method_native_single_output(self) -> None:
+        # is_object_output=False (single native output) must be threaded to invoke_function_method as
+        # unpack_object=False, so the SQL client casts the result column directly instead of unpacking an OBJECT.
+        pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
+        m_sig = _DUMMY_SIG["predict"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+        self._add_id_check_mock_operations(m_df, [Row(1)])
+        m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
+        with (
+            mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+            ) as mock_convert_from_df,
+            mock.patch.object(
+                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df),
+        ):
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                signature=m_sig,
+                X=pd_df,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                is_object_output=False,
+            )
+            mock_convert_from_df.assert_called_once_with(
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
+            )
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=m_df,
+                input_args=['"input"'],
+                returns=[("output", spt.FloatType(), '"output"')],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                params=None,
+                unpack_object=False,
             )
 
     def test_invoke_method_1_no_sort(self) -> None:
@@ -1823,6 +1876,7 @@ class ModelOpsTest(parameterized.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                     params=None,
+                    unpack_object=True,
                 )
                 mock_convert_to_df.assert_called_once_with(
                     m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1876,6 +1930,7 @@ class ModelOpsTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 params=None,
+                unpack_object=True,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1967,6 +2022,7 @@ class ModelOpsTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 params=None,
+                unpack_object=True,
             )
             mock_convert_to_df.assert_not_called()
 
@@ -2013,6 +2069,7 @@ class ModelOpsTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 params=None,
+                unpack_object=True,
             )
             mock_convert_to_df.assert_not_called()
 
@@ -2339,6 +2396,7 @@ class ModelOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 statement_params=self.m_statement_params,
                 params=None,
+                unpack_object=True,
             )
             mock_convert_to_df.assert_not_called()
 
@@ -3201,7 +3259,7 @@ class ModelOpsTest(parameterized.TestCase):
                 return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
             ) as mock_validate_model_metadata,
         ):
-            self.m_ops.get_functions(
+            result = self.m_ops.get_functions(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
@@ -3224,6 +3282,54 @@ class ModelOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
+
+            function_info_by_method = {f["target_method"]: f for f in result}
+            # "NUMBER" is a native scalar return -> value returned directly (not packed in an OBJECT).
+            self.assertEqual(
+                function_info_by_method["predict"]["target_method_function_type"],
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+            )
+            self.assertFalse(function_info_by_method["predict"]["is_object_output"])
+            # A TABLE (...) return type is a table function.
+            self.assertEqual(
+                function_info_by_method["predict_table"]["target_method_function_type"],
+                model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+            )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("NUMBER(38,0)", False),
+        ("FLOAT", False),
+        ("VARCHAR(16777216)", False),
+        ("OBJECT", True),
+        ("OBJECT NOT NULL", True),
+    )
+    def test_get_functions_is_object_output(self, return_type: str, expected_is_object_output: bool) -> None:
+        # is_object_output is derived from the registered SQL return type: OBJECT (packed) vs a native scalar.
+        m_spec = {"signatures": {"predict": _DUMMY_SIG["predict"].to_dict()}}
+        m_show_versions_result = [Row(model_spec=yaml.safe_dump(m_spec))]
+        m_show_functions_result = [Row(name="predict", return_type=return_type)]
+        with (
+            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_show_versions_result),
+            mock.patch.object(self.m_ops._model_version_client, "show_functions", return_value=m_show_functions_result),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
+            ),
+        ):
+            result = self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]["is_object_output"], expected_is_object_output)
+            self.assertEqual(
+                result[0]["target_method_function_type"],
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+            )
 
     @parameterized.parameters(  # type: ignore[misc]
         {

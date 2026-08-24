@@ -1629,5 +1629,82 @@ class TestRefreshFreqDriftRoutesAsUpdateFv:
         )
 
 
+# ---------------------------------------------------------------------------
+# PR A — cosmetic SQL edits on a query-backed BatchFV route to NO_CHANGE
+# ---------------------------------------------------------------------------
+
+
+def _bfv_query_backed_authoring_dict(
+    *,
+    name: str = "BFV_QUERY_BACKED",
+    version: str = "V1",
+    query: str = "SELECT USER_ID FROM ORDERS_RAW",
+) -> dict[str, Any]:
+    """BatchFV authoring dict whose single source binds on an inline SQL query."""
+    return {
+        "kind": "BatchFeatureView",
+        "name": name,
+        "version": version,
+        "database": "DB",
+        "schema_": "SCH",
+        "online": False,
+        "refresh_freq": "1 hour",
+        "entities": ["USER_ID"],
+        "sources": [
+            {
+                "name": "SRC1",
+                "source_type": "Batch",
+                "query": query,
+                "columns": [{"name": "USER_ID", "type": "StringType"}],
+            }
+        ],
+    }
+
+
+class TestQueryBackedBatchFvCosmeticSqlEdits:
+    """A comment / keyword-case / whitespace-only edit to a query-backed
+    ``BatchFeatureView`` must route to ``NO_CHANGE`` — the SQL is
+    canonicalized at the hash boundary so the destructive ``RECREATE_FV``
+    (which would drop the companion ``$SNAPSHOTS``) is not emitted.  A
+    genuine query change still recreates."""
+
+    def _plan_kinds_for(self, deployed_query: str, local_query: str) -> list[OpKind]:
+        applied_state = _applied_from_compiled(_bfv_query_backed_authoring_dict(query=deployed_query))
+        local_fv = FeatureView.model_validate(_bfv_query_backed_authoring_dict(query=local_query))
+        plan = generate_plan(_batch(local_fv), applied_state, _opts())
+        return [op.kind for op in plan.ops if op.name == "BFV_QUERY_BACKED"]
+
+    def test_comment_only_query_edit_is_no_change(self) -> None:
+        kinds = self._plan_kinds_for(
+            "SELECT USER_ID FROM ORDERS_RAW",
+            "SELECT USER_ID FROM ORDERS_RAW -- add a comment",
+        )
+        assert OpKind.NO_CHANGE in kinds, f"comment-only SQL edit must be NO_CHANGE; got {kinds}"
+        assert OpKind.RECREATE_FV not in kinds
+
+    def test_keyword_case_only_query_edit_is_no_change(self) -> None:
+        kinds = self._plan_kinds_for(
+            "SELECT USER_ID FROM ORDERS_RAW",
+            "select USER_ID from ORDERS_RAW",
+        )
+        assert OpKind.NO_CHANGE in kinds, f"keyword-case-only SQL edit must be NO_CHANGE; got {kinds}"
+        assert OpKind.RECREATE_FV not in kinds
+
+    def test_whitespace_only_query_edit_is_no_change(self) -> None:
+        kinds = self._plan_kinds_for(
+            "SELECT USER_ID FROM ORDERS_RAW",
+            "SELECT USER_ID\n   FROM   ORDERS_RAW",
+        )
+        assert OpKind.NO_CHANGE in kinds, f"whitespace-only SQL edit must be NO_CHANGE; got {kinds}"
+        assert OpKind.RECREATE_FV not in kinds
+
+    def test_semantic_query_edit_still_recreates(self) -> None:
+        kinds = self._plan_kinds_for(
+            "SELECT USER_ID FROM ORDERS_RAW",
+            "SELECT USER_ID, TOTAL FROM ORDERS_RAW",
+        )
+        assert OpKind.RECREATE_FV in kinds, f"a genuine query change must still RECREATE_FV; got {kinds}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

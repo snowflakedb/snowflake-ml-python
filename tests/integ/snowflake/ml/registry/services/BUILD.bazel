@@ -316,6 +316,7 @@ py_test(
     ],
     deps = [
         ":registry_aisql_byom_test_base",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 

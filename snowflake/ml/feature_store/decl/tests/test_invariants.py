@@ -1737,5 +1737,80 @@ class TestBatchFvStructuralKeys:
         )
 
 
+# ---------------------------------------------------------------------------
+# Incomplete aggregation features (must fail at plan time)
+# ---------------------------------------------------------------------------
+
+
+def _agg_feature(**overrides: Any) -> dict[str, Any]:
+    feat: dict[str, Any] = {
+        "function": "sum",
+        "window_sec": 3600,
+        "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+        "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+    }
+    feat.update(overrides)
+    return feat
+
+
+class TestFeatureIncomplete:
+    """A features[] row that looks like an aggregation must carry function,
+    source_column, and integer window_sec.  Silent drops at apply time
+    used to deploy a shorter FV than the spec declared.
+    """
+
+    def _validate(self, features: list[dict[str, Any]]) -> list[Any]:
+        entity_spec = _make_entity_spec()
+        source_spec = _make_source_spec()
+        fv_spec = _make_fv_spec(features=features)
+        batch = _batch(entity_spec, source_spec, fv_spec)
+        return validate_specs(batch, _empty_applied())
+
+    def _incomplete_codes(self, features: list[dict[str, Any]]) -> list[str]:
+        results = self._validate(features)
+        return [r.code for r in results if r.code == "FEATURE_INCOMPLETE"]
+
+    def test_bare_numeric_window_string_is_error(self) -> None:
+        feat = _agg_feature()
+        feat.pop("window_sec")
+        feat["window"] = "300"
+        assert self._incomplete_codes([feat]) == ["FEATURE_INCOMPLETE"]
+
+    def test_fractional_window_string_is_error(self) -> None:
+        feat = _agg_feature()
+        feat.pop("window_sec")
+        feat["window"] = "1.5m"
+        assert self._incomplete_codes([feat]) == ["FEATURE_INCOMPLETE"]
+
+    def test_missing_window_is_error(self) -> None:
+        feat = _agg_feature()
+        feat.pop("window_sec")
+        assert self._incomplete_codes([feat]) == ["FEATURE_INCOMPLETE"]
+
+    def test_missing_function_is_error(self) -> None:
+        feat = _agg_feature()
+        feat.pop("function")
+        assert self._incomplete_codes([feat]) == ["FEATURE_INCOMPLETE"]
+
+    def test_missing_source_column_is_error(self) -> None:
+        feat = _agg_feature(source_column={"name": "", "type": "DoubleType"})
+        assert self._incomplete_codes([feat]) == ["FEATURE_INCOMPLETE"]
+
+    def test_passthrough_features_are_not_incomplete(self) -> None:
+        results = self._validate(
+            [
+                {
+                    "source_column": {"name": "event", "type": "StringType"},
+                    "output_column": {"name": "event", "type": "StringType"},
+                }
+            ]
+        )
+        assert not any(r.code == "FEATURE_INCOMPLETE" for r in results)
+
+    def test_complete_aggregation_is_not_incomplete(self) -> None:
+        results = self._validate([_agg_feature()])
+        assert not any(r.code == "FEATURE_INCOMPLETE" for r in results)
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    raise SystemExit(pytest.main([__file__, "-v"]))

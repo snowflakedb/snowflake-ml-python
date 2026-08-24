@@ -21,6 +21,8 @@ INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VE
 SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST = "SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST"
 ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = "ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS"
 ENABLE_PIP_ONLY_PACKAGING = "ENABLE_PIP_ONLY_PACKAGING"
+ENABLE_LORA_ADAPTERS = "ENABLE_LORA_ADAPTERS"
+ENABLE_SINGLE_OUTPUT_NATIVE_TYPE = "ENABLE_SINGLE_OUTPUT_NATIVE_TYPE"
 
 
 class PlatformCapabilities:
@@ -86,6 +88,21 @@ class PlatformCapabilities:
 
     def is_model_method_signature_parameters_enabled(self) -> bool:
         return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)
+
+    def is_lora_adapters_enabled(self) -> bool:
+        return False
+
+    def is_single_output_native_type_enabled(self) -> bool:
+        """Whether a single, non-OBJECT model FUNCTION output is registered with its native SQL type.
+
+        When enabled (and supported server-side), a scalar FUNCTION method with exactly one non-OBJECT output
+        is declared with that native type in the manifest and returns the value directly, instead of packing it
+        into an OBJECT. Defaults to disabled when the capability is absent (older servers).
+
+        Returns:
+            True if single-output native typing is enabled for this account; otherwise False.
+        """
+        return self._get_bool_feature(ENABLE_SINGLE_OUTPUT_NATIVE_TYPE, False)
 
     def is_pip_only_packaging_enabled(self) -> bool:
         """Whether pip-only model packaging is enabled for this account.

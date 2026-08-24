@@ -5000,10 +5000,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
     @parameterized.parameters("AWS", "AZURE")
     def test_iceberg_storage_rejects_online_config(self, provider: str) -> None:
-        """Test that Iceberg storage does not allow online feature tables.
+        """Test that Iceberg storage rejects hybrid-table (HT-OFT) online config.
 
-        Online Feature Tables with Iceberg storage is not currently supported and
-        requires a dedicated investigation into compatibility.
+        Postgres OFT on Iceberg is covered by the spec-OFT bundle
+        (``test_iceberg_batch_fv_spec_oft_online_read_by_key``).
         """
         fs = self._create_feature_store()
 
@@ -5015,7 +5015,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "Online storage is not supported with Iceberg",
+            "only supported with the Postgres online store",
         ):
             FeatureView(
                 name="iceberg_fv_online",

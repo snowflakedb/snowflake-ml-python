@@ -60,11 +60,16 @@ _FEATURE_VIEW_VERSION_MAX_LENGTH = 128
 
 # Postgres online store identifiers must fit PostgreSQL's 63-byte limit (NAMEDATALEN - 1); longer names
 # are silently truncated and can collide. name+version maps to "{name}${version}$UDF_TRANSFORMED"
-# (17 bytes of affixes) and columns to a distinct-N tile column "_PARTIAL_FIRST_DISTINCT_1000_TS_<col>"
-# (32 bytes), so each budget below leaves a 1-byte margin. The padding-guard test rechecks the affixes.
+# (17 bytes of affixes), so its budget leaves a 1-byte margin. Column budgets depend on the feature view:
+#   - Tiled (aggregation) feature views wrap each column in a tile prefix, worst case the distinct-N tile
+#     column "_PARTIAL_FIRST_DISTINCT_1000_TS_<col>" (32 bytes), so the tile budget is tight.
+#   - Non-tiled (passthrough) feature views map each column 1:1 to a Postgres column with no prefix, so
+#     the passthrough budget only reserves the 1-byte margin.
+# The padding-guard test rechecks the affixes.
 _PG_IDENTIFIER_BYTE_LIMIT = 63
 _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN = 45
 _POSTGRES_ONLINE_MAX_COLUMN_LEN = 30
+_POSTGRES_ONLINE_MAX_PASSTHROUGH_COLUMN_LEN = _PG_IDENTIFIER_BYTE_LIMIT - 1
 
 # The online-store schema is derived as "{schema}__{oft_id}", so its budget reserves room for the "__"
 # separator and a 19-digit (64-bit) oft_id, keeping the derived identifier within the limit (63 - 2 - 19).
@@ -1085,8 +1090,11 @@ class FeatureView(lineage_node.LineageNode):
         # Optional authored source-ref list. When the caller passes one,
         # ``FeatureStore.register_feature_view`` persists it under
         # ``MetadataType.FV_SOURCE_REFS`` and ``get_feature_view``
-        # rehydrates the same list onto reconstructed FVs; callers that
-        # leave it ``None`` skip the metadata write entirely.
+        # rehydrates the same list onto reconstructed FVs. When it is left
+        # ``None``, ``register_feature_view`` auto-stamps a best-effort
+        # source-ref derived from the raw ``feature_df`` schema for managed
+        # batch FVs (so declarative state recovery round-trips); streaming and
+        # realtime FVs still skip the write.
         self._source_refs: Optional[list[dict[str, Any]]] = _kwargs.pop("_source_refs", None)
         if self._stream_config is not None:
             if online_config is not None and online_config.enable is False:
@@ -1645,8 +1653,10 @@ class FeatureView(lineage_node.LineageNode):
         When set, :meth:`FeatureStore.register_feature_view` persists
         these entries under :attr:`MetadataType.FV_SOURCE_REFS` and
         ``get_feature_view`` returns the same list on the reconstructed
-        FV. Callers that did not supply a list see ``None`` here and no
-        metadata row is written.
+        FV. When it is ``None``, ``register_feature_view`` still auto-stamps
+        a best-effort source-ref derived from the raw ``feature_df`` schema
+        for managed batch FVs; this property reflects only what was supplied
+        at construction and is unaffected by that register-time default.
 
         Returns:
             The list of source-ref dicts as supplied, or ``None`` when
@@ -2156,7 +2166,12 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         # Validate Iceberg storage configuration
         if self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG:
             if self.online:
-                raise ValueError("Online storage is not supported with Iceberg.")
+                store_type = self._online_config.store_type if self._online_config is not None else None
+                if store_type != OnlineStoreType.POSTGRES:
+                    raise ValueError(
+                        "Online storage with Iceberg is only supported with the Postgres online store. "
+                        "Use OnlineConfig(store_type=OnlineStoreType.POSTGRES)."
+                    )
             if self._refresh_freq is None:
                 raise ValueError("Iceberg storage requires refresh_freq.")
 
@@ -2226,11 +2241,16 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 key = join_key if isinstance(join_key, SqlIdentifier) else SqlIdentifier(join_key)
                 resolved_columns.add(key.resolved())
 
+        # Tiled feature views wrap each column in a tile prefix, so they get the tighter budget;
+        # non-tiled (passthrough) columns map 1:1 to Postgres columns and can use the full budget.
+        column_budget = (
+            _POSTGRES_ONLINE_MAX_COLUMN_LEN if self.is_tiled else _POSTGRES_ONLINE_MAX_PASSTHROUGH_COLUMN_LEN
+        )
         for resolved in sorted(resolved_columns):
-            if len(resolved) > _POSTGRES_ONLINE_MAX_COLUMN_LEN:
+            if len(resolved) > column_budget:
                 raise ValueError(
                     f"column '{resolved}' is too long for the Postgres online store: {len(resolved)} "
-                    f"characters exceeds the limit of {_POSTGRES_ONLINE_MAX_COLUMN_LEN}. Rename the column."
+                    f"characters exceeds the limit of {column_budget}. Rename the column."
                 )
 
     def _validate_window_offset_alignment(self) -> None:

@@ -13,6 +13,8 @@ filegroup(
         "fixtures/function_4.py",
         "fixtures/function_4_init_once.py",
         "fixtures/function_5.py",
+        "fixtures/function_6.py",
+        "fixtures/function_6_init_once.py",
     ],
 )
 

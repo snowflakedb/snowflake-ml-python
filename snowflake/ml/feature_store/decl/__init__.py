@@ -39,6 +39,20 @@ Import the key functions and types from this package:
     )
 """
 
+try:
+    from snowflake.ml.feature_store.decl.api import (
+        discover_project,
+        fetch_applied_state,
+        generate_plan,
+        load_manifest,
+        load_project,
+        load_specs,
+        resolve_datasource_columns,
+        resolve_target,
+        validate_specs,
+    )
+except ModuleNotFoundError:  # lower-layer BUILD targets omit api.py
+    pass
 from snowflake.ml.feature_store.decl.enums import (
     TYPE_ALIASES,
     FeatureAggregationMethod,
@@ -93,6 +107,16 @@ from snowflake.ml.feature_store.decl.types import (
 )
 
 __all__ = [
+    # api.py
+    "load_specs",
+    "validate_specs",
+    "generate_plan",
+    "fetch_applied_state",
+    "resolve_datasource_columns",
+    "load_manifest",
+    "discover_project",
+    "resolve_target",
+    "load_project",
     # enums.py
     "FSBaseType",
     "FeatureViewKind",

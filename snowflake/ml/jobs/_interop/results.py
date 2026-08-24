@@ -49,3 +49,51 @@ class LoadedExecutionResult(ExecutionResult):
             if self.load_error:
                 raise ValueError("Job execution succeeded but result retrieval failed") from self.load_error
             return self.value
+
+
+@dataclass(frozen=True)
+class DistributedResult:
+    """Aggregated result of a multi-node job that has no single result-bearing instance.
+
+    For jobs where every instance runs the entrypoint independently — no head/worker
+    split (e.g. submitted with parallel=True) — there is no single head result to read.
+    Instead this LEFT-JOINs every instance's per-instance record onto the authoritative
+    control-plane instance set.
+
+    Args:
+        success: True iff every instance in the control-plane set exited 0.
+        exit_codes: instance_id -> exit code; None = lost (killed before writing a record).
+        failed_instance: Earliest-failing instance id; None on success.
+        return_value: The run's Python return value on success — persisted by instance 0, if the
+            entrypoint produced one — else None (subprocess entrypoints, lost instances, and
+            failures have no return value).
+    """
+
+    success: bool
+    exit_codes: dict[int, Optional[int]]
+    failed_instance: Optional[int] = None
+    return_value: Any = None
+
+
+class DistributedJobError(RuntimeError):
+    """Raised by ``MLJob.distributed_result()`` when a multi-node job did not fully succeed.
+
+    Carries the full :class:`DistributedResult` (``.result``) so callers can inspect per-instance
+    ``exit_codes`` and ``failed_instance``. The earliest-failing instance's reconstructed
+    exception is attached by the raising site as ``__cause__`` (via ``raise ... from``), so
+    the original error and its remote traceback surface on an uncaught raise.
+    """
+
+    def __init__(self, message: str, result: Optional[DistributedResult] = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+    @classmethod
+    def from_result(cls, result: DistributedResult) -> "DistributedJobError":
+        num_succeeded = sum(1 for code in result.exit_codes.values() if code == 0)
+        num_failed = len(result.exit_codes) - num_succeeded
+        return cls(
+            f"Distributed job failed: {num_failed}/{len(result.exit_codes)} instances did not exit 0 "
+            f"(earliest failed instance: {result.failed_instance}); see .result.exit_codes for details.",
+            result=result,
+        )

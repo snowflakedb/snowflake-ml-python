@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
-from snowflake.ml.jobs import job_definition
+from snowflake.ml.jobs import decorators, job_definition
 from snowflake.ml.jobs._interop import utils as interop_utils
 from snowflake.ml.jobs._utils import arg_protocol, constants, feature_flags, type_utils
 
@@ -313,7 +313,7 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.assertIn("ArgProtocol.NONE", str(ctx.exception))
 
     def _register_with_env_vars(
-        self, env_vars: dict[str, str] | None = None
+        self, env_vars: dict[str, str] | None = None, **register_kwargs: Any
     ) -> job_definition.MLJobDefinition[[Any], Any]:
         with patch(
             "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
@@ -330,6 +330,7 @@ class MLJobDefinitionTest(parameterized.TestCase):
                 session=self.session,
                 runtime_environment="/snowflake/image/image_repo/test_image:test_flag",
                 env_vars=env_vars,
+                **register_kwargs,
             )
             return result
 
@@ -348,6 +349,123 @@ class MLJobDefinitionTest(parameterized.TestCase):
         assert result.spec_options.env_vars is not None
         self.assertEqual(result.spec_options.env_vars[constants.USE_EMBEDDED_SCRIPTS_ENV_VAR], "true")
         self.assertEqual(result.spec_options.env_vars["OTHER_VAR"], "value")
+
+    def test_parallel_true_sets_launch_backend_passthrough(self) -> None:
+        result = self._register_with_env_vars(parallel=True)
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(
+            result.spec_options.env_vars[constants.LAUNCH_BACKEND_ENV_VAR],
+            constants.LAUNCH_BACKEND_PASSTHROUGH,
+        )
+
+    def test_parallel_omitted_does_not_set_launch_backend(self) -> None:
+        # Backward-compat contract: when parallel is not provided the launch-backend env var must be
+        # entirely absent so the default Ray path is unchanged.
+        result = self._register_with_env_vars()
+        assert result.spec_options.env_vars is not None
+        self.assertNotIn(constants.LAUNCH_BACKEND_ENV_VAR, result.spec_options.env_vars)
+
+    def test_user_env_vars_override_launch_backend(self) -> None:
+        result = self._register_with_env_vars(parallel=True, env_vars={constants.LAUNCH_BACKEND_ENV_VAR: "ray"})
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars[constants.LAUNCH_BACKEND_ENV_VAR], "ray")
+
+    def test_parallel_non_bool_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "parallel must be a boolean"):
+            job_definition.MLJobDefinition._create(
+                source="entry.py",
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                entrypoint="entry.py",
+                name="entry",
+                parallel="yes",
+            )
+
+    def test_parallel_true_with_callable_source_raises(self) -> None:
+        def train() -> None:
+            pass
+
+        with self.assertRaisesRegex(ValueError, "not supported for callable payloads"):
+            job_definition.MLJobDefinition._create(
+                source=train,
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                name="train",
+                parallel=True,
+            )
+
+    def test_remote_decorator_rejects_parallel(self) -> None:
+        # @remote forwards **kwargs straight to _create, so parallel must be rejected there rather
+        # than silently running the decorated function independently on every instance.
+        with self.assertRaisesRegex(ValueError, "not supported for callable payloads"):
+
+            @decorators.remote(
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                parallel=True,
+            )
+            def train() -> None:
+                pass
+
+    def test_remote_decorator_without_parallel_still_works(self) -> None:
+        # Guards the guard: rejecting callables must stay conditional on parallel, or every existing
+        # @remote caller breaks.
+        @decorators.remote(compute_pool="POOL", stage_name="@payload_stage/job", session=self.session)
+        def train() -> None:
+            pass
+
+        self.assertIsInstance(train, job_definition.MLJobDefinition)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("no_parallel", {"preflight": "wiring"}, "only supported for distributed"),
+        ("unknown_level", {"preflight": "throughput", "parallel": True}, "must be one of"),
+        ("none_as_string", {"preflight": "none", "parallel": True}, "must be one of"),
+        ("empty_string", {"preflight": "", "parallel": True}, "must be one of"),
+        ("list_of_levels", {"preflight": ["wiring"], "parallel": True}, "must be one of"),
+        ("bool_true", {"preflight": True, "parallel": True}, "must be one of"),
+        ("bool_false", {"preflight": False, "parallel": True}, "must be one of"),
+    )
+    def test_preflight_validation_raises(self, kwargs: dict[str, Any], expected: str) -> None:
+        with self.assertRaisesRegex(ValueError, expected):
+            job_definition.MLJobDefinition._create(
+                source="entry.py",
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                entrypoint="entry.py",
+                name="entry",
+                **kwargs,
+            )
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("wiring", "wiring", False),
+        ("reference", "reference", True),
+        ("mixed_case_and_padding", "  Reference  ", True),
+    )
+    def test_preflight_level_injects_env_vars(self, level: str, reference_expected: bool) -> None:
+        # "reference" must set both gates, not only its own.
+        result = self._register_with_env_vars(parallel=True, preflight=level)
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars.get(constants.PREFLIGHT_ENV_VAR), "true")
+        self.assertEqual(
+            result.spec_options.env_vars.get(constants.PREFLIGHT_REFERENCE_STEP_ENV_VAR) == "true",
+            reference_expected,
+        )
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("omitted", {"parallel": True}),
+        ("explicit_none", {"parallel": True, "preflight": None}),
+        # None means off, so it must not trip the parallel=True requirement either.
+        ("explicit_none_without_parallel", {"preflight": None}),
+    )
+    def test_no_preflight_omits_env_vars(self, register_kwargs: dict[str, Any]) -> None:
+        result = self._register_with_env_vars(**register_kwargs)
+        assert result.spec_options.env_vars is not None
+        self.assertNotIn(constants.PREFLIGHT_ENV_VAR, result.spec_options.env_vars)
+        self.assertNotIn(constants.PREFLIGHT_REFERENCE_STEP_ENV_VAR, result.spec_options.env_vars)
 
 
 if __name__ == "__main__":

@@ -628,3 +628,502 @@ py_test(
         ":decl_lib_state",
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Library — client-facade tier (layer 4 of the import-DAG, the top)
+#
+# The imperative bridge (``imperative_executor.py``: lazy adapter onto the
+# imperative ``FeatureStore`` — ``assert_feature_store_initialized`` /
+# ``fetch_entity_rows`` / ``fetch_stream_source_rows`` /
+# ``_build_feature_view`` / ``execute_plan``), the top-level facade
+# (``api.py``: the single entry point the CLI plugin imports — query
+# factories, state, planning, enrichment, export, plan-file (de)serialise),
+# and the pure service-status parsing helpers (``service.py``).  This is the
+# rollup target that pulls in every lower tier of the import-DAG; the
+# wheel-isolation contract (pinned by ``tests/test_wheel_isolation.py``)
+# permits only the two stdlib-only siblings ``spec.enums`` /
+# ``interval_utils`` from outside the package.
+# ---------------------------------------------------------------------------
+py_library(
+    name = "decl_lib",
+    srcs = [
+        "api.py",
+        "imperative_executor.py",
+        "service.py",
+    ],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":decl_lib_loader",
+        ":decl_lib_planner",
+        ":decl_lib_state",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Unit tests — client-facade tier (and the cross-tier integration suites that
+# exercise the full apply path, so they depend on the ``:decl_lib`` rollup).
+# ---------------------------------------------------------------------------
+py_test(
+    name = "imperative_executor_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_entity_resolution_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_entity_resolution.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_entity_resolution.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_fetch_fg_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_fetch_fg.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_fetch_fg.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_list_fv_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_list_fv.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_list_fv.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_target_lag_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_target_lag.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_target_lag.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "imperative_executor_update_batch_fv_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_update_batch_fv.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_update_batch_fv.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "api_export_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_api_export.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_api_export.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "api_project_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_api_project.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_api_project.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "api_stream_source_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_api_stream_source.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_api_stream_source.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "api_validate_specs_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_api_validate_specs.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_api_validate_specs.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "service_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_service.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_service.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "state_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_state.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_state.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "exporter_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_exporter.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_exporter.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "golden_spec_round_trip_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_golden_spec_round_trip.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_golden_spec_round_trip.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "export_plan_round_trip_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_export_plan_round_trip.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_export_plan_round_trip.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "export_plan_round_trip_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_export_plan_round_trip_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_export_plan_round_trip_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "enrich_list_results_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_enrich_list_results.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_enrich_list_results.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "enrich_list_results_feature_group_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_enrich_list_results_feature_group.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_enrich_list_results_feature_group.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_cluster_by_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_cluster_by.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_cluster_by.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_initialize_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_initialize.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_initialize.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_refresh_mode_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_refresh_mode.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_refresh_mode.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_secondary_keys_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_secondary_keys.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_secondary_keys.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_storage_config_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_storage_config.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_storage_config.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "advanced_bvt_warehouse_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_warehouse.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_warehouse.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "batch_fv_bugbash_e2e_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_batch_fv_bugbash_e2e.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_batch_fv_bugbash_e2e.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "batch_fv_project_integration_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_batch_fv_project_integration.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_batch_fv_project_integration.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "batch_fv_query_source_integration_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_batch_fv_query_source_integration.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_batch_fv_query_source_integration.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "clean_apply_replan_regression_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_clean_apply_replan_regression.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_clean_apply_replan_regression.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "decoupled_refresh_contract_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_decoupled_refresh_contract.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_decoupled_refresh_contract.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "init_first_hypotheses_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_init_first_hypotheses.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_init_first_hypotheses.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "integration_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_integration.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_integration.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "load_project_templating_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_load_project_templating.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_load_project_templating.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "no_entity_tag_sql_in_decl_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_no_entity_tag_sql_in_decl.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_no_entity_tag_sql_in_decl.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "planner_batch_feature_view_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_batch_feature_view.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_batch_feature_view.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "planner_virtual_sources_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_virtual_sources.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_virtual_sources.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "serializer_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_serializer.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_serializer.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)
+
+py_test(
+    name = "types_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_types.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_types.py",
+    tags = ["feature:feature_store"],
+    deps = [":decl_lib"],
+)

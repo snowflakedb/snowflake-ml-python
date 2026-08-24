@@ -290,6 +290,16 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_pip_only_packaging_enabled())
 
+    def test_lora_adapters_disabled_by_default(self) -> None:
+        """Test is_lora_adapters_enabled stays off until client release."""
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            {
+                platform_capabilities.ENABLE_LORA_ADAPTERS: True,
+            }
+        ):
+            pc = platform_capabilities.PlatformCapabilities.get_instance()
+            self.assertFalse(pc.is_lora_adapters_enabled())
+
     @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
     def test_mocking(self, live_commit: bool) -> None:
         """Test mocking of platform capabilities."""

@@ -17,6 +17,8 @@ import json
 import re
 from typing import Any, Optional
 
+import sqlparse
+
 from snowflake.ml.feature_store.decl.enums import normalize_type
 from snowflake.ml.feature_store.decl.templating import detect_and_render
 from snowflake.ml.feature_store.interval_utils import interval_to_seconds
@@ -272,9 +274,13 @@ def normalize_sql_whitespace(sql: str) -> str:
       ``'a   b'`` collapses to ``'a b'``. Authors who need exact
       whitespace inside quoted literals should use SQL functions like
       ``REPLACE`` or escape sequences instead.
-    - **Comments are preserved as-is** only insofar as the regex does
-      not strip them; ``-- foo`` and ``/* foo */`` survive but any
-      whitespace inside them collapses.
+    - **Comments are NOT handled here.** This helper only touches
+      whitespace, so a ``--`` line comment would swallow the rest of the
+      query once its terminating newline collapses.  The compile-time
+      caller (:func:`inline_query_source`) therefore runs
+      :func:`strip_sql_comments` *before* this normaliser so the deployed
+      SQL is comment-free and valid; the hash-basis canonicaliser
+      (:func:`canonicalize_sql_for_hash`) strips comments too.
     - **Embedded** ``;`` separators (i.e. multi-statement bodies) are
       preserved.  Only a *trailing* run of ``;`` is removed, mirroring
       how Snowflake stores the ``AS <body>`` portion.
@@ -287,6 +293,72 @@ def normalize_sql_whitespace(sql: str) -> str:
     """
     collapsed = _SQL_WHITESPACE_RUN.sub(" ", sql).strip()
     return _SQL_TRAILING_TERMINATORS.sub("", collapsed)
+
+
+def strip_sql_comments(sql: str) -> str:
+    """Remove SQL comments (``--`` line and ``/* ... */`` block) from ``sql``.
+
+    Applied at compile time by :func:`inline_query_source` *before*
+    :func:`normalize_sql_whitespace` collapses newlines.  Without this a
+    ``--`` line comment loses its terminating newline when whitespace is
+    collapsed and swallows the rest of the query onto a single line,
+    producing invalid ``CREATE DYNAMIC TABLE … AS <body>`` DDL.
+
+    The transform is defensive: any parser error returns the input
+    unchanged so a malformed SQL body never breaks compilation.
+
+    Args:
+        sql: The SQL string to strip comments from.
+
+    Returns:
+        The SQL with comments removed (whitespace otherwise untouched;
+        the caller normalises whitespace separately).  Empty / falsy
+        input is returned unchanged.
+    """
+    if not sql:
+        return sql
+    try:
+        # sqlparse.format is untyped (returns Any); coerce for mypy.
+        return str(sqlparse.format(sql, strip_comments=True))
+    except Exception:  # noqa: BLE001 — never break compilation on a parser hiccup
+        return sql
+
+
+def canonicalize_sql_for_hash(sql: str) -> str:
+    """Canonicalize SQL into a stable **hash basis** (never the submitted DDL).
+
+    Strips comments, upper-cases keywords, and collapses whitespace so a
+    comment-only / keyword-case-only / formatting-only edit to a
+    query-backed ``BatchSource`` does not change the structural hash —
+    which would otherwise emit a spurious ``RECREATE_SOURCE`` /
+    ``RECREATE_FV`` (and, for append-only BatchFVs, wipe the companion
+    ``$SNAPSHOTS`` history).
+
+    This is used *only* at hashing boundaries in
+    :mod:`snowflake.ml.feature_store.decl.invariants`; the SQL actually
+    submitted to the Dynamic Table keeps its authored keyword case /
+    quoting verbatim.  Idempotent, and defensive: any parser error falls
+    back to :func:`normalize_sql_whitespace` so hashing never crashes.
+
+    Args:
+        sql: The SQL string to canonicalize for hashing.
+
+    Returns:
+        The canonicalized SQL string; empty / falsy input is returned
+        unchanged.
+    """
+    if not sql:
+        return sql
+    try:
+        formatted = sqlparse.format(
+            sql,
+            strip_comments=True,
+            keyword_case="upper",
+            strip_whitespace=True,
+        )
+    except Exception:  # noqa: BLE001 — fall back to whitespace-only normalisation
+        formatted = sql
+    return normalize_sql_whitespace(formatted)
 
 
 def inline_query_source(
@@ -303,9 +375,13 @@ def inline_query_source(
     * If the doc carries ``query_file:``, read the sibling file
       (resolved relative to ``spec_file_dir``), Jinja-render it with
       ``template_vars`` when supplied, set ``query`` to the
-      whitespace-normalized contents, and drop ``query_file``.
-    * If the doc already carries an inline ``query:``, normalize it in
-      place. This is what keeps the DT-text round-trip stable on
+      comment-stripped, whitespace-normalized contents, and drop
+      ``query_file``.
+    * If the doc already carries an inline ``query:``, strip comments and
+      normalize whitespace in place. Comment stripping (via
+      :func:`strip_sql_comments`) runs BEFORE whitespace collapse so a
+      ``--`` line comment cannot swallow the rest of the query; the
+      whitespace normalisation keeps the DT-text round-trip stable on
       re-apply (see :func:`normalize_sql_whitespace`).
     * Missing sidecar files raise :class:`SpecLoadError` naming both
       the source and the file. ``spec_file_dir=None`` returns the doc
@@ -363,13 +439,13 @@ def inline_query_source(
             json.dumps(template_vars) if template_vars else None,
             query_path,
         )
-        data["query"] = normalize_sql_whitespace(source)
+        data["query"] = normalize_sql_whitespace(strip_sql_comments(source))
         del data["query_file"]
         return data
 
     inline_query = data.get("query")
     if isinstance(inline_query, str) and inline_query:
-        data["query"] = normalize_sql_whitespace(inline_query)
+        data["query"] = normalize_sql_whitespace(strip_sql_comments(inline_query))
 
     return data
 

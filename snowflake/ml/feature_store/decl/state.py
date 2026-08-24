@@ -708,7 +708,7 @@ def _build_offline_fv_object(
         _inject_batch_fv_fields_from_list_row(spec_payload, fv_row, fv_obj=fv_obj)
 
     content_hash = _full_spec_hash(spec_payload)
-    key = _buildspec_key(kind, spec_payload)
+    key = _build_spec_key(kind, spec_payload)
     return AppliedObject(
         key=key,
         kind=kind,
@@ -810,7 +810,7 @@ def _extract_spec_from_oft(row: dict[str, Any]) -> Optional[dict[str, Any]]:
         return None
 
 
-def _buildspec_key(kind: str, spec: dict[str, Any]) -> str:
+def _build_spec_key(kind: str, spec: dict[str, Any]) -> str:
     """Build a canonical ``kind:DATABASE.SCHEMA:NAME`` key from spec metadata.
 
     Mirrors :func:`snowflake.ml.feature_store.decl.invariants.spec_key` so
@@ -1406,7 +1406,7 @@ def fetch_applied_state(
                     spec_payload.update(inner_spec)
                 content_hash = structural_fingerprint_hash(spec_payload)
 
-            key = _buildspec_key(
+            key = _build_spec_key(
                 kind,
                 {
                     "database": db,

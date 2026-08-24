@@ -49,6 +49,7 @@ class FunctionGenerator:
         wide_input: bool = False,
         options: Optional[FunctionGenerateOptions] = None,
         use_udf_init_once: bool = False,
+        single_output: bool = False,
     ) -> None:
         import importlib_resources
 
@@ -84,6 +85,7 @@ class FunctionGenerator:
             max_batch_size=options.get("max_batch_size", None),
             wide_input=wide_input,
             function_name=FunctionGenerator.FUNCTION_NAME,
+            single_output=single_output,
         )
         with open(function_file_path, "w", encoding="utf-8") as f:
             f.write(udf_code)

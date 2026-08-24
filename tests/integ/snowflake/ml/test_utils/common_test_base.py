@@ -134,6 +134,9 @@ class CommonTestBase(parameterized.TestCase):
 
         self.session = test_env_utils.get_available_session()
 
+        if _ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG:
+            self._enable_hidden_live_version_session_parameters()
+
         try:
             snowflake_version = snowflake_env.get_current_snowflake_version(self.session)
             logging.info(f"Snowflake version: {str(snowflake_version)}")
@@ -151,6 +154,20 @@ class CommonTestBase(parameterized.TestCase):
             self._hidden_live_commit_patcher.stop()
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             self.session.close()
+
+    def _enable_hidden_live_version_session_parameters(self) -> None:
+        """Enable server-side hidden live version support for the current session.
+
+        The client capability is force-enabled in integ tests, so the server must
+        also accept the ``WITH/ADD LIVE VERSION`` grammar and hide the intermediate
+        live objects. Older deployments that do not recognize these parameters are
+        tolerated so the client fallback path can still be exercised.
+        """
+        for parameter in ("ENABLE_HIDDEN_LIVE_VERSION_IN_MODEL", "HIDE_LIVE_MODEL_AND_VERSIONS"):
+            try:
+                self.session.sql(f"ALTER SESSION SET {parameter} = TRUE").collect()
+            except Exception as e:
+                logging.warning(f"Failed to set session parameter {parameter}: {e}")
 
     def _enable_hf_hub_download_retry(self) -> None:
         """Patch HuggingFace Hub downloads with exponential backoff for this test.

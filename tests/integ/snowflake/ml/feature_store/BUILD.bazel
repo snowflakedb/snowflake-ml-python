@@ -355,6 +355,7 @@ py_test(
         "feature_store_feature_group_bundled.py",
         "feature_store_last_first_n_online_bundled.py",
         "feature_store_oft_varchar_length_bundled.py",
+        "feature_store_online_name_length_bundled.py",
         "feature_store_realtime_bundled.py",
         "feature_store_spec_oft_bundle_test.py",
         "feature_store_stream_ingest_bundled.py",
