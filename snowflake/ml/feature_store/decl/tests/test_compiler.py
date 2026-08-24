@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from snowflake.ml.feature_store.decl.compiler import (
+    canonicalize_sql_for_hash,
     compile_spec,
     inline_query_source,
     inline_udf_source,
@@ -13,6 +14,7 @@ from snowflake.ml.feature_store.decl.compiler import (
     normalize_sql_whitespace,
     normalize_types,
     parse_duration_to_seconds,
+    strip_sql_comments,
 )
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 
@@ -538,6 +540,118 @@ class TestInlineQuerySource:
             result = inline_query_source(d, tmpdir)
         assert result["query"] == "SELECT 1"
         assert "query_file" not in result
+
+    def test_inline_query_with_line_comment_does_not_break(self) -> None:
+        # Regression: a ``--`` line comment used to lose its terminating
+        # newline when whitespace collapsed, swallowing the rest of the
+        # query onto one line and producing invalid DDL.  The comment must
+        # be stripped BEFORE collapse so the remaining SQL survives.
+        d = {
+            "kind": "BatchSource",
+            "name": "events",
+            "query": "SELECT id, -- primary key\n amount\nFROM t",
+        }
+        result = inline_query_source(d, None)
+        assert result["query"] == "SELECT id, amount FROM t"
+        assert "--" not in result["query"]
+
+    def test_inline_query_with_block_comment_is_stripped(self) -> None:
+        d = {
+            "kind": "BatchSource",
+            "name": "events",
+            "query": "SELECT a, /* keep me? no */ b FROM t",
+        }
+        result = inline_query_source(d, None)
+        assert result["query"] == "SELECT a, b FROM t"
+        assert "/*" not in result["query"]
+
+    def test_query_file_with_line_comment_does_not_break(self) -> None:
+        sql_body = "SELECT\n  user_id, -- the user\n  ts\nFROM RAW.EVENTS\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sql_path = os.path.join(tmpdir, "events.sql")
+            with open(sql_path, "w") as f:
+                f.write(sql_body)
+            d = {"kind": "BatchSource", "name": "events", "query_file": "events.sql"}
+            result = inline_query_source(d, tmpdir)
+        assert result["query"] == "SELECT user_id, ts FROM RAW.EVENTS"
+        assert "--" not in result["query"]
+
+
+# ---------------------------------------------------------------------------
+# strip_sql_comments — PR A (A1)
+# ---------------------------------------------------------------------------
+
+
+class TestStripSqlComments:
+    """``strip_sql_comments`` removes ``--`` line comments and ``/* */``
+    block comments so the compile-time whitespace collapse cannot swallow
+    trailing SQL onto a commented-out line."""
+
+    def test_strips_line_comment(self) -> None:
+        assert "primary key" not in strip_sql_comments("SELECT id -- primary key\nFROM t")
+
+    def test_line_comment_rest_of_query_survives(self) -> None:
+        out = strip_sql_comments("SELECT id, -- pk\n amount\nFROM t")
+        assert "amount" in out
+        assert "FROM t" in out
+        assert "--" not in out
+
+    def test_strips_block_comment(self) -> None:
+        out = strip_sql_comments("SELECT a, /* note */ b FROM t")
+        assert "/*" not in out
+        assert "note" not in out
+        assert "a" in out and "b" in out
+
+    def test_no_comments_returns_equivalent_sql(self) -> None:
+        s = "SELECT a, b FROM t WHERE c = 1"
+        assert strip_sql_comments(s).strip() == s
+
+    def test_defensive_on_unparsable_input(self) -> None:
+        # Never raise: a parser hiccup must return input unchanged.
+        weird = "not really ))) sql -- x"
+        assert isinstance(strip_sql_comments(weird), str)
+
+    def test_empty_string(self) -> None:
+        assert strip_sql_comments("") == ""
+
+
+# ---------------------------------------------------------------------------
+# canonicalize_sql_for_hash — PR A (A2)
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalizeSqlForHash:
+    """``canonicalize_sql_for_hash`` produces a stable hash basis: comments
+    stripped, keywords upper-cased, whitespace collapsed.  It never mutates
+    the SQL submitted to the Dynamic Table (hash-basis use only)."""
+
+    def test_comment_only_change_canonicalizes_equal(self) -> None:
+        a = canonicalize_sql_for_hash("SELECT a FROM t -- v1")
+        b = canonicalize_sql_for_hash("SELECT a FROM t -- v2 (edited)")
+        assert a == b
+
+    def test_keyword_case_only_change_canonicalizes_equal(self) -> None:
+        a = canonicalize_sql_for_hash("select a from t")
+        b = canonicalize_sql_for_hash("SELECT a FROM t")
+        assert a == b
+
+    def test_whitespace_only_change_canonicalizes_equal(self) -> None:
+        a = canonicalize_sql_for_hash("SELECT   a,\n   b\nFROM t")
+        b = canonicalize_sql_for_hash("SELECT a, b FROM t")
+        assert a == b
+
+    def test_semantic_change_differs(self) -> None:
+        a = canonicalize_sql_for_hash("SELECT a FROM t")
+        b = canonicalize_sql_for_hash("SELECT a, b FROM t")
+        assert a != b
+
+    def test_idempotent(self) -> None:
+        s = "SELECT a, b FROM t -- c\n"
+        once = canonicalize_sql_for_hash(s)
+        assert canonicalize_sql_for_hash(once) == once
+
+    def test_defensive_on_unparsable_input(self) -> None:
+        assert isinstance(canonicalize_sql_for_hash("))) not sql"), str)
 
 
 # ---------------------------------------------------------------------------

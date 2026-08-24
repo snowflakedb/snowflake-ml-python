@@ -15,7 +15,8 @@ class SnowflakeMLException(Exception):
 
         Attributes:
             error_code: Error code.
-            original_exception: Original exception with an error code in its message.
+            original_exception: Original exception. The error code is added to its message when the exception
+                type can be constructed from a message.
             suppress_source_trace: Suppress source stacktrace.
 
         Raises:
@@ -34,7 +35,12 @@ class SnowflakeMLException(Exception):
             raise ValueError("Must provide non-empty error_code and original_exception.")
 
         self.error_code = error_code
-        self.original_exception = type(original_exception)(f"({self.error_code}) {str(original_exception)}")
+        try:
+            self.original_exception = type(original_exception)(f"({self.error_code}) {str(original_exception)}")
+        except Exception:
+            # Not every exception class can be rebuilt from a message alone: sqlalchemy's DBAPIError, for one,
+            # requires a statement, parameters and the driver error. Keep the original rather than masking it.
+            self.original_exception = original_exception
         self.suppress_source_trace = suppress_source_trace
         self._pretty_msg = repr(self.original_exception)
 

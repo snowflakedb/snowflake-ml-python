@@ -289,6 +289,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -298,6 +299,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -326,6 +328,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -345,6 +348,47 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
+                explain_case_sensitive=False,
+                params=None,
+            )
+
+    def test_run_native_single_output(self) -> None:
+        # A single, native (non-OBJECT) output function has is_object_output=False, which run() must thread
+        # through to invoke_method so the result column is cast directly instead of unpacked from an OBJECT.
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                    "is_object_output": False,
+                }
+            ),
+        ]
+        self.m_mv._functions = m_methods
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+        ):
+            self.m_mv.run(m_df, function_name='"predict"')
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict"',
+                method_function_type="FUNCTION",
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
+                partition_column=None,
+                statement_params=mock.ANY,
+                is_partitioned=False,
+                is_object_output=False,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -359,6 +403,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -383,6 +428,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -397,6 +443,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -421,6 +468,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -435,6 +483,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict_table"],
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -444,6 +493,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict_table"],
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -467,6 +517,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=True,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -486,6 +537,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column="PARTITION_COLUMN",
                 statement_params=mock.ANY,
                 is_partitioned=True,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -500,6 +552,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict_table"],
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -509,6 +562,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["explain_table"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -547,6 +601,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=None,
             )
@@ -561,6 +616,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -579,6 +635,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 statement_params=mock.ANY,
                 params=None,
+                is_object_output=True,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
@@ -593,6 +650,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 statement_params=mock.ANY,
                 params=None,
+                is_object_output=True,
             )
 
     def test_run_with_params(self) -> None:
@@ -606,6 +664,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict_with_params"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -632,6 +691,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                is_object_output=True,
                 explain_case_sensitive=False,
                 params=test_params,
             )
@@ -647,6 +707,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict_with_params"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -667,6 +728,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 statement_params=mock.ANY,
                 params=test_params,
+                is_object_output=True,
             )
 
     def test_run_no_service_name_spcs_only(self) -> None:
@@ -679,6 +741,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -1459,6 +1522,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -1479,6 +1543,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -1488,6 +1553,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -1521,6 +1587,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": mock_signature,
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
             model_manifest_schema.ModelFunctionInfo(
@@ -1530,6 +1597,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": mock_signature,
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -1617,6 +1685,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": mock_signature,
                     "is_partitioned": False,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -1687,6 +1756,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": mock_signature,
                     "is_partitioned": True,
+                    "is_object_output": True,
                 }
             ),
         ]
@@ -2226,6 +2296,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2306,6 +2377,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2385,6 +2457,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2471,6 +2544,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2547,6 +2621,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2587,6 +2662,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2625,6 +2701,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2669,6 +2746,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2741,6 +2819,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2817,6 +2896,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2901,6 +2981,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict_with_params"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2937,6 +3018,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict_with_params"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -2973,6 +3055,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict_with_params"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -3010,6 +3093,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -3053,6 +3137,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -3134,6 +3219,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
@@ -3189,6 +3275,7 @@ class ModelVersionImplTest(absltest.TestCase):
                     "target_method_function_type": "TABLE_FUNCTION",
                     "signature": sig_with_partition_col_output,
                     "is_partitioned": True,
+                    "is_object_output": True,
                 },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),

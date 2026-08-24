@@ -15,6 +15,7 @@ from sklearn import (
     preprocessing,
 )
 
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -58,6 +59,33 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
             },
         )
+
+    def test_skl_model_single_output_native_type(self) -> None:
+        # End-to-end check for the single-output native dtype feature. With the capability enabled, a single-output
+        # PREDICT (one INT column) is registered with a native SQL return type (is_object_output=False) instead of a
+        # packed OBJECT, while multi-output PREDICT_PROBA stays packed (is_object_output=True). The prediction assert
+        # also confirms the native result round-trips correctly through the client's direct-cast read path.
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        classifier = linear_model.LogisticRegression()
+        classifier.fit(iris_X, iris_y)
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+        ):
+            self._test_registry_model(
+                model=classifier,
+                sample_input_data=iris_X,
+                prediction_assert_fns={
+                    "predict": (
+                        iris_X,
+                        lambda res: pd.testing.assert_frame_equal(
+                            res["output_feature_0"].to_frame("output_feature_0"),
+                            pd.DataFrame(classifier.predict(iris_X), columns=["output_feature_0"]),
+                            check_dtype=False,
+                        ),
+                    ),
+                },
+                is_object_output_assert={"predict": False, "predict_proba": True},
+            )
 
     def test_skl_model_explain(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)

@@ -152,6 +152,46 @@ class FunctionGeneratorTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_function_generator_single_output(self) -> None:
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # A single, non-OBJECT output returns its value directly instead of a packed OBJECT.
+            fg.generate(
+                pathlib.Path(tmpdir, "handler.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                single_output=True,
+            )
+            with open(pathlib.Path(tmpdir, "handler.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_6.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+            # Same, with the init_once template.
+            fg.generate(
+                pathlib.Path(tmpdir, "handler_init_once.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                use_udf_init_once=True,
+                single_output=True,
+            )
+            with open(pathlib.Path(tmpdir, "handler_init_once.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_6_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
 
 if __name__ == "__main__":
     absltest.main()

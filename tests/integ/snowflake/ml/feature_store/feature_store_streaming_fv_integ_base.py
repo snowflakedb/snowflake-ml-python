@@ -422,6 +422,12 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
 
     def setUp(self) -> None:
         self._session = type(self)._session
+        # Offline tile boundaries are bucketed on a UTC grid, while a read resolves its window
+        # boundary in the session timezone. Pin the session to UTC so both agree and the
+        # newest tile is not dropped from offline aggregate reads. Applied per test so it
+        # holds for both the standalone and module-level runner paths.
+        # TODO(okharatsidi): fix this properly by persisting FV-level timezone.
+        self._session.sql("ALTER SESSION SET TIMEZONE = 'UTC'").collect()
         self._dbm = type(self)._dbm
         self._evm = type(self)._evm
         self._test_db = type(self)._test_db

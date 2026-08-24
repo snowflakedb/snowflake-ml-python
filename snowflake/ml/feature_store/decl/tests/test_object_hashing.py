@@ -68,6 +68,7 @@ import pytest
 
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
+    _normalise_fv_sources_for_hash,
     compute_local_spec_hash,
     fg_content_hash,
     model_to_dict,
@@ -2490,6 +2491,48 @@ class TestRefreshFreqRoundTrip:
             "structural hash; otherwise the planner cannot route the "
             "change through UPDATE_FV (it would emit RECREATE_FV)."
         )
+
+
+class TestQuerySourceHashCanonicalization:
+    """Query-backed FV source bindings are canonicalized before hashing so a
+    comment / keyword-case / whitespace-only SQL edit does not bump the
+    structural hash (which would spuriously emit RECREATE_FV / RECREATE_SOURCE
+    and, for append-only BFVs, wipe the ``$SNAPSHOTS`` history)."""
+
+    def _sources(self, query: str) -> Any:
+        return [{"name": "ORDERS", "query": query}]
+
+    def test_comment_only_query_edit_same_binding(self) -> None:
+        a = _normalise_fv_sources_for_hash(self._sources("SELECT id FROM orders -- v1"))
+        b = _normalise_fv_sources_for_hash(self._sources("SELECT id FROM orders -- v2 changed"))
+        assert a == b
+
+    def test_keyword_case_only_query_edit_same_binding(self) -> None:
+        a = _normalise_fv_sources_for_hash(self._sources("select id from orders"))
+        b = _normalise_fv_sources_for_hash(self._sources("SELECT id FROM orders"))
+        assert a == b
+
+    def test_whitespace_only_query_edit_same_binding(self) -> None:
+        a = _normalise_fv_sources_for_hash(self._sources("SELECT id\n  FROM orders"))
+        b = _normalise_fv_sources_for_hash(self._sources("SELECT id FROM orders"))
+        assert a == b
+
+    def test_semantic_query_edit_differs(self) -> None:
+        a = _normalise_fv_sources_for_hash(self._sources("SELECT id FROM orders"))
+        b = _normalise_fv_sources_for_hash(self._sources("SELECT id, total FROM orders"))
+        assert a != b
+
+    def test_structural_fingerprint_ignores_comment_only_query_edit(self) -> None:
+        base: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "name": "FV",
+            "version": "V1",
+            "columns": [{"name": "ID", "type": "LongType"}],
+            "sources": [{"name": "ORDERS", "query": "SELECT id FROM orders -- a"}],
+        }
+        edited = copy.deepcopy(base)
+        edited["sources"][0]["query"] = "SELECT id FROM orders -- b (edited)"
+        assert structural_fingerprint_hash(base) == structural_fingerprint_hash(edited)
 
 
 if __name__ == "__main__":

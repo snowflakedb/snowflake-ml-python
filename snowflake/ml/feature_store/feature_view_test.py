@@ -27,6 +27,7 @@ from snowflake.ml.feature_store.feature_view import (
     _PG_IDENTIFIER_BYTE_LIMIT,
     _POSTGRES_ONLINE_MAX_COLUMN_LEN,
     _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN,
+    _POSTGRES_ONLINE_MAX_PASSTHROUGH_COLUMN_LEN,
     _POSTGRES_ONLINE_MAX_SCHEMA_LEN,
     _UDF_TRANSFORMED_TABLE_SUFFIX,
     FeatureView,
@@ -160,6 +161,40 @@ class FeatureViewValidationTest(parameterized.TestCase):
             self._create_mock_feature_view_with_specs(specs)
 
         self.assertIn("Duplicate feature alias", str(cm.exception))
+
+    def test_iceberg_rejects_hybrid_table_online(self) -> None:
+        """Hybrid-table online storage is unsupported for Iceberg-backed feature views."""
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        with self.assertRaisesRegex(ValueError, "only supported with the Postgres online store"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["user_id"])],
+                feature_df=mock_df,
+                refresh_freq="1h",
+                storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL"),
+                online_config=OnlineConfig(enable=True),
+            )
+
+    def test_iceberg_allows_postgres_online(self) -> None:
+        """Postgres OFT is allowed with Iceberg-backed feature views."""
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            refresh_freq="1h",
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL"),
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        self.assertTrue(fv.online)
+        assert fv.online_config is not None
+        self.assertEqual(fv.online_config.store_type, OnlineStoreType.POSTGRES)
+        assert fv.storage_config is not None
+        self.assertEqual(fv.storage_config.format, StorageFormat.ICEBERG)
 
 
 class InitializationWarehouseTest(absltest.TestCase):
@@ -3455,6 +3490,36 @@ class PostgresOnlineIdentifierBudgetTest(parameterized.TestCase):
             online_config=online_config,
         )
 
+    def _make_tiled_fv(
+        self,
+        name: str,
+        columns: list[str],
+        join_key: str,
+        online_config: OnlineConfig,
+    ) -> FeatureView:
+        """Build a tiled (aggregation) FV so ``is_tiled`` is True and the tighter tile budget applies."""
+        mock_df = MagicMock()
+        mock_df.columns = columns
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="2h",
+                output_column="TOTAL",
+            ),
+        ]
+        return FeatureView(
+            name=name,
+            entities=[Entity(name="user", join_keys=[join_key])],
+            feature_df=mock_df,
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            _aggregation_specs=specs,
+            online_config=online_config,
+        )
+
     def test_generated_affix_padding_fits_reserved_budget(self) -> None:
         """The fixed affixes wrapped around a name/column must fit within the bytes reserved by each
         budget, so a max-length user identifier can never overflow PostgreSQL's 63-byte limit. If a
@@ -3503,12 +3568,57 @@ class PostgresOnlineIdentifierBudgetTest(parameterized.TestCase):
             fv._validate_online_store_identifier_budget(FeatureViewVersion("VERSION1"))  # 44 + 8 = 52 > 45
 
     def test_long_column_over_budget_raises(self) -> None:
-        fv = self._make_fv(
+        # Tiled feature views keep the tight tile budget of 30, so a 32-char column overflows.
+        fv = self._make_tiled_fv(
             "short_fv",
-            ["user_id", "event_ts", "c" * 32],  # 32 > column budget of 31
+            ["user_id", "event_ts", "amount", "c" * 32],  # 32 > tile column budget of 30
             "user_id",
             OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
+        with self.assertRaisesRegex(ValueError, "is too long for the Postgres online store"):
+            fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_non_tiled_long_column_passes(self) -> None:
+        """A non-tiled (passthrough) FV column above the tile budget of 30 is accepted."""
+        fv = self._make_fv(
+            "short_fv",
+            ["user_id", "event_ts", "c" * 40],  # 40 > tile budget of 30, within passthrough budget
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        self.assertFalse(fv.is_tiled)
+        fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_non_tiled_column_at_max_passes(self) -> None:
+        """A non-tiled column at exactly the passthrough budget is accepted."""
+        fv = self._make_fv(
+            "short_fv",
+            ["user_id", "event_ts", "c" * _POSTGRES_ONLINE_MAX_PASSTHROUGH_COLUMN_LEN],
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_non_tiled_column_over_max_raises(self) -> None:
+        """A non-tiled column one byte over the passthrough budget is rejected."""
+        fv = self._make_fv(
+            "short_fv",
+            ["user_id", "event_ts", "c" * (_POSTGRES_ONLINE_MAX_PASSTHROUGH_COLUMN_LEN + 1)],
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        with self.assertRaisesRegex(ValueError, "is too long for the Postgres online store"):
+            fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_tiled_long_column_still_raises(self) -> None:
+        """A tiled/aggregation FV keeps the tighter tile budget: a 40-char column still raises."""
+        fv = self._make_tiled_fv(
+            "short_fv",
+            ["user_id", "event_ts", "amount", "c" * 40],  # 40 > tile budget of 30
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        self.assertTrue(fv.is_tiled)
         with self.assertRaisesRegex(ValueError, "is too long for the Postgres online store"):
             fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
 

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import custom_model
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -20,6 +21,19 @@ class DemoModel(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
+
+
+class DemoModelSingleOutputWithNulls(custom_model.CustomModel):
+    """Single DOUBLE output column that contains NaN, to exercise the native (non-OBJECT) return path."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        out = input["c1"].astype("float64").copy()
+        out[out < 0] = np.nan
+        return pd.DataFrame({"output": out})
 
 
 class DemoModelSPQuote(custom_model.CustomModel):
@@ -193,6 +207,38 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
             },
         )
+
+    def test_custom_single_output_native_type_with_nulls(self) -> None:
+        # A single native (DOUBLE) output whose column contains NaN. The generated UDF returns the column
+        # directly instead of a packed OBJECT, and `replace({pd.NA: None, np.nan: None})` upcasts the pandas
+        # dtype to `object`, so this checks that NULLs still round-trip through the native return path.
+        lm = DemoModelSingleOutputWithNulls(custom_model.ModelContext())
+        pd_df = pd.DataFrame([[1.0, 2.0, 3.0], [-1.0, 2.0, 5.0], [7.0, 2.0, 5.0]], columns=["c1", "c2", "c3"])
+        expected_values = [1.0, None, 7.0]
+
+        def _assert_nulls_round_trip(res: pd.DataFrame) -> None:
+            # Locate the output column without assuming the server's identifier casing.
+            output_cols = [col for col in res.columns if str(col).strip('"').upper() == "OUTPUT"]
+            assert len(output_cols) == 1, f"expected exactly one output column, got {list(res.columns)}"
+            actual = list(res[output_cols[0]])
+            assert len(actual) == len(expected_values), f"row count mismatch: {actual}"
+            for actual_value, expected_value in zip(actual, expected_values):
+                if expected_value is None:
+                    assert actual_value is None or pd.isna(
+                        actual_value
+                    ), f"expected NULL for the NaN row, got {actual_value!r}"
+                else:
+                    assert actual_value == expected_value, f"expected {expected_value}, got {actual_value!r}"
+
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            {platform_capabilities.ENABLE_SINGLE_OUTPUT_NATIVE_TYPE: True}
+        ):
+            self._test_registry_model(
+                model=lm,
+                sample_input_data=pd_df,
+                prediction_assert_fns={"predict": (pd_df, _assert_nulls_round_trip)},
+                is_object_output_assert={"predict": False},
+            )
 
     def test_custom_demo_model_decimal(self) -> None:
         import decimal

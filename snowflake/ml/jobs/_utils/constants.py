@@ -19,6 +19,14 @@ INSTANCES_TIMEOUT_ENV_VAR = "MLRS_INSTANCES_TIMEOUT"
 INSTANCES_CHECK_INTERVAL_ENV_VAR = "MLRS_INSTANCES_CHECK_INTERVAL"
 RUNTIME_IMAGE_TAG_ENV_VAR = "MLRS_CONTAINER_IMAGE_TAG"
 USE_EMBEDDED_SCRIPTS_ENV_VAR = "MLRS_USE_EMBEDDED_SCRIPTS"
+PREFLIGHT_ENV_VAR = "MLRS_DISTRIBUTED_PREFLIGHT"
+# Adds the reference step to the preflight; no effect on its own.
+PREFLIGHT_REFERENCE_STEP_ENV_VAR = "MLRS_PREFLIGHT_REFERENCE_STEP"
+LAUNCH_BACKEND_ENV_VAR = "MLRS_LAUNCH_BACKEND"
+# Value for LAUNCH_BACKEND_ENV_VAR that selects the passthrough launch path: the user's
+# entrypoint runs directly on every instance (Ray is still brought up, for readiness only).
+# Must match the literal the image's launcher compares against.
+LAUNCH_BACKEND_PASSTHROUGH = "passthrough"
 
 # Stage mount paths
 STAGE_VOLUME_MOUNT_PATH = "/mnt/job_stage"

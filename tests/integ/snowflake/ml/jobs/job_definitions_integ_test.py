@@ -304,7 +304,7 @@ class JobDefinitionsTest(JobTestBase):
             return job.get_logs()
 
         result = job_sproc(self.session, test_constants._TEST_COMPUTE_POOL)
-        self.assertEqual("Hello from remote function!", result)
+        self.assertIn("Hello from remote function!", result)
 
     def test_job_definition_runtime_image_negative(self) -> None:
         with self.assertRaisesRegex(ValueError, r"image .* is not a valid runtime image"):

@@ -87,6 +87,7 @@ py_test(
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/jobs:job_decorators",
         "//snowflake/ml/jobs:job_definition",
         "//snowflake/ml/jobs/_interop:utils",
         "//snowflake/ml/jobs/_utils:arg_protocol",

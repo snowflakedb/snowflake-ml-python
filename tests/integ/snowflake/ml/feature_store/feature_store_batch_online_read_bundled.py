@@ -19,15 +19,21 @@ Requires ``SNOWFLAKE_PAT`` for spec OFT online read, e.g.
 ``bazel test ... --test_env=SNOWFLAKE_PAT=$(tr -d '\\n' < ~/mypat)``.
 """
 
+import datetime
+import decimal
 import json
 import logging
 import math
+import os
 import time
 import uuid
 
 from absl.testing import absltest
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA
-from feature_store_streaming_fv_integ_base import StreamingFeatureViewIntegTestBase
+from feature_store_streaming_fv_integ_base import (
+    StreamingFeatureViewIntegTestBase,
+    identity_transform,
+)
 
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
@@ -36,8 +42,12 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     OnlineConfig,
     OnlineStoreType,
+    StorageConfig,
+    StorageFormat,
     StoreType,
 )
+from snowflake.ml.feature_store.stream_config import StreamConfig
+from snowflake.snowpark import functions as snowpark_functions
 
 
 class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
@@ -81,6 +91,29 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.product_entity = type(self).product_entity
         self.sample_data = type(self).sample_data
         self._events_table = type(self)._events_table
+        self._iceberg_external_volumes: list[str] = []
+        self._iceberg_tables: list[str] = []
+        self._test_tables: list[str] = []
+        self._udf_functions: list[str] = []
+        self._udf_stages: list[str] = []
+
+    def tearDown(self) -> None:
+        # Delete tracked FVs first so Dynamic Iceberg Tables release the external
+        # volume (same order as FeatureStoreTest.tearDown). The bundle schema is
+        # shared and must not be dropped.
+        super().tearDown()
+        if os.environ.get("SKIP_FV_TEARDOWN"):
+            return
+        for table in getattr(self, "_test_tables", []):
+            self._session.sql(f"DROP TABLE IF EXISTS {table}").collect()
+        for table in getattr(self, "_iceberg_tables", []):
+            self._session.sql(f"DROP ICEBERG TABLE IF EXISTS {table}").collect()
+        for volume in getattr(self, "_iceberg_external_volumes", []):
+            self._evm.drop_external_volume(volume, if_exists=True)
+        for function_sig in getattr(self, "_udf_functions", []):
+            self._session.sql(f"DROP FUNCTION IF EXISTS {function_sig}").collect()
+        for stage in getattr(self, "_udf_stages", []):
+            self._session.sql(f"DROP STAGE IF EXISTS {stage}").collect()
 
     @classmethod
     def _create_events_table_class(cls) -> str:
@@ -107,13 +140,22 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # Helpers
     # =========================================================================
 
-    def _create_batch_source_table(self, fs: FeatureStore, suffix: str, entity_key: str, amount: float) -> str:
+    def _create_batch_source_table(
+        self,
+        fs: FeatureStore,
+        suffix: str,
+        entity_key: str,
+        amount: float,
+        *,
+        event_time_type: str = "TIMESTAMP_NTZ",
+    ) -> str:
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_ONLINE_SRC_{suffix}"
+        self._test_tables.append(table_name)
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
                 USER_ID VARCHAR,
-                EVENT_TIME TIMESTAMP_NTZ,
+                EVENT_TIME {event_time_type},
                 AMOUNT FLOAT
             )
         """
@@ -130,6 +172,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self, fs: FeatureStore, suffix: str, entity_key: str
     ) -> tuple[str, float, int]:
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_TILED_SRC_{suffix}"
+        self._test_tables.append(table_name)
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
@@ -193,6 +236,417 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled")
+
+    def _create_iceberg_storage_config(self) -> StorageConfig:
+        """Create a unique AWS Iceberg external volume + StorageConfig for this test."""
+        volume_name = f"MLPLATFORMTEST_ICEBERG_AWS_S3_{uuid.uuid4().hex[:8].upper()}"
+        storage_location_sql = """
+                (
+                    NAME                 = 'prod-iceberg-s3'
+                    STORAGE_PROVIDER     = 'S3'
+                    STORAGE_BASE_URL     = 's3://mlplatform-iceberg-test/ml-platform/'
+                    STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::736112632310:role/MLPlatformTestIcebergRole'
+                    STORAGE_AWS_EXTERNAL_ID = 'MLPLATFORMTEST_SFCRole=MLPlatformExternalVolume='
+                )
+            """
+        self._evm.create_external_volume(volume_name, storage_location_sql)
+        self._iceberg_external_volumes.append(volume_name)
+        return StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume=volume_name,
+            base_location=f"test_{uuid.uuid4().hex}/",
+        )
+
+    def test_iceberg_batch_fv_spec_oft_online_read_by_key(self) -> None:
+        """Dynamic Iceberg Table batch FV with Postgres OFT: register, wait, online read."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"ICEBERG_BATCH_OFT_{s}"
+        batch_key = f"U_ICEBERG_{s}"
+        expected_amount = 777.0
+
+        # Iceberg TIMESTAMP_NTZ max scale is 6; Snowflake default TIMESTAMP_NTZ is (9).
+        src_table = self._create_batch_source_table(
+            fs, s, batch_key, expected_amount, event_time_type="TIMESTAMP_NTZ(6)"
+        )
+        feature_df = self._session.table(src_table)
+        iceberg_storage_config = self._create_iceberg_storage_config()
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            storage_config=iceberg_storage_config,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered.is_streaming)
+        self.assertTrue(registered.online)
+        assert registered.online_config is not None
+        self.assertEqual(registered.online_config.store_type, OnlineStoreType.POSTGRES)
+        assert registered.storage_config is not None
+        self.assertEqual(registered.storage_config.format, StorageFormat.ICEBERG)
+
+        online_name = registered.fully_qualified_online_table_name()
+        self.assertIsNotNone(online_name)
+        self.assertIn("$ONLINE", online_name)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        self._assert_amount_round_trip(fs, fv_name, "v1", src_table, batch_key, expected_amount)
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="iceberg batch postgres oft"
+        )
+
+        # Reverse-ETL: insert into the source and let the pipeline propagate on its own lag
+        # (Dynamic Iceberg Table at refresh_freq, then Postgres OFT at target_lag). Nothing is
+        # refreshed by hand, so this exercises the automatic source -> DIT -> Postgres path.
+        new_key = f"U_ICEBERG_NEW_{s}"
+        new_amount = 888.0
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table} VALUES
+            ({new_key!r}, DATEADD('minute', -1, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(6)), {new_amount})
+            """
+        ).collect()
+
+        def _validate_new(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), new_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[new_key]],
+            validate_fn=_validate_new,
+            desc="iceberg dit reverse-etl postgres oft",
+        )
+        # Online served the new row, so the DIT behind it is materialized; confirm offline agrees.
+        self._assert_amount_round_trip(fs, fv_name, "v1", src_table, new_key, new_amount)
+
+    def _create_iceberg_table_from_snowflake_table(self, fs: FeatureStore, snowflake_table: str, suffix: str) -> str:
+        """Create a Snowflake-managed Iceberg table (not a Dynamic Iceberg Table) from a Snowflake table."""
+        iceberg_storage_config = self._create_iceberg_storage_config()
+        iceberg_table = f"{self.test_db}.{fs._config.schema.identifier()}.ICEBERG_FROM_SF_{suffix}"
+        self._session.sql(
+            f"""
+            CREATE ICEBERG TABLE {iceberg_table}
+                CATALOG = 'SNOWFLAKE'
+                EXTERNAL_VOLUME = {iceberg_storage_config.external_volume}
+                BASE_LOCATION = '{iceberg_storage_config.base_location}'
+            AS SELECT * FROM {snowflake_table}
+            """
+        ).collect()
+        self._iceberg_tables.append(iceberg_table)
+        return iceberg_table
+
+    def _assert_amount_round_trip(
+        self,
+        fs: FeatureStore,
+        fv_name: str,
+        version: str,
+        source_table: str,
+        batch_key: str,
+        expected_amount: float,
+    ) -> None:
+        """Assert the inserted AMOUNT is unchanged on the source table and on the offline FV read.
+
+        Args:
+            fs: Feature store client.
+            fv_name: Feature view name.
+            version: Feature view version.
+            source_table: Fully qualified table the FV is registered over.
+            batch_key: Entity key of the inserted row.
+            expected_amount: Amount written into ``source_table``.
+        """
+        source_rows = self._session.sql(f"SELECT AMOUNT FROM {source_table} WHERE USER_ID = {batch_key!r}").collect()
+        self.assertEqual(len(source_rows), 1, f"expected one inserted row in {source_table}")
+        inserted_amount = float(source_rows[0]["AMOUNT"])
+        self.assertEqual(inserted_amount, expected_amount)
+
+        fv_live = fs.get_feature_view(fv_name, version)
+        offline_pdf = fs.read_feature_view(fv_live, store_type=StoreType.OFFLINE).to_pandas()
+        self.assertGreater(len(offline_pdf), 0)
+        self.assertIn("AMOUNT", offline_pdf.columns)
+        if "USER_ID" in offline_pdf.columns:
+            offline_pdf = offline_pdf[offline_pdf["USER_ID"].astype(str) == batch_key]
+            self.assertGreater(len(offline_pdf), 0, f"no offline row for key {batch_key!r}")
+        self.assertEqual(float(offline_pdf.iloc[0]["AMOUNT"]), inserted_amount)
+
+    def _write_snowflake_table_via_udf(
+        self,
+        fs: FeatureStore,
+        source_table: str,
+        suffix: str,
+    ) -> str:
+        """Write a Snowflake table by projecting a permanent scalar UDF over ``source_table``.
+
+        Args:
+            fs: Feature store used for schema placement.
+            source_table: Fully qualified source table with USER_ID, EVENT_TIME, AMOUNT.
+            suffix: Unique suffix for UDF, stage, and destination names.
+
+        Returns:
+            Fully qualified destination table name.
+        """
+        schema_path = fs._config.full_schema_path
+        stage_name = f"{schema_path}.UDF_WRITE_STAGE_{suffix}"
+        udf_name = f"{schema_path}.TIMES_TWO_{suffix}"
+        dest_table = f"{self.test_db}.{fs._config.schema.identifier()}.UDF_WRITE_SRC_{suffix}"
+        self._test_tables.append(dest_table)
+
+        self._session.sql(f"CREATE OR REPLACE STAGE {stage_name}").collect()
+        self._udf_stages.append(stage_name)
+
+        @snowpark_functions.udf(  # type: ignore[misc, arg-type]
+            name=udf_name,
+            session=self._session,
+            is_permanent=True,
+            stage_location=f"@{stage_name}",
+            replace=True,
+        )
+        def times_two(x: float) -> float:
+            return x * 2.0
+
+        self._udf_functions.append(f"{udf_name}(DOUBLE)")
+
+        self._session.table(source_table).select(
+            snowpark_functions.col("USER_ID"),
+            snowpark_functions.col("EVENT_TIME"),
+            snowpark_functions.call_udf(udf_name, snowpark_functions.col("AMOUNT")).alias("AMOUNT"),
+        ).write.save_as_table(dest_table, mode="overwrite")
+        return dest_table
+
+    def test_udf_write_snowflake_table_batch_fv_spec_oft_online_read_by_key(self) -> None:
+        """Batch FV over a Snowflake table written via UDF, with Postgres OFT online read."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"UDF_WRITE_BATCH_OFT_{s}"
+        batch_key = f"U_UDF_WRITE_{s}"
+        source_amount = 333.0
+        expected_amount = source_amount * 2.0
+
+        src_table = self._create_batch_source_table(fs, s, batch_key, source_amount)
+        dest_table = self._write_snowflake_table_via_udf(fs, src_table, s)
+        feature_df = self._session.table(dest_table)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered.is_streaming)
+        self.assertTrue(registered.online)
+        assert registered.online_config is not None
+        self.assertEqual(registered.online_config.store_type, OnlineStoreType.POSTGRES)
+
+        online_name = registered.fully_qualified_online_table_name()
+        self.assertIsNotNone(online_name)
+        self.assertIn("$ONLINE", online_name)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        self._assert_amount_round_trip(fs, fv_name, "v1", dest_table, batch_key, expected_amount)
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=_validate,
+            desc="udf write snowflake table postgres oft",
+        )
+
+    def _register_passthrough_streaming_fv(
+        self, fs: FeatureStore, fv_name: str, suffix: str, source_table: str
+    ) -> FeatureView:
+        """Register a passthrough SFV whose backfill is ``source_table`` and wait for UDF backfill.
+
+        Args:
+            fs: Feature store client.
+            fv_name: Feature view name.
+            suffix: Unique suffix for the stream source name.
+            source_table: Fully qualified backfill table (Iceberg or Snowflake).
+
+        Returns:
+            The registered streaming feature view.
+        """
+        stream = f"TXN_{suffix}"
+        self._make_stream_source(fs, stream)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=StreamConfig(
+                stream_source=stream,
+                transformation_fn=identity_transform,
+                backfill_df=self._session.table(source_table),
+            ),
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.is_streaming)
+        self.assertTrue(registered.online)
+        assert registered.online_config is not None
+        self.assertEqual(registered.online_config.store_type, OnlineStoreType.POSTGRES)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        return registered
+
+    def test_iceberg_table_from_snowflake_streaming_fv_spec_oft_online_read_by_key(self) -> None:
+        """SFV backfill from a Snowflake-managed Iceberg table (CTAS, not DIT); Postgres OFT."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"ICEBERG_TBL_STREAM_OFT_{s}"
+        batch_key = f"U_ICEBERG_SFV_{s}"
+        expected_amount = 555.0
+
+        src_table = self._create_batch_source_table(
+            fs, s, batch_key, expected_amount, event_time_type="TIMESTAMP_NTZ(6)"
+        )
+        iceberg_table = self._create_iceberg_table_from_snowflake_table(fs, src_table, s)
+        self._register_passthrough_streaming_fv(fs, fv_name, s, iceberg_table)
+        self._assert_amount_round_trip(fs, fv_name, "v1", iceberg_table, batch_key, expected_amount)
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=_validate,
+            desc="iceberg table from snowflake streaming postgres oft",
+        )
+
+    def test_udf_write_snowflake_table_streaming_fv_spec_oft_online_read_by_key(self) -> None:
+        """SFV backfill from a Snowflake table written via UDF, with Postgres OFT online read."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"UDF_WRITE_STREAM_OFT_{s}"
+        batch_key = f"U_UDF_WRITE_SFV_{s}"
+        source_amount = 222.0
+        expected_amount = source_amount * 2.0
+
+        src_table = self._create_batch_source_table(fs, s, batch_key, source_amount)
+        dest_table = self._write_snowflake_table_via_udf(fs, src_table, s)
+        self._register_passthrough_streaming_fv(fs, fv_name, s, dest_table)
+        self._assert_amount_round_trip(fs, fv_name, "v1", dest_table, batch_key, expected_amount)
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=_validate,
+            desc="udf write snowflake table streaming postgres oft",
+        )
+
+    def test_iceberg_backfill_streaming_fv_spec_oft_online_read_by_key(self) -> None:
+        """SFV with Iceberg ``$UDF_TRANSFORMED`` / ``$BACKFILL``, through to an online read.
+
+        With Iceberg storage the offline Dynamic Table becomes a Dynamic Iceberg Table and
+        both landing tables are managed Iceberg tables. Postgres OFT hydrates from
+        ``$UDF_TRANSFORMED``.
+
+        ``$BACKFILL`` is checked via query history rather than ``INFORMATION_SCHEMA``: the
+        OFT refresh drains and then drops it, so it is gone by the time backfill completes.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"ICEBERG_BF_STREAM_OFT_{s}"
+        batch_key = f"U_ICEBERG_BF_{s}"
+        expected_amount = 333.0
+
+        # Iceberg TIMESTAMP_NTZ max scale is 6.
+        src_table = self._create_batch_source_table(
+            fs, s, batch_key, expected_amount, event_time_type="TIMESTAMP_NTZ(6)"
+        )
+        iceberg_storage_config = self._create_iceberg_storage_config()
+        registered = self._register_passthrough_streaming_fv(
+            fs, fv_name, s, src_table, storage_config=iceberg_storage_config
+        )
+        assert registered.storage_config is not None
+        self.assertEqual(registered.storage_config.format, StorageFormat.ICEBERG)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        backfill_table = f"{udf_table.resolved()}$BACKFILL"
+
+        self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=True)
+        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=True)
+        self._assert_created_as_iceberg_table(backfill_table)
+
+        self._assert_amount_round_trip(fs, fv_name, "v1", src_table, batch_key, expected_amount)
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=_validate,
+            desc="iceberg backfill streaming postgres oft",
+        )
+
+        ingested_key = f"U_ICEBERG_INGEST_{s}"
+        ingested_amount = 777.0
+        ingested_event_time = datetime.datetime(2024, 6, 1, 12, 0, 0)
+        self._stream_ingest_with_retry(
+            fs,
+            f"TXN_{s}",
+            {
+                "USER_ID": ingested_key,
+                "AMOUNT": ingested_amount,
+                "EVENT_TIME": ingested_event_time,
+            },
+        )
+
+        def _validate_ingested(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), ingested_amount)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[ingested_key]],
+            validate_fn=_validate_ingested,
+            desc="iceberg streaming ingest postgres oft",
+        )
 
     def test_batch_fv_online_read_negotiates_http2(self) -> None:
         """Soft assertion: confirm the Online Service negotiates HTTP/2.
@@ -1492,6 +1946,59 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate, desc="all types BFV")
+
+    def test_batch_fv_high_precision_decimal_online_read(self) -> None:
+        """A ``NUMBER(38,37)`` value survives an online read with full precision (no float truncation)."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_HP_DECIMAL_{s}"
+        entity_key = f"U_HPDEC_{s}"
+
+        # 1 integer digit + 37 fractional digits = 38 significant digits, i.e. the NUMBER(38,37) limit.
+        high_precision = "3.1415926535897932384626433832795028841"
+        expected = decimal.Decimal(high_precision)
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.HP_DECIMAL_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                BALANCE NUMBER(38,37)
+            )
+        """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} VALUES
+            ({entity_key!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), {high_precision})
+        """
+        ).collect()
+
+        feature_df = self._session.table(table_name)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate(pdf):
+            value = pdf.iloc[0]["BALANCE"]
+            self.assertIsInstance(value, decimal.Decimal)
+            self.assertEqual(value, expected)
+            # A float round-trip would collapse the value to ~16 significant digits; ensure it did not.
+            self.assertNotEqual(value, decimal.Decimal(str(float(high_precision))))
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate, desc="high-precision decimal BFV"
+        )
 
     # =========================================================================
     # as_pandas fast path: wiring, dtype parity, and offline rejection

@@ -29,8 +29,8 @@ def get_self_ip() -> Optional[str]:
         return None
 
 
-def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
-    """Get the first instance of a batch job based on start time and instance ID.
+def get_head_instance(service_name: str) -> Optional[tuple[str, str, str]]:
+    """Get the head instance of a batch job.
 
     Args:
         service_name (str): The name of the service to query.
@@ -50,26 +50,10 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
 
     result = session.sql(f"show service instances in service {service_name}").collect()
 
-    if not result:
-        return None
     # we have already integrated with first_instance startup policy,
     # the instance 0 is guaranteed to be the head instance
-    head_instance = next(
-        (
-            row
-            for row in result
-            if "instance_id" in row and row["instance_id"] is not None and int(row["instance_id"]) == 0
-        ),
-        None,
-    )
-    # fallback to find the first instance if the instance 0 is not found
-    if not head_instance:
-        # Sort by start_time first, then by instance_id. If start_time is null/empty, it will be sorted to the end.
-        sorted_instances = sorted(
-            result, key=lambda x: (not bool(x["start_time"]), x["start_time"], int(x["instance_id"]))
-        )
-        head_instance = sorted_instances[0]
-    if not head_instance["instance_id"] or not head_instance["ip_address"]:
+    head_instance = next((row for row in result if row["instance_id"] in (0, "0")), None)
+    if head_instance is None or not head_instance["ip_address"]:
         return None
     # Validate head instance IP
     ip_address = head_instance["ip_address"]
@@ -125,7 +109,7 @@ def main() -> None:
 
     if args.head:
         while time.time() - start_time < args.timeout:
-            head_info = get_first_instance(args.service_name)
+            head_info = get_head_instance(args.service_name)
             if head_info:
                 # Print to stdout to allow capture but don't use logger
                 sys.stdout.write(" ".join(head_info) + "\n")

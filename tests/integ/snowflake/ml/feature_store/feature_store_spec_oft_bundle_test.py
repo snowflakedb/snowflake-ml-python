@@ -302,6 +302,9 @@ from feature_store_last_first_n_online_bundled import (  # noqa: E402,F401
 from feature_store_oft_varchar_length_bundled import (  # noqa: E402,F401
     FeatureStoreOftVarcharLengthIntegTest,
 )
+from feature_store_online_name_length_bundled import (  # noqa: E402,F401
+    FeatureStoreOnlineNameLengthIntegTest,
+)
 from feature_store_realtime_bundled import (  # noqa: E402,F401
     RealtimeFeatureViewIntegTest,
 )
@@ -320,6 +323,7 @@ FeatureStoreLastFirstNStreamingIntegTest.__module__ = __name__
 FeatureStoreLastFirstNBatchIntegTest.__module__ = __name__
 FeatureGroupIntegTest.__module__ = __name__
 FeatureStoreOftVarcharLengthIntegTest.__module__ = __name__
+FeatureStoreOnlineNameLengthIntegTest.__module__ = __name__
 RealtimeFeatureViewIntegTest.__module__ = __name__
 FeatureStoreStreamIngestIntegTest.__module__ = __name__
 FeatureStoreAppendOnlyOFTIntegTest.__module__ = __name__

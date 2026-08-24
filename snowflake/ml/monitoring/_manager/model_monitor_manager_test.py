@@ -33,6 +33,7 @@ def _build_mock_model_version(
             target_method_function_type="FUNCTION",
             signature=model_signature.ModelSignature(inputs=[], outputs=[]),
             is_partitioned=False,
+            is_object_output=True,
         )
     ]
     return model_version

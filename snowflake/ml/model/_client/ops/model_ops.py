@@ -1001,13 +1001,16 @@ class ModelOperator:
             version_name=version_name,
             statement_params=statement_params,
         )
-        function_names_and_types = []
+        function_names_and_types: list[tuple[sql_identifier.SqlIdentifier, str, bool]] = []
         for r in show_functions_res:
             function_name = sql_identifier.SqlIdentifier(
                 r[self._model_version_client.FUNCTION_NAME_COL_NAME], case_sensitive=True
             )
 
             function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+            # Whether the function returns a single packed OBJECT that must be unpacked client-side.
+            # Defaults to True (legacy/safe) when the return type is unavailable.
+            is_object_output = True
             try:
                 return_type = r[self._model_version_client.FUNCTION_RETURN_TYPE_COL_NAME]
             except KeyError:
@@ -1015,8 +1018,12 @@ class ModelOperator:
             else:
                 if "TABLE" in return_type:
                     function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+                else:
+                    # A scalar FUNCTION whose registered return type is not OBJECT returns its single output
+                    # value directly; OBJECT means the outputs are packed and must be unpacked.
+                    is_object_output = return_type.strip().upper().startswith("OBJECT")
 
-            function_names_and_types.append((function_name, function_type))
+            function_names_and_types.append((function_name, function_type, is_object_output))
 
         if not function_names_and_types:
             # If function_names_and_types is not populated, there are currently
@@ -1030,17 +1037,25 @@ class ModelOperator:
                 statement_params=statement_params,
             )
             for method in model_manifest["methods"]:
-                function_names_and_types.append((sql_identifier.SqlIdentifier(method["name"]), method["type"]))
+                method_outputs = method.get("outputs", [])
+                # A single, non-OBJECT output means the function returns its value directly (not packed in an OBJECT).
+                returns_single_native_value = len(method_outputs) == 1 and not str(
+                    method_outputs[0].get("type", "")
+                ).strip().upper().startswith("OBJECT")
+                is_object_output = not returns_single_native_value
+                function_names_and_types.append(
+                    (sql_identifier.SqlIdentifier(method["name"]), method["type"], is_object_output)
+                )
 
         signatures = model_spec["signatures"]
-        function_names = [name for name, _ in function_names_and_types]
+        function_names = [name for name, _, _ in function_names_and_types]
         function_name_mapping = ModelOperator._match_model_spec_with_sql_functions(
             function_names, list(signatures.keys())
         )
 
         model_func_info = []
 
-        for function_name, function_type in function_names_and_types:
+        for function_name, function_type, is_object_output in function_names_and_types:
             target_method = function_name_mapping[function_name]
 
             is_partitioned = False
@@ -1063,6 +1078,7 @@ class ModelOperator:
                     target_method_function_type=function_type,
                     signature=model_signature.ModelSignature.from_dict(signatures[target_method]),
                     is_partitioned=is_partitioned,
+                    is_object_output=is_object_output,
                 )
             )
 
@@ -1086,6 +1102,7 @@ class ModelOperator:
         is_partitioned: Optional[bool] = None,
         explain_case_sensitive: bool = False,
         params: Optional[dict[str, Any]] = None,
+        is_object_output: bool = True,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -1103,6 +1120,7 @@ class ModelOperator:
         statement_params: Optional[dict[str, str]] = None,
         explain_case_sensitive: bool = False,
         params: Optional[dict[str, Any]] = None,
+        is_object_output: bool = True,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -1124,6 +1142,7 @@ class ModelOperator:
         is_partitioned: Optional[bool] = None,
         explain_case_sensitive: bool = False,
         params: Optional[dict[str, Any]] = None,
+        is_object_output: bool = True,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
@@ -1193,6 +1212,7 @@ class ModelOperator:
                 service_name=service_name,
                 statement_params=statement_params,
                 params=method_parameters,
+                unpack_object=is_object_output,
             )
         else:
             assert model_name is not None
@@ -1209,6 +1229,7 @@ class ModelOperator:
                     version_name=version_name,
                     statement_params=statement_params,
                     params=method_parameters,
+                    unpack_object=is_object_output,
                 )
             elif method_function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
                 df_res = self._model_version_client.invoke_table_function_method(

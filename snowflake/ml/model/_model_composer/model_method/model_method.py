@@ -19,6 +19,14 @@ from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.ml.model.volatility import Volatility
 from snowflake.snowpark._internal import type_utils
 
+# Snowflake SQL types that a single FUNCTION output must NOT be declared as natively: it stays packed in an OBJECT.
+# OBJECT/VARIANT are object-like by definition. ARRAY and TIMESTAMP_* are not yet first-class on the SPCS
+# (Snowlink/Arrow) serving path — they would degrade to a JSON string and mismatch a declared native return type
+# (tracked by SNOW-3031938) — so they remain packed to keep the warehouse and SPCS representations consistent.
+_NON_NATIVE_SINGLE_OUTPUT_SF_TYPES = frozenset(
+    {"OBJECT", "VARIANT", "ARRAY", "TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ", "TIMESTAMP"}
+)
+
 
 class ModelMethodOptions(TypedDict):
     """Options when creating model method.
@@ -186,6 +194,26 @@ class ModelMethod:
                 "model_init_once is a Private Preview feature. It will only take effect if enabled server-side.",
                 stacklevel=2,
             )
+
+        # A scalar FUNCTION method with exactly one output that both the warehouse and SPCS serving paths can carry
+        # natively is registered with that native SQL type and returns the value directly, instead of packing it into
+        # an OBJECT. Gated by a server capability so the legacy OBJECT behavior is preserved until the ecosystem
+        # (server + clients) supports the native type. OBJECT/ARRAY/TIMESTAMP_* outputs stay packed (see
+        # _NON_NATIVE_SINGLE_OUTPUT_SF_TYPES).
+        output_features = self.model_meta.signatures[self.target_method].outputs
+        single_output_native_type: Optional[str] = None
+        if (
+            self.function_type == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+            and len(output_features) == 1
+            and platform_capabilities.PlatformCapabilities.get_instance().is_single_output_native_type_enabled()
+        ):
+            output_sf_type = type_utils.convert_sp_to_sf_type(output_features[0].as_snowpark_type())
+            # Strip any type parameters to get the base SQL type, e.g. "NUMBER(38,0)" -> "NUMBER".
+            output_base_sf_type = output_sf_type.split("(", 1)[0].strip().upper()
+            if output_base_sf_type not in _NON_NATIVE_SINGLE_OUTPUT_SF_TYPES:
+                single_output_native_type = output_sf_type
+        single_output = single_output_native_type is not None
+
         self.function_generator.generate(
             workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH / f"{self.target_method}.py",
             self.target_method,
@@ -194,6 +222,7 @@ class ModelMethod:
             self.wide_input,
             options=options,
             use_udf_init_once=use_udf_init_once,
+            single_output=single_output,
         )
         input_list = [
             ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
@@ -219,6 +248,8 @@ class ModelMethod:
                 ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
                 for ft in self.model_meta.signatures[self.target_method].outputs
             ]
+        elif single_output_native_type is not None:
+            outputs = [model_manifest_schema.ModelMethodSignatureField(type=single_output_native_type)]
         else:
             outputs = [model_manifest_schema.ModelMethodSignatureField(type="OBJECT")]
 

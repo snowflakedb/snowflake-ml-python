@@ -366,6 +366,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         statement_params: Optional[dict[str, Any]] = None,
         params: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None,
+        unpack_object: bool = True,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -427,9 +428,16 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         output_cols = []
         output_names = []
 
-        for output_name, output_type, output_col_name in returns:
-            output_cols.append(F.col(INTERMEDIATE_OBJ_NAME)[output_name].astype(output_type))
+        if not unpack_object and len(returns) == 1:
+            # Single, non-OBJECT output: the function returns the value directly, so cast the result column
+            # itself instead of extracting a field from a packed OBJECT.
+            output_name, output_type, output_col_name = returns[0]
+            output_cols.append(F.col(INTERMEDIATE_OBJ_NAME).astype(output_type))
             output_names.append(output_col_name)
+        else:
+            for output_name, output_type, output_col_name in returns:
+                output_cols.append(F.col(INTERMEDIATE_OBJ_NAME)[output_name].astype(output_type))
+                output_names.append(output_col_name)
 
         output_df = output_df.with_columns(
             col_names=output_names,
