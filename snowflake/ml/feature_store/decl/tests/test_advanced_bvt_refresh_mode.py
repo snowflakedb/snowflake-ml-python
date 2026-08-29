@@ -2,9 +2,10 @@
 
 ``refresh_mode`` is *structural* (Snowflake cannot change the refresh
 strategy on an existing Dynamic Table), so an edit must route through
-``RECREATE_FV(destructive=True)``.  The accepted values mirror the
-imperative ``FeatureView`` constructor: ``AUTO`` (default), ``FULL``,
-``INCREMENTAL``.  Anything else is rejected at ``model_validate`` time.
+``RECREATE_FV(destructive=True)``.  The accepted explicit values are
+``FULL`` and ``INCREMENTAL``; omit the field to let Snowflake choose
+automatically.  Anything else (including ``AUTO``) is rejected at
+``model_validate`` time.
 
 Coverage map:
 
@@ -57,6 +58,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
@@ -85,7 +87,7 @@ def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
 def _applied_state_for(local: dict[str, Any]) -> AppliedState:
     compiled = compile_to_spec(local, "DB1", "SC1")
     h = _full_spec_hash(compiled)
-    key = "BatchFeatureView:DB1.SC1:BFV_RM"
+    key = "BatchFeatureView:DB1.SC1:BFV_RM:V1"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -102,7 +104,7 @@ def _applied_state_for(local: dict[str, Any]) -> AppliedState:
     )
 
 
-@pytest.mark.parametrize("value", ["AUTO", "FULL", "INCREMENTAL"])
+@pytest.mark.parametrize("value", ["FULL", "INCREMENTAL"])
 def test_refresh_mode_round_trips_through_model_validate(value: str) -> None:
     """Each canonical ``refresh_mode`` value survives spec-model validation."""
     payload = _minimal_batch_fv_authoring(refresh_mode=value)
@@ -128,14 +130,14 @@ def test_compile_to_spec_threads_refresh_mode() -> None:
 
 def test_hash_changes_when_refresh_mode_changes() -> None:
     """A pure ``refresh_mode`` edit must bump the structural hash."""
-    a = compile_to_spec(_minimal_batch_fv_authoring(refresh_mode="AUTO"), "DB1", "SC1")
+    a = compile_to_spec(_minimal_batch_fv_authoring(refresh_mode="INCREMENTAL"), "DB1", "SC1")
     b = compile_to_spec(_minimal_batch_fv_authoring(refresh_mode="FULL"), "DB1", "SC1")
     assert _full_spec_hash(a) != _full_spec_hash(b)
 
 
 def test_planner_emits_recreate_fv_when_refresh_mode_changes() -> None:
     """A pure ``refresh_mode`` edit lands as ``RECREATE_FV(destructive=True)``."""
-    local = _minimal_batch_fv_authoring(refresh_mode="AUTO")
+    local = _minimal_batch_fv_authoring(refresh_mode="INCREMENTAL")
     applied = _applied_state_for(local)
     edited = _minimal_batch_fv_authoring(refresh_mode="FULL")
 
@@ -248,4 +250,4 @@ def test_state_inject_refresh_mode_from_list_row() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

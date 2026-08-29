@@ -1,11 +1,8 @@
 import json
 import uuid
-from typing import Any, Optional
-from unittest import mock
 
 from absl.testing import parameterized
 
-from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
@@ -19,18 +16,9 @@ INPUT_FEATURE_COLUMNS_NAMES = [f"input_feature_{i}" for i in range(NUM_FEATURES)
 
 
 class ModelMonitorIntegrationTestBase(parameterized.TestCase):
-    _hidden_live_commit_patcher: Optional[Any] = None
-
     @classmethod
     def setUpClass(cls) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        cls._hidden_live_commit_patcher = mock.patch.object(
-            pc.PlatformCapabilities,
-            "is_hidden_live_commit_enabled",
-            return_value=True,
-        )
-        cls._hidden_live_commit_patcher.start()
-
         cls._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
 
         cls._run_id = uuid.uuid4().hex
@@ -77,8 +65,6 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
     def tearDownClass(cls) -> None:
         cls._db_manager.drop_database(cls._db_name)
         cls._session.close()
-        if cls._hidden_live_commit_patcher is not None:
-            cls._hidden_live_commit_patcher.stop()
 
     def _get_monitor_segment_columns(self, monitor_name: str) -> list[str]:
         """Helper method to get segment columns from DESCRIBE MODEL MONITOR."""

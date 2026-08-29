@@ -561,7 +561,7 @@ class ModelOperator:
         )
         if len(res) != 1:
             raise ValueError(f"Model {model_name} does not exist or has been dropped.")
-        return sql_identifier.SqlIdentifier(res[0][self._model_client.MODEL_OWNER_COL_NAME], case_sensitive=False)
+        return sql_identifier.SqlIdentifier(res[0][self._model_client.MODEL_OWNER_COL_NAME], case_sensitive=True)
 
     def get_version_by_alias(
         self,

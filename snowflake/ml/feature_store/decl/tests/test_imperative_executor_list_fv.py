@@ -25,6 +25,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.ml.test_utils import pytest_driver
+
 
 class TestFetchFeatureViewRowsImportable:
     """RED before fix — the helper does not exist yet, so the import
@@ -398,4 +400,4 @@ class TestCanonicalizeEnumsInPlace:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

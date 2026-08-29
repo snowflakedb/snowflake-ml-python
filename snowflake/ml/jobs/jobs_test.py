@@ -31,6 +31,38 @@ class JobTest(parameterized.TestCase):
             target_instances = job._get_target_instances(mock_session, "jobs_DB.jobs_schema.test_id")
             self.assertEqual(target_instances, expected_result)
 
+    def test_get_submitted_instance_count_reads_replicas(self) -> None:
+        row = Row(PARAMETERS=json.dumps({"ASYNC": True, "REPLICAS": 3}))
+        with patch.object(job, "_get_service_info_spcs", return_value=row):
+            self.assertEqual(job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id"), 3)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("other parameters present", {"ASYNC": True}),
+        ("empty parameters", {}),
+    )
+    def test_get_submitted_instance_count_defaults_to_one_when_replicas_omitted(
+        self, parameters: dict[str, Any]
+    ) -> None:
+        row = Row(PARAMETERS=json.dumps(parameters))
+        with patch.object(job, "_get_service_info_spcs", return_value=row):
+            self.assertEqual(job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id"), 1)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("malformed PARAMETERS", Row(PARAMETERS="not-json")),
+        ("non-object PARAMETERS", Row(PARAMETERS=json.dumps([]))),
+        ("null REPLICAS", Row(PARAMETERS=json.dumps({"REPLICAS": None}))),
+        ("non-numeric REPLICAS", Row(PARAMETERS=json.dumps({"REPLICAS": "many"}))),
+        ("non-positive REPLICAS", Row(PARAMETERS=json.dumps({"REPLICAS": 0}))),
+    )
+    def test_get_submitted_instance_count_raises_when_unreadable(self, row: Row) -> None:
+        with patch.object(job, "_get_service_info_spcs", return_value=row), self.assertRaises(RuntimeError):
+            job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id")
+
+    def test_get_submitted_instance_count_raises_when_history_unavailable(self) -> None:
+        err = sp_exceptions.SnowparkSQLException("job history unavailable", sql_error_code=2003)
+        with patch.object(job, "_get_service_info_spcs", side_effect=err), self.assertRaises(RuntimeError):
+            job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id")
+
     @parameterized.named_parameters(  # type: ignore[misc]
         ("target instance is 1", 1, [Row(start_time=None, instance_id=None)], 0),
         (
@@ -280,37 +312,20 @@ class DistributedResultReduceTest(parameterized.TestCase):
 
     @parameterized.named_parameters(  # type: ignore[misc]
         # No failure -> None.
-        ("no_failure", [{"instance_id": 0, "start_time": "t"}], {0: {"ended_at": 1.0}}, {0: 0}, None),
+        ("no_failure", [0], {0: {"ended_at": 1.0}}, {0: 0}, None),
         # Two failures, both with records: pick the smaller ended_at. This is the only
         # cross-instance timestamp compare; a lower instance_id must NOT win if it ended later.
         (
             "orders_by_earliest_ended_at",
-            [{"instance_id": 0, "start_time": "t"}, {"instance_id": 1, "start_time": "t"}],
+            [0, 1],
             {0: {"ended_at": 5.0}, 1: {"ended_at": 2.0}},
             {0: 1, 1: 1},
             1,
         ),
-        # All failed instances are lost (no record) -> fall back to control-plane start_time.
+        # All failed instances are lost (no record) -> deterministic lowest-ID fallback.
         (
-            "all_lost_falls_back_to_start_time",
-            [{"instance_id": 0, "start_time": 2}, {"instance_id": 1, "start_time": 1}],
-            {0: None, 1: None},
-            {0: None, 1: None},
-            1,
-        ),
-        # Lost instances have a NULL start_time — the real shape of this fallback. Mixed None/value
-        # must not TypeError on the compare; the real start_time wins.
-        (
-            "all_lost_mixed_null_start_time",
-            [{"instance_id": 0, "start_time": None}, {"instance_id": 1, "start_time": 5}],
-            {0: None, 1: None},
-            {0: None, 1: None},
-            1,
-        ),
-        # All start_times NULL -> ties break on the lowest instance_id (never compares None < None).
-        (
-            "all_lost_all_null_start_time_ties_to_lowest_id",
-            [{"instance_id": 1, "start_time": None}, {"instance_id": 0, "start_time": None}],
+            "all_lost_falls_back_to_lowest_id",
+            [1, 0],
             {0: None, 1: None},
             {0: None, 1: None},
             0,
@@ -318,20 +333,19 @@ class DistributedResultReduceTest(parameterized.TestCase):
     )
     def test_earliest_failed_instance(
         self,
-        instances: list[dict[str, Any]],
+        instance_ids: list[int],
         records: dict[int, Any],
         exit_codes: dict[int, Any],
         expected: Any,
     ) -> None:
-        self.assertEqual(job._earliest_failed_instance(instances, records, exit_codes), expected)
+        self.assertEqual(job._earliest_failed_instance(instance_ids, records, exit_codes), expected)
 
     def test_reduce_all_success(self) -> None:
-        instances = [{"instance_id": 0, "start_time": "t"}, {"instance_id": 1, "start_time": "t"}]
         records = {0: {"exit_code": 0, "ended_at": 1.0}, 1: {"exit_code": 0, "ended_at": 2.0}}
-        with patch.object(job, "_get_service_instances", return_value=instances), patch.object(
-            job, "_read_all_records_with_retry", return_value=records
-        ), patch.object(job, "_load_instance0_value_or_none", return_value="v0"):
-            dr = job._reduce_distributed_result(MagicMock(), "id", "@stage/r", lambda p: p)
+        with patch.object(job, "_read_all_records_with_retry", return_value=records), patch.object(
+            job, "_load_instance0_value_or_none", return_value="v0"
+        ):
+            dr = job._reduce_distributed_result(MagicMock(), "@stage/r", path_transform=lambda p: p, target_instances=2)
         self.assertTrue(dr.success)
         self.assertEqual(dr.exit_codes, {0: 0, 1: 0})
         self.assertIsNone(dr.failed_instance)
@@ -340,31 +354,18 @@ class DistributedResultReduceTest(parameterized.TestCase):
     def test_reduce_failure_and_lost(self) -> None:
         # instance 0 ok, 1 failed (has record), 2 lost (no record): covers failure + lost +
         # earliest-failed preferring the record-bearing instance over the lost one.
-        instances = [
-            {"instance_id": 0, "start_time": "t"},
-            {"instance_id": 1, "start_time": "t"},
-            {"instance_id": 2, "start_time": "t"},
-        ]
         records: dict[int, Any] = {
             0: {"exit_code": 0, "ended_at": 1.0},
             1: {"exit_code": 1, "ended_at": 2.0},
             2: None,
         }
-        with patch.object(job, "_get_service_instances", return_value=instances), patch.object(
-            job, "_read_all_records_with_retry", return_value=records
-        ):
-            dr = job._reduce_distributed_result(MagicMock(), "id", "@stage/r", lambda p: p)
+        with patch.object(job, "_read_all_records_with_retry", return_value=records) as mock_read_records:
+            dr = job._reduce_distributed_result(MagicMock(), "@stage/r", path_transform=lambda p: p, target_instances=3)
         self.assertFalse(dr.success)
         self.assertEqual(dr.exit_codes, {0: 0, 1: 1, 2: None})  # None = lost
         self.assertEqual(dr.failed_instance, 1)  # has a record -> ranks before the lost one
         self.assertIsNone(dr.return_value)
-
-    def test_reduce_empty_instances_raises(self) -> None:
-        # No usable control-plane rows = couldn't read instance state, not a job failure — must raise
-        # a retrieval error rather than a nonsense "0/0 instances did not exit 0" DistributedResult.
-        with patch.object(job, "_get_service_instances", return_value=[]):
-            with self.assertRaises(RuntimeError):
-                job._reduce_distributed_result(MagicMock(), "id", "@stage/r", lambda p: p)
+        self.assertEqual(mock_read_records.call_args.args[2], {0, 1, 2})
 
     def test_rebuild_failure_exception_malformed_record_does_not_raise(self) -> None:
         # Runs inside a `raise ... from` position, so a malformed exc dict (missing keys) must
@@ -374,23 +375,23 @@ class DistributedResultReduceTest(parameterized.TestCase):
         self.assertIsInstance(rebuilt, BaseException)
 
     def test_retry_timeout_marks_lost(self) -> None:
-        instances = [{"instance_id": 0, "start_time": "t"}]
         with patch.object(job, "_read_instance_record", return_value=None), patch(
             "snowflake.ml.jobs.job.time"
         ) as mock_time:
             # First monotonic() sets the deadline; each later call jumps far past it, so the loop
             # times out on its next check no matter how many times monotonic() is called.
             mock_time.monotonic.side_effect = itertools.count(0, 1000)
-            records = job._read_all_records_with_retry(MagicMock(), "@stage/r", instances)
+            records = job._read_all_records_with_retry(MagicMock(), "@stage/r", {0})
         self.assertEqual(records, {0: None})  # still missing after timeout -> lost
 
 
 class DistributedResultApiTest(parameterized.TestCase):
     """Unit tests for MLJob.distributed_result() (result() is untouched classic behavior).
 
-    These cover the accessor only — gating, return-on-success, and raise-on-failure; the reduce
-    itself is covered by DistributedResultReduceTest. Each test seeds ``_distributed_result``
-    directly so the method short-circuits the wait/reduce — no network.
+    Cover the accessor: gating, return-on-success, raise-on-failure, and the wait/count/reduce path
+    (submitted-count read and the min<target warning). The reduce itself is covered by
+    DistributedResultReduceTest. Tests either seed ``_distributed_result`` directly or mock the
+    count/reduce, so no network is needed.
     """
 
     def _make_job(self, distributed: bool) -> job.MLJob[None]:
@@ -425,6 +426,18 @@ class DistributedResultApiTest(parameterized.TestCase):
         j = self._make_job(distributed=False)
         with self.assertRaises(NotImplementedError):
             j.distributed_result()
+
+    def test_distributed_result_warns_when_min_lt_target(self) -> None:
+        j = self._make_job(distributed=True)
+        j.__dict__["min_instances"] = 2
+        dr = jobs.DistributedResult(success=True, exit_codes={0: 0}, failed_instance=None, return_value=None)
+        with patch.object(j, "wait"), patch.object(job, "_get_submitted_instance_count", return_value=3), patch.object(
+            job.MLJob, "_result_path", new_callable=PropertyMock, return_value="@stage/r"
+        ), patch.object(job, "_reduce_distributed_result", return_value=dr), self.assertLogs(
+            job.logger, level="WARNING"
+        ) as logs:
+            self.assertIs(j.distributed_result(), dr)
+        self.assertTrue(any("min_instances" in line for line in logs.output))
 
     def test_has_distributed_result_deleted_job_no_keyerror(self) -> None:
         # A deleted job's _container_spec is {}; the gate must not KeyError on a missing "env".

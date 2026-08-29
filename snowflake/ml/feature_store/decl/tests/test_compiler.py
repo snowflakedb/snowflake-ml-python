@@ -17,6 +17,7 @@ from snowflake.ml.feature_store.decl.compiler import (
     strip_sql_comments,
 )
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # parse_duration_to_seconds
@@ -725,4 +726,4 @@ class TestCompileSpecRunsInlineQuerySource:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -689,28 +689,38 @@ def save_requirements_file(
     path: pathlib.Path,
     pip_deps: list[requirements.Requirement],
     cuda_version: Optional[str] = None,
-) -> None:
+) -> list[str]:
     """Generate Python requirements.txt file in the given directory path.
 
     Args:
         path: Path to the requirements.txt file.
         pip_deps: List of dependencies after validation.
         cuda_version: Optional CUDA version for GPU models. If provided and torch is in
-            dependencies, adds PyTorch CUDA index URL and pins torch to CUDA variant.
+            dependencies, pins torch to CUDA variant.
+
+    Returns:
+        List of extra pip index URLs (e.g. ``["https://download.pytorch.org/whl/cu124"]``)
+        that were NOT written to requirements.txt because SPCS rejects non-PEP-508 lines.
+        Callers should persist these via model metadata so the build step can apply them.
     """
     assert path.suffix in [".txt"], "PIP requirement file should have extension of txt."
     path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
+    pip_extra_index_urls: list[str] = []
 
     if cuda_version and _has_torch_dependency(pip_deps):
-        lines.append(_get_pytorch_cuda_index_url(cuda_version))
+        # Strip the "--extra-index-url " prefix to store just the URL.
+        raw = _get_pytorch_cuda_index_url(cuda_version)
+        pip_extra_index_urls.append(raw.removeprefix("--extra-index-url "))
         pip_deps = _pin_torch_to_cuda_variant(pip_deps, cuda_version)
 
     lines.extend(map(str, pip_deps))
 
     with open(path, "w", encoding="utf-8") as out:
         out.write("\n".join(lines))
+
+    return pip_extra_index_urls
 
 
 def load_conda_env_file(

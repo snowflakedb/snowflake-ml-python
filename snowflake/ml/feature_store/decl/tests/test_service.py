@@ -12,6 +12,7 @@ from snowflake.ml.feature_store.decl.service import (
     parse_service_status,
     service_sql,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -778,4 +779,4 @@ class TestFormatStatusDisplayCompactSpacing:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

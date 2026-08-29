@@ -19,6 +19,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     SpecBase,
     StreamingSource,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestFSColumn:
@@ -504,4 +505,4 @@ class TestBatchFeatureViewRefreshModeRestriction:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

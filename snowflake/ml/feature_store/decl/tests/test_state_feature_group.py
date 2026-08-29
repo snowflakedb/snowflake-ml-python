@@ -4,7 +4,7 @@ Pin the contract that an FG row from
 :func:`imperative_executor.fetch_feature_group_rows` is reified as one
 ``AppliedObject(kind="FeatureGroup")`` per row, with:
 
-* ``key``  = ``"FeatureGroup:<DB>.<SCHEMA>:<NAME_UPPER>"``.
+* ``key``  = ``"FeatureGroup:<DB>.<SCHEMA>:<NAME_UPPER>:<VERSION_UPPER>"``.
 * ``name``, ``version`` populated from the row.
 * ``content_hash`` computed via :func:`invariants.fg_content_hash` over
   the reconstructed declarative-shape spec payload.  This makes the
@@ -17,10 +17,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import fg_content_hash
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _fg_row(
@@ -67,7 +66,7 @@ class TestStateFetchAppliedFeatureGroup:
             default_database="DB",
             default_schema="SCH",
         )
-        assert "FeatureGroup:DB.SCH:MY_FG" in state.objects
+        assert "FeatureGroup:DB.SCH:MY_FG:V1" in state.objects
 
     def test_content_hash_matches_planner_basis(self) -> None:
         sources: list[dict[str, Any]] = [
@@ -94,7 +93,7 @@ class TestStateFetchAppliedFeatureGroup:
             default_database="DB",
             default_schema="SCH",
         )
-        ao = state.objects["FeatureGroup:DB.SCH:FG_X"]
+        ao = state.objects["FeatureGroup:DB.SCH:FG_X:V1"]
         # Reconstruct the declarative-shape spec the planner will see at
         # plan time and verify the applied hash matches by construction.
         decl_payload = {
@@ -163,4 +162,4 @@ class TestStateFetchAppliedFeatureGroup:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

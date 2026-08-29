@@ -41,6 +41,7 @@ from snowflake.ml.feature_store.decl.imperative_executor import (
     fetch_entity_rows,
 )
 from snowflake.ml.feature_store.decl.types import Plan, PlanOp, PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 _FORBIDDEN_LITERALS = (
     "CREATE TAG",
@@ -283,4 +284,4 @@ class TestNT3NoSessionSqlForEntityReadPath:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

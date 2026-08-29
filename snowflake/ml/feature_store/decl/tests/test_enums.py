@@ -1,7 +1,5 @@
 """Tests for decl/enums.py — FSBaseType, TYPE_ALIASES, normalize_type()."""
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import (
     TYPE_ALIASES,
     FeatureAggregationMethod,
@@ -11,6 +9,7 @@ from snowflake.ml.feature_store.decl.enums import (
     SourceType,
     normalize_type,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestFSBaseType:
@@ -186,4 +185,4 @@ class TestNormalizeType:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -30,6 +30,7 @@ from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 from snowflake.ml.feature_store.decl.loader import load_from_project
 from snowflake.ml.feature_store.decl.types import SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "templated_project"
 
@@ -396,4 +397,4 @@ class TestLoadFromProjectThreadsTemplateVarsToCompiler:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -276,6 +276,18 @@ def compile_to_spec(spec_dict: dict[str, Any], database: str, schema: str) -> di
     # matching half of that hash-symmetry contract).
     if kind == "BatchFeatureView" and spec_dict.get("refresh_freq"):
         spec["target_lag_sec"] = parse_duration_to_seconds(spec_dict["refresh_freq"])
+    elif kind == "StreamingFeatureView" and has_windows and spec_dict.get("refresh_freq"):
+        # A tiled streaming FV schedules an offline tile Dynamic Table
+        # whose ``TARGET_LAG`` is ``refresh_freq``.  Carry the
+        # authoring-form ``refresh_freq`` (NOT ``target_lag_sec`` — that
+        # is the OFT ingest lag the runtime stamps to ``0`` and
+        # ``_RUNTIME_STAMPED_SPEC_KEYS`` strips) so the local-vs-applied
+        # round-trip is symmetric: the applied side recovers the same
+        # authoring-form key from the deployed DT ``REFRESH_FREQ`` via
+        # ``state._inject_fv_refresh_freq_from_list_row``.  ``refresh_freq``
+        # is operational (``_OPERATIONAL_FV_KEYS``), so it is stripped
+        # from the structural hash on both sides.
+        spec["refresh_freq"] = spec_dict["refresh_freq"]
 
     if has_windows:
         method = spec_dict.get("feature_aggregation_method", "tiles")

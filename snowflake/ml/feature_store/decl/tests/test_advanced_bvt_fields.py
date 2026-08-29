@@ -16,7 +16,8 @@ The six fields and their planner routing are:
                                    from ``backfill.initialize``)
 * ``storage_config``             — structural,  ``RECREATE_FV``
 * ``aggregation_secondary_keys`` — structural,  ``RECREATE_FV``
-                                   (tiled-only; private preview, max length 1)
+                                   (private preview, max length 1; valid on
+                                   tiled and non-tiled BFVs)
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 import pytest
 
 from snowflake.ml.feature_store.decl.spec_models import FeatureView
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _xfail(reason: str) -> pytest.MarkDecorator:
@@ -83,4 +85,4 @@ def test_authoring_field_survives_model_validate(field: str, value: object) -> N
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

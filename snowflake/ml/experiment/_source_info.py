@@ -44,6 +44,11 @@ _SNOWFLAKE_FILE_DOMAIN_TYPE_ENV = "SNOWFLAKE_FILE_DOMAIN_TYPE"
 _SNOWFLAKE_FILE_DOMAIN_NAME_ENV = "SNOWFLAKE_FILE_DOMAIN_NAME"
 _SNOWFLAKE_MAIN_FILE_PATH_ENV = "SNOWFLAKE_MAIN_FILE_PATH"
 
+# Environment variable Snowflake injects into an ML job's container, carrying the
+# job's fully-qualified id. Its presence is how we recognize that the run was
+# created from inside an ML job.
+_ML_JOB_ID_ENV = "MLRS_JOB_ID"
+
 
 @dataclasses.dataclass(frozen=True)
 class GitInfo:
@@ -72,6 +77,9 @@ class SourceInfo:
     # ``entry_point``, not duplicated here.
     snowflake_file_domain_type: Optional[str] = None
     snowflake_file_domain_name: Optional[str] = None
+    # The fully-qualified id of the ML job this run was created from, taken from
+    # the environment. ``None`` when not running inside an ML job.
+    ml_job_id: Optional[str] = None
 
     def is_empty(self) -> bool:
         """Return True when there is nothing useful to send."""
@@ -80,6 +88,7 @@ class SourceInfo:
             and (self.git is None or self.git.is_empty())
             and self.snowflake_file_domain_type is None
             and self.snowflake_file_domain_name is None
+            and self.ml_job_id is None
         )
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -92,8 +101,9 @@ class SourceInfo:
 
         Returns:
             A JSON-serializable dict whose keys (``entry_point``, ``git``,
-            ``snowflake_file_domain_type``, ``snowflake_file_domain_name``) are
-            included only when resolved. May be empty when nothing was collected.
+            ``snowflake_file_domain_type``, ``snowflake_file_domain_name``,
+            ``ml_job_id``) are included only when resolved. May be empty when
+            nothing was collected.
         """
         out: dict[str, Any] = {}
         if self.entry_point is not None and "$$" not in self.entry_point:
@@ -110,6 +120,8 @@ class SourceInfo:
             out["snowflake_file_domain_type"] = self.snowflake_file_domain_type
         if self.snowflake_file_domain_name is not None and "$$" not in self.snowflake_file_domain_name:
             out["snowflake_file_domain_name"] = self.snowflake_file_domain_name
+        if self.ml_job_id is not None and "$$" not in self.ml_job_id:
+            out["ml_job_id"] = self.ml_job_id
         return out
 
     @classmethod
@@ -121,22 +133,37 @@ class SourceInfo:
             be resolved or collection failed.
         """
         try:
+            # An ML job id is orthogonal to how the entry point is described, so
+            # it is resolved once and attached to whichever shape is returned.
+            ml_job_id = _collect_ml_job_id()
+
             # Snowflake-managed files (notebooks or .py workspace files) describe
             # the running file via environment variables rather than a resolvable
             # local path, so they are handled first and independently of the
             # git/notebook-path machinery.
             snowflake_file = _collect_snowflake_file()
             if snowflake_file is not None:
-                return snowflake_file
+                return dataclasses.replace(snowflake_file, ml_job_id=ml_job_id)
 
             # Resolve the notebook once so entry-point and git agree on the same file.
             notebook_path = _resolve_notebook_path() if _in_ipython_kernel() else None
             return cls(
                 entry_point=_detect_entry_point(notebook_path),
                 git=_collect_git(notebook_path),
+                ml_job_id=ml_job_id,
             )
         except Exception:
             return cls()
+
+
+def _collect_ml_job_id() -> Optional[str]:
+    """Collect the fully-qualified id of the enclosing ML job.
+
+    Returns:
+        The ML job id from the environment, or ``None`` when not running inside
+        an ML job (or when the server does not expose the id).
+    """
+    return os.environ.get(_ML_JOB_ID_ENV) or None
 
 
 def _collect_snowflake_file() -> Optional[SourceInfo]:

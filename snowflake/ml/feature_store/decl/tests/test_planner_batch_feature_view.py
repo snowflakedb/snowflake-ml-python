@@ -5,8 +5,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import _full_spec_hash
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
@@ -17,6 +15,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _minimal_batch_fv(**overrides: Any) -> dict[str, Any]:
@@ -44,7 +43,7 @@ def _minimal_batch_fv(**overrides: Any) -> dict[str, Any]:
 def _applied_batch_state(local: dict[str, Any]) -> AppliedState:
     compiled = compile_to_spec(local, "DB1", "SC1")
     h = _full_spec_hash(compiled)
-    key = "BatchFeatureView:DB1.SC1:BFV_PLAN"
+    key = "BatchFeatureView:DB1.SC1:BFV_PLAN:V1"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -178,9 +177,9 @@ def test_planner_update_fv_when_only_refresh_freq_changes_with_target_lag_also_s
     """§7: edit ``refresh_freq`` while keeping ``target_lag`` constant → UPDATE_FV."""
     local = _bugbash_shape_batch_fv()
     state = _applied_batch_state(local)
-    state.objects["BatchFeatureView:DB1.SC1:BFV_DOC"] = state.objects.pop(
-        "BatchFeatureView:DB1.SC1:BFV_PLAN",
-        state.objects.get("BatchFeatureView:DB1.SC1:BFV_DOC"),  # type: ignore[arg-type]
+    state.objects["BatchFeatureView:DB1.SC1:BFV_DOC:V1"] = state.objects.pop(
+        "BatchFeatureView:DB1.SC1:BFV_PLAN:V1",
+        state.objects.get("BatchFeatureView:DB1.SC1:BFV_DOC:V1"),  # type: ignore[arg-type]
     )
 
     changed = copy.deepcopy(local)
@@ -250,7 +249,7 @@ def test_planner_no_change_when_only_target_lag_changes_pending_oft_recovery() -
     above.
     """
     local = _bugbash_shape_batch_fv()
-    state = _applied_batch_state_for(local, "BatchFeatureView:DB1.SC1:BFV_DOC")
+    state = _applied_batch_state_for(local, "BatchFeatureView:DB1.SC1:BFV_DOC:V1")
 
     changed = copy.deepcopy(local)
     changed["target_lag_sec"] = 7200
@@ -363,8 +362,8 @@ def test_planner_recreate_when_batch_source_table_swaps_via_resolution() -> None
     initial_hash = _full_spec_hash(initial_compiled)
     applied = AppliedState(
         objects={
-            "BatchFeatureView:DB1.SC1:MY_BATCH_FV": AppliedObject(
-                key="BatchFeatureView:DB1.SC1:MY_BATCH_FV",
+            "BatchFeatureView:DB1.SC1:MY_BATCH_FV:V1": AppliedObject(
+                key="BatchFeatureView:DB1.SC1:MY_BATCH_FV:V1",
                 kind="BatchFeatureView",
                 name="MY_BATCH_FV",
                 version="V1",
@@ -462,8 +461,8 @@ def test_planner_recreate_when_batch_source_table_swaps_without_specification() 
 
     applied = AppliedState(
         objects={
-            "BatchFeatureView:DB1.SC1:MY_BATCH_FV_STRUCT": AppliedObject(
-                key="BatchFeatureView:DB1.SC1:MY_BATCH_FV_STRUCT",
+            "BatchFeatureView:DB1.SC1:MY_BATCH_FV_STRUCT:V1": AppliedObject(
+                key="BatchFeatureView:DB1.SC1:MY_BATCH_FV_STRUCT:V1",
                 kind="BatchFeatureView",
                 name="MY_BATCH_FV_STRUCT",
                 version="V1",
@@ -645,7 +644,7 @@ def _applied_state_via_metadata_roundtrip(local: dict[str, Any], fv_name: str) -
     """
     compiled = compile_to_spec(local, "DB1", "SC1")
     h = _full_spec_hash(compiled)
-    key = f"BatchFeatureView:DB1.SC1:{fv_name}"
+    key = f"BatchFeatureView:DB1.SC1:{fv_name}:V1"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -773,4 +772,4 @@ def test_query_backed_fv_full_spec_hash_ignores_source_name() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

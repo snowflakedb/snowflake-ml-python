@@ -187,6 +187,12 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         registered_fv = self.fs.register_feature_view(fv, "v1")
         self.assertFalse(registered_fv.online)
 
+        physical_name = feature_view.FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        dt_rows = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{physical_name.resolved()}' IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dt_rows), 1)
+
         # Enable online storage
         custom_config = feature_view.OnlineConfig(enable=True, target_lag="15s")
         updated_fv = self.fs.update_feature_view(
@@ -199,6 +205,14 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertTrue(updated_fv.online)
         self.assertIsNotNone(updated_fv.online_config)
         self.assertEqual(updated_fv.online_config.target_lag, "15 seconds")
+
+        online_table_name = feature_view.FeatureView._get_online_table_name(physical_name)
+        oft_rows = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '{online_table_name.resolved()}' "
+            f"IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(oft_rows), 1)
+        self.assertEqual(oft_rows[0]["refresh_mode"], "INCREMENTAL")
 
     def test_update_enable_hybrid_online_on_tiled_fv_rejected(self) -> None:
         """Enabling HYBRID_TABLE online on a tiled FV is unsupported and rejected with a clear error.

@@ -32,6 +32,8 @@ py_library(
     deps = [
         ":model_parameter_reconciler",
         "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_impl",
@@ -81,6 +83,8 @@ py_test(
         ":model_manager",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_model_composer:model_composer",

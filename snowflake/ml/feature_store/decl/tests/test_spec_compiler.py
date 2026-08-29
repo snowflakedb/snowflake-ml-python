@@ -4,12 +4,11 @@ from typing import Any
 
 import json
 
-import pytest
-
 from snowflake.ml.feature_store.decl.spec_compiler import (
     compile_to_spec,
     sanitize_json_for_dollar_quoting,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Shared test fixture
@@ -939,6 +938,66 @@ class TestStreamingContinuousGranularityDefault:
         )
 
 
+class TestTiledStreamingCarriesRefreshFreq:
+    """A **tiled** ``StreamingFeatureView`` schedules an offline tile
+    Dynamic Table whose ``TARGET_LAG`` is ``refresh_freq``.  The compiler
+    must carry that authoring-form ``refresh_freq`` onto the compiled
+    ``spec`` so the local-vs-applied round-trip is symmetric (the applied
+    side recovers it from the deployed DT via
+    ``state._inject_fv_refresh_freq_from_list_row``).
+
+    It must NOT emit ``target_lag_sec`` on a streaming spec — that names
+    the Online Feature Table's ingest lag, which the runtime stamps to
+    ``0`` and ``_RUNTIME_STAMPED_SPEC_KEYS`` strips from the hash.
+    """
+
+    def _tiled_streaming_spec(self, **overrides: Any) -> dict[str, Any]:
+        spec: dict[str, Any] = {
+            "kind": "StreamingFeatureView",
+            "name": "user_clicks_tiled",
+            "version": "v1",
+            "entities": ["user_id"],
+            "sources": [
+                {
+                    "name": "user_events",
+                    "source_type": "Stream",
+                    "columns": [
+                        {"name": "user_id", "type": "StringType"},
+                        {"name": "amount", "type": "DoubleType"},
+                    ],
+                }
+            ],
+            "features": [
+                {
+                    "source_column": {"name": "amount", "type": "DoubleType"},
+                    "output_column": {"name": "amount_1h", "type": "DoubleType"},
+                    "function": "sum",
+                    "window": "1h",
+                }
+            ],
+            "timestamp_col": "timestamp",
+            "feature_granularity_sec": 300,
+            "feature_aggregation_method": "tiles",
+            "refresh_freq": "1 minute",
+        }
+        spec.update(overrides)
+        return spec
+
+    def test_compile_tiled_streaming_carries_refresh_freq(self) -> None:
+        result = compile_to_spec(self._tiled_streaming_spec(), "DB", "SCH")
+        assert result["spec"].get("refresh_freq") == "1 minute", (
+            "A tiled streaming FV must carry authoring-form refresh_freq on "
+            "the compiled spec (offline tile DT cadence); got "
+            f"{result['spec'].get('refresh_freq')!r}."
+        )
+
+    def test_compile_tiled_streaming_still_strips_target_lag_sec(self) -> None:
+        result = compile_to_spec(self._tiled_streaming_spec(), "DB", "SCH")
+        assert "target_lag_sec" not in result["spec"], (
+            "Streaming compiled specs must not carry target_lag_sec (the " "OFT ingest lag the runtime stamps to 0)."
+        )
+
+
 class TestRefreshFreqDrivesTargetLagSec:
     """``compile_to_spec`` reads the renamed ``refresh_freq`` authoring
     field and emits the imperative wire-form ``spec.target_lag_sec``.
@@ -1016,4 +1075,4 @@ class TestRefreshFreqDrivesTargetLagSec:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

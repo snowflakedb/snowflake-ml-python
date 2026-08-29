@@ -41,6 +41,7 @@ from snowflake.ml.feature_store.decl.compiler import normalize_sql_whitespace
 from snowflake.ml.feature_store.decl.manifest import FSTarget
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
 from snowflake.ml.feature_store.decl.types import AppliedState, PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "batch_fv_query_source"
 
@@ -335,4 +336,4 @@ def test_query_is_inlined_at_compile_time(fv_name: str) -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

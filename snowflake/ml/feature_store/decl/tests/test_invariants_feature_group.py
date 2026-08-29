@@ -21,9 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.types import AppliedObject, AppliedState
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,6 +73,33 @@ def _applied_with(*payloads: Any) -> AppliedState:
         db = (p.get("database") or "").upper()
         schema = (p.get("schema") or "").upper()
         key = f"{kind}:{db}.{schema}:{name}"
+        objs[key] = AppliedObject(
+            key=key,
+            kind=kind,
+            name=p.get("name", ""),
+            version=p.get("version"),
+            content_hash="x",
+            spec_payload=p,
+        )
+    return AppliedState(objects=objs)
+
+
+def _applied_with_versions(*payloads: Any) -> AppliedState:
+    # Build applied state keyed by (name, version) so multiple versions of
+    # one FV name coexist as distinct objects. _applied_with keys by name
+    # only, which mirrors the versioned applied-state builder's pre-fix
+    # collapse and would drop all but the last version of a shared name --
+    # useless for exercising the version-blind resolution bug. Insertion
+    # order is preserved so tests can control which version would win a
+    # name-only lookup.
+    objs: dict[str, AppliedObject] = {}
+    for p in payloads:
+        kind = p.get("kind", "")
+        name = (p.get("name") or "").upper()
+        version = (p.get("version") or "").upper()
+        db = (p.get("database") or "").upper()
+        schema = (p.get("schema") or "").upper()
+        key = f"{kind}:{db}.{schema}:{name}:{version}"
         objs[key] = AppliedObject(
             key=key,
             kind=kind,
@@ -199,7 +225,7 @@ class TestCheckFeatureGroupSourcesUnresolved:
         spec = _fg(feature_views=[{"name": "FV_A", "version": "V1"}])
         results = _check_feature_group_sources(
             spec,
-            batch_fv_specs={"FV_A": _fv_payload("FV_A", online=True, store_type="POSTGRES")},
+            batch_fv_specs={("FV_A", "V1"): _fv_payload("FV_A", online=True, store_type="POSTGRES")},
             applied_state=AppliedState(objects={}),
         )
         # Resolved + online + Postgres → no error.
@@ -243,7 +269,7 @@ class TestCheckFeatureGroupSourcesNotOnlinePostgres:
         spec = _fg(feature_views=[{"name": "FV_A", "version": "V1"}])
         results = _check_feature_group_sources(
             spec,
-            batch_fv_specs={"FV_A": _fv_payload("FV_A", online=False, store_type="")},
+            batch_fv_specs={("FV_A", "V1"): _fv_payload("FV_A", online=False, store_type="")},
             applied_state=AppliedState(objects={}),
         )
         codes = [r.code for r in results]
@@ -282,7 +308,7 @@ class TestCheckFeatureGroupSourcesNotOnlinePostgres:
         }
         results = _check_feature_group_sources(
             spec,
-            batch_fv_specs={"FV_A": local_fv_payload},
+            batch_fv_specs={("FV_A", "V1"): local_fv_payload},
             applied_state=AppliedState(objects={}),
         )
         codes = [r.code for r in results]
@@ -290,5 +316,75 @@ class TestCheckFeatureGroupSourcesNotOnlinePostgres:
         assert "MISSING_FEATURE_VIEW" not in codes
 
 
+class TestCheckFeatureGroupSourcesVersionIdentity:
+    """Source resolution must be by ``(name, version)``, not name alone.
+
+    With two versions of one FV name in either the applied state or the
+    local batch, a name-only index keeps only the last insert, so an FG's
+    pinned version can be validated against the wrong version's payload —
+    a spurious ``FG_SOURCE_NOT_ONLINE_POSTGRES`` or a missed real one,
+    depending on insertion / row order.
+    """
+
+    def test_pinned_v1_not_flagged_when_v2_offline(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import (
+            _check_feature_group_sources,
+        )
+
+        # V2 inserted last: a name-only index would resolve MY_FV -> V2
+        # (offline) and spuriously flag the FG that actually pins V1.
+        applied = _applied_with_versions(
+            _fv_payload("MY_FV", version="V1", online=True, store_type="POSTGRES"),
+            _fv_payload("MY_FV", version="V2", online=False, store_type=""),
+        )
+        spec = _fg(feature_views=[{"name": "MY_FV", "version": "V1"}])
+        results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=applied)
+        codes = [r.code for r in results]
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" not in codes, (
+            "FG pins MY_FV:V1 (online+POSTGRES); the offline V2 must not be "
+            f"resolved in its place. Got codes={codes}"
+        )
+
+    def test_pinned_v2_flags_real_violation(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import (
+            _check_feature_group_sources,
+        )
+
+        # V1 inserted last: a name-only index would resolve MY_FV -> V1
+        # (valid) and miss the real violation on the pinned V2.
+        applied = _applied_with_versions(
+            _fv_payload("MY_FV", version="V2", online=False, store_type=""),
+            _fv_payload("MY_FV", version="V1", online=True, store_type="POSTGRES"),
+        )
+        spec = _fg(feature_views=[{"name": "MY_FV", "version": "V2"}])
+        results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=applied)
+        codes = [r.code for r in results]
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" in codes, (
+            "FG pins MY_FV:V2 (online: false); the valid V1 must not mask the " f"real violation. Got codes={codes}"
+        )
+
+    def test_batch_specs_resolved_by_name_version(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import (
+            _check_feature_group_sources,
+        )
+
+        batch_fv_specs = {
+            ("MY_FV", "V1"): _fv_payload("MY_FV", version="V1", online=True, store_type="POSTGRES"),
+            ("MY_FV", "V2"): _fv_payload("MY_FV", version="V2", online=False, store_type=""),
+        }
+        spec = _fg(feature_views=[{"name": "MY_FV", "version": "V2"}])
+        results = _check_feature_group_sources(
+            spec,
+            batch_fv_specs=batch_fv_specs,
+            applied_state=AppliedState(objects={}),
+        )
+        codes = [r.code for r in results]
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" in codes, (
+            "FG pins MY_FV:V2 (offline) from the batch; the offline version must "
+            f"resolve by (name, version). Got codes={codes}"
+        )
+        assert "MISSING_FEATURE_VIEW" not in codes
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

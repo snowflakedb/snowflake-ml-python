@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 from snowflake.ml.feature_store.decl.compiler import canonicalize_sql_for_hash
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
@@ -63,7 +63,13 @@ _SOURCE_KIND_ALIASES: frozenset[str] = frozenset({"StreamingSource", "BatchSourc
 
 
 def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> str:
-    """Build a unique key: ``kind:database.schema:NAME`` (uppercased name).
+    """Build a unique key for an object's identity.
+
+    Versioned kinds (``FeatureView`` subkinds and ``FeatureGroup``) key as
+    ``kind:database.schema:NAME:VERSION`` because their identity is
+    ``(name, version)``; unversioned kinds (``Entity``, ``Datasource``)
+    key as ``kind:database.schema:NAME``.  Name (and version) are
+    uppercased for a case-stable key.
 
     The two concrete source kinds (``StreamingSource``, ``BatchSource``)
     collapse to the canonical ``Datasource`` kind in
@@ -105,7 +111,18 @@ def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> s
     db = (data.get("database", "") or database or "").upper()
     schema = (data.get("schema", "") or data.get("schema_", "") or schema or "").upper()
     qualifier = f"{db}.{schema}" if (db or schema) else ""
-    return f"{kind}:{qualifier}:{name}"
+    key = f"{kind}:{qualifier}:{name}"
+    # Object identity is (name, version) for versioned kinds — append the
+    # version so distinct versions of one name key (and therefore plan /
+    # validate / apply) independently instead of shadowing each other.
+    # Entity / Datasource are schema-level and unversioned, so they keep
+    # the name-only key.  A versioned kind that is missing its version
+    # keeps the name-only key too; the absence is surfaced as
+    # ``MISSING_VERSION`` by :func:`validate_specs`.
+    version = data.get("version")
+    if kind in _VERSIONED_KINDS and version:
+        key = f"{key}:{str(version).upper()}"
+    return key
 
 
 def _spec_hash(data: dict[str, Any]) -> str:
@@ -116,7 +133,7 @@ def _spec_hash(data: dict[str, Any]) -> str:
 
 
 def _content_hash(data: dict[str, Any]) -> str:
-    """SHA-256 excluding the ``version`` field (for dev-mode idempotency)."""
+    """SHA-256 over the spec dict excluding the ``version`` field."""
     d = {k: v for k, v in data.items() if k not in _INTERNAL_KEYS}
     d = copy.deepcopy(d)
     d.pop("version", None)
@@ -141,7 +158,7 @@ def _sf_type_for_fp(type_str: str) -> str:
     return _FINGERPRINT_TYPE_MAP.get(type_str, type_str).upper()
 
 
-def _structural_fingerprint(data: dict[str, Any], include_version: bool = True) -> dict[str, Any]:
+def _structural_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
     """Build a structural fingerprint from a spec or DESCRIBE-derived dict.
 
     Extracts ``name``, ``version`` (optional), and sorted output column
@@ -166,16 +183,13 @@ def _structural_fingerprint(data: dict[str, Any], include_version: bool = True) 
 
     Args:
         data: Spec dict or DESCRIBE-derived dict.
-        include_version: When ``False``, the version field is omitted from the
-            fingerprint.  Used for dev-mode idempotency where auto-generated
-            timestamp versions should be ignored.
 
     Returns:
         Dict with keys ``name``, ``version``, ``columns``, and (for
         ``Entity`` kinds only) ``description`` and ``join_keys``.
     """
     name = (data.get("name") or "").upper()
-    version = (data.get("version") or "").upper() if include_version else ""
+    version = (data.get("version") or "").upper()
 
     udf = data.get("udf") or {}
     if udf and "output_columns" in udf:
@@ -270,7 +284,7 @@ def _structural_fingerprint(data: dict[str, Any], include_version: bool = True) 
     return fingerprint
 
 
-def structural_fingerprint_hash(data: dict[str, Any], include_version: bool = True) -> str:
+def structural_fingerprint_hash(data: dict[str, Any]) -> str:
     """SHA-256 of the structural fingerprint (name + version + output columns).
 
     This is the canonical hash used for idempotency checks throughout the
@@ -281,12 +295,11 @@ def structural_fingerprint_hash(data: dict[str, Any], include_version: bool = Tr
 
     Args:
         data: Spec dict or DESCRIBE-derived dict.
-        include_version: Passed through to :func:`_structural_fingerprint`.
 
     Returns:
         64-character lowercase hex SHA-256 digest.
     """
-    fp = _structural_fingerprint(data, include_version=include_version)
+    fp = _structural_fingerprint(data)
     canonical = json.dumps(fp, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -778,6 +791,50 @@ def _normalise_feature_column_types(features: Any) -> None:
                 col["type"] = promoted
 
 
+def _canonical_function_spelling(fn: Any) -> Any:
+    """Map the SPECIFICATION stddev spelling to the imperative wire token.
+
+    ``"stddev"`` (case-insensitive) canonicalizes to ``"std"``; every other
+    value is returned unchanged so the caller can compare function tokens
+    without treating the two stddev spellings as a change.
+
+    Args:
+        fn: A raw ``function`` token (or any value).
+
+    Returns:
+        ``"std"`` when ``fn`` is ``"stddev"``, otherwise ``fn`` unchanged.
+    """
+    if isinstance(fn, str) and fn.lower() == "stddev":
+        return "std"
+    return fn
+
+
+def _normalise_feature_function_spelling(features: Any) -> None:
+    """Canonicalize the aggregation ``function`` spelling in a ``features`` list.
+
+    The imperative wire token for stddev is ``"std"`` (see
+    ``AggregationType.STD``), but Snowflake's ``DESCRIBE … TYPE =
+    SPECIFICATION`` reports the SQL spelling ``"stddev"``.  The applied
+    side therefore carries ``"stddev"`` while the local-compile side
+    carries ``"std"``.  Rewriting ``"stddev"`` -> ``"std"`` on both halves
+    before hashing keeps the round-trip clean without changing the
+    imperative wire form.  The rewrite is symmetric and a no-op on any
+    other function token.
+
+    Args:
+        features: The ``features`` list of a tiled FV inner spec (mutated
+            in place).  Non-list / non-dict entries are skipped.
+    """
+    if not isinstance(features, list):
+        return
+    for feat in features:
+        if not isinstance(feat, dict):
+            continue
+        fn = feat.get("function")
+        if isinstance(fn, str):
+            feat["function"] = _canonical_function_spelling(fn)
+
+
 # Operational FV-level keys that influence registration semantics but
 # never appear in the deployed ``DESCRIBE … TYPE = SPECIFICATION``
 # payload.  Stripped before hashing so a local YAML that adds (or
@@ -1061,31 +1118,28 @@ def _normalise_fv_sources_for_hash(sources: Any) -> list[dict[str, str]]:
     return out
 
 
-def _full_spec_hash(spec: dict[str, Any]) -> str:
-    """SHA-256 over the full spec JSON, with stable key ordering.
+def _canonical_spec_for_hash(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *spec* with hash-irrelevant fields stripped.
 
-    Used by the planner for full-spec diffs when an ``AppliedObject`` was
-    populated from ``DESCRIBE ONLINE FEATURE TABLE <name> TYPE =
-    SPECIFICATION`` (i.e. ``from_specification=True``).  Volatile metadata
-    fields (see :data:`_VOLATILE_METADATA_KEYS`) are removed before
-    hashing so that a tool-version bump does not falsely flag a deployed
-    spec as changed.  Spec-level runtime-stamped keys (see
-    :data:`_RUNTIME_STAMPED_SPEC_KEYS`) and per-column runtime defaults
-    (see :data:`_RUNTIME_STAMPED_COLUMN_DEFAULTS`) are likewise stripped
-    so a deploy-time ``target_lag_sec: 0`` or ``length: 16777216``
-    stamping does not bump the hash on the next ``snow feature plan``.
+    This is the payload hashed by :func:`_full_spec_hash`.  Diagnostic
+    diffs (and any other hash-aligned comparison) must use this helper
+    rather than re-implementing the skip set, so they report the same
+    fields the planner hashes.
+
+    Volatile metadata (see :data:`_VOLATILE_METADATA_KEYS`) is removed so
+    a tool-version bump is not treated as a change.  Spec-level
+    runtime-stamped keys (see :data:`_RUNTIME_STAMPED_SPEC_KEYS`) and
+    per-column runtime defaults (see :data:`_RUNTIME_STAMPED_COLUMN_DEFAULTS`)
+    are likewise stripped so a deploy-time ``target_lag_sec: 0`` or
+    ``length: 16777216`` stamp does not look like drift.  Remaining
+    ``metadata`` fields (name, version, database, schema) are kept.
 
     **BatchFV parity normalisation.**  For FeatureView kinds in
     :data:`_FV_HASH_NORMALISE_KINDS` the inner ``spec.sources`` is
     projected to a sorted ``[{table}]`` shape (see
     :func:`_normalise_fv_sources_for_hash`) and ``spec.features`` is
     stripped of 1:1 ``source_column == output_column`` pass-throughs
-    (see :func:`_is_auto_derived_feature`).  This is the parity fix for
-    snowml-core's lossy ``DESCRIBE … TYPE = SPECIFICATION`` round-trip:
-    the deployed BatchFV spec always has ``sources = []`` and N
-    auto-derived feature entries, so the comparison must focus on the
-    stable structural binding (source ``table``, entities, explicit
-    aggregations) rather than the spec-payload boilerplate.  See
+    (see :func:`_is_auto_derived_feature`).  See
     docs/BATCH_FV_BUG_BASH.md §7/§8.
 
     Args:
@@ -1094,9 +1148,10 @@ def _full_spec_hash(spec: dict[str, Any]) -> str:
             ``DESCRIBE ... TYPE = SPECIFICATION``).
 
     Returns:
-        64-character lowercase hex SHA-256 digest.
+        Deep copy with volatile, derived, operational, and runtime-stamped
+        fields removed and BatchFV parity applied.  Does not mutate *spec*.
     """
-    cleaned = json.loads(json.dumps(spec, default=str))  # deep copy via JSON round-trip
+    cleaned = cast(dict[str, Any], json.loads(json.dumps(spec, default=str)))  # deep copy via JSON round-trip
     kind = cleaned.get("kind") if isinstance(cleaned, dict) else ""
     metadata = cleaned.get("metadata") if isinstance(cleaned, dict) else None
     if isinstance(metadata, dict):
@@ -1171,6 +1226,10 @@ def _full_spec_hash(spec: dict[str, Any]) -> str:
             features = inner.get("features")
             if isinstance(features, list):
                 inner["features"] = [f for f in features if not _is_auto_derived_feature(f)]
+            # Canonicalize the stddev spelling ("stddev" -> "std") across
+            # batch + streaming tiled features so the SPECIFICATION spelling
+            # does not diverge from the imperative wire token when hashing.
+            _normalise_feature_function_spelling(inner.get("features"))
         # BatchFV-specific operational-default stripping.  snowml-core
         # stamps ``initialize: ON_CREATE``, ``refresh_mode: AUTO``, and a
         # default ``cluster_by`` (entities, or entities + TILE_START for
@@ -1185,7 +1244,28 @@ def _full_spec_hash(spec: dict[str, Any]) -> str:
             _strip_default_operational_fields(inner)
             _strip_default_cluster_by(inner)
             _normalise_feature_column_types(inner.get("features"))
-    canonical = json.dumps(cleaned, sort_keys=True, ensure_ascii=True)
+    return cleaned
+
+
+def _full_spec_hash(spec: dict[str, Any]) -> str:
+    """SHA-256 over the full spec JSON, with stable key ordering.
+
+    Used by the planner for full-spec diffs when an ``AppliedObject`` was
+    populated from ``DESCRIBE ONLINE FEATURE TABLE <name> TYPE =
+    SPECIFICATION`` (i.e. ``from_specification=True``).  The hashed
+    payload is produced by :func:`_canonical_spec_for_hash` (volatile
+    metadata, runtime-stamped keys, operational FV keys, and BatchFV
+    parity normalisation).
+
+    Args:
+        spec: A compiled-spec dict (e.g. the output of
+            :func:`spec_compiler.compile_to_spec` or the JSON returned by
+            ``DESCRIBE ... TYPE = SPECIFICATION``).
+
+    Returns:
+        64-character lowercase hex SHA-256 digest.
+    """
+    canonical = json.dumps(_canonical_spec_for_hash(spec), sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -1451,31 +1531,25 @@ def _check_feature_aggregations(spec: dict[str, Any]) -> list[ValidationResult]:
 def _check_versions(
     spec: dict[str, Any],
     applied: Optional[AppliedObject],
-    dev_mode: bool,
 ) -> list[ValidationResult]:
     """Version management invariants.
 
     Only ``FeatureView`` and ``FeatureGroup`` kinds are required to carry an
-    explicit version string. ``Entity`` and ``Source`` specs are schema-level
-    objects without semantic versioning.
+    explicit version string (``MISSING_VERSION`` when absent). ``Entity`` and
+    ``Source`` specs are schema-level objects without semantic versioning.
 
-    ``VERSION_CONFLICT`` fires only when the local version is *strictly*
-    less than the deployed version (i.e. an attempt to "go backwards").
-    Equal versions are not a conflict — they're the canonical re-plan
-    case and are short-circuited upstream by ``_check_idempotency``
-    when the content matches.  When the content has actually changed at
-    the same version, the planner emits a destructive ``RECREATE_FV``
-    op (gated behind ``--allow-recreate``), which provides natural
-    friction without forcing an explicit version bump.  See
-    ``plans/planner_revalidate_identical_spec.plan.md`` for the
-    BUG_BASH §9 cascade where the prior ``<=`` semantics caused
-    spurious ``VERSION_CONFLICT`` errors when the idempotency hash
-    diverged on a re-plan of an unchanged FV.
+    There is no cross-version "downgrade" rule.  Object identity is now
+    ``(name, version)`` (see :func:`spec_key`), so ``applied`` is the exact
+    same-version object (or ``None``) and a lower version number is a
+    distinct object rather than a conflict.  The former ``VERSION_CONFLICT``
+    check (rejecting a local version string strictly below the deployed one)
+    has been removed.
 
     Args:
         spec: The normalized spec dict to validate.
         applied: The currently-deployed object, or ``None`` for new objects.
-        dev_mode: When True, bypass version-conflict checks.
+            Retained for signature stability with the other ``_check_*``
+            helpers; no longer consulted now that the downgrade rule is gone.
 
     Returns:
         List of ``ValidationResult`` objects (may be empty).
@@ -1490,46 +1564,25 @@ def _check_versions(
         return results
 
     if not version:
-        if not dev_mode:
-            results.append(
-                _result(
-                    "ERROR",
-                    "MISSING_VERSION",
-                    f"{name} has no version. Add a version or use dev_mode for automatic "
-                    "timestamp-based versioning.",
-                    name,
-                )
-            )
-        # In dev_mode a version will be auto-generated later; no error.
-        return results
-
-    if applied is None:
-        # New object — no conflict possible.
-        return results
-
-    # Object already exists: only flag a *strictly lower* local version.
-    # Equal versions on identical content are NO_CHANGE (handled by
-    # ``_check_idempotency``); equal versions on changed content surface
-    # as a destructive ``RECREATE_FV`` plan op rather than a validator
-    # error.
-    applied_version = applied.version or ""
-    if applied_version and version < applied_version:
         results.append(
             _result(
                 "ERROR",
-                "VERSION_CONFLICT",
-                f"{name}: version '{version}' is lower than the currently deployed "
-                f"'{applied_version}'. Bump the version or use overwrite to force.",
+                "MISSING_VERSION",
+                f"{name} has no version. Add an explicit version string.",
                 name,
             )
         )
+        return results
+
+    # Object identity is (name, version); a versioned kind with a version
+    # present is always valid.  There is no cross-version "downgrade" rule:
+    # a lower version number is simply a distinct object, not a conflict.
     return results
 
 
 def _check_idempotency(
     spec: dict[str, Any],
     applied: Optional[AppliedObject],
-    dev_mode: bool,
     target_database: str = "",
     target_schema: str = "",
 ) -> tuple[bool, list[ValidationResult]]:
@@ -1547,8 +1600,6 @@ def _check_idempotency(
     Args:
         spec: The normalized spec dict to check.
         applied: The currently-deployed object, or ``None`` for new objects.
-        dev_mode: When True, compare structural fingerprints excluding version
-            so that auto-generated timestamp versions are ignored.
         target_database: Connection target database used when compiling the
             local spec for the full-spec hash path.  Falls back to
             ``spec["database"]`` if empty.
@@ -1564,33 +1615,25 @@ def _check_idempotency(
 
     name = spec.get("name", "")
 
-    if dev_mode:
-        # Compare structural fingerprints without version so auto-generated
-        # timestamps do not cause spurious re-deploys.
-        current_hash = structural_fingerprint_hash(spec, include_version=False)
-        applied_hash = structural_fingerprint_hash(applied.spec_payload, include_version=False)
-        if current_hash == applied_hash:
-            return True, [_result("WARNING", "NO_CHANGE", f"{name}: content unchanged (dev-mode).", name)]
-    else:
-        kind = spec.get("kind", "")
-        if applied.from_specification and kind in _FV_RECREATE_KINDS:
-            db_for_compile = target_database or spec.get("database", "") or ""
-            sch_for_compile = target_schema or spec.get("schema", "") or spec.get("schema_", "") or ""
-            try:
-                current_hash = compute_local_spec_hash(spec, db_for_compile, sch_for_compile)
-            except Exception:  # noqa: BLE001 — defensive fallback (mirrors planner)
-                current_hash = structural_fingerprint_hash(spec)
-        elif kind == "FeatureGroup":
-            # FG identity hash mirrors the planner's ``fg_content_hash``;
-            # there is no FV-style operational/structural split (see
-            # ``decl/DESIGN.md`` §"Feature Group hash strategy").
-            current_hash = fg_content_hash(spec)
-        else:
+    kind = spec.get("kind", "")
+    if applied.from_specification and kind in _FV_RECREATE_KINDS:
+        db_for_compile = target_database or spec.get("database", "") or ""
+        sch_for_compile = target_schema or spec.get("schema", "") or spec.get("schema_", "") or ""
+        try:
+            current_hash = compute_local_spec_hash(spec, db_for_compile, sch_for_compile)
+        except Exception:  # noqa: BLE001 — defensive fallback (mirrors planner)
             current_hash = structural_fingerprint_hash(spec)
-        if current_hash == applied.content_hash:
-            return True, [
-                _result("WARNING", "NO_CHANGE", f"{name}: spec is identical to deployed version; skipping.", name)
-            ]
+    elif kind == "FeatureGroup":
+        # FG identity hash mirrors the planner's ``fg_content_hash``;
+        # there is no FV-style operational/structural split (see
+        # ``decl/DESIGN.md`` §"Feature Group hash strategy").
+        current_hash = fg_content_hash(spec)
+    else:
+        current_hash = structural_fingerprint_hash(spec)
+    if current_hash == applied.content_hash:
+        return True, [
+            _result("WARNING", "NO_CHANGE", f"{name}: spec is identical to deployed version; skipping.", name)
+        ]
 
     return False, []
 
@@ -1837,7 +1880,7 @@ def _check_dependencies(
 
 def _check_feature_group_sources(
     spec: dict[str, Any],
-    batch_fv_specs: dict[str, dict[str, Any]],
+    batch_fv_specs: dict[tuple[str, str], dict[str, Any]],
     applied_state: AppliedState,
 ) -> list[ValidationResult]:
     """Cross-FV invariants for a single FeatureGroup spec.
@@ -1855,8 +1898,9 @@ def _check_feature_group_sources(
       can prove is **not** ``online: true`` with ``store_type: POSTGRES``.
       Three resolution rules apply, in order:
 
-      1. If the source FV is in ``batch_fv_specs`` and the local payload
-         declares ``online_config.store_type``, validate against it.
+      1. If the source FV ``(name, version)`` is in ``batch_fv_specs`` and
+         the local payload declares ``online_config.store_type``, validate
+         against it.
       2. Else, if the FV is in ``applied_state``, validate against the
          applied payload's ``online`` + ``online_config.store_type`` /
          ``online_store_type`` field (whichever is populated).
@@ -1870,8 +1914,8 @@ def _check_feature_group_sources(
 
     Args:
         spec: The FG spec dict to validate.
-        batch_fv_specs: Map of ``fv_name`` to local FV spec dict (e.g.
-            built by the caller from ``batch.specs``).
+        batch_fv_specs: Map of uppercased ``(fv_name, fv_version)`` to local
+            FV spec dict (e.g. built by the caller from ``batch.specs``).
         applied_state: Applied-state snapshot.
 
     Returns:
@@ -1883,13 +1927,16 @@ def _check_feature_group_sources(
 
     fg_name = spec.get("name", "")
 
-    # Index applied FVs by uppercased name for case-insensitive lookup
-    # (Snowflake identifiers are case-insensitive; YAML round-trip can
-    # change the case of the source-FV ref).
-    applied_fvs_by_name: dict[str, dict[str, Any]] = {}
+    # Index applied FVs by uppercased ``(name, version)`` for
+    # case-insensitive lookup (Snowflake identifiers are case-insensitive;
+    # YAML round-trip can change the case of the source-FV ref).  Keying by
+    # name alone would let a later version of one name clobber the earlier
+    # one, so an FG pinning a specific version could be validated against
+    # the wrong version's payload.
+    applied_fvs_by_id: dict[tuple[str, str], dict[str, Any]] = {}
     for obj in applied_state.objects.values():
         if "FeatureView" in obj.kind:
-            applied_fvs_by_name[(obj.name or "").upper()] = obj.spec_payload
+            applied_fvs_by_id[((obj.name or "").upper(), (obj.version or "").upper())] = obj.spec_payload
 
     seen: set[tuple[str, str]] = set()
     for fv_ref in spec.get("feature_views", []) or []:
@@ -1915,8 +1962,11 @@ def _check_feature_group_sources(
 
         # Resolution: prefer batch payload, then applied payload, else
         # soft-pass with a MISSING_FEATURE_VIEW unless it's in either view.
-        local_payload = batch_fv_specs.get(fv_name)
-        applied_payload = applied_fvs_by_name.get(fv_name.upper())
+        # Both sides key by ``(name, version)`` so the pinned version is
+        # resolved exactly, not shadowed by another version of the name.
+        fv_id = (fv_name.upper(), fv_version.upper())
+        local_payload = batch_fv_specs.get(fv_id)
+        applied_payload = applied_fvs_by_id.get(fv_id)
         if local_payload is None and applied_payload is None:
             results.append(
                 _result(
@@ -2024,9 +2074,11 @@ def _check_destructive(
         if not col_name or col_name not in prev_features:
             continue
         prev_feat = prev_features[col_name]
-        # Compare functions (expression change)
-        old_fn = prev_feat.get("function")
-        new_fn = feat.get("function")
+        # Compare functions (expression change).  Canonicalize the stddev
+        # spelling so the applied SPECIFICATION token ``"stddev"`` and the
+        # local-compile token ``"std"`` are not flagged as a function change.
+        old_fn = _canonical_function_spelling(prev_feat.get("function"))
+        new_fn = _canonical_function_spelling(feat.get("function"))
         if old_fn != new_fn:
             results.append(
                 _result(
@@ -2330,29 +2382,18 @@ def _check_batch_feature_view_constraints(
                 )
             )
 
-    # ``aggregation_secondary_keys`` constraints (private preview):
-    #
-    #   1. Tiled-only — the field is only meaningful when ``features``
-    #      declares aggregation windows.  On a non-tiled BFV the value
-    #      cannot be honoured and snowml-core would raise late at
-    #      register time; we surface the error here instead.
-    #   2. Max length 1 — current Snowflake preview cap.
-    #
-    # ``features`` is already stripped of 1:1 auto-derived passthroughs
-    # above (``features = [...]``), so the tiled check below reads from
-    # the same projection as the other ``BATCH_FV_TILING_*`` checks.
+    # ``aggregation_secondary_keys`` constraint (private preview): max
+    # length 1 (current Snowflake cap).  The field is NOT tiled-only — on
+    # a tiled BFV it adds a secondary group-by to each aggregation, and on
+    # a non-tiled (passthrough) BFV it is still a first-class identity
+    # column: the imperative register path persists it,
+    # ``_build_batch_feature_view_spec`` folds it into ``entity_columns``
+    # / ``secondary_key_columns``, and the POSTGRES OFT widens its primary
+    # key with it.  The removed ``BATCH_FV_SECONDARY_KEYS_REQUIRE_TILES``
+    # gate rejected a state the imperative side persists and the exporter
+    # re-emits into ``snow feature init`` YAML.
     secondary_keys = spec.get("aggregation_secondary_keys")
     if isinstance(secondary_keys, list) and secondary_keys:
-        if not features:
-            results.append(
-                _result(
-                    "ERROR",
-                    "BATCH_FV_SECONDARY_KEYS_REQUIRE_TILES",
-                    f"{name}: ``aggregation_secondary_keys`` is only valid on a tiled "
-                    "BatchFeatureView (one with explicit ``features`` aggregation windows).",
-                    name,
-                )
-            )
         if len(secondary_keys) > 1:
             results.append(
                 _result(
@@ -2441,6 +2482,58 @@ def _check_batch_feature_view_constraints(
                 )
             )
 
+    return results
+
+
+def _check_streaming_feature_view_constraints(
+    spec: dict[str, Any],
+) -> list[ValidationResult]:
+    """Validate ``StreamingFeatureView`` authoring rules that the decl
+    surface must catch before apply.
+
+    A **tiled** streaming FV (any feature declares an aggregation window)
+    materialises its tiles as a managed offline Dynamic Table whose
+    ``CREATE DYNAMIC TABLE … TARGET_LAG`` is driven by ``refresh_freq`` —
+    the imperative ``FeatureView._validate`` requires it, and without it
+    the register flow silently degrades to a plain VIEW over the untiled
+    source query (no tiles). So a tiled streaming FV must carry
+    ``refresh_freq``.  This mirrors ``BATCH_FV_TILING_REFRESH``.
+
+    Unlike the batch check, ``target_lag`` / ``target_lag_sec`` are **not**
+    accepted substitutes here: on a streaming FV they name the Online
+    Feature Table's lag, which the Snowflake runtime stamps to ``0`` on
+    the ingest path — they do not schedule the offline tile DT.  Only
+    ``refresh_freq`` supplies the offline cadence.
+
+    A non-tiled streaming FV (1:1 passthrough features, no windows)
+    materialises to a zero-lag VIEW and has no offline DT to schedule, so
+    it is unaffected.
+
+    Args:
+        spec: The StreamingFeatureView authoring dict.
+
+    Returns:
+        A list of ``ValidationResult`` (a single ``STREAM_FV_TILING_REFRESH``
+        ERROR when a tiled streaming FV omits ``refresh_freq``, else empty).
+    """
+    results: list[ValidationResult] = []
+    name = spec.get("name", "")
+    raw_features = spec.get("features") or []
+    has_windows = any(
+        isinstance(f, dict) and (f.get("window") is not None or f.get("window_sec") is not None) for f in raw_features
+    )
+    if has_windows and not spec.get("refresh_freq"):
+        results.append(
+            _result(
+                "ERROR",
+                "STREAM_FV_TILING_REFRESH",
+                f"{name}: tiled StreamingFeatureView requires ``refresh_freq`` so the offline tile "
+                "Dynamic Table has a refresh cadence (it drives ``CREATE DYNAMIC TABLE … TARGET_LAG`` "
+                "over the tiling query). ``target_lag`` / ``target_lag_sec`` name the Online Feature "
+                "Table's ingest-path lag (runtime-stamped 0) and do not schedule the offline DT.",
+                name,
+            )
+        )
     return results
 
 
@@ -2584,7 +2677,6 @@ def _check_source_compatibility(
 def validate_specs(
     batch: SpecBatch,
     applied_state: AppliedState,
-    dev_mode: bool = False,
     target_database: str = "",
     target_schema: str = "",
 ) -> list[ValidationResult]:
@@ -2595,7 +2687,6 @@ def validate_specs(
     Args:
         batch: The parsed spec batch to validate.
         applied_state: Current applied-state snapshot (from ``fetch_applied_state``).
-        dev_mode: When True, skip version checks and use content-hash idempotency.
         target_database: Connection target database; when non-empty, specs with a
             differing ``database`` field produce a ``DB_MISMATCH`` warning.
         target_schema: Connection target schema; when non-empty, specs with a
@@ -2681,7 +2772,6 @@ def validate_specs(
         is_up_to_date, idem_results = _check_idempotency(
             data,
             applied,
-            dev_mode,
             target_database=target_database,
             target_schema=target_schema,
         )
@@ -2690,7 +2780,7 @@ def validate_specs(
             continue
 
         # 2. Version checks
-        results.extend(_check_versions(data, applied, dev_mode))
+        results.extend(_check_versions(data, applied))
 
         # 3. Column evolution
         results.extend(_check_column_evolution(data, applied))
@@ -2700,6 +2790,8 @@ def validate_specs(
 
         if data.get("kind") == "BatchFeatureView":
             results.extend(_check_batch_feature_view_constraints(data, batch_source_specs))
+        elif data.get("kind") == "StreamingFeatureView":
+            results.extend(_check_streaming_feature_view_constraints(data))
 
         # 5. Destructive changes
         results.extend(_check_destructive(data, applied))

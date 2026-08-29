@@ -107,6 +107,7 @@ SupportedNoSignatureRequirementsModelType = Union[
     "sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
     "snowflake.ml.model.models.huggingface.SentenceTransformer",
+    "snowflake.ml.model.models.huggingface.PeftAdapter",
 ]
 
 SupportedModelType = Union[
@@ -137,6 +138,7 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | sentence_transformers.SentenceTransformer | sentence_transformers.py | _SentenceTransformerHandler |
 | models.huggingface.SentenceTransformer | models/huggingface.py | _SentenceTransformerHandler |
 | keras.Model | keras.py | _KerasHandler |
+| snowflake.ml.model.models.huggingface.PeftAdapter | peft_adapter.py | PeftAdapterModelHandler |
 """
 
 SupportedModelHandlerType = Literal[
@@ -154,6 +156,7 @@ SupportedModelHandlerType = Literal[
     "torchscript",
     "xgboost",
     "keras",
+    "peft_adapter",
 ]
 
 _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
@@ -179,6 +182,13 @@ class BaseModelSaveOption(TypedDict):
         models (sklearn, xgboost, pytorch, huggingface_pipeline, mlflow, etc.) default to IMMUTABLE, while
         custom models default to VOLATILE. When both global volatility and per-method volatility are specified,
         the per-method volatility takes precedence.
+    case_sensitive: Set case sensitivity for all model methods globally. When True, method and feature names
+        are treated as case-sensitive SQL identifiers and must be double-quoted. To set this per method see
+        case_sensitive in method_options. Defaults to False. When both global and per-method values are
+        specified, the per-method value takes precedence.
+    max_batch_size: Set the warehouse vectorized batch size for all model methods. To set this per method see
+        max_batch_size in method_options. Defaults to None (determined automatically). When both global and
+        per-method values are specified, the per-method value takes precedence.
     method_options: Per-method saving options. This dictionary has method names as keys and dictionary
         values with the desired options.
     enable_explainability: Whether to enable explainability features for the model. Defaults to False.
@@ -196,6 +206,8 @@ class BaseModelSaveOption(TypedDict):
     relax_version: NotRequired[bool]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
     volatility: NotRequired[Volatility]
+    case_sensitive: NotRequired[bool]
+    max_batch_size: NotRequired[int]
     method_options: NotRequired[dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
     save_location: NotRequired[str]
@@ -279,6 +291,10 @@ class ProphetSaveOptions(BaseModelSaveOption):
     target_column: NotRequired[str]
 
 
+class PeftAdapterSaveOptions(BaseModelSaveOption):
+    ...
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CatBoostModelSaveOptions,
@@ -295,6 +311,7 @@ ModelSaveOption = Union[
     HuggingFaceSaveOptions,
     SentenceTransformersSaveOptions,
     KerasSaveOptions,
+    PeftAdapterSaveOptions,
 ]
 
 
@@ -364,6 +381,10 @@ class ProphetLoadOptions(BaseModelLoadOption):
     ...
 
 
+class PeftAdapterLoadOptions(BaseModelLoadOption):
+    ...
+
+
 ModelLoadOption = Union[
     BaseModelLoadOption,
     CatBoostModelLoadOptions,
@@ -380,6 +401,7 @@ ModelLoadOption = Union[
     HuggingFaceLoadOptions,
     SentenceTransformersLoadOptions,
     KerasLoadOptions,
+    PeftAdapterLoadOptions,
 ]
 
 

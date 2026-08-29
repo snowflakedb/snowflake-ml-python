@@ -25,8 +25,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
@@ -48,6 +46,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "DB1"
 _SCHEMA = "SC1"
@@ -117,7 +116,7 @@ def _resolve_and_compile(batch: SpecBatch, fv: FeatureView) -> dict[str, Any]:
 
 def _applied_fv(compiled: dict[str, Any], *, kind: str, name: str) -> AppliedObject:
     """Build an AppliedObject for the FV reflecting a deployed runtime."""
-    key = f"{kind}:{_DB}.{_SCHEMA}:{name}"
+    key = f"{kind}:{_DB}.{_SCHEMA}:{name}:V1"
     return AppliedObject(
         key=key,
         kind=kind,
@@ -270,7 +269,7 @@ def test_streaming_source_with_deployed_fv_is_no_change() -> None:
     # Mirror the full shape that ``state._build_stream_source_object`` /
     # ``state._datasource_objects_from_specs`` stamp on the runtime
     # payload (database, schema, description) so the four-way decision
-    # in :func:`_compute_source_diff_kind` recognises this as a
+    # in :func:`compute_source_diff_kind` recognises this as a
     # structural round-trip rather than a recreate.
     datasource_key = f"Datasource:{_DB}.{_SCHEMA}:CLICKSTREAM_EVENTS"
     datasource_payload = {
@@ -452,7 +451,7 @@ def test_runtime_row_authority_short_circuits_virtual_override() -> None:
     :func:`state._build_stream_source_object` from a runtime row) AND a
     referencing FV that is already deployed, the planner must enter the
     ``applied is not None`` arm and route through
-    :func:`_compute_source_diff_kind` rather than the
+    :func:`compute_source_diff_kind` rather than the
     ``_sources_with_deployed_fv`` virtual override.
 
     Simplest case — identical local vs. runtime spec → ``NO_CHANGE``
@@ -615,7 +614,7 @@ def test_example_store_r1_shape_emits_zero_non_no_change_ops() -> None:
     # Throw in a derived Datasource for the streaming source — matches
     # how state._datasource_objects_from_specs / _build_stream_source_object
     # stamp the full payload (database, schema, description) so the
-    # four-way decision in :func:`_compute_source_diff_kind` recognises
+    # four-way decision in :func:`compute_source_diff_kind` recognises
     # this as a structural round-trip rather than a recreate.
     streaming_datasource_payload = {
         "kind": "Datasource",
@@ -653,4 +652,4 @@ def test_example_store_r1_shape_emits_zero_non_no_change_ops() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

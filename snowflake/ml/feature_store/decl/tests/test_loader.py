@@ -13,6 +13,7 @@ from snowflake.ml.feature_store.decl.loader import (
     load_specs,
     process_file,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # expand_input_files
@@ -481,4 +482,4 @@ class TestIsQueryCompanionSql:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

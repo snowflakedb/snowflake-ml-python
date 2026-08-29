@@ -580,11 +580,33 @@ class SourceInfoTest(absltest.TestCase):
         self.assertFalse(_source_info.SourceInfo(snowflake_file_domain_type="workspace").is_empty())
         self.assertFalse(_source_info.SourceInfo(snowflake_file_domain_name="USER$.PUBLIC.NB").is_empty())
 
+    def test_is_empty_false_when_ml_job_id_set(self) -> None:
+        self.assertFalse(_source_info.SourceInfo(ml_job_id="MY_DB.MY_SCHEMA.MY_JOB").is_empty())
+
+    def test_to_json_dict_includes_ml_job_id(self) -> None:
+        self.assertEqual(
+            _source_info.SourceInfo(
+                entry_point="train/main.py",
+                ml_job_id="MY_DB.MY_SCHEMA.MY_JOB",
+            ).to_json_dict(),
+            {"entry_point": "train/main.py", "ml_job_id": "MY_DB.MY_SCHEMA.MY_JOB"},
+        )
+
+    def test_to_json_dict_drops_ml_job_id_containing_dollar_quote(self) -> None:
+        self.assertEqual(
+            _source_info.SourceInfo(
+                entry_point="train/main.py",
+                ml_job_id="MY_DB.MY_SCHEMA.we$$ird",
+            ).to_json_dict(),
+            {"entry_point": "train/main.py"},
+        )
+
+    @patch("snowflake.ml.experiment._source_info._collect_ml_job_id", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._collect_git", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True, return_value=None)
     def test_collect_returns_empty_when_nothing_collected(
-        self, mock_entry: object, mock_git: object, mock_snowflake: object
+        self, mock_entry: object, mock_git: object, mock_snowflake: object, mock_job_id: object
     ) -> None:
         result = _source_info.SourceInfo.collect()
         self.assertTrue(result.is_empty())
@@ -596,6 +618,7 @@ class SourceInfoTest(absltest.TestCase):
         assert result.entry_point is not None
         self.assertEqual(os.path.basename(result.entry_point), os.path.basename(sys.argv[0]))
 
+    @patch("snowflake.ml.experiment._source_info._collect_ml_job_id", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch(
         "snowflake.ml.experiment._source_info._collect_git",
@@ -603,7 +626,9 @@ class SourceInfoTest(absltest.TestCase):
         return_value=_source_info.GitInfo(remote_url="https://x", commit_hash="abc", branch="main"),
     )
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True, return_value="m.py")
-    def test_collect_composes_both_buckets(self, mock_entry: object, mock_git: object, mock_snowflake: object) -> None:
+    def test_collect_composes_both_buckets(
+        self, mock_entry: object, mock_git: object, mock_snowflake: object, mock_job_id: object
+    ) -> None:
         self.assertEqual(
             _source_info.SourceInfo.collect(),
             _source_info.SourceInfo(
@@ -612,6 +637,7 @@ class SourceInfoTest(absltest.TestCase):
             ),
         )
 
+    @patch("snowflake.ml.experiment._source_info._collect_ml_job_id", autospec=True, return_value=None)
     @patch(
         "snowflake.ml.experiment._source_info._collect_snowflake_file",
         autospec=True,
@@ -622,7 +648,9 @@ class SourceInfoTest(absltest.TestCase):
         ),
     )
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True)
-    def test_collect_prefers_snowflake_file(self, mock_entry: object, mock_snowflake: object) -> None:
+    def test_collect_prefers_snowflake_file(
+        self, mock_entry: object, mock_snowflake: object, mock_job_id: object
+    ) -> None:
         # A Snowflake-managed file short-circuits the git/notebook-path machinery.
         self.assertEqual(
             _source_info.SourceInfo.collect(),
@@ -634,11 +662,69 @@ class SourceInfoTest(absltest.TestCase):
         )
         mock_entry.assert_not_called()  # type: ignore[attr-defined]
 
+    @patch(
+        "snowflake.ml.experiment._source_info._collect_ml_job_id",
+        autospec=True,
+        return_value="MY_DB.MY_SCHEMA.MY_JOB",
+    )
+    @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
+    @patch("snowflake.ml.experiment._source_info._collect_git", autospec=True, return_value=None)
+    @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True, return_value="m.py")
+    def test_collect_includes_ml_job_id(
+        self, mock_entry: object, mock_git: object, mock_snowflake: object, mock_job_id: object
+    ) -> None:
+        self.assertEqual(
+            _source_info.SourceInfo.collect(),
+            _source_info.SourceInfo(entry_point="m.py", ml_job_id="MY_DB.MY_SCHEMA.MY_JOB"),
+        )
+
+    @patch(
+        "snowflake.ml.experiment._source_info._collect_ml_job_id",
+        autospec=True,
+        return_value="MY_DB.MY_SCHEMA.MY_JOB",
+    )
+    @patch(
+        "snowflake.ml.experiment._source_info._collect_snowflake_file",
+        autospec=True,
+        return_value=_source_info.SourceInfo(
+            entry_point="git_capture_test.ipynb",
+            snowflake_file_domain_type="workspace",
+            snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+        ),
+    )
+    def test_collect_includes_ml_job_id_for_snowflake_file(self, mock_snowflake: object, mock_job_id: object) -> None:
+        # The job id is orthogonal to the Snowflake-managed-file short-circuit, so it
+        # must survive that branch too.
+        self.assertEqual(
+            _source_info.SourceInfo.collect(),
+            _source_info.SourceInfo(
+                entry_point="git_capture_test.ipynb",
+                snowflake_file_domain_type="workspace",
+                snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+                ml_job_id="MY_DB.MY_SCHEMA.MY_JOB",
+            ),
+        )
+
     @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True)
     def test_collect_never_raises(self, mock_entry: object, mock_snowflake: object) -> None:
         mock_entry.side_effect = RuntimeError("boom")  # type: ignore[attr-defined]
         self.assertTrue(_source_info.SourceInfo.collect().is_empty())
+
+
+class CollectMlJobIdTest(absltest.TestCase):
+    def test_none_when_env_absent(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MLRS_JOB_ID", None)
+            self.assertIsNone(_source_info._collect_ml_job_id())
+
+    def test_returns_env_value(self) -> None:
+        with mock.patch.dict(os.environ, {"MLRS_JOB_ID": "MY_DB.MY_SCHEMA.MY_JOB"}, clear=False):
+            self.assertEqual(_source_info._collect_ml_job_id(), "MY_DB.MY_SCHEMA.MY_JOB")
+
+    def test_empty_env_value_treated_as_absent(self) -> None:
+        with mock.patch.dict(os.environ, {"MLRS_JOB_ID": ""}, clear=False):
+            self.assertIsNone(_source_info._collect_ml_job_id())
 
 
 class CollectSnowflakeFileTest(absltest.TestCase):

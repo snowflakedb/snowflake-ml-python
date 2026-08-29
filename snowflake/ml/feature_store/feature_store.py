@@ -1298,24 +1298,33 @@ class FeatureStore:
                 created_resources=created_resources,
             )
 
-            # Step 3: Save aggregation metadata for tiled feature views (atomically)
-            if feature_view.is_tiled:
-                agg_metadata = AggregationMetadata(
-                    feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
-                    features=feature_view.aggregation_specs,  # type: ignore[arg-type]
-                    feature_aggregation_method=(
-                        feature_view.feature_aggregation_method.value
-                        if feature_view.feature_aggregation_method is not None
-                        else None
-                    ),
-                    # Stored in FEATURE_SPECS so ``get_feature_view``
-                    # reconstructs the exact secondary key order registered.
-                    aggregation_secondary_keys=(
-                        list(feature_view.aggregation_secondary_keys)
-                        if feature_view.aggregation_secondary_keys
-                        else None
-                    ),
-                )
+            # Step 3: Save aggregation metadata for tiled feature views (atomically),
+            # and also for non-tiled advanced BFVs that carry aggregation_secondary_keys
+            # so get_feature_view() can restore them without re-deriving from the DT.
+            if feature_view.is_tiled or feature_view.aggregation_secondary_keys:
+                if feature_view.is_tiled:
+                    agg_metadata = AggregationMetadata(
+                        feature_granularity=feature_view.feature_granularity,
+                        features=feature_view.aggregation_specs,
+                        feature_aggregation_method=(
+                            feature_view.feature_aggregation_method.value
+                            if feature_view.feature_aggregation_method is not None
+                            else None
+                        ),
+                        # Stored in FEATURE_SPECS so ``get_feature_view``
+                        # reconstructs the exact secondary key order registered.
+                        aggregation_secondary_keys=(
+                            list(feature_view.aggregation_secondary_keys)
+                            if feature_view.aggregation_secondary_keys
+                            else None
+                        ),
+                    )
+                else:
+                    # Non-tiled advanced BFV: persist only secondary keys.
+                    # feature_granularity and features stay None so that
+                    # get_feature_view() correctly reconstructs is_tiled=False.
+                    sk = list(feature_view.aggregation_secondary_keys)  # type: ignore[arg-type]
+                    agg_metadata = AggregationMetadata(aggregation_secondary_keys=sk)
                 # Convert SqlIdentifier keys to strings if descriptions exist
                 descs = None
                 if feature_view.feature_descs:
@@ -2203,7 +2212,9 @@ class FeatureStore:
         )
 
     @dispatch_decorator()
-    def create_online_service(self, producer_role: str, consumer_role: str) -> online_service.OnlineServiceResult:
+    def create_online_service(
+        self, producer_role: str, consumer_role: str, *, size: Optional[str] = None
+    ) -> online_service.OnlineServiceResult:
         """Create the Online Service for this store's schema.
 
         Requires schema OWNERSHIP and account feature enablement. After SUCCESS, poll
@@ -2213,6 +2224,10 @@ class FeatureStore:
         Args:
             producer_role: Role name granted producer privileges on the Online Service.
             consumer_role: Role name granted consumer privileges on the Online Service.
+            size: Size to provision the Online Service at, one of ``"XS"``, ``"S"``, ``"M"``,
+                ``"L"``, ``"XL"``, ``"2XL"``, ``"3XL"`` (case-insensitive). Defaults to the
+                server-side default when omitted. Accounts that cap the available size
+                provision at their cap instead.
 
         Returns:
             Parsed create result from the Online Service.
@@ -2223,6 +2238,7 @@ class FeatureStore:
             self._config.schema,
             producer_role,
             consumer_role,
+            size=size,
             statement_params=self._telemetry_stmp,
         )
 
@@ -2234,7 +2250,7 @@ class FeatureStore:
         ``RUNNING`` before using online feature reads or stream ingestion.
 
         Returns:
-            OnlineServiceStatus with ``status``, ``message``, and ``endpoints``.
+            OnlineServiceStatus with ``status``, ``message``, ``endpoints``, and ``size``.
         """
         return online_service.get_online_service_status(
             self._session,
@@ -6903,7 +6919,9 @@ END;"""
         feature_view: FeatureView,
         tagging_clause_str: str,
     ) -> str:
-        return f"""CREATE{overwrite_clause} VIEW {view_name} ({column_descs})
+        # Include column definitions only if provided (empty when feature_descs is None).
+        col_clause = f" ({column_descs})" if column_descs else ""
+        return f"""CREATE{overwrite_clause} VIEW {view_name}{col_clause}
             COMMENT = {_sql_string_literal(feature_view.desc)}
             TAG (
                 {tagging_clause_str}
@@ -8058,6 +8076,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         if target_lag == "DOWNSTREAM":
             target_lag = self._resolve_task_schedule(FeatureView._get_physical_name(name, version), target_lag)
         values.append(target_lag)
+        # ``refresh_mode`` is the Snowflake-resolved value from the deployed
+        # Dynamic Table (``SHOW DYNAMIC TABLES.refresh_mode`` surfaces
+        # ``INCREMENTAL`` / ``FULL`` after ``AUTO`` is resolved).  The
+        # imperative API returns this resolved value to all callers; it is
+        # not persisted on the metadata tag.  The declarative round-trip
+        # handles the authored-vs-resolved asymmetry in
+        # ``decl/invariants._normalize_applied_bfv_for_hash`` rather than by
+        # reading an authored value back here.
         values.append(row["refresh_mode"] if "refresh_mode" in row else None)
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
         values.append(row["warehouse"] if "warehouse" in row else None)
@@ -8294,7 +8320,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         agg_metadata = self._metadata_manager.get_feature_specs(name.identifier(), version)
         feature_granularity = agg_metadata.feature_granularity if agg_metadata else None
         aggregation_specs = agg_metadata.features if agg_metadata else None
-        is_tiled = agg_metadata is not None
+        # Tiled iff a tile size was persisted. Null granularity is passthrough (SK-only).
+        is_tiled = agg_metadata is not None and agg_metadata.feature_granularity is not None
+        if not is_tiled:
+            aggregation_specs = None  # [] is not a tiled spec list
         # Restored from the FEATURE_SPECS row; None when no tiling metadata.
         aggregation_secondary_keys = agg_metadata.aggregation_secondary_keys if agg_metadata else None
         # The persisted aggregation method must be known before _construct_feature_view runs
@@ -8575,6 +8604,29 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 descs[SqlIdentifier(r["name"], case_sensitive=True).identifier()] = r["comment"]
         return descs
 
+    _DT_TO_OFT_REFRESH_MODE = {
+        "INCREMENTAL": "INCREMENTAL",
+        "FULL": "FULL",
+        "ADAPTIVE": "INCREMENTAL",
+    }
+
+    @staticmethod
+    def _dt_to_oft_refresh_mode(dt_refresh_mode: str) -> str:
+        """Map a resolved Dynamic Table refresh mode to an Online Feature Table refresh mode.
+
+        ``ADAPTIVE`` is incrementalizable but is not a valid OFT ``REFRESH_MODE``.
+
+        Args:
+            dt_refresh_mode: Resolved DT refresh mode (``INCREMENTAL``, ``FULL``, or ``ADAPTIVE``).
+
+        Returns:
+            OFT refresh mode (``INCREMENTAL`` or ``FULL``).
+        """
+        mapped = FeatureStore._DT_TO_OFT_REFRESH_MODE.get(dt_refresh_mode.upper())
+        if mapped is None:
+            return dt_refresh_mode
+        return mapped
+
     def _tag_oft(self, fully_qualified_oft_name: str, obj_type: _FeatureStoreObjTypes) -> None:
         """Apply the FS object tag to a freshly-created OFT.
 
@@ -8672,7 +8724,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
         refresh_mode_clause = ""
         if feature_view.refresh_mode:
-            refresh_mode_clause = f"REFRESH_MODE='{feature_view.refresh_mode}'"
+            oft_refresh_mode = self._dt_to_oft_refresh_mode(feature_view.refresh_mode)
+            refresh_mode_clause = f"REFRESH_MODE='{oft_refresh_mode}'"
 
         timestamp_clause = ""
         if feature_view.timestamp_col:

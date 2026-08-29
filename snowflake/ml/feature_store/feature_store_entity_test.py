@@ -294,6 +294,44 @@ class CreateOfflineFeatureViewViewQueryDescEscapingTest(absltest.TestCase):
         _assert_safely_quoted(self, sql, _EXPLOIT_DESC, clause_prefix="COMMENT = ")
 
 
+class CreateOfflineFeatureViewViewQueryColumnListTest(absltest.TestCase):
+    """``_create_offline_feature_view_view_query`` column-list rendering."""
+
+    def test_empty_column_descs_omits_column_list(self) -> None:
+        """When ``_build_column_descs`` returns ``""`` (``feature_descs is None``),
+        the VIEW DDL must not contain an empty ``()`` column list, which Snowflake
+        rejects."""
+        fs = _new_fs_with_mocks()
+        fv = _make_feature_view_mock(desc="")
+
+        sql = fs._create_offline_feature_view_view_query(
+            overwrite_clause=" OR REPLACE",
+            view_name='"DB"."SCH"."FV$V1"',
+            column_descs="",
+            feature_view=fv,
+            tagging_clause_str="",
+        )
+
+        self.assertIn('CREATE OR REPLACE VIEW "DB"."SCH"."FV$V1"', sql)
+        self.assertNotRegex(sql, r"VIEW\s+\S+\s*\(\s*\)")
+        self.assertRegex(sql, r'VIEW\s+"DB"\."SCH"\."FV\$V1"\s+COMMENT')
+
+    def test_non_empty_column_descs_includes_column_list(self) -> None:
+        """A non-empty ``column_descs`` clause is emitted inside a ``(...)`` column list."""
+        fs = _new_fs_with_mocks()
+        fv = _make_feature_view_mock(desc="")
+
+        sql = fs._create_offline_feature_view_view_query(
+            overwrite_clause=" OR REPLACE",
+            view_name='"DB"."SCH"."FV$V1"',
+            column_descs="user_id COMMENT 'join key', score COMMENT 'feature'",
+            feature_view=fv,
+            tagging_clause_str="",
+        )
+
+        self.assertIn("(user_id COMMENT 'join key', score COMMENT 'feature')", sql)
+
+
 class CreateRollupFeatureViewDescEscapingTest(absltest.TestCase):
     """The rollup DT path interpolates ``feature_view.desc`` in the same way.
 

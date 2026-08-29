@@ -17,8 +17,8 @@ from snowflake.ml.feature_store.aggregation import (
 )
 
 _NO_OFFSET = "0"
-_KEYS = "keys"
 _LIFETIME = "lifetime"
+_KEYS = "keys"
 
 
 class Feature:

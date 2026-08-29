@@ -27,6 +27,8 @@ wire shape across YAML / JSON / Python.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from snowflake.ml.feature_store.decl.loader import _dict_to_spec
@@ -39,6 +41,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     SourceRef,
     StreamingFeatureView,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestFeatureViewSubclassDefaults:
@@ -632,28 +635,36 @@ class TestFeatureViewRefreshFreqAuthoring:
 
 
 class TestFeatureViewRejectsRefreshFreqOnStreamingAndRealtime:
-    """Streaming and Realtime feature views must not accept ``refresh_freq``.
+    """``refresh_freq`` is valid only where it drives an offline Dynamic
+    Table cadence: BatchFeatureView, and **tiled** StreamingFeatureView.
 
     ``refresh_freq`` controls the offline Dynamic Table's refresh cadence
-    (the ``CREATE DYNAMIC TABLE … TARGET_LAG`` / ``SCHEDULE`` clause).
-    Streaming and realtime kinds run at zero target lag — Snowflake's
-    runtime stamps ``target_lag_sec=0`` regardless of any authored
-    cadence — so the field is silently dropped at deploy time on those
-    kinds. The declarative surface rejects the field at load time
-    instead, so authors get a clear error rather than a silently-dropped
+    (the ``CREATE DYNAMIC TABLE … TARGET_LAG`` / ``SCHEDULE`` clause). A
+    **non-tiled** streaming FV materialises to a zero-lag VIEW and a
+    realtime FV computes on lookup, so neither has an offline DT to
+    schedule — Snowflake's runtime stamps ``target_lag_sec=0`` regardless
+    of any authored cadence and the field is silently dropped at deploy
+    time. The declarative surface rejects the field at load time on those
+    kinds so authors get a clear error rather than a silently-dropped
     value.
 
-    Pins the validator added to :class:`FeatureView` mirroring
+    A **tiled** streaming FV (aggregation windows) is different: its
+    offline object is a managed tile Dynamic Table whose ``TARGET_LAG`` is
+    ``refresh_freq`` (imperative ``FeatureView._validate`` requires it), so
+    the validator must **accept** it there. (The *requirement* that a
+    tiled streaming FV carry ``refresh_freq`` is enforced one layer up by
+    the ``STREAM_FV_TILING_REFRESH`` invariant, not by this validator.)
+
+    Pins the validator on :class:`FeatureView` mirroring
     :meth:`_reject_target_lag_on_stream_or_realtime`:
 
-    * Python form: ``StreamingFeatureView(refresh_freq=...)`` /
+    * Python form: non-tiled ``StreamingFeatureView(refresh_freq=...)`` /
       ``RealtimeFeatureView(refresh_freq=...)`` raise ``ValueError``.
     * Same for the base ``FeatureView(kind="StreamingFeatureView", ...)``
       / ``FeatureView(kind="RealtimeFeatureView", ...)`` construction.
     * YAML / JSON path via ``_dict_to_spec`` raises the same error.
-    * ``BatchFeatureView`` is unaffected — ``refresh_freq`` continues to
-      be a valid authoring field for batch FVs (where it drives the
-      offline DT refresh cadence).
+    * ``BatchFeatureView`` and **tiled** ``StreamingFeatureView`` accept
+      ``refresh_freq`` (it drives the offline DT refresh cadence).
     """
 
     def test_streaming_fv_rejects_refresh_freq_string(self) -> None:
@@ -757,10 +768,10 @@ class TestFeatureViewRejectsRefreshFreqOnStreamingAndRealtime:
         assert fv.refresh_freq == "5 minutes"
 
     def test_streaming_fv_unset_refresh_freq_is_accepted(self) -> None:
-        """The canonical authoring shape — no ``refresh_freq`` at all —
-        must construct without error so existing streaming-FV specs
-        continue to load. After the rename + rejection, streaming FVs
-        carry no cadence knob; the imperative side derives cadence from
+        """The canonical non-tiled authoring shape — no ``refresh_freq`` at
+        all — must construct without error so existing non-tiled
+        streaming-FV specs continue to load. A non-tiled streaming FV
+        carries no cadence knob; the imperative side derives cadence from
         ``StreamConfig`` and the runtime stamp.
         """
         fv = StreamingFeatureView(
@@ -768,6 +779,89 @@ class TestFeatureViewRejectsRefreshFreqOnStreamingAndRealtime:
             entities=["USER_ID"],
             sources=[SourceRef(name="src", source_type="Stream")],
         )
+        assert fv.refresh_freq is None
+
+    # --- Tiled streaming ACCEPTS refresh_freq (offline tile DT cadence) ---
+
+    @staticmethod
+    def _tiled_streaming_kwargs() -> dict[str, Any]:
+        """A tiled streaming FV shape: an aggregation feature carrying a
+        window, which is what marks the FV as tiled (mirrors the
+        compiler's ``has_windows`` / imperative ``is_tiled``).
+
+        Returns:
+            Constructor kwargs for a tiled ``StreamingFeatureView`` (no
+            ``refresh_freq``); callers add it as needed.
+        """
+        from snowflake.ml.feature_store.decl.spec_models import UDF, Feature
+
+        return dict(
+            name="x",
+            entities=["USER_ID"],
+            sources=[SourceRef(name="src", source_type="Stream")],
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1h",
+            feature_aggregation_method="tiles",
+            udf=UDF(
+                name="udf",
+                output_columns=[FSColumn(name="AMOUNT", type="FloatType")],
+            ),
+            features=[
+                Feature(
+                    source_column=FSColumn(name="AMOUNT", type="FloatType"),
+                    output_column=FSColumn(name="AMOUNT_SUM", type="FloatType"),
+                    function="sum",
+                    window="2h",
+                )
+            ],
+        )
+
+    def test_tiled_streaming_fv_accepts_refresh_freq(self) -> None:
+        """A tiled streaming FV (aggregation windows) accepts an authored
+        ``refresh_freq`` — it drives the offline tile Dynamic Table's
+        ``TARGET_LAG``, which the imperative ``FeatureView._validate``
+        requires for tiled kinds.
+        """
+        fv = StreamingFeatureView(**self._tiled_streaming_kwargs(), refresh_freq="1 minute")
+        assert fv.refresh_freq == "1 minute"
+        assert fv.kind == "StreamingFeatureView"
+
+    def test_yaml_loader_tiled_streaming_fv_accepts_refresh_freq(self) -> None:
+        """The YAML / JSON authoring path also accepts ``refresh_freq`` on
+        a tiled streaming FV.
+        """
+        spec = _dict_to_spec(
+            {
+                "kind": "StreamingFeatureView",
+                "name": "x",
+                "entities": ["USER_ID"],
+                "sources": [{"name": "src", "source_type": "Stream"}],
+                "timestamp_col": "EVENT_TIME",
+                "feature_granularity": "1h",
+                "feature_aggregation_method": "tiles",
+                "udf": {"name": "udf", "output_columns": [{"name": "AMOUNT", "type": "FloatType"}]},
+                "features": [
+                    {
+                        "source_column": {"name": "AMOUNT", "type": "FloatType"},
+                        "output_column": {"name": "AMOUNT_SUM", "type": "FloatType"},
+                        "function": "sum",
+                        "window": "2h",
+                    }
+                ],
+                "refresh_freq": "1 minute",
+            }
+        )
+        assert isinstance(spec, StreamingFeatureView)
+        assert spec.refresh_freq == "1 minute"
+
+    def test_tiled_streaming_fv_without_refresh_freq_passes_validator(self) -> None:
+        """The Pydantic validator does not *require* ``refresh_freq`` on a
+        tiled streaming FV — omission loads cleanly here. The requirement
+        is enforced one layer up by the ``STREAM_FV_TILING_REFRESH``
+        invariant, so this pins the layering (validator allows; invariant
+        requires).
+        """
+        fv = StreamingFeatureView(**self._tiled_streaming_kwargs())
         assert fv.refresh_freq is None
 
 
@@ -866,4 +960,4 @@ class TestFeatureViewBatchScheduleMigrationError:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

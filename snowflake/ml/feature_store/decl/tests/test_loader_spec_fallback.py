@@ -45,6 +45,7 @@ import pytest
 
 from snowflake.ml.feature_store.decl.loader import _dict_to_spec
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # _dict_to_spec — versioned-kind fallback preserves identity fields
@@ -555,4 +556,4 @@ class TestRefreshModeAutoPropagatesToCaller:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

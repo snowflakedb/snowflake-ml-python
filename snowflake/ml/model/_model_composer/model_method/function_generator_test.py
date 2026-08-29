@@ -5,6 +5,7 @@ import importlib_resources
 from absl.testing import absltest
 
 from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
+from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import function_generator
 
@@ -191,6 +192,22 @@ class FunctionGeneratorTest(absltest.TestCase):
                     ),
                     f.read(),
                 )
+
+    def test_get_function_generate_options_resolves_max_batch_size(self) -> None:
+        options: type_hints.ModelSaveOption = {}
+        resolved = function_generator.get_function_generate_options_from_options(options, "predict")
+        self.assertIsNone(resolved.get("max_batch_size"))
+
+        options = {"max_batch_size": 32}
+        resolved = function_generator.get_function_generate_options_from_options(options, "predict")
+        self.assertEqual(resolved.get("max_batch_size"), 32)
+
+        options = {"max_batch_size": 32, "method_options": {"predict": {"max_batch_size": 8}}}
+        resolved = function_generator.get_function_generate_options_from_options(options, "predict")
+        self.assertEqual(resolved.get("max_batch_size"), 8)
+
+        resolved = function_generator.get_function_generate_options_from_options(options, "predict_proba")
+        self.assertEqual(resolved.get("max_batch_size"), 32)
 
 
 if __name__ == "__main__":

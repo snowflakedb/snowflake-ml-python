@@ -19,8 +19,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
     _normalize_applied_bfv_for_hash,
@@ -42,6 +40,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "JKEW_DB"
 _SCH = "JKEW_SCHEMA"
@@ -331,4 +330,4 @@ class TestPlannerRefreshModeNormalization:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -39,8 +39,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import structural_fingerprint_hash
 from snowflake.ml.feature_store.decl.planner import generate_plan
@@ -58,6 +56,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "DB1"
 _SCHEMA = "SC1"
@@ -221,8 +220,8 @@ class TestPlanSourceFourWayDecision:
         fv_payload = {"kind": "BatchFeatureView", "name": "MY_BATCH_FV", "version": "V1"}
         applied = AppliedState(
             objects={
-                f"BatchFeatureView:{_DB}.{_SCHEMA}:MY_BATCH_FV": AppliedObject(
-                    key=f"BatchFeatureView:{_DB}.{_SCHEMA}:MY_BATCH_FV",
+                f"BatchFeatureView:{_DB}.{_SCHEMA}:MY_BATCH_FV:V1": AppliedObject(
+                    key=f"BatchFeatureView:{_DB}.{_SCHEMA}:MY_BATCH_FV:V1",
                     kind="BatchFeatureView",
                     name="MY_BATCH_FV",
                     version="V1",
@@ -481,4 +480,4 @@ def test_recreate_source_payload_carries_local_spec_dict() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

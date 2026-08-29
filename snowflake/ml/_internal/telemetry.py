@@ -9,7 +9,8 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, Callable, Iterable, Mapping, Optional, TypeVar, Union, cast
+from collections.abc import Iterable, Mapping
+from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 from typing_extensions import ParamSpec
 
@@ -119,6 +120,7 @@ class TelemetryField(enum.Enum):
     TYPE_FUNCTION_USAGE = "function_usage"
     TYPE_SNOWML_SPCS_USAGE = "snowml_spcs_usage"
     TYPE_SNOWML_PIPELINE_USAGE = "snowml_pipeline_usage"
+    TYPE_SNOWML_LOADED_MODEL_USAGE = "snowml_loaded_model_usage"
     # message keys for telemetry
     KEY_PROJECT = "project"
     KEY_SUBPROJECT = "subproject"
@@ -717,6 +719,12 @@ def _extract_arg_value(field: str, sig: inspect.Signature, args: Any, kwargs: An
         Tuple: First value indicates if `field` exists.
         Second value is the extracted value if existed.
     """
+    # Check keyword arguments first. The field may have no named parameter of its own and instead be
+    # absorbed by a variadic keyword parameter (**kwargs), in which case the signature lookup below
+    # would not find it even though the caller passed a value.
+    if field in kwargs:
+        return True, kwargs[field]
+
     if field not in sig.parameters:
         return False, None
 
@@ -728,10 +736,6 @@ def _extract_arg_value(field: str, sig: inspect.Signature, args: Any, kwargs: An
     if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
         if idx < len(args):
             return True, args[idx]
-
-    # Check if value was passed as keyword argument
-    if field in kwargs:
-        return True, kwargs[field]
 
     # Fall back to default value if available
     if param.default is not inspect.Parameter.empty:

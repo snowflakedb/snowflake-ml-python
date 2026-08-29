@@ -133,6 +133,7 @@ def create_model_metadata(
 
     # Persist full method_options
     method_options: dict[str, dict[str, Any]] = kwargs.pop("method_options", {})
+    case_sensitive = kwargs.pop("case_sensitive", None)
     model_meta = ModelMetadata(
         name=name,
         env=env,
@@ -142,6 +143,7 @@ def create_model_metadata(
         function_properties=function_properties,
         task=task,
         method_options=method_options,
+        case_sensitive=case_sensitive,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
@@ -314,13 +316,14 @@ class ModelMetadata:
         task: model_types.Task = model_types.Task.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
         method_options: Optional[dict[str, dict[str, Any]]] = None,
+        case_sensitive: Optional[bool] = None,
         sample_input_file_paths: Optional[dict[str, str]] = None,
         packaged_env_dict: Optional[model_meta_schema.ModelEnvDict] = None,
     ) -> None:
         self.name = name
-        self.signatures: dict[str, model_signature.ModelSignature] = dict()
-        if signatures:
-            self.signatures = signatures
+        # Distinguish omitted signatures=None from an explicit empty dict. Both become {}.
+        self._signatures_supplied = signatures is not None
+        self.signatures: dict[str, model_signature.ModelSignature] = signatures if signatures is not None else dict()
         self.function_properties = function_properties or {}
         self.user_files = user_files
         self.metadata = metadata
@@ -344,6 +347,7 @@ class ModelMetadata:
         self.task: model_types.Task = task
         self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
         self.method_options: dict[str, dict[str, Any]] = method_options or {}
+        self.case_sensitive: Optional[bool] = case_sensitive
         # Maps method name -> filename of the captured sample input data row,
         # written into model.yaml as the per-method ``sample_input_file_path`` field.
         self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
@@ -382,7 +386,9 @@ class ModelMetadata:
         """
         model_yaml_path = os.path.join(model_dir_path, MODEL_METADATA_FILE)
 
-        if (not self.signatures) or (self.name not in self.models):
+        if self.name not in self.models:
+            raise RuntimeError("The meta data is not ready to save.")
+        if (not self.signatures) and self.model_type != "peft_adapter":
             raise RuntimeError("The meta data is not ready to save.")
 
         model_dict = model_meta_schema.ModelMetadataDict(
@@ -412,6 +418,8 @@ class ModelMetadata:
                 "method_options": self.method_options,
             }
         )
+        if self.case_sensitive is not None:
+            model_dict["case_sensitive"] = self.case_sensitive
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_dict, stream=out, default_flow_style=False)
@@ -453,7 +461,7 @@ class ModelMetadata:
                 f"The minimal version required to load the model is {loaded_meta_min_snowpark_ml_version}, "
                 f"while current version of Snowpark ML library is {snowml_version.VERSION}."
             )
-        return model_meta_schema.ModelMetadataDict(
+        validated = model_meta_schema.ModelMetadataDict(
             creation_timestamp=loaded_meta["creation_timestamp"],
             env=loaded_meta["env"],
             runtimes=loaded_meta.get("runtimes", None),
@@ -469,6 +477,9 @@ class ModelMetadata:
             function_properties=loaded_meta.get("function_properties", {}),
             method_options=loaded_meta.get("method_options", {}),
         )
+        if loaded_meta.get("case_sensitive") is not None:
+            validated["case_sensitive"] = bool(loaded_meta["case_sensitive"])
+        return validated
 
     @classmethod
     def load(cls, model_dir_path: str) -> "ModelMetadata":
@@ -530,6 +541,7 @@ class ModelMetadata:
             explain_algorithm=explanation_algorithm,
             function_properties=model_dict.get("function_properties", {}),
             method_options=model_dict.get("method_options", {}),
+            case_sensitive=model_dict.get("case_sensitive"),
             sample_input_file_paths=sample_input_file_paths,
             packaged_env_dict=packaged_env_dict,
         )

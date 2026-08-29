@@ -1,9 +1,16 @@
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
 
+# Names that are not valid unquoted SQL identifiers and require quoting.
+_QUOTED_IDENTIFIER_STORED_NAMES = (
+    "APP-INF-FOO",
+    "APP INF FOO",
+    "123FOO",
+)
 
-class SqlIdentifierTest(absltest.TestCase):
+
+class SqlIdentifierTest(parameterized.TestCase):
     def test_sql_identifier(self) -> None:
         id = sql_identifier.SqlIdentifier("abc", case_sensitive=False)
         self.assertEqual(id.identifier(), "ABC")
@@ -41,6 +48,12 @@ class SqlIdentifierTest(absltest.TestCase):
         id_1 = sql_identifier.SqlIdentifier("ABC", case_sensitive=True)
         id_2 = sql_identifier.SqlIdentifier("abc", case_sensitive=True)
         self.assertNotEqual(id_1, id_2)
+
+    @parameterized.parameters(*_QUOTED_IDENTIFIER_STORED_NAMES)  # type: ignore[misc]
+    def test_quoted_session_identifier_equals_show_stored_name(self, stored_name: str) -> None:
+        session_role = sql_identifier.SqlIdentifier(f'"{stored_name}"')
+        show_owner = sql_identifier.SqlIdentifier(stored_name, case_sensitive=True)
+        self.assertEqual(session_role, show_owner)
 
     def test_parse_fully_qualified_name(self) -> None:
         self.assertTupleEqual(

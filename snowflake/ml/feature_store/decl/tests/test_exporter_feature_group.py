@@ -33,6 +33,7 @@ from snowflake.ml.feature_store.decl.exporter import (
     _fg_source_to_authoring_dict,
     export_specs,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _fg_row(
@@ -104,7 +105,7 @@ class TestExportSpecsFGEmission:
         # Base under sources layout is <output_dir>/sources.
         base = tmp_path / "sources"
         fg_dir = base / "feature_groups"
-        fg_path = fg_dir / "USER_FRAUD_FG.yaml"
+        fg_path = fg_dir / "USER_FRAUD_FG_V1.yaml"
         assert fg_path.exists(), f"expected {fg_path}, got {result['files']}"
         # The result envelope lists the file.
         assert str(fg_path) in result["files"]
@@ -139,7 +140,7 @@ class TestExportSpecsFGEmission:
             feature_group_rows=[_fg_row(name="FG_X", sources=sources)],
             layout="sources",
         )
-        fg_path = tmp_path / "sources" / "feature_groups" / "FG_X.yaml"
+        fg_path = tmp_path / "sources" / "feature_groups" / "FG_X_V1.yaml"
         parsed = yaml.safe_load(fg_path.read_text())
         # Translation from imperative ``fv_name`` / ``fv_version`` to
         # declarative ``name`` / ``version`` must happen during emission.
@@ -168,7 +169,7 @@ class TestExportSpecsFGEmission:
             feature_group_rows=[_fg_row(name="FG_E", sources=sources)],
             layout="sources",
         )
-        fg_path = tmp_path / "sources" / "feature_groups" / "FG_E.yaml"
+        fg_path = tmp_path / "sources" / "feature_groups" / "FG_E_V1.yaml"
         parsed = yaml.safe_load(fg_path.read_text())
         # alias="" is preserved as an explicit YAML key (semantically
         # "no prefix"); distinct from the absent-key default which means
@@ -192,8 +193,8 @@ class TestExportSpecsFGEmission:
             layout="sources",
         )
         fg_dir = tmp_path / "sources" / "feature_groups"
-        assert (fg_dir / "FG_A.yaml").exists()
-        assert (fg_dir / "FG_B.yaml").exists()
+        assert (fg_dir / "FG_A_V1.yaml").exists()
+        assert (fg_dir / "FG_B_V1.yaml").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +345,7 @@ class TestExportSpecsFgYamlVersion:
             layout="sources",
         )
 
-        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL.yaml"
+        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL_V1.yaml"
         assert fg_yaml.exists()
         doc = yaml.safe_load(fg_yaml.read_text())
 
@@ -372,7 +373,7 @@ class TestExportSpecsFgYamlVersion:
             layout="sources",
         )
 
-        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL.yaml"
+        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL_V1.yaml"
         text = fg_yaml.read_text()
 
         assert "version: V1" in text, f"expected 'version: V1' in exported FG YAML, got:\n{text}"
@@ -398,7 +399,7 @@ class TestExportSpecsFgYamlVersion:
                 layout="sources",
             )
 
-        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL.yaml"
+        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_DECL_V1.yaml"
         assert not fg_yaml.exists()
 
     def test_export_specs_raises_on_source_ref_without_version(self, tmp_path: Path) -> None:
@@ -429,4 +430,4 @@ class TestExportSpecsFgYamlVersion:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

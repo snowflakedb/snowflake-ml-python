@@ -84,7 +84,7 @@ class PlatformCapabilities:
         return self._get_bool_feature(LIVE_COMMIT_PARAMETER, False)
 
     def is_hidden_live_commit_enabled(self) -> bool:
-        return False
+        return self._get_bool_feature(HIDDEN_LIVE_COMMIT_PARAMETER, False)
 
     def is_model_method_signature_parameters_enabled(self) -> bool:
         return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)

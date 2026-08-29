@@ -623,3 +623,23 @@ py_library(
         "//snowflake/ml/model/_signatures:utils",
     ],
 )
+
+py_library(
+    name = "peft_adapter",
+    srcs = ["peft_adapter.py"],
+    deps = [
+        ":_base",
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_signatures:core",
+        "//snowflake/ml/model/models:huggingface",
+    ],
+)

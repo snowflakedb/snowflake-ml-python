@@ -29,7 +29,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _state_module_path() -> Path:
@@ -112,4 +112,4 @@ class TestNoRegexCallSitesInState:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -6,7 +6,7 @@ from typing import Any, cast
 from unittest import mock
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.exceptions import error_codes
@@ -72,7 +72,7 @@ _DUMMY_SIG = {
 }
 
 
-class ModelVersionImplTest(absltest.TestCase):
+class ModelVersionImplTest(parameterized.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
@@ -1018,6 +1018,30 @@ class ModelVersionImplTest(absltest.TestCase):
                 return_value=sql_identifier.SqlIdentifier("prod_owner", case_sensitive=False),
             ),
             mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"PROD_OWNER"'),
+            mock.patch.object(self.m_mv._model_ops, "download_files"),
+            mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
+        ):
+            self.assertEqual(self.m_mv.load(force=True), m_model)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("APP-INF-SNF_FRDM_DATA_SCIENCE",),
+        ("APP INF ROLE",),
+        ("123ROLE",),
+    )
+    def test_load_owner_match_quoted_role(self, stored_role: str) -> None:
+        m_model = mock.MagicMock()
+        m_pk = mock.MagicMock()
+        m_pk.meta = mock.MagicMock()
+        m_pk.model = m_model
+        quoted_role = f'"{stored_role}"'
+
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier(stored_role, case_sensitive=True),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value=quoted_role),
             mock.patch.object(self.m_mv._model_ops, "download_files"),
             mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
         ):

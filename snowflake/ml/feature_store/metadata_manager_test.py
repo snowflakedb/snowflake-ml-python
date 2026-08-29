@@ -344,6 +344,43 @@ class TestAggregationMetadataAggregationSecondaryKeys(absltest.TestCase):
         meta = AggregationMetadata.from_dict(legacy)
         self.assertIsNone(meta.aggregation_secondary_keys)
 
+    def test_sk_only_to_dict_always_emits_tiling_keys(self) -> None:
+        """SK-only (passthrough) metadata still writes feature_granularity/features
+        so older ``from_dict`` (which does ``data["feature_granularity"]`` and
+        iterates ``data["features"]``) can parse the row without KeyError/TypeError."""
+        meta = AggregationMetadata(aggregation_secondary_keys=["OFFER_KEY"])
+        d = meta.to_dict()
+        self.assertIn("feature_granularity", d)
+        self.assertIsNone(d["feature_granularity"])
+        self.assertIn("features", d)
+        self.assertEqual(d["features"], [])
+        self.assertEqual(d["aggregation_secondary_keys"], ["OFFER_KEY"])
+
+    def test_sk_only_to_dict_from_dict_round_trip(self) -> None:
+        """SK-only metadata round-trips: null granularity, empty features, SK preserved.
+
+        With always-emit keys, ``from_dict`` reads ``features: []`` back as an
+        empty list; passthrough classification (granularity-based) and the
+        ``[] -> None`` coerce happen in ``get_feature_view`` reconstruction.
+        """
+        meta = AggregationMetadata(aggregation_secondary_keys=["OFFER_KEY"])
+        restored = AggregationMetadata.from_dict(meta.to_dict())
+        self.assertIsNone(restored.feature_granularity)
+        self.assertEqual(restored.features, [])
+        self.assertEqual(restored.aggregation_secondary_keys, ["OFFER_KEY"])
+
+    def test_tiled_to_dict_keys_unchanged(self) -> None:
+        """Tiled metadata still serializes a string granularity and a real features list."""
+        meta = AggregationMetadata(
+            feature_granularity="1h",
+            features=self._sample_aggregation_specs(),
+            aggregation_secondary_keys=["MERCHANT_ID"],
+        )
+        d = meta.to_dict()
+        self.assertEqual(d["feature_granularity"], "1h")
+        self.assertEqual(len(d["features"]), 1)
+        self.assertEqual(d["features"][0]["output_column"], "TOTAL_AMOUNT_24H")
+
 
 class TestStreamingMetadataBackfillTable(absltest.TestCase):
     def test_backfill_table_round_trip(self) -> None:

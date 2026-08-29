@@ -283,8 +283,10 @@ class FeatureView(SpecBase):
     # values raises ``ValidationError`` at load time.
     initialize: Optional[Literal["ON_CREATE", "ON_SCHEDULE"]] = None
     storage_config: Optional[StorageConfig] = None
-    # ``aggregation_secondary_keys`` is private-preview and tiled-only;
-    # the length-1 cap and tiled-only constraint are enforced by
+    # ``aggregation_secondary_keys`` is private-preview; valid on both
+    # tiled and non-tiled BFVs (on a non-tiled FV it is a spec/OFT
+    # identity column, not a no-op).  The only authoring constraint — the
+    # length-1 cap — is enforced by
     # ``invariants._check_batch_feature_view_constraints`` so the error
     # message can name the offending FV.  Default ``None`` keeps the
     # field out of the compiled ``spec`` for the common case.
@@ -341,9 +343,11 @@ class FeatureView(SpecBase):
                 "'refresh_freq' to match the imperative FeatureView(...) "
                 "constructor. Update your YAML / Python authoring (this "
                 "is a hard rename — there is no alias). Note that "
-                "refresh_freq is rejected on StreamingFeatureView and "
-                "RealtimeFeatureView (those kinds run at zero target lag); "
-                "remove the field entirely on those kinds."
+                "refresh_freq is only valid where it drives an offline "
+                "Dynamic Table cadence: BatchFeatureView and tiled "
+                "StreamingFeatureView. It is rejected on non-tiled "
+                "StreamingFeatureView and RealtimeFeatureView (those run "
+                "at zero target lag); remove the field entirely there."
             )
         return data
 
@@ -355,20 +359,23 @@ class FeatureView(SpecBase):
         kind = self.kind or ""
         is_streaming = "Streaming" in kind or "Realtime" in kind
         is_batch = kind == "BatchFeatureView"
-        # Streaming: reject the batch-only fields.
+        # Streaming: reject the batch-only fields.  Messages MUST contain
+        # ``"is not valid on"`` so ``loader._dict_to_spec`` re-raises instead
+        # of degrading to a bare SpecBase.
         if is_streaming:
             if b.overwrite is not None and b.overwrite is not False:
                 raise ValueError(
                     f"FeatureView '{self.name}' (kind={kind}): "
-                    "backfill.overwrite is only valid on a BatchFeatureView "
-                    "(it maps to FeatureStore.register_feature_view(overwrite=...)). "
+                    f"backfill.overwrite is not valid on {kind} "
+                    "(it maps to FeatureStore.register_feature_view(overwrite=...) "
+                    "on BatchFeatureView). "
                     "Streaming feature views use StreamConfig lifecycle instead."
                 )
             if b.initialize is not None:
                 raise ValueError(
                     f"FeatureView '{self.name}' (kind={kind}): "
-                    "backfill.initialize is only valid on a BatchFeatureView "
-                    "(it maps to FeatureView(initialize=...)). "
+                    f"backfill.initialize is not valid on {kind} "
+                    "(it maps to FeatureView(initialize=...) on BatchFeatureView). "
                     "Streaming feature views use StreamConfig lifecycle instead."
                 )
         # Batch: reject the streaming-only fields.
@@ -376,15 +383,17 @@ class FeatureView(SpecBase):
             if b.table is not None:
                 raise ValueError(
                     f"FeatureView '{self.name}' (kind={kind}): "
-                    "backfill.table is only valid on a StreamingFeatureView "
-                    "(it maps to StreamConfig.backfill_df via session.table(...)). "
+                    f"backfill.table is not valid on {kind} "
+                    "(it maps to StreamConfig.backfill_df via session.table(...) "
+                    "on StreamingFeatureView). "
                     "Batch feature views read history from their declared sources."
                 )
             if b.start_time is not None:
                 raise ValueError(
                     f"FeatureView '{self.name}' (kind={kind}): "
-                    "backfill.start_time is only valid on a StreamingFeatureView "
-                    "(it maps to StreamConfig.backfill_start_time). "
+                    f"backfill.start_time is not valid on {kind} "
+                    "(it maps to StreamConfig.backfill_start_time on "
+                    "StreamingFeatureView). "
                     "Batch feature views derive freshness from their refresh cadence."
                 )
         return self
@@ -508,56 +517,78 @@ class FeatureView(SpecBase):
                 )
         return self
 
+    def _has_aggregation_windows(self) -> bool:
+        """Whether this FV is tiled — i.e. any feature declares an
+        aggregation window.
+
+        Mirrors the imperative ``FeatureView.is_tiled`` and the
+        compiler's ``has_windows`` check: a tiled FV materialises its
+        tiles as a managed Dynamic Table.
+
+        Returns:
+            ``True`` if any feature declares an aggregation window
+            (``window`` or ``window_sec``), else ``False``.
+        """
+        return any(
+            getattr(f, "window", None) is not None or getattr(f, "window_sec", None) is not None for f in self.features
+        )
+
     @model_validator(mode="after")
     def _reject_refresh_freq_on_stream_or_realtime(self) -> "FeatureView":
-        """Reject ``refresh_freq`` on streaming and realtime feature views.
+        """Reject ``refresh_freq`` where it has no offline Dynamic Table to
+        schedule: non-tiled streaming and all realtime feature views.
 
         ``refresh_freq`` controls the offline Dynamic Table's refresh
         cadence (the ``CREATE DYNAMIC TABLE … TARGET_LAG`` / ``SCHEDULE``
         clause); it maps 1:1 to the imperative
-        ``FeatureView(refresh_freq=...)`` constructor kwarg.  Streaming
-        and realtime feature views always run at zero target lag — the
-        Snowflake runtime stamps ``target_lag_sec=0`` onto the deployed
-        SPECIFICATION regardless of the authored value, so any cadence
-        the operator wrote is silently dropped at deploy time.  The
-        declarative surface rejects the field at load time instead so
-        operators get a clear pointer rather than a silently-dropped
-        value.
+        ``FeatureView(refresh_freq=...)`` constructor kwarg.
 
-        Streaming feature views derive their cadence from the
-        ``StreamConfig`` lifecycle (continuous ingest at zero lag);
-        realtime feature views compute on demand at lookup time and
-        have no offline DT to schedule.  Authoring ``refresh_freq`` on
-        either kind has no runtime effect.
+        A **non-tiled** streaming FV materialises to a zero-lag VIEW and a
+        realtime FV computes on demand at lookup time — neither has an
+        offline DT to schedule, and the Snowflake runtime stamps
+        ``target_lag_sec=0`` onto the deployed SPECIFICATION regardless of
+        any authored cadence, so the field is silently dropped at deploy
+        time.  The declarative surface rejects it at load time on those
+        kinds so operators get a clear pointer rather than a
+        silently-dropped value.  Strict semantics: even an explicit
+        ``"0 seconds"`` is rejected.
 
-        Strict semantics: even an explicit ``"0 seconds"`` is rejected
-        so authors must remove the keys entirely.  Mirrors the kind
-        predicate used by :meth:`_validate_backfill_against_kind` and
-        :meth:`_reject_target_lag_on_stream_or_realtime`.
+        A **tiled** streaming FV (aggregation windows) is the exception:
+        its offline object is a managed tile Dynamic Table whose
+        ``TARGET_LAG`` is ``refresh_freq`` — the imperative
+        ``FeatureView._validate`` *requires* it — so it is accepted here.
+        The *requirement* that a tiled streaming FV carry ``refresh_freq``
+        is enforced by the ``STREAM_FV_TILING_REFRESH`` invariant, not
+        this validator.
 
         Returns:
             ``self`` when the validator predicate does not apply (batch
-            kind) or when ``refresh_freq`` is unset on a streaming /
-            realtime kind.
+            kind, or tiled streaming), or when ``refresh_freq`` is unset.
 
         Raises:
-            ValueError: When ``refresh_freq`` is supplied on a
-                ``StreamingFeatureView`` or ``RealtimeFeatureView``.
+            ValueError: When ``refresh_freq`` is supplied on a non-tiled
+                ``StreamingFeatureView`` or any ``RealtimeFeatureView``.
         """
         kind = self.kind or ""
-        is_stream_or_realtime = "Streaming" in kind or "Realtime" in kind
-        if not is_stream_or_realtime:
+        is_realtime = "Realtime" in kind
+        is_streaming = "Streaming" in kind
+        if not (is_streaming or is_realtime):
+            return self
+        # Tiled streaming FVs schedule an offline tile Dynamic Table and
+        # therefore legitimately carry refresh_freq.
+        if is_streaming and self._has_aggregation_windows():
             return self
         if self.refresh_freq is not None:
+            offline_object = "computes on demand at lookup time" if is_realtime else "materialises to a zero-lag VIEW"
             raise ValueError(
                 f"FeatureView '{self.name}' (kind={kind}): "
-                f"refresh_freq is not valid on {kind} — streaming and "
-                "realtime feature views always run at 0 seconds target "
-                "lag (the Snowflake runtime stamps target_lag_sec=0 "
-                "regardless of any authored cadence). refresh_freq "
-                "controls the offline Dynamic Table refresh cadence and "
-                "is only meaningful on BatchFeatureView. Remove the "
-                "field entirely."
+                f"refresh_freq is not valid on {kind} — a non-tiled "
+                f"streaming / realtime feature view {offline_object} and "
+                "runs at 0 seconds target lag (the Snowflake runtime "
+                "stamps target_lag_sec=0 regardless of any authored "
+                "cadence). refresh_freq controls the offline Dynamic Table "
+                "refresh cadence and is only meaningful on BatchFeatureView "
+                "and tiled StreamingFeatureView. Remove the field entirely."
             )
         return self
 

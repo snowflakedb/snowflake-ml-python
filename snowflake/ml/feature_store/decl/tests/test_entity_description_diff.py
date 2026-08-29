@@ -33,7 +33,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 import yaml
 
 from snowflake.ml.feature_store.decl.enums import OpKind
@@ -53,6 +52,7 @@ from snowflake.ml.feature_store.decl.types import (
 from snowflake.ml.feature_store.spec.enums import (
     ENTITY_TAG_PREFIX as _ENTITY_TAG_PREFIX,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "JKEW_DB"
 _SCHEMA = "JKEW_SCHEMA"
@@ -356,4 +356,4 @@ class TestAppliedStateKeyMatchesPlannerLookup:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

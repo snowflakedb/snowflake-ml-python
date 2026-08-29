@@ -61,6 +61,7 @@ from snowflake.ml.feature_store.decl.types import (
     SpecBatch,
     ValidationResult,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — the BUG_BASH §5 USER_CLICK_STATS_DECL spec, byte-for-byte
@@ -86,6 +87,7 @@ def _bug_bash_fv_yaml() -> str:
         "timestamp_col: TIMESTAMP\n"
         "feature_granularity_sec: 300\n"
         "feature_aggregation_method: tiles\n"
+        "refresh_freq: 1 minute\n"
         "sources:\n"
         "  - name: CLICKSTREAM_EVENTS\n"
         "    columns:\n"
@@ -242,6 +244,7 @@ def _bug_bash_fv_model() -> FeatureView:
             "timestamp_col": "TIMESTAMP",
             "feature_granularity_sec": 300,
             "feature_aggregation_method": "tiles",
+            "refresh_freq": "1 minute",
             "sources": [
                 {
                     "name": "CLICKSTREAM_EVENTS",
@@ -513,7 +516,7 @@ class TestColumnEvolutionNestedFeatures:
         """
         deployed = self._deployed_fv_payload()
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V1",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version=_BUG_BASH_FV_VERSION,
@@ -539,7 +542,7 @@ class TestColumnEvolutionNestedFeatures:
         # "adds" it on the next plan.
         deployed["spec"]["features"] = deployed["spec"]["features"][:1]
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V1",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version=_BUG_BASH_FV_VERSION,
@@ -612,7 +615,7 @@ class TestDestructiveCheckNestedFeatures:
         """
         deployed = self._deployed_fv_payload()
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V1",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version=_BUG_BASH_FV_VERSION,
@@ -646,7 +649,7 @@ class TestDestructiveCheckNestedFeatures:
         """Regression guard: identical functions must not fire DESTRUCTIVE_CHANGE."""
         deployed = self._deployed_fv_payload()
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V1",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version=_BUG_BASH_FV_VERSION,
@@ -738,22 +741,25 @@ class TestVersionConflictSemantics:
             "version": _BUG_BASH_FV_VERSION,
         }
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V1",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version=_BUG_BASH_FV_VERSION,
         )
 
-        results = _check_versions(spec, applied, dev_mode=False)
+        results = _check_versions(spec, applied)
 
         codes = [r.code for r in results]
         assert "VERSION_CONFLICT" not in codes, (
             "VERSION_CONFLICT must not fire when local and applied versions " f"are equal; got codes={codes!r}"
         )
 
-    def test_check_versions_still_fires_when_version_genuinely_lower(self) -> None:
-        """Regression guard: a strictly-lower local version must still
-        produce VERSION_CONFLICT — the fix must not eliminate the rule.
+    def test_check_versions_does_not_fire_when_version_lower(self) -> None:
+        """The downgrade rule was removed: a strictly-lower local version is a
+        distinct object under ``(name, version)`` identity, not a conflict.
+
+        Previously ``_check_versions`` fired VERSION_CONFLICT for ``V1`` local
+        against ``V2`` deployed; now the two versions are independent objects.
         """
         spec = {
             "kind": "StreamingFeatureView",
@@ -761,18 +767,17 @@ class TestVersionConflictSemantics:
             "version": "V1",  # local is V1
         }
         applied = AppliedObject(
-            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL",
+            key="StreamingFeatureView:JKEW_DB.JKEW_SCHEMA:USER_CLICK_STATS_DECL:V2",
             kind="StreamingFeatureView",
             name=_BUG_BASH_FV_NAME,
             version="V2",  # deployed is V2 (higher)
         )
 
-        results = _check_versions(spec, applied, dev_mode=False)
+        results = _check_versions(spec, applied)
 
         codes = [r.code for r in results]
-        assert "VERSION_CONFLICT" in codes, (
-            "VERSION_CONFLICT must still fire when local version is "
-            f"strictly lower than applied; got codes={codes!r}"
+        assert "VERSION_CONFLICT" not in codes, (
+            "The downgrade rule is gone; a lower local version must not fire " f"VERSION_CONFLICT; got codes={codes!r}"
         )
 
 
@@ -940,4 +945,4 @@ class TestBugBashGoldenSpecRoundTrip:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

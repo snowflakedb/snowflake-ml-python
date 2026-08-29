@@ -15,6 +15,8 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewVersion,
     OnlineConfig,
     OnlineStoreType,
+    StorageConfig,
+    StorageFormat,
     _FeatureViewMetadata,
 )
 from snowflake.ml.feature_store.metadata_manager import StreamingMetadata
@@ -2007,6 +2009,38 @@ class CreateEmptyTableTest(absltest.TestCase):
 
         sql_arg = session.sql.call_args[0][0]
         self.assertIn("CREATE OR REPLACE TABLE", sql_arg)
+
+    def test_iceberg_storage_emits_timestamp_ntz6_on_snowflake_table(self) -> None:
+        """Iceberg FVs still create Snowflake landing tables, with TIMESTAMP_NTZ(6)."""
+        session = MagicMock()
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TS", TimestampType()),
+            ]
+        )
+        storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume="MY_VOL",
+            base_location="test_root/",
+        )
+
+        _create_empty_table(
+            session=session,
+            fq_table_name="DB.SCH.MY_TABLE",
+            schema=schema,
+            overwrite=False,
+            telemetry_stmp={},
+            storage_config=storage_config,
+        )
+
+        sql_arg = session.sql.call_args[0][0]
+        self.assertIn("CREATE TABLE DB.SCH.MY_TABLE", sql_arg)
+        self.assertNotIn("ICEBERG TABLE", sql_arg)
+        self.assertIn('"TS" TIMESTAMP_NTZ(6)', sql_arg)
+        self.assertNotIn("TIMESTAMP_NTZ,", sql_arg)
+        self.assertNotIn("EXTERNAL_VOLUME", sql_arg)
+        self.assertNotIn("BASE_LOCATION", sql_arg)
 
 
 # ============================================================================

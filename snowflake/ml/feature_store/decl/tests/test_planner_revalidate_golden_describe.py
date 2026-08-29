@@ -58,6 +58,7 @@ from snowflake.ml.feature_store.decl.types import (
     SpecBatch,
     ValidationResult,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Golden fixture loading
@@ -408,4 +409,4 @@ class TestValidateSpecsWithDivergentHash:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

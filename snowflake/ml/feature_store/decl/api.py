@@ -229,7 +229,6 @@ def validate_specs(
     applied_state: AppliedState,
     target_database: str = "",
     target_schema: str = "",
-    dev_mode: bool = False,
 ) -> list[ValidationResult]:
     """Validate a spec batch against invariant rules and applied state.
 
@@ -245,10 +244,6 @@ def validate_specs(
             same database used by the planner / state-fetcher.
         target_schema: Connection target schema; forwarded to the
             idempotency check (same purpose as ``target_database``).
-        dev_mode: When True, version-management checks are bypassed and
-            content-hash idempotency is used instead. ``snow feature
-            plan/apply --dev`` threads this through. Defaults to False
-            so production validation remains strict.
 
     Returns:
         Combined list of ``ValidationResult`` objects (ERRORRs and WARNINGGs).
@@ -262,7 +257,6 @@ def validate_specs(
         applied_state,
         target_database=target_database,
         target_schema=target_schema,
-        dev_mode=dev_mode,
     )
 
 
@@ -290,7 +284,7 @@ def generate_plan(
     Args:
         batch: The validated spec batch.
         applied_state: The current applied state snapshot from Snowflake.
-        options: Flags that control plan generation (dev_mode, overwrite, etc.).
+        options: Flags that control plan generation (overwrite, allow_recreate, etc.).
         database: Snowflake database name for compiling local FV specs.
         schema: Snowflake schema name for compiling local FV specs.
 

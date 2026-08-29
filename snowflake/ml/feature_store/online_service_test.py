@@ -139,6 +139,19 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
         self.assertEqual(online_service.endpoint_url(st, "ingest"), "https://i")
 
+    def test_parse_status_payload_reads_size(self) -> None:
+        st = online_service._parse_status_payload({"status": "RUNNING", "size": "2XL"})
+        self.assertEqual(st.size, "2XL")
+
+    def test_parse_status_payload_size_absent_is_none(self) -> None:
+        """Services provisioned before sizes were recorded report no size."""
+        st = online_service._parse_status_payload({"status": "RUNNING"})
+        self.assertIsNone(st.size)
+
+    def test_parse_status_payload_coerces_non_string_size_to_none(self) -> None:
+        st = online_service._parse_status_payload({"status": "RUNNING", "size": 42})
+        self.assertIsNone(st.size)
+
     def test_parse_status_payload_extracts_privatelink_and_internal_urls(self) -> None:
         st = online_service._parse_status_payload(
             {
@@ -1052,6 +1065,90 @@ class OnlineServiceTest(absltest.TestCase):
         )
         self.assertEqual(result.status, "SUCCESS")
 
+    def test_create_online_service_sends_size_when_provided(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        result = online_service.create_online_service(
+            session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="M"
+        )
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertIn('"size": "M"', seen_queries[0])
+
+    def test_create_online_service_strips_size_whitespace(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.create_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="  M  ")
+        self.assertIn('"size": "M"', seen_queries[0])
+
+    def test_create_online_service_omits_size_when_not_provided(self) -> None:
+        """With no size, the key must be absent so the server applies its own default."""
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.create_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c")
+        self.assertNotIn("size", seen_queries[0])
+
+    def test_create_online_service_rejects_blank_size(self) -> None:
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.create_online_service(
+                session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="   "
+            )
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("non-empty", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_create_online_service_rejects_unknown_size(self) -> None:
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.create_online_service(
+                session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="9XL"
+            )
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("size must be one of", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_create_online_service_accepts_lowercase_size(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.create_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="m")
+        self.assertIn('"size": "m"', seen_queries[0])
+
     def test_drop_online_service_invalid_json_response(self) -> None:
         session = create_autospec(Session)
 
@@ -1145,6 +1242,40 @@ class OnlineServiceTest(absltest.TestCase):
         )
         self.assertEqual(st.status, "UPDATING")
         self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
+
+    def test_assert_updating_size_with_query_endpoint_succeeds(self) -> None:
+        """UPDATING_SIZE (size change in progress) with a live query endpoint is serviceable and must not raise."""
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "UPDATING_SIZE", "endpoints": [{"name": "query", "url": "https://q.example"}]})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        st = online_service.assert_online_service_running_with_query_endpoint(
+            session, SqlIdentifier("DB"), SqlIdentifier("SC")
+        )
+        self.assertEqual(st.status, "UPDATING_SIZE")
+        self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
+
+    def test_assert_updating_size_with_ingest_endpoint_succeeds(self) -> None:
+        """UPDATING_SIZE with a live ingest endpoint is serviceable and must not raise."""
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "UPDATING_SIZE", "endpoints": [{"name": "ingest", "url": "https://i.example"}]})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        st = online_service.assert_online_service_running_with_ingest_endpoint(
+            session, SqlIdentifier("DB"), SqlIdentifier("SC")
+        )
+        self.assertEqual(st.status, "UPDATING_SIZE")
+        self.assertEqual(online_service.endpoint_url(st, "ingest"), "https://i.example")
 
     # --- Stream ingest edge case tests ---
 

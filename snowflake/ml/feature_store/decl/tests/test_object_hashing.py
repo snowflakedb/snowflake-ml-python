@@ -83,6 +83,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     SpecBase,
     StreamingSource,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "DB"
 _SCHEMA = "SCH"
@@ -950,6 +951,47 @@ class TestThreeShapeParity:
         assert _hash_authoring(kind, authoring) == _hash_for_kind(
             kind, applied
         ), f"{label}: authoring hash != applied hash on a clean round-trip."
+
+
+class TestStddevSpellingCanonicalization:
+    """The stddev spelling is canonicalized before hashing a tiled FV.
+
+    The imperative wire token for stddev stays ``"std"`` (see
+    ``AggregationType.STD``); Snowflake's ``DESCRIBE … TYPE =
+    SPECIFICATION`` reports the SQL spelling ``"stddev"``.  The applied
+    side therefore carries ``"stddev"`` while the local-compile side
+    carries ``"std"``.  ``_full_spec_hash`` must treat them as equal so a
+    clean round-trip lands as ``NO_CHANGE`` instead of ``RECREATE_FV``.
+    """
+
+    def test_std_and_stddev_hash_equal(self) -> None:
+        """An applied ``stddev`` feature hashes equal to a local ``std`` feature."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+
+        local_side = copy.deepcopy(applied)
+        local_side["spec"]["features"][0]["function"] = "std"
+
+        applied_side = copy.deepcopy(applied)
+        applied_side["spec"]["features"][0]["function"] = "stddev"
+
+        assert _full_spec_hash(local_side) == _full_spec_hash(applied_side), (
+            "std (imperative wire) and stddev (SPECIFICATION) must hash equal; "
+            "_normalise_feature_function_spelling should canonicalize both to 'std'."
+        )
+
+    def test_stddev_not_confused_with_other_function(self) -> None:
+        """Canonicalization only collapses stddev/std, not unrelated functions."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+
+        std_side = copy.deepcopy(applied)
+        std_side["spec"]["features"][0]["function"] = "std"
+
+        var_side = copy.deepcopy(applied)
+        var_side["spec"]["features"][0]["function"] = "var"
+
+        assert _full_spec_hash(std_side) != _full_spec_hash(var_side), (
+            "std and var are distinct aggregation functions and must not " "collapse to the same hash."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2536,4 +2578,4 @@ class TestQuerySourceHashCanonicalization:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

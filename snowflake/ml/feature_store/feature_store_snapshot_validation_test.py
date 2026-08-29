@@ -19,7 +19,10 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewStatus,
     FeatureViewVersion,
 )
-from snowflake.ml.feature_store.metadata_manager import AppendOnlyMetadata
+from snowflake.ml.feature_store.metadata_manager import (
+    AggregationMetadata,
+    AppendOnlyMetadata,
+)
 
 
 def _create_feature_store_with_mocks() -> Any:
@@ -991,6 +994,86 @@ class ComposeFeatureViewAppendOnlyTest(absltest.TestCase):
 
         self.assertTrue(fv.append_only)
         self.assertEqual(fv.backup_source, "DB.SCH.HISTORY")
+
+
+class ComposeFeatureViewSecondaryKeyTest(absltest.TestCase):
+    """A non-tiled (passthrough) BFV with only ``aggregation_secondary_keys`` must
+    reconstruct as non-tiled: null persisted ``feature_granularity`` is the tiled
+    discriminator, and an empty ``features`` list must not reach ``_validate``."""
+
+    def _run_compose(self, agg_metadata: Any) -> Any:
+        from unittest.mock import patch
+
+        from snowflake.ml.feature_store.feature_store import _FeatureStoreObjTypes
+        from snowflake.ml.feature_store.feature_view import _FeatureViewMetadata
+        from snowflake.snowpark.types import TimestampType
+
+        fs = _create_feature_store_with_mocks()
+
+        metadata = _FeatureViewMetadata(
+            entities=["USER"],
+            timestamp_col="EVENT_TS",
+        )
+
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, key: {
+            "name": "SK_FV$V1",
+            "text": "CREATE DYNAMIC TABLE x initialize = 'ON_CREATE' AS SELECT 1",
+            "comment": "test",
+            "target_lag": "1 minute",
+            "scheduling_state": "ACTIVE",
+            "warehouse": "WH_1",
+            "refresh_mode": "FULL",
+            "refresh_mode_reason": "",
+            "owner": "ROLE_1",
+            "cluster_by": "",
+        }[key]
+
+        entity_row = MagicMock()
+        entity_row.__getitem__ = lambda self, key: {
+            "NAME": "USER",
+            "JOIN_KEYS": '["USER_ID"]',
+            "DESC": "",
+        }[key]
+
+        mock_df = MagicMock()
+        mock_df.columns = ["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"]
+        mock_df.queries = {"queries": ["SELECT 1"]}
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+
+        fs._session.sql.return_value = mock_df
+
+        fs._lookup_feature_view_metadata = MagicMock(return_value=(metadata, "SELECT 1"))
+        fs._determine_online_config_from_oft = MagicMock(return_value='{"enable": false}')
+        fs._extract_cluster_by_columns = MagicMock(return_value=None)
+        fs._fetch_column_descs = MagicMock(return_value={})
+        fs._hydrate_postgres_online_service = MagicMock()
+        fs._metadata_manager.get_feature_specs.return_value = agg_metadata
+        fs._metadata_manager.get_feature_view_source_refs.return_value = None
+
+        with patch.object(FeatureView, "_construct_feature_view", wraps=FeatureView._construct_feature_view) as mock_ct:
+            fv = fs._compose_feature_view(mock_row, _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, [entity_row])
+            _, kwargs = mock_ct.call_args
+            return fv, kwargs
+
+    def test_sk_only_passthrough_reconstructs_non_tiled(self) -> None:
+        # Simulate the persisted wire form: always-emit keys => granularity null, features [].
+        agg_metadata = AggregationMetadata.from_dict(
+            AggregationMetadata(aggregation_secondary_keys=["AD_ID"]).to_dict()
+        )
+
+        fv, kwargs = self._run_compose(agg_metadata)
+
+        # Empty features must be coerced to None so _validate does not raise
+        # "features requires feature_granularity".
+        self.assertIsNone(kwargs.get("feature_granularity"))
+        self.assertIsNone(kwargs.get("aggregation_specs"))
+        self.assertEqual(kwargs.get("aggregation_secondary_keys"), ["AD_ID"])
+
+        self.assertFalse(fv.is_tiled)
+        self.assertEqual(fv.aggregation_secondary_keys, ["AD_ID"])
 
 
 class AppendOnlyJoinValidationTest(absltest.TestCase):

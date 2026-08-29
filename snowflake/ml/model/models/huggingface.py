@@ -6,12 +6,27 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, NoReturn, Optional, Union
 
+from snowflake.ml._internal import platform_capabilities, type_utils
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model.compute_pool import DEFAULT_CPU_COMPUTE_POOL
 
+if TYPE_CHECKING:
+    from snowflake.ml.model._client.model import model_version_impl
+
 logger = logging.getLogger(__name__)
+
+
+def _invalid_peft_argument(message: str, original_exception_type: type[Exception] = ValueError) -> NoReturn:
+    raise snowml_exceptions.SnowflakeMLException(
+        error_code=error_codes.INVALID_ARGUMENT,
+        original_exception=original_exception_type(message),
+    )
 
 
 _TELEMETRY_PROJECT = "MLOps"
@@ -727,3 +742,75 @@ class SentenceTransformer(TransformersPipeline):
             ignore_patterns=ignore_patterns,
             lazy_upload=lazy_upload,
         )
+
+
+class PeftAdapter:
+    """Wrapper for logging a PEFT LoRA adapter as a Model Registry version pinned to a base ``ModelVersion``."""
+
+    def __init__(
+        self,
+        *,
+        base_model: "model_version_impl.ModelVersion",
+        adapter_path: Optional[str] = None,
+        adapter: Optional[Any] = None,
+        adapter_repo: Optional[str] = None,
+        subfolder: Optional[str] = None,
+        revision: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> None:
+        """Construct a PeftAdapter.
+
+        Args:
+            base_model: Registry ``ModelVersion`` this adapter is pinned to. Required.
+            adapter_path: Local directory containing adapter files. Mutually exclusive with ``adapter`` /
+                ``adapter_repo``.
+            adapter: In-memory ``peft.PeftModel``. Mutually exclusive with ``adapter_path`` / ``adapter_repo``.
+            adapter_repo: Hugging Face Hub repo id. Mutually exclusive with ``adapter_path`` / ``adapter``.
+            subfolder: Nested adapter directory under ``adapter_path`` or ``adapter_repo``. Illegal with
+                in-memory ``adapter``.
+            revision: Hub revision. Only valid with ``adapter_repo``.
+            token: Hub token. Not a Snowflake SECRET.
+        """
+        if not platform_capabilities.PlatformCapabilities.get_instance().is_lora_adapters_enabled():
+            _invalid_peft_argument("PEFT adapter logging is unavailable because ENABLE_LORA_ADAPTERS is not enabled.")
+
+        # Lazy: a module-level import of ModelVersion cycles Bazel through model_packager -> this handler.
+        from snowflake.ml.model._client.model import model_version_impl
+
+        if not isinstance(base_model, model_version_impl.ModelVersion):
+            _invalid_peft_argument(
+                f"base_model must be a ModelVersion, got {type(base_model).__name__}.",
+                original_exception_type=TypeError,
+            )
+
+        provided_sources = [
+            name
+            for name, value in (
+                ("adapter_path", adapter_path),
+                ("adapter", adapter),
+                ("adapter_repo", adapter_repo),
+            )
+            if value is not None
+        ]
+        if len(provided_sources) != 1:
+            _invalid_peft_argument("Exactly one of adapter_path, adapter, or adapter_repo must be provided.")
+
+        if revision is not None and adapter_repo is None:
+            _invalid_peft_argument("revision is only valid when adapter_repo is provided.")
+
+        if subfolder is not None and adapter is not None:
+            _invalid_peft_argument("subfolder is only valid with adapter_path or adapter_repo.")
+
+        if adapter is not None and not type_utils.LazyType("peft.PeftModel").isinstance(adapter):
+            _invalid_peft_argument(
+                "adapter must be a peft.PeftModel.",
+                original_exception_type=TypeError,
+            )
+
+        self.base_model = base_model
+        self.adapter_path = adapter_path
+        self.adapter = adapter
+        self.adapter_repo = adapter_repo
+        self.subfolder = subfolder
+        self.revision = revision
+        self.token = token

@@ -54,19 +54,23 @@ class ModelPackager:
         task: model_types.Task = model_types.Task.UNKNOWN,
         prefer_pip_for_automatic_dependencies: Optional[bool] = None,
     ) -> model_meta.ModelMetadata:
-        if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    "Either of `signatures` or `sample_input_data` must be provided for this kind of model."
-                ),
-            )
-
         handler = model_handler.find_handler(model)
         if handler is None:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_TYPE,
                 original_exception=TypeError(f"{type(model)} is not supported."),
+            )
+        if (
+            signatures is None
+            and sample_input_data is None
+            and not handler.IS_AUTO_SIGNATURE
+            and handler.HANDLER_TYPE != "peft_adapter"
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Either of `signatures` or `sample_input_data` must be provided for this kind of model."
+                ),
             )
         model_save_options.validate_model_save_option_keys(
             handler_type=handler.HANDLER_TYPE,

@@ -49,6 +49,7 @@ class ExperimentTrackingSourceInfoIntegTest(ExperimentTrackingIntegTestBase):
             ),
             snowflake_file_domain_type="workspace",
             snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+            ml_job_id="MY_DB.MY_SCHEMA.MY_JOB",
         )
 
         self._add_run(experiment_name, run_name, source_info)
@@ -63,6 +64,19 @@ class ExperimentTrackingSourceInfoIntegTest(ExperimentTrackingIntegTestBase):
         source_info = _source_info.SourceInfo(
             entry_point="notebook.ipynb",
             git=_source_info.GitInfo(commit_hash="0123456789abcdef0123456789abcdef01234567"),
+        )
+
+        self._add_run(experiment_name, run_name, source_info)
+
+        self._read_run_metadata(experiment_name, run_name)
+
+    def test_add_run_with_ml_job_id_source_info(self) -> None:
+        experiment_name = "TEST_EXPERIMENT_SOURCE_INFO_ML_JOB"
+        run_name = "RUN_ML_JOB"
+        # Shape of a run created from inside an ML job: an entry point plus the job id.
+        source_info = _source_info.SourceInfo(
+            entry_point="train/main.py",
+            ml_job_id="MY_DB.MY_SCHEMA.MY_JOB",
         )
 
         self._add_run(experiment_name, run_name, source_info)

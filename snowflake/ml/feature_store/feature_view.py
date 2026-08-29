@@ -7,7 +7,7 @@ import json
 import re
 import warnings
 from collections import OrderedDict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -410,21 +410,12 @@ class _FeatureViewMetadata:
     @classmethod
     def from_json(cls, json_str: str) -> _FeatureViewMetadata:
         state_dict = json.loads(json_str)
-        # Backward compatibility: old FVs don't have is_tiled
-        if "is_tiled" not in state_dict:
-            state_dict["is_tiled"] = False
-        # Backward compatibility: old FVs don't have is_iceberg
-        if "is_iceberg" not in state_dict:
-            state_dict["is_iceberg"] = False
-        # Backward compatibility: old FVs don't have is_rollup
-        if "is_rollup" not in state_dict:
-            state_dict["is_rollup"] = False
-        # Backward compatibility: old FVs don't have is_streaming
-        if "is_streaming" not in state_dict:
-            state_dict["is_streaming"] = False
-        if "is_append_only" not in state_dict:
-            state_dict["is_append_only"] = False
-        return cls(**state_dict)
+        # Drop keys that are not constructor fields so a tag written by a
+        # different SDK version (carrying keys this one does not know) does not
+        # raise ``TypeError``. Optional fields omitted by older tags fall back
+        # to their dataclass defaults.
+        known_fields = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in state_dict.items() if k in known_fields})
 
 
 @dataclass(frozen=True)
@@ -2147,6 +2138,22 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                     "timestamp_col is required for tile-based aggregations. "
                     "Specify the timestamp column used for time-series lookups."
                 )
+            # refresh_freq is the OFFLINE object's cadence: it drives the
+            # CREATE DYNAMIC TABLE … TARGET_LAG clause over the tiling
+            # query (_get_tile_query).  Every tiled FV — batch AND
+            # streaming — must be a managed Dynamic Table so the
+            # pre-computed partial aggregates exist for the merge-at-read
+            # path.  Without refresh_freq the register flow falls to
+            # _create_offline_feature_view_view_query and builds a plain
+            # VIEW over the untiled source query (empty column list) — no
+            # tiles.  The VIEW path is only correct for non-tiled streaming
+            # FVs.
+            #
+            # This is independent of the Online Feature Table's TARGET_LAG,
+            # which is "0 seconds" for every streaming kind because data
+            # lands via the ingest path (stream source -> UDF transform ->
+            # spec-backed OFT) as soon as it is available.  A zero OFT lag
+            # is not a reason to skip the offline tile Dynamic Table.
             if self._refresh_freq is None:
                 raise ValueError(
                     "refresh_freq is required for tile-based aggregations. "
@@ -2166,12 +2173,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         # Validate Iceberg storage configuration
         if self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG:
             if self.online:
-                store_type = self._online_config.store_type if self._online_config is not None else None
-                if store_type != OnlineStoreType.POSTGRES:
-                    raise ValueError(
-                        "Online storage with Iceberg is only supported with the Postgres online store. "
-                        "Use OnlineConfig(store_type=OnlineStoreType.POSTGRES)."
-                    )
+                raise ValueError("Online storage is not supported with Iceberg.")
             if self._refresh_freq is None:
                 raise ValueError("Iceberg storage requires refresh_freq.")
 

@@ -498,7 +498,7 @@ class ModelEnv:
             )
 
         pip_cuda_version = None if write_conda else cuda_version
-        env_utils.save_requirements_file(
+        pip_extra_index_urls = env_utils.save_requirements_file(
             pathlib.Path(base_dir / self.pip_requirements_rel_path),
             self._pip_requirements,
             cuda_version=pip_cuda_version,
@@ -512,6 +512,9 @@ class ModelEnv:
             "cuda_version": self.cuda_version,
             "snowpark_ml_version": self.snowpark_ml_version,
         }
+
+        if pip_extra_index_urls:
+            env_dict["pip_extra_index_urls"] = pip_extra_index_urls
 
         # Add conda key if conda.yml was written
         if write_conda:

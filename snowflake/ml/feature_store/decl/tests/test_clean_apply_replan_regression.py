@@ -61,8 +61,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.invariants import _full_spec_hash
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
@@ -73,6 +71,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     FSColumn,
 )
 from snowflake.ml.feature_store.decl.types import PlanOptions, SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Shared environment — matches the user-reported repro from
@@ -852,4 +851,4 @@ class TestRegressionHashSymmetryPreconditions:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

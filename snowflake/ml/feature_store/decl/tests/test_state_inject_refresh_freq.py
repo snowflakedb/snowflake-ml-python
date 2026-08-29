@@ -42,12 +42,11 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.state import (
     _inject_fv_refresh_freq_from_list_row,
     fetch_applied_state,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "JKEW_DB"
 _SCHEMA = "JKEW_SCHEMA"
@@ -105,6 +104,41 @@ def _streaming_oft_specification() -> dict[str, Any]:
                 {
                     "source_column": {"name": "EVENT", "type": "StringType"},
                     "output_column": {"name": "EVENT", "type": "StringType"},
+                }
+            ],
+            "target_lag_sec": 0,
+        },
+    }
+
+
+def _tiled_streaming_oft_specification() -> dict[str, Any]:
+    """Return a minimal **tiled** streaming-FV spec_payload.
+
+    Unlike :func:`_streaming_oft_specification` (1:1 passthrough), the
+    features carry an aggregation ``window_sec`` — this FV schedules an
+    offline tile Dynamic Table whose ``REFRESH_FREQ`` we recover.  The
+    runtime still stamps ``spec.target_lag_sec = 0`` (the OFT ingest lag).
+
+    Returns:
+        A tiled ``StreamingFeatureView`` spec_payload dict.
+    """
+    return {
+        "kind": "StreamingFeatureView",
+        "metadata": {
+            "database": _DB,
+            "schema": _SCHEMA,
+            "name": "USER_CLICK_AGG_DECL",
+            "version": "V1",
+        },
+        "spec": {
+            "ordered_entity_column_names": ["USER_ID"],
+            "sources": [],
+            "features": [
+                {
+                    "function": "sum",
+                    "window_sec": 3600,
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_1H", "type": "DoubleType"},
                 }
             ],
             "target_lag_sec": 0,
@@ -251,13 +285,15 @@ class TestInjectRefreshFreqWritesSpecRefreshFreq:
 
         assert "refresh_freq" not in spec_payload["spec"]
 
-    def test_skips_streaming_kind(self) -> None:
-        """Streaming FV spec_payloads must NOT receive a refresh_freq.
+    def test_skips_non_tiled_streaming_kind(self) -> None:
+        """A **non-tiled** streaming FV spec_payload must NOT receive a
+        refresh_freq.
 
-        The declarative spec validator now rejects ``refresh_freq`` on
-        streaming kinds; the recovery helper must therefore skip the
-        injection so a runtime-stamped value cannot leak into a kind
-        that the next ``snow feature plan`` would reject on load.
+        A non-tiled streaming FV materialises to a zero-lag VIEW with no
+        offline Dynamic Table, and the spec validator rejects
+        ``refresh_freq`` on that shape; the recovery helper must skip the
+        injection so a runtime-stamped value cannot leak into a kind that
+        the next ``snow feature plan`` would reject on load.
         """
         spec_payload = _streaming_oft_specification()
         row = _list_fv_row("5 minutes", kind="STREAMING")
@@ -265,9 +301,28 @@ class TestInjectRefreshFreqWritesSpecRefreshFreq:
         _inject_fv_refresh_freq_from_list_row(spec_payload, row)
 
         assert "refresh_freq" not in spec_payload["spec"], (
-            "Streaming FV spec_payload must not receive refresh_freq — "
-            "the spec validator rejects the field on this kind, so an "
-            "exported value would fail to load. Got "
+            "Non-tiled streaming FV spec_payload must not receive "
+            "refresh_freq — it has no offline DT and the validator rejects "
+            "the field, so an exported value would fail to load. Got "
+            f"refresh_freq={spec_payload['spec'].get('refresh_freq')!r}."
+        )
+
+    def test_recovers_tiled_streaming_kind(self) -> None:
+        """A **tiled** streaming FV schedules an offline tile Dynamic
+        Table, so the recovery helper must plumb the deployed
+        ``REFRESH_FREQ`` onto ``spec.refresh_freq`` — otherwise the
+        planner compares the local cadence against the OFT
+        ``target_lag_sec=0`` sentinel and emits a spurious ``UPDATE_FV``
+        on every replan.
+        """
+        spec_payload = _tiled_streaming_oft_specification()
+        row = _list_fv_row("5 minutes", kind="STREAMING")
+
+        _inject_fv_refresh_freq_from_list_row(spec_payload, row)
+
+        assert spec_payload["spec"]["refresh_freq"] == "5 minutes", (
+            "Tiled streaming FV spec_payload must recover refresh_freq "
+            "from the deployed tile DT REFRESH_FREQ. Got "
             f"refresh_freq={spec_payload['spec'].get('refresh_freq')!r}."
         )
 
@@ -278,6 +333,26 @@ class TestInjectRefreshFreqWritesSpecRefreshFreq:
         _inject_fv_refresh_freq_from_list_row(spec_payload, row)
 
         assert "refresh_freq" not in spec_payload["spec"]
+
+    def test_injects_tiled_streaming_kind(self) -> None:
+        """A *tiled* streaming FV DOES receive the deployed DT cadence.
+
+        A tiled streaming FV materialises an offline aggregate Dynamic
+        Table whose refresh cadence is ``refresh_freq``; the recovery
+        helper must plumb the row's ``refresh_freq`` onto the applied
+        spec_payload so the planner's operational-drift compare finds no
+        drift on a clean replan (rather than a phantom UPDATE_FV).
+        """
+        spec_payload = _tiled_streaming_oft_specification()
+        row = _list_fv_row("5 minutes", kind="STREAMING")
+
+        _inject_fv_refresh_freq_from_list_row(spec_payload, row)
+
+        assert spec_payload["spec"]["refresh_freq"] == "5 minutes", (
+            "Tiled streaming FV spec_payload must receive refresh_freq from "
+            "the deployed DT cadence. Got "
+            f"refresh_freq={spec_payload['spec'].get('refresh_freq')!r}."
+        )
 
 
 # ===========================================================================
@@ -313,7 +388,7 @@ class TestFetchAppliedStateInjectsRefreshFreqForBatchFv:
             default_schema=_SCHEMA,
         )
 
-        key = f"BatchFeatureView:{_DB}.{_SCHEMA}:USER_AMOUNTS_FG_DECL"
+        key = f"BatchFeatureView:{_DB}.{_SCHEMA}:USER_AMOUNTS_FG_DECL:V1"
         applied = state.objects.get(key)
         assert applied is not None, (
             f"expected AppliedObject under key {key!r}; got " f"keys={sorted(state.objects.keys())!r}"
@@ -325,5 +400,81 @@ class TestFetchAppliedStateInjectsRefreshFreqForBatchFv:
         )
 
 
+class TestFetchAppliedStateInjectsRefreshFreqForTiledStreamingFv:
+    """``fetch_applied_state`` plumbs ``refresh_freq`` onto a **tiled**
+    streaming FV spec_payload via the OFT-loop streaming carve-out.
+
+    Guards the caller wiring: the injection helper is invoked for
+    ``StreamingFeatureView`` (not only ``BatchFeatureView``) so a genuine
+    tile-DT cadence edit is detected by ``_refresh_freq_drifted`` — which,
+    for streaming, refuses to read the OFT ``target_lag_sec=0`` sentinel.
+    A non-tiled streaming FV stays a no-op (the helper self-guards).
+    """
+
+    def test_tiled_streaming_fv_spec_payload_gets_refresh_freq_from_row(self) -> None:
+        spec = _tiled_streaming_oft_specification()
+        show_row = {
+            "name": "USER_CLICK_AGG_DECL$V1$ONLINE",
+            "database_name": _DB,
+            "schema_name": _SCHEMA,
+            "created_on": "2024-01-01 00:00:00",
+        }
+        list_fv_row = _list_fv_row("5 minutes", kind="STREAMING")
+        list_fv_row["name"] = "USER_CLICK_AGG_DECL"
+        list_fv_row["physical_dt_name"] = "USER_CLICK_AGG_DECL$V1"
+
+        state = fetch_applied_state(
+            [show_row],
+            None,
+            specification_map={show_row["name"]: copy.deepcopy(spec)},
+            feature_view_rows=[list_fv_row],
+            default_database=_DB,
+            default_schema=_SCHEMA,
+        )
+
+        key = f"StreamingFeatureView:{_DB}.{_SCHEMA}:USER_CLICK_AGG_DECL:V1"
+        applied = state.objects.get(key)
+        assert applied is not None, (
+            f"expected AppliedObject under key {key!r}; got " f"keys={sorted(state.objects.keys())!r}"
+        )
+        assert applied.spec_payload["spec"]["refresh_freq"] == "5 minutes", (
+            "fetch_applied_state did not plumb refresh_freq onto the "
+            "tiled-streaming spec_payload. Recovered "
+            f"spec={applied.spec_payload.get('spec')!r}"
+        )
+
+    def test_non_tiled_streaming_fv_spec_payload_stays_bare(self) -> None:
+        spec = _streaming_oft_specification()
+        show_row = {
+            "name": "USER_CLICK_BACKFILL_DECL$V1$ONLINE",
+            "database_name": _DB,
+            "schema_name": _SCHEMA,
+            "created_on": "2024-01-01 00:00:00",
+        }
+        list_fv_row = _list_fv_row("5 minutes", kind="STREAMING")
+        list_fv_row["name"] = "USER_CLICK_BACKFILL_DECL"
+        list_fv_row["physical_dt_name"] = "USER_CLICK_BACKFILL_DECL$V1"
+
+        state = fetch_applied_state(
+            [show_row],
+            None,
+            specification_map={show_row["name"]: copy.deepcopy(spec)},
+            feature_view_rows=[list_fv_row],
+            default_database=_DB,
+            default_schema=_SCHEMA,
+        )
+
+        key = f"StreamingFeatureView:{_DB}.{_SCHEMA}:USER_CLICK_BACKFILL_DECL:V1"
+        applied = state.objects.get(key)
+        assert applied is not None, (
+            f"expected AppliedObject under key {key!r}; got " f"keys={sorted(state.objects.keys())!r}"
+        )
+        assert "refresh_freq" not in applied.spec_payload["spec"], (
+            "Non-tiled streaming FV must not recover refresh_freq (zero-lag "
+            "VIEW, no offline DT). Recovered "
+            f"spec={applied.spec_payload.get('spec')!r}"
+        )
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

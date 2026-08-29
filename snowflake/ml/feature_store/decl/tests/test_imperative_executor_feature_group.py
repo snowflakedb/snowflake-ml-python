@@ -23,11 +23,10 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.imperative_executor import execute_plan
 from snowflake.ml.feature_store.decl.types import Plan, PlanOp, PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -430,4 +429,4 @@ class TestFGHydrationPreservesAdvancedBfvFields:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

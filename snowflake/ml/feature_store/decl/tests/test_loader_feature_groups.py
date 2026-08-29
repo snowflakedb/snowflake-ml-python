@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from snowflake.ml.feature_store.decl.spec_models import FeatureGroup
 from snowflake.ml.feature_store.decl.types import SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -128,4 +127,4 @@ class TestLoadFromProjectFeatureGroupsInjection:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

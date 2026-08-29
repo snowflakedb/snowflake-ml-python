@@ -34,6 +34,7 @@ from snowflake.ml.feature_store.decl.loader import load_specs
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
 from snowflake.ml.feature_store.decl.types import PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 GOLDEN_DIR = Path(__file__).parent / "golden_specs"
 
@@ -218,4 +219,4 @@ def test_golden_spec_export_then_plan_no_change(golden_path: Any, tmp_path: Path
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

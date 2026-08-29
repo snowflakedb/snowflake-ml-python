@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.dependencies import (
     extract_dependencies,
     topological_sort,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Test-local helpers (moved out of production ``dependencies.py`` — no runtime callers)
@@ -206,6 +205,62 @@ class TestTopologicalSort:
         result = topological_sort([])
         assert result == []
 
+    def test_preserves_distinct_versions_of_same_name(self) -> None:
+        """Two versions of one FeatureView name are distinct objects and
+        must BOTH survive the sort.
+
+        Object identity is ``(name, version)`` (mirrored by
+        ``invariants.spec_key`` / ``state._build_spec_key``).  The
+        ``name_to_spec`` map keyed by name alone collapsed the versions —
+        the later spec overwrote the earlier one — so a v1 that was still
+        authored locally vanished from the batch.  Downstream, the planner
+        never saw that v1 in its diff loop, left its key out of
+        ``batch_keys``, and orphan-``DROP``ped the deployed v1 while
+        ``CREATE``-ing v2.  This pin forces both versions through.
+        """
+        fv_v1 = _fv(name="stays_fv")
+        fv_v1["version"] = "V1"
+        fv_v2 = _fv(name="stays_fv")
+        fv_v2["version"] = "V2"
+        specs = [fv_v1, fv_v2]
+
+        result = topological_sort(specs)
+
+        assert len(result) == 2, (
+            "Both versions of one FV name must survive topological_sort; got "
+            f"{[(s['name'], s.get('version')) for s in result]}"
+        )
+        assert {s.get("version") for s in result} == {"V1", "V2"}
+
+    def test_preserves_versions_and_orders_after_shared_dependencies(self) -> None:
+        """Versioned FVs still land after their shared entity/source deps.
+
+        Both versions share the same entity and source; the sort must keep
+        the entity and source ahead of both FV versions while preserving
+        each distinct version.
+        """
+        entity = _entity()
+        source = _source()
+        fv_v1 = _fv(name="stays_fv")
+        fv_v1["version"] = "V1"
+        fv_v2 = _fv(name="stays_fv")
+        fv_v2["version"] = "V2"
+        specs = [fv_v2, fv_v1, source, entity]
+
+        result = topological_sort(specs)
+
+        assert len(result) == 4, (
+            "Entity, source, and both FV versions must all survive; got "
+            f"{[(s['name'], s.get('version')) for s in result]}"
+        )
+        kinds_by_index = [s.get("kind") for s in result]
+        entity_idx = kinds_by_index.index("Entity")
+        source_idx = kinds_by_index.index("StreamingSource")
+        fv_indices = [i for i, k in enumerate(kinds_by_index) if k == "StreamingFeatureView"]
+        assert len(fv_indices) == 2
+        assert entity_idx < min(fv_indices)
+        assert source_idx < min(fv_indices)
+
 
 # ---------------------------------------------------------------------------
 # detect_cycles tests
@@ -238,4 +293,4 @@ class TestDetectCycles:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

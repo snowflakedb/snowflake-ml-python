@@ -14,6 +14,7 @@ from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import inference_engine, openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
+    _loaded_model_telemetry,
     batch_inference_job_specs,
     batch_inference_specs,
     inference_engine_utils,
@@ -641,7 +642,9 @@ class ModelVersion(lineage_node.LineageNode):
         model_spec = self._get_model_spec(statement_params)
         method_options = model_spec.get("method_options", {})
         return model_method_utils.determine_explain_case_sensitive_from_method_options(
-            method_options, target_function_info["name"]
+            method_options,
+            target_function_info["name"],
+            default=bool(model_spec.get("case_sensitive", False)),
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1209,7 +1212,11 @@ class ModelVersion(lineage_node.LineageNode):
             "Unable to load model. "
             f"model_name={self._model_name}, version_name={self._version_name}, metadata={pk.meta}"
         )
-        return pk.model
+        return _loaded_model_telemetry.instrument_for_telemetry(
+            pk.model,
+            model_name=self._model_name.identifier(),
+            version_name=self._version_name.identifier(),
+        )
 
     def _enforce_owner_only(self, operation: str, *, statement_params: Optional[dict[str, Any]] = None) -> None:
         owner = self._model_ops.get_model_owner(
@@ -1226,7 +1233,7 @@ class ModelVersion(lineage_node.LineageNode):
                     f"model registry: cannot {operation} this model — no active role on the session."
                 ),
             )
-        current_role = sql_identifier.SqlIdentifier(current_role_raw.strip('"'), case_sensitive=False)
+        current_role = sql_identifier.SqlIdentifier(current_role_raw)
         if current_role != owner:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INSUFFICIENT_PRIVILEGES,

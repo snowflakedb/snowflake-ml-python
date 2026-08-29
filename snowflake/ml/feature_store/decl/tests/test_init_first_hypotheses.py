@@ -28,10 +28,10 @@ Hypothesis ↔ implementation phase ↔ falsification → design impact:
   Implementation phase: Phase 4. Falsification: the planner must
   enforce the dependency check itself (more work).
 
-- **H4** — ``FeatureStore.update_entity`` accepts ``join_keys=`` while
-  remaining backward-compatible with the existing ``desc=``-only
-  callers. Implementation phase: Phase 3. Falsification: signature
-  extension breaks existing imperative callers.
+- **H4** — ``FeatureStore.update_entity`` remains ``desc=``-only
+  (join keys are not an update argument). **GREEN-as-pin**: locks the
+  public signature so declarative apply does not invent unsupported
+  kwargs.
 
 - **H5** — ``FeatureStore.__init__(FAIL_IF_NOT_EXIST)`` raises a
   deterministic exception when the schema lacks internal tags, and
@@ -84,6 +84,7 @@ from snowflake.ml.feature_store.decl.errors import DependencyError
 from snowflake.ml.feature_store.decl.imperative_executor import execute_plan
 from snowflake.ml.feature_store.decl.types import Plan, PlanOp, PlanOptions
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _entity_payload(
@@ -301,39 +302,26 @@ class TestH3DeleteEntityFVDependency:
 
 
 # ---------------------------------------------------------------------------
-# H4 — update_entity gains join_keys= while staying backward-compatible
+# H4 — update_entity is desc-only (no join_keys=)
 # ---------------------------------------------------------------------------
 
 
-class TestH4UpdateEntityJoinKeysExtension:
-    """``FeatureStore.update_entity`` must gain a ``join_keys=`` keyword
-    in Phase 3 while leaving ``desc=``-only callers unaffected.
+class TestH4UpdateEntityDescOnly:
+    """``FeatureStore.update_entity`` accepts ``desc=`` only.
 
-    The signature-extension test is RED today (no ``join_keys``
-    parameter exists). GREEN after Phase 3.
-
-    The backward-compatibility test is GREEN today and must stay GREEN
-    after Phase 3 — if it flips red, Phase 3 broke an existing caller
-    and we must STOP and ask.
+    Join keys are set at ``register_entity`` time and are not an
+    ``update_entity`` argument. Pin the public signature so the
+    declarative executor does not pass unsupported kwargs.
     """
-
-    def test_update_entity_signature_carries_join_keys_keyword(self) -> None:
-        sig = inspect.signature(fs_module.FeatureStore.update_entity)
-        assert "join_keys" in sig.parameters, (
-            "FeatureStore.update_entity must accept a `join_keys=` keyword " "after Phase 3 (see hypothesis H4)."
-        )
-        param = sig.parameters["join_keys"]
-        assert param.kind == inspect.Parameter.KEYWORD_ONLY
-        assert param.default is None
 
     def test_update_entity_signature_preserves_desc_keyword(self) -> None:
         sig = inspect.signature(fs_module.FeatureStore.update_entity)
-        assert "desc" in sig.parameters, (
-            "FeatureStore.update_entity must preserve the existing `desc=` "
-            "keyword after Phase 3 (backward-compat pin for H4)."
-        )
+        assert (
+            "desc" in sig.parameters
+        ), "FeatureStore.update_entity must preserve the existing `desc=` keyword (backward-compat pin for H4)."
         assert sig.parameters["desc"].kind == inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["desc"].default is None
+        assert "join_keys" not in sig.parameters
 
 
 # ---------------------------------------------------------------------------
@@ -568,4 +556,4 @@ class TestH9UninitializedSchemaIsHardError:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

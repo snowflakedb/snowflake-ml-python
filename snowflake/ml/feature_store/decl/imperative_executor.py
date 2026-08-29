@@ -1043,7 +1043,7 @@ def execute_plan(
         database: Snowflake database name.
         schema: Snowflake schema name (FeatureStore "name").
         warehouse: Snowflake warehouse name.
-        options: Plan options (overwrite, dev_mode, etc.).
+        options: Plan options (overwrite, allow_recreate, etc.).
 
     Returns:
         ApplyResult with per-operation status.
@@ -1485,6 +1485,54 @@ _UPDATE_FV_SUPPORTED_KINDS: frozenset[str] = frozenset(
 )
 
 
+def _payload_has_aggregation_windows(payload: dict[str, Any]) -> bool:
+    """Whether a plan payload describes a tiled FV — i.e. any feature
+    declares an aggregation window.
+
+    Mirrors the compiler's ``has_windows`` check and the imperative
+    ``FeatureView.is_tiled``: a tiled FV materialises its tiles as a
+    managed Dynamic Table whose ``TARGET_LAG`` is driven by
+    ``refresh_freq``.
+
+    Args:
+        payload: The FV authoring/plan payload dict.
+
+    Returns:
+        ``True`` if any ``features[]`` entry carries ``window`` or
+        ``window_sec``, else ``False``.
+    """
+    return any(
+        isinstance(f, dict) and (f.get("window") is not None or f.get("window_sec") is not None)
+        for f in (payload.get("features") or [])
+    )
+
+
+def _payload_forwards_refresh_freq(payload: dict[str, Any]) -> bool:
+    """Whether ``refresh_freq`` should reach the imperative FV surface for
+    this payload.
+
+    ``refresh_freq`` is the offline Dynamic Table cadence, so it is
+    forwarded only for kinds that build an offline DT: BatchFeatureView,
+    and **tiled** StreamingFeatureView (whose tiles are a managed DT).
+    Non-tiled streaming FVs materialise to a zero-lag VIEW and realtime
+    FVs compute on lookup — neither has a DT to schedule — so the field
+    is dropped there as defence-in-depth against a hand-built payload
+    that bypassed the spec validator.
+
+    Args:
+        payload: The FV authoring/plan payload dict.
+
+    Returns:
+        ``True`` if ``refresh_freq`` should be forwarded for this kind.
+    """
+    kind = payload.get("kind", "")
+    if kind == "BatchFeatureView":
+        return True
+    if kind == "StreamingFeatureView":
+        return _payload_has_aggregation_windows(payload)
+    return False
+
+
 def _execute_update_feature_view(fs: Any, op: Any, default_warehouse: str) -> None:
     """Apply ``OpKind.UPDATE_FV`` via ``FeatureStore.update_feature_view``.
 
@@ -1522,16 +1570,19 @@ def _execute_update_feature_view(fs: Any, op: Any, default_warehouse: str) -> No
         )
 
     is_realtime = kind == "RealtimeFeatureView"
-    is_batch = kind == "BatchFeatureView"
 
     kwargs: dict[str, Any] = {}
-    # ``refresh_freq`` is the offline DT cadence; only BatchFeatureView
-    # accepts it on the declarative authoring surface (the spec
-    # validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
-    # rejects authoring on streaming / realtime).  We gate defensively
-    # here so a hand-built payload cannot smuggle ``refresh_freq`` past
-    # the validator and onto a streaming UPDATE_FV.
-    if is_batch:
+    # ``refresh_freq`` is the offline Dynamic Table cadence.  It is
+    # forwarded for kinds that build an offline DT: BatchFeatureView and
+    # **tiled** StreamingFeatureView (whose tiles are a managed DT — the
+    # spec validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
+    # accepts it there and the ``STREAM_FV_TILING_REFRESH`` invariant
+    # requires it).  Non-tiled streaming and realtime FVs have no DT to
+    # schedule, so the field is dropped there as defence-in-depth against
+    # a hand-built payload that bypassed the validator.  On a tiled
+    # streaming UPDATE_FV this alters the tile DT ``TARGET_LAG``
+    # (``ALTER DYNAMIC TABLE … SET TARGET_LAG``).
+    if _payload_forwards_refresh_freq(payload):
         schedule = payload.get("refresh_freq")
         if schedule:
             kwargs["refresh_freq"] = str(schedule)
@@ -1918,12 +1969,9 @@ def _execute_drop_entity(fs: Any, op: Any) -> None:
 def _execute_update_entity(fs: Any, op: Any) -> None:
     """Materialise an ``OpKind.UPDATE_ENTITY`` via ``FeatureStore.update_entity``.
 
-    Delegates fully to the imperative API.  The ``update_entity``
-    method was extended in this refactor to accept a ``join_keys=``
-    keyword so the declarative layer can update both ``DESC`` and
-    ``ALLOWED_VALUES`` through a single call (previously only
-    ``DESC`` was supported, which forced declarative join-key edits
-    through raw ``ALTER TAG`` SQL).
+    Delegates to the imperative API. ``FeatureStore.update_entity``
+    accepts ``desc=`` only; join keys are identity for a registered
+    entity and are not updated through this path.
 
     Args:
         fs: The constructed ``FeatureStore`` instance (built in
@@ -1939,11 +1987,9 @@ def _execute_update_entity(fs: Any, op: Any) -> None:
     if not name:
         raise ValueError(f"UPDATE_ENTITY op {op.name} has no entity name in its payload.")
 
-    join_keys_raw = payload.get("join_keys", [])
-    join_keys = [jk["name"] if isinstance(jk, dict) else str(jk) for jk in join_keys_raw]
     desc = payload.get("description", "") or ""
 
-    fs.update_entity(name, desc=desc, join_keys=join_keys or None)
+    fs.update_entity(name, desc=desc)
 
 
 def _build_features(raw: list[dict[str, Any]]) -> list[Any]:
@@ -2211,25 +2257,24 @@ def _build_feature_view(
     # ``target_lag_sec`` field is OFT staleness only (it maps to
     # ``OnlineConfig.target_lag``) and is NOT read here.
     #
-    # Streaming and realtime kinds never carry ``refresh_freq`` — the
-    # spec validator
-    # (``FeatureView._reject_refresh_freq_on_stream_or_realtime``)
-    # rejects authoring on those kinds, and the runtime always stamps
-    # ``target_lag_sec=0`` regardless of cadence.  We gate the
-    # forwarding to BatchFeatureView only as defence-in-depth so a
-    # hand-built payload cannot smuggle ``refresh_freq`` past the
-    # validator into the streaming / realtime constructor.
+    # ``refresh_freq`` is the offline Dynamic Table cadence, so it is
+    # forwarded only for kinds that build an offline DT: BatchFeatureView
+    # and **tiled** StreamingFeatureView (see
+    # ``_payload_forwards_refresh_freq``).  Non-tiled streaming and
+    # realtime kinds have no DT to schedule — the spec validator
+    # (``FeatureView._reject_refresh_freq_on_stream_or_realtime``) rejects
+    # authoring on them and the runtime stamps ``target_lag_sec=0`` — so
+    # the field is dropped there as defence-in-depth against a hand-built
+    # payload that bypassed the validator.
     #
-    # Tiled BFVs require ``refresh_freq`` (snowml-core's ``FeatureView``
-    # constructor raises otherwise — the BFV branch of the check at
-    # ``feature_view.py:_validate``).  The pre-fix granularity-based
-    # default is removed: tiled BFVs without an authored ``refresh_freq``
-    # now hit the imperative error verbatim, matching the validator
-    # contract on the declarative side (``invariants.py``:
-    # ``BATCH_FV_TILING_REFRESH``).  Tiled streaming FVs construct
-    # cleanly without ``refresh_freq`` (Phase 2's relaxation scoped the
-    # check to BFV only).
-    if payload.get("kind") == "BatchFeatureView" and payload.get("refresh_freq"):
+    # Tiled FVs (batch AND streaming) REQUIRE ``refresh_freq``:
+    # snowml-core's ``FeatureView`` constructor raises otherwise (the
+    # tile-based check in ``feature_view.py:_validate``), matching the
+    # declarative-side invariants ``BATCH_FV_TILING_REFRESH`` /
+    # ``STREAM_FV_TILING_REFRESH``.  There is no granularity-based
+    # default: a tiled FV without an authored ``refresh_freq`` hits the
+    # imperative error verbatim.
+    if _payload_forwards_refresh_freq(payload) and payload.get("refresh_freq"):
         kwargs["refresh_freq"] = payload["refresh_freq"]
     if payload.get("warehouse", warehouse):
         kwargs["warehouse"] = payload.get("warehouse", warehouse)
@@ -2390,15 +2435,14 @@ def _build_feature_view(
         if features:
             kwargs["features"] = features
 
-        # Streaming FVs construct without ``refresh_freq`` after the
-        # Phase 2 relaxation: snowml-core's tile-based-aggregation
-        # ``refresh_freq`` requirement is now scoped to BatchFV via
-        # ``not self.is_streaming`` in ``feature_view.py:_validate``.
-        # The Snowflake runtime stamps ``target_lag_sec=0`` onto every
-        # streaming SPECIFICATION regardless of authored cadence, so
-        # any cadence value would have no runtime effect — the
-        # declarative surface rejects authoring it entirely (see the
-        # ``_reject_refresh_freq_on_stream_or_realtime`` validator).
+        # ``refresh_freq`` for a tiled streaming FV was already added to
+        # ``kwargs`` above by the ``_payload_forwards_refresh_freq`` gate:
+        # it drives the offline tile Dynamic Table's ``TARGET_LAG`` (the
+        # tiles are a managed DT), and snowml-core's ``_validate`` requires
+        # it for every tiled kind.  A non-tiled streaming FV never reaches
+        # that gate (no aggregation windows) and materialises to a zero-lag
+        # VIEW instead.  The OFT's ``target_lag_sec`` is a separate knob the
+        # runtime stamps to 0 on the ingest path and is not read here.
 
         fv = FeatureView(
             name=name,

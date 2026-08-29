@@ -5,11 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.manifest import FSTarget
 from snowflake.ml.feature_store.decl.types import AppliedState, PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 _FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "batch_fv_minimal"
 _BUGBASH_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "batch_fv_bugbash_names"
@@ -166,4 +165,4 @@ def test_resolve_datasource_columns_batch_source_case_insensitive() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -25,13 +25,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
     compute_local_spec_hash,
 )
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Shared fixtures — match docs/BATCH_FV_BUG_BASH.md §5 authoring
@@ -193,7 +192,7 @@ class TestOfflineBfvMissingFromAppliedStateBeforeFix:
             default_database=_DB,
             default_schema=_SCH,
         )
-        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}"
+        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"
         assert expected_key in state.objects
         obj = state.objects[expected_key]
         assert obj.kind == "BatchFeatureView"
@@ -242,7 +241,7 @@ class TestOfflineBfvMissingFromAppliedStateBeforeFix:
             default_database=_DB,
             default_schema=_SCH,
         )
-        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}"
+        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"
         assert expected_key in state.objects
         # Exactly one object with this key — no duplicate from the
         # FV-list path.
@@ -283,7 +282,7 @@ class TestOfflineBfvHashRoundTrip:
             default_database=_DB,
             default_schema=_SCH,
         )
-        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}"
+        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"
         applied = state.objects[expected_key]
         # ``content_hash`` must be the ``_full_spec_hash`` of the
         # reconstructed ``spec_payload`` so the planner's
@@ -315,7 +314,7 @@ class TestOfflineBfvHashRoundTrip:
             default_database=_DB,
             default_schema=_SCH,
         )
-        applied = state.objects[f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}"]
+        applied = state.objects[f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"]
         payload = applied.spec_payload
 
         assert payload["kind"] == "BatchFeatureView"
@@ -375,9 +374,165 @@ class TestOfflineBfvHashRoundTrip:
             default_database=_DB,
             default_schema=_SCH,
         )
-        applied = state.objects[f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}"]
+        applied = state.objects[f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"]
         assert applied.spec_payload["spec"].get("target_lag_sec") == 60
 
 
+# ===========================================================================
+# Bug B — Advanced offline BFV (online:false, offline:false, cluster_by +
+#          aggregation_secondary_keys) produces hash mismatch on second plan
+# ===========================================================================
+
+_ADV_FV_NAME = "MY_ADV_BFV_DECL"
+_ADV_DT_NAME = f"{_ADV_FV_NAME}$V1"
+_ADV_SOURCE_REF = {
+    "name": "EVENTS_ADV_DECL",
+    "source_type": "Batch",
+    "table": "RAW_ADV_EVENTS",
+}
+
+
+def _adv_bfv_spec_text(*, with_secondary_keys: bool) -> dict[str, Any]:
+    """Construct the spec_text dict that _serialize_batch_fv_spec produces.
+
+    Args:
+        with_secondary_keys: When True, include aggregation_secondary_keys in the
+            inner spec dict.
+
+    Returns:
+        A SPECIFICATION-shaped dict matching the _serialize_batch_fv_spec contract.
+    """
+    inner: dict[str, Any] = {
+        "ordered_entity_column_names": ["ENTITY_ID"],
+        "sources": [_ADV_SOURCE_REF],
+        "features": [],
+        "target_lag_sec": 60,
+        "cluster_by": ["ENTITY_ID"],
+        "refresh_mode": "AUTO",
+        "warehouse": "TEST_WH",
+    }
+    if with_secondary_keys:
+        inner["aggregation_secondary_keys"] = ["REGION"]
+    return {
+        "kind": "BatchFeatureView",
+        "metadata": {
+            "database": _DB,
+            "schema": _SCH,
+            "name": _ADV_FV_NAME,
+            "version": "V1",
+            "spec_format_version": "1",
+            "internal_data_version": "1",
+            "client_version": "0.1.0",
+        },
+        "spec": inner,
+    }
+
+
+def _adv_bfv_row(*, with_secondary_keys: bool) -> dict[str, Any]:
+    """Build the feature_view_rows entry for MY_ADV_BFV_DECL.
+
+    ``with_secondary_keys`` is forwarded to :func:`_adv_bfv_spec_text` to
+    control whether the embedded spec_text carries aggregation_secondary_keys.
+
+    Args:
+        with_secondary_keys: Forwarded to _adv_bfv_spec_text.
+
+    Returns:
+        A row dict in the feature_view_rows contract shape.
+    """
+    import json as _json
+
+    return {
+        "name": _ADV_FV_NAME,
+        "version": "V1",
+        "database_name": _DB,
+        "schema_name": _SCH,
+        "kind": "BATCH",
+        "entities": ["ENTITY_ID"],
+        "online_enabled": False,
+        "target_lag": "",
+        "refresh_freq": "1 minute",
+        "warehouse": "TEST_WH",
+        "cluster_by": _json.dumps(["ENTITY_ID"]),
+        "refresh_mode": "AUTO",
+        "desc": "",
+        "physical_dt_name": _ADV_DT_NAME,
+        "source_refs": [_ADV_SOURCE_REF],
+        "spec_text": _adv_bfv_spec_text(with_secondary_keys=with_secondary_keys),
+    }
+
+
+def _adv_bfv_authoring_dict() -> dict[str, Any]:
+    """Return the authoring-side dict for MY_ADV_BFV_DECL.
+
+    Matches sources/feature_views/MY_ADV_BFV_DECL.yaml in the example store.
+
+    Returns:
+        dict: Authoring-side BFV dict with online:false, offline:false, cluster_by,
+        and aggregation_secondary_keys set.
+    """
+    return {
+        "kind": "BatchFeatureView",
+        "name": _ADV_FV_NAME,
+        "version": "V1",
+        "database": _DB,
+        "schema": _SCH,
+        "online": False,
+        "offline": False,
+        "entities": ["ENTITY_ID"],
+        "sources": [_ADV_SOURCE_REF],
+        "refresh_freq": "1 minute",
+        "cluster_by": ["ENTITY_ID"],
+        "aggregation_secondary_keys": ["REGION"],
+        "refresh_mode": "AUTO",
+        "initialize": "ON_CREATE",
+    }
+
+
+def _adv_applied_and_local_hashes(*, with_secondary_keys: bool) -> tuple[str, str]:
+    """Return (applied content_hash, local compile hash) for MY_ADV_BFV_DECL.
+
+    Args:
+        with_secondary_keys: Whether reconstructed spec_text includes
+            aggregation_secondary_keys.
+
+    Returns:
+        Applied hash from fetch_applied_state and the local compile hash.
+    """
+    local_hash = compute_local_spec_hash(_adv_bfv_authoring_dict(), _DB, _SCH)
+    state = fetch_applied_state(
+        raw_show_results=[],
+        raw_table_results=[],
+        specification_map={},
+        entity_rows=[],
+        dt_text_map={},
+        feature_view_rows=[_adv_bfv_row(with_secondary_keys=with_secondary_keys)],
+        default_database=_DB,
+        default_schema=_SCH,
+    )
+    applied_key = f"BatchFeatureView:{_DB}.{_SCH}:{_ADV_FV_NAME}:V1"
+    assert (
+        applied_key in state.objects
+    ), f"Advanced offline BFV must appear in applied state; keys present: {list(state.objects)}"
+    return state.objects[applied_key].content_hash, local_hash
+
+
+class TestAdvancedOfflineBfvHashRoundTrip:
+    """aggregation_secondary_keys in applied spec_text must participate in the hash.
+
+    Authoring includes aggregation_secondary_keys=["REGION"].  When reconstructed
+    spec_text carries those keys, applied hash matches local compile.  When they
+    are omitted, hashes differ and the planner would emit RECREATE_FV.
+    """
+
+    def test_hash_matches_when_spec_text_includes_secondary_keys(self) -> None:
+        applied_hash, local_hash = _adv_applied_and_local_hashes(with_secondary_keys=True)
+        assert applied_hash == local_hash
+
+    def test_hash_mismatches_when_spec_text_omits_secondary_keys(self) -> None:
+        applied_hash, local_hash = _adv_applied_and_local_hashes(with_secondary_keys=False)
+        assert applied_hash != local_hash
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -1344,6 +1344,44 @@ class ModelMethodOptionsTest(absltest.TestCase):
         method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
         self.assertEqual(method_options.get("volatility"), Volatility.IMMUTABLE)
 
+    def test_get_model_method_options_with_case_sensitive(self) -> None:
+        options: type_hints.ModelSaveOption = {}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="predict")
+        self.assertFalse(method_options.get("case_sensitive", False))
+
+        options = {"case_sensitive": True}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="predict")
+        self.assertTrue(method_options.get("case_sensitive"))
+
+        options = {"case_sensitive": True, "method_options": {"predict": {"case_sensitive": False}}}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="predict")
+        self.assertFalse(method_options.get("case_sensitive", False))
+
+        options = {"case_sensitive": True}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="explain")
+        self.assertTrue(method_options.get("case_sensitive"))
+
+        options = {
+            "case_sensitive": False,
+            "method_options": {"predict": {"case_sensitive": True}},
+        }
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="explain")
+        self.assertTrue(method_options.get("case_sensitive"))
+
+        options = {
+            "case_sensitive": True,
+            "method_options": {"explain": {"case_sensitive": False}, "predict": {"case_sensitive": True}},
+        }
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="explain")
+        self.assertFalse(method_options.get("case_sensitive", False))
+
+        options = {
+            "case_sensitive": True,
+            "method_options": {"predict": {"max_batch_size": 10}},
+        }
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="explain")
+        self.assertTrue(method_options.get("case_sensitive"))
+
 
 if __name__ == "__main__":
     absltest.main()

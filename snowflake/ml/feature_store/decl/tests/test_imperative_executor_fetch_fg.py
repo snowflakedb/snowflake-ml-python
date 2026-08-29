@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.ml.test_utils import pytest_driver
+
 
 def _make_row(
     *,
@@ -350,4 +352,4 @@ class TestFetchFeatureGroupRowsApiFacade:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

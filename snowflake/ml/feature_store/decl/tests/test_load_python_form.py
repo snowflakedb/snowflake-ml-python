@@ -45,6 +45,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     StreamingFeatureView,
     StreamingSource,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _make_sources_tree(
@@ -579,4 +580,4 @@ class TestPythonFormScenario12_NoKindRequired:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

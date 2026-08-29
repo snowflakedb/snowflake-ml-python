@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from snowflake.ml.feature_store.decl.api import (
     fetch_applied_state,
     generate_plan,
@@ -25,6 +23,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     StreamingSource,
 )
 from snowflake.ml.feature_store.decl.types import AppliedState, PlanOptions, SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -215,4 +214,4 @@ class TestEndToEndPipeline:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

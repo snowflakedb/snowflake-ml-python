@@ -6,6 +6,7 @@ py_test(
     srcs = ["hidden_live_commit_integ_test.py"],
     tags = [
         "feature:model_registry",
+        "short_regress",
     ],
     deps = [
         "//snowflake/ml/registry",

@@ -7,10 +7,9 @@ objects (``is``) as the ones exposed by ``spec/enums.py``. ``OpKind``
 remains decl-local.
 """
 
-import pytest
-
 from snowflake.ml.feature_store.decl import enums as decl_enums
 from snowflake.ml.feature_store.spec import enums as spec_enums
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestEnumIdentityParity:
@@ -62,4 +61,4 @@ class TestSpecEnumsHostsConsolidatedNames:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

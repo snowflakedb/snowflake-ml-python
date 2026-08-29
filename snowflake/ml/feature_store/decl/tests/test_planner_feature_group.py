@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_models import FeatureGroup, FeatureViewRef
@@ -31,6 +29,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,7 +86,11 @@ def _applied_with_fg(
     name_upper = (spec_payload.get("name") or "").upper()
     db_upper = (spec_payload.get("database") or "").upper()
     schema_upper = (spec_payload.get("schema") or "").upper()
+    version_upper = str(spec_payload.get("version") or "").upper()
     key = f"FeatureGroup:{db_upper}.{schema_upper}:{name_upper}"
+    # FeatureGroup is a versioned kind — mirror invariants.spec_key.
+    if version_upper:
+        key = f"{key}:{version_upper}"
     ao = AppliedObject(
         key=key,
         kind="FeatureGroup",
@@ -208,4 +211,4 @@ class TestPlannerFGOverAdvancedBfvNoRegression:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

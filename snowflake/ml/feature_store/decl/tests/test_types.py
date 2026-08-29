@@ -8,6 +8,7 @@ import pytest
 
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.types import Plan, PlanFile, PlanOp
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,4 +203,4 @@ class TestDeserializePlan:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

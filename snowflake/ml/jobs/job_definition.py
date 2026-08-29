@@ -266,14 +266,18 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
     def __call__(self, *args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
         # we need session to upload the arguments to the stage if the arg_protocol is PICKLE
         self._ensure_registered()
+        args_list = self._prepare_arguments(*args, **kwargs)
         statement_params = telemetry.get_statement_params(_PROJECT)
         statement_params = telemetry.add_statement_params_custom_tags(
             statement_params,
             custom_tags={
                 "job_definition_id": self.job_definition_id,
+                # Only the counts are logged: argument and environment variable values may carry user
+                # secrets or personal data.
+                "job_args_count": len(args_list or []),
+                "env_vars_count": len(self.env_vars or {}),
             },
         )
-        args_list = self._prepare_arguments(*args, **kwargs)
         query = self.to_sql(job_args=args_list, use_async=True)
         job_id = query_helper.run_query(self.session, query, statement_params=statement_params)[0][0]
         return jb.MLJob[_ReturnValue](job_id, session=self.session)

@@ -1,4 +1,4 @@
-import pytest
+from snowflake.ml.test_utils import pytest_driver
 
 """Tests for decl/serializer.py — spec_to_dict, spec_to_yaml, spec_to_json, callable_to_source."""
 
@@ -449,4 +449,4 @@ class TestPlanFileTargetName:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -20,6 +20,7 @@ import pytest
 
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 from snowflake.ml.feature_store.decl.types import SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Fixture helpers — write a small ``sources/`` tree under ``tmp_path``.
@@ -724,4 +725,4 @@ class TestLoadFromProjectSourceFiles:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

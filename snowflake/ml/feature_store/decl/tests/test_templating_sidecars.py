@@ -29,6 +29,7 @@ from snowflake.ml.feature_store.decl.compiler import (
     inline_udf_source,
 )
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # inline_query_source — sidecar templating (H4)
@@ -335,4 +336,4 @@ class TestCompileSpecPassesTemplateVars:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

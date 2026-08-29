@@ -11,9 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestApiExportSpecsForwardsEntityRows:
@@ -92,4 +91,4 @@ class TestApiExportSpecsForwardsEntityRows:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

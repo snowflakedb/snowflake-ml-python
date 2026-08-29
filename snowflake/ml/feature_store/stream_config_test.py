@@ -524,6 +524,9 @@ class SnowparkTypeToSqlTest(parameterized.TestCase):
     def test_timestamp_type(self) -> None:
         self.assertEqual(_snowpark_type_to_sql(TimestampType()), "TIMESTAMP_NTZ")
 
+    def test_timestamp_type_iceberg(self) -> None:
+        self.assertEqual(_snowpark_type_to_sql(TimestampType(), iceberg=True), "TIMESTAMP_NTZ(6)")
+
 
 class SnowparkTypeToSqlExtendedTest(parameterized.TestCase):
     """Additional _snowpark_type_to_sql tests for types not yet covered."""
@@ -552,6 +555,11 @@ class SnowparkTypeToSqlExtendedTest(parameterized.TestCase):
         from snowflake.snowpark.types import TimeType
 
         self.assertEqual(_snowpark_type_to_sql(TimeType()), "TIME")
+
+    def test_time_type_iceberg(self) -> None:
+        from snowflake.snowpark.types import TimeType
+
+        self.assertEqual(_snowpark_type_to_sql(TimeType(), iceberg=True), "TIME(6)")
 
 
 class StreamConfigStreamSourceObjectTest(absltest.TestCase):

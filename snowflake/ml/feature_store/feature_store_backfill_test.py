@@ -1474,5 +1474,50 @@ class EnsureSnapshotStatusTableBestEffortTest(absltest.TestCase):
             )
 
 
+class CreateOfflineFeatureViewViewQueryTest(absltest.TestCase):
+    """Tests for _create_offline_feature_view_view_query DDL generation."""
+
+    def test_empty_column_descs_omits_column_list(self) -> None:
+        """Tiled FVs pass column_descs='' — the generated VIEW DDL must not
+        contain an empty '()' column list, which Snowflake rejects."""
+        from unittest.mock import MagicMock
+
+        fs = _create_feature_store_with_mocks()
+        mock_fv = MagicMock()
+        mock_fv.desc = ""
+        mock_fv.query = "SELECT * FROM source_table"
+
+        sql = fs._create_offline_feature_view_view_query(
+            " OR REPLACE",
+            "TEST_DB.TEST_SCHEMA.TILED_FV$V1",
+            "",
+            mock_fv,
+            "MY_TAG = 'v'",
+        )
+
+        self.assertNotIn(" ()", sql, "Empty column list '()' must not appear in VIEW DDL")
+        self.assertIn("CREATE OR REPLACE VIEW", sql)
+        self.assertIn("SELECT * FROM source_table", sql)
+
+    def test_non_empty_column_descs_includes_column_list(self) -> None:
+        """Non-tiled FVs pass column_descs with column comments — must be included."""
+        from unittest.mock import MagicMock
+
+        fs = _create_feature_store_with_mocks()
+        mock_fv = MagicMock()
+        mock_fv.desc = ""
+        mock_fv.query = "SELECT user_id, score FROM source_table"
+
+        sql = fs._create_offline_feature_view_view_query(
+            " OR REPLACE",
+            "TEST_DB.TEST_SCHEMA.MY_FV$V1",
+            "user_id COMMENT 'join key', score COMMENT 'feature'",
+            mock_fv,
+            "MY_TAG = 'v'",
+        )
+
+        self.assertIn("(user_id COMMENT 'join key', score COMMENT 'feature')", sql)
+
+
 if __name__ == "__main__":
     absltest.main()

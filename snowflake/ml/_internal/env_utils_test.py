@@ -1177,17 +1177,18 @@ class EnvFileTest(absltest.TestCase):
 
     def test_save_requirements_file_with_pytorch_cuda(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Test with torch==2.5.0 + cuda_version - should add index URL and pin to +cu124
+            # Test with torch==2.5.0 + cuda_version - should pin to +cu124 and return index URL
             rl = [requirements.Requirement("torch==2.5.0"), requirements.Requirement("numpy>=1.0")]
             pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
-            env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
+            pip_extra_index_urls = env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
 
             with open(pip_file_path) as f:
                 content = f.read()
 
-            lines = content.strip().split("\n")
-            # Check index URL is at the top
-            self.assertEqual(lines[0], "--extra-index-url https://download.pytorch.org/whl/cu124")
+            # Index URL must NOT be in requirements.txt (SPCS rejects non-PEP-508 lines)
+            self.assertNotIn("--extra-index-url", content)
+            # Index URL must be returned so callers can persist it elsewhere
+            self.assertEqual(pip_extra_index_urls, ["https://download.pytorch.org/whl/cu124"])
             # Check torch is pinned to CUDA variant
             self.assertIn("torch==2.5.0+cu124", content)
             # Check numpy is unchanged
@@ -1197,12 +1198,13 @@ class EnvFileTest(absltest.TestCase):
             # Test with torch but no cuda_version - should NOT add index URL or modify torch
             rl = [requirements.Requirement("torch==2.5.0")]
             pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
-            env_utils.save_requirements_file(pip_file_path, rl, cuda_version=None)
+            pip_extra_index_urls = env_utils.save_requirements_file(pip_file_path, rl, cuda_version=None)
 
             with open(pip_file_path) as f:
                 content = f.read()
 
             self.assertNotIn("--extra-index-url", content)
+            self.assertEqual(pip_extra_index_urls, [])
             self.assertIn("torch==2.5.0", content)
             self.assertNotIn("+cu", content)
 
@@ -1210,12 +1212,13 @@ class EnvFileTest(absltest.TestCase):
             # Test without torch but with cuda_version - should NOT add index URL
             rl = [requirements.Requirement("numpy>=1.0")]
             pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
-            env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
+            pip_extra_index_urls = env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
 
             with open(pip_file_path) as f:
                 content = f.read()
 
             self.assertNotIn("--extra-index-url", content)
+            self.assertEqual(pip_extra_index_urls, [])
 
     def test_load_requirements_file_with_extra_index_url(self) -> None:
         """Test that load_requirements_file correctly skips pip options like --extra-index-url."""

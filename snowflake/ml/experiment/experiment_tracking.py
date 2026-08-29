@@ -63,9 +63,10 @@ class ExperimentTracking:
             schema_name: The name of the schema. If None, the current schema of the session
                 will be used. If there is no active schema, the PUBLIC schema will be used. Defaults to None.
             capture_source_info: If True, each new run records best-effort source provenance — the
-                entry-point filename and any surrounding git commit, branch, and remote URL. Set to
-                False to skip collection entirely. Collection is always non-fatal and never blocks
-                run creation. Defaults to True.
+                entry-point filename, any surrounding git commit, branch, and remote URL, and the id
+                of the enclosing ML job when running inside one. Set to False to skip collection
+                entirely. Collection is always non-fatal and never blocks run creation. Defaults to
+                True.
 
         Raises:
             ValueError: If no database is provided and no active database exists in the session.
