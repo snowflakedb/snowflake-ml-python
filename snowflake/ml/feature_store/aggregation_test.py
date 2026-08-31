@@ -114,6 +114,18 @@ class AggregationTypeTest(absltest.TestCase):
         self.assertTrue(AggregationType.FIRST_N.is_list())
         self.assertTrue(AggregationType.FIRST_DISTINCT_N.is_list())
 
+    def test_std_value_is_std_and_accepts_stddev(self) -> None:
+        """STD keeps the short ``std`` token on the imperative wire.
+
+        The enum value stays ``"std"`` so imperative serialization, clients,
+        and default column names are unchanged. Snowflake's SPECIFICATION
+        spelling ``"stddev"`` is still accepted on read and resolves back to
+        ``STD`` via ``_missing_``.
+        """
+        self.assertEqual(AggregationType.STD.value, "std")
+        self.assertIs(AggregationType("std"), AggregationType.STD)
+        self.assertIs(AggregationType("stddev"), AggregationType.STD)
+
 
 class AggregationSpecTest(absltest.TestCase):
     """Unit tests for AggregationSpec dataclass."""
@@ -256,6 +268,26 @@ class AggregationSpecTest(absltest.TestCase):
         spec2 = AggregationSpec.from_dict(spec_dict)
         self.assertEqual(spec, spec2)
 
+    def test_std_to_dict_uses_std_spelling(self) -> None:
+        """A STDDEV aggregation serializes its function as the wire token ``std``.
+
+        The imperative wire spelling stays ``"std"``; ``from_dict`` still
+        accepts Snowflake's SPECIFICATION spelling ``"stddev"`` via the enum
+        ``_missing_`` alias so both round-trip back to ``STD``.
+        """
+        spec = AggregationSpec(
+            function=AggregationType.STD,
+            source_column="amount",
+            window="24h",
+            output_column="amount_std_24h",
+        )
+        spec_dict = spec.to_dict()
+        self.assertEqual(spec_dict["function"], "std")
+        self.assertEqual(AggregationSpec.from_dict(spec_dict), spec)
+
+        stddev_dict = dict(spec_dict, function="stddev")
+        self.assertEqual(AggregationSpec.from_dict(stddev_dict), spec)
+
     def test_source_column_normalized_on_construction(self) -> None:
         """Test that source_column is normalized to SQL identifier form.
 
@@ -396,6 +428,13 @@ class FeatureTest(absltest.TestCase):
         self.assertEqual(spec.function, AggregationType.STD)
         self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
+        self.assertEqual(spec.output_column, "PRICE_STD_24H")
+        self.assertEqual(AggregationType.STD.value, "std")
+
+    def test_stddev_lifetime_default_output_name(self) -> None:
+        """Lifetime stddev also uses the short ``STD`` token in its default name."""
+        spec = Feature.stddev("amount", "lifetime").to_spec()
+        self.assertEqual(spec.output_column, "AMOUNT_STD_LIFETIME")
 
     def test_var(self) -> None:
         """Test Feature.var factory method."""
@@ -685,8 +724,13 @@ class LifetimeWindowTest(absltest.TestCase):
     def test_lifetime_feature_approx_count_distinct_not_supported(self) -> None:
         """Test that lifetime APPROX_COUNT_DISTINCT is not supported."""
         feature = Feature.approx_count_distinct("user_id", "lifetime").alias("unique_users")
-        with self.assertRaisesRegex(ValueError, "Lifetime window is not supported for approx_count_distinct"):
+        with self.assertRaises(ValueError) as ctx:
             feature.to_spec()
+        message = str(ctx.exception)
+        self.assertIn("Lifetime window is not supported for approx_count_distinct", message)
+        # The supported list uses the short enum name ``STD``.
+        self.assertIn("STD", message)
+        self.assertNotIn("STDDEV", message)
 
     def test_lifetime_feature_approx_percentile_not_supported(self) -> None:
         """Test that lifetime APPROX_PERCENTILE is not supported."""

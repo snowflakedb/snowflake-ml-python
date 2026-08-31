@@ -1,6 +1,38 @@
 # Release History
 
-## 1.53.0
+## 1.54.0
+
+### New Features
+
+* Registry: `log_model(..., options={"case_sensitive": True})` and
+  `options={"max_batch_size": N}` apply those settings to all methods. Per-method
+  `method_options` still override the global values.
+
+* Feature Store: `create_online_service` accepts a `size` kwarg naming the size to provision the Online
+  Service at, one of `"XS"`, `"S"`, `"M"`, `"L"`, `"XL"`, `"2XL"`, `"3XL"` (case-insensitive). When
+  omitted, the server-side default applies; accounts that cap the available size provision at their
+  cap. `get_online_service_status()` now reports the provisioned `size`, which is `None` for services
+  created before sizes were recorded.
+
+* Experiment Tracking: Source provenance now also records the id of the enclosing ML job when a run is created from
+  inside one.
+
+### Bug Fixes
+
+* Feature Store: Feature View metadata tags carrying unknown keys (including a legacy `refresh_mode`)
+  no longer fail to deserialize; unknown keys are ignored on read and the tag still does not persist
+  `refresh_mode`.
+* Registry: Fixed `ModelVersion.load()` failing with `ValueError: ... is not a valid SQL identifier`
+  when the model's owner role is a quoted identifier.
+* Feature Store: Fixed FeatureStore.update_feature_view() failing with `SQL compilation error:
+  invalid value 'ADAPTIVE' for property 'REFRESH_MODE'` when enabling online storage for an existing
+  feature view.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.53.0 (2026-08-24)
 
 ### New Features
 
@@ -28,6 +60,10 @@
   other store types.
 
 ### Bug Fixes
+
+* Feature Store: online feature reads and stream ingestion no longer fail while the Online Service is
+  changing size (status `UPDATING_SIZE`). The service serves reads and writes throughout a size
+  change, which can take hours, so it is now treated as serviceable like `UPDATING` already was.
 
 ### Behavior Changes
 

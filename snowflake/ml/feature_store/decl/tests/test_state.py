@@ -16,6 +16,7 @@ from snowflake.ml.feature_store.decl.state import (
     _parse_oft_name,
     fetch_applied_state,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -192,14 +193,14 @@ class TestFetchAppliedStateWithDescribeMap:
         assert len(obj.content_hash) == 64  # SHA-256 hex
 
     def test_describe_map_key_format(self) -> None:
-        """Key must be StreamingFeatureView:DB.SCH:CLICK_FV."""
+        """Key must be StreamingFeatureView:DB.SCH:CLICK_FV:V1 (versioned identity)."""
         state = fetch_applied_state(
             [self._SHOW_ROW_NO_SPEC],
             None,
             describe_map={"CLICK_FV$V1$ONLINE": self._DESCRIBE_ROWS},
         )
         key = list(state.objects.keys())[0]
-        assert key == "StreamingFeatureView:DB.SCH:CLICK_FV"
+        assert key == "StreamingFeatureView:DB.SCH:CLICK_FV:V1"
 
     def test_describe_map_content_hash_matches_spec_fingerprint(self) -> None:
         """Hash from DESCRIBE must equal structural_fingerprint_hash of authoring spec."""
@@ -1559,4 +1560,4 @@ class TestParseClusterByIdentifierResolution:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

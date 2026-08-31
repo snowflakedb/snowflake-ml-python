@@ -21,6 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from snowflake.ml.feature_store.decl.spec_models import FeatureGroup, FeatureViewRef
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # FeatureViewRef
@@ -159,4 +160,4 @@ class TestFeatureGroupAcceptsRawDicts:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -13,6 +13,7 @@ class PackageVisibilityTest(absltest.TestCase):
         self.assertIsInstance(model.Model, type)
         self.assertIsInstance(model.ModelVersion, type)
         self.assertIsInstance(model.HuggingFacePipelineModel, type)
+        self.assertIsInstance(model.PeftAdapter, type)
 
     def test_module_visible(self) -> None:
         self.assertIsInstance(custom_model, ModuleType)

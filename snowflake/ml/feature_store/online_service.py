@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 _MAX_QUERY_REQUEST_ROWS = 10
 
+# Kept in sync with the server-side size tiers (FeatureStoreRuntimeSize); adding a new tier here
+# requires an snowflake-ml-python release.
+_VALID_ONLINE_SERVICE_SIZES = ("XS", "S", "M", "L", "XL", "2XL", "3XL")
+
 _ONLINE_SERVICE_NOT_READY_USER_MESSAGE = (
     "Online Service is not RUNNING or the query endpoint is not available. "
     "Online reads for Postgres-backed online feature tables require a running Online Service with a query endpoint. "
@@ -79,11 +83,12 @@ class OnlineServiceStatus:
     """Snapshot returned by ``get_online_service_status``.
 
     Attributes:
-        status: ``"PENDING"``, ``"RUNNING"``, ``"NOT_FOUND"``, or ``"ERROR"``.
+        status: ``"PENDING"``, ``"RUNNING"``, ``"UPDATING"``, ``"UPDATING_SIZE"``, ``"NOT_FOUND"``, or ``"ERROR"``.
         message: Detail for ``status``, when provided.
         endpoints: Ingest/query endpoints; empty until ``"RUNNING"``.
         created_at: Server creation timestamp.
         updated_at: Server last-update timestamp.
+        size: Size the Online Service is provisioned at; ``None`` when the server does not report one.
     """
 
     status: str
@@ -91,6 +96,7 @@ class OnlineServiceStatus:
     endpoints: tuple[OnlineServiceEndpoint, ...] = field(default_factory=tuple)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    size: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -107,9 +113,9 @@ def _parse_status_payload(data: dict[str, Any]) -> OnlineServiceStatus:
     """Parse Online Service status JSON.
 
     Only ``status``, ``message``, ``endpoints`` (each item: ``name``, ``url``,
-    ``privatelink_url``, ``internal_url``), ``created_at``, and ``updated_at``
-    are read. Any other top-level or endpoint keys are ignored (Snowflake may
-    return a superset on some accounts).
+    ``privatelink_url``, ``internal_url``), ``created_at``, ``updated_at``, and
+    ``size`` are read. Any other top-level or endpoint keys are ignored (Snowflake
+    may return a superset on some accounts).
 
     Args:
         data: Parsed JSON object from the system function.
@@ -142,6 +148,7 @@ def _parse_status_payload(data: dict[str, Any]) -> OnlineServiceStatus:
         endpoints=tuple(endpoints),
         created_at=str(data["created_at"]) if data.get("created_at") is not None else None,
         updated_at=str(data["updated_at"]) if data.get("updated_at") is not None else None,
+        size=data.get("size") if isinstance(data.get("size"), str) else None,
     )
 
 
@@ -235,6 +242,7 @@ def create_online_service(
     producer_role: str,
     consumer_role: str,
     *,
+    size: Optional[str] = None,
     statement_params: Optional[dict[str, Any]] = None,
 ) -> OnlineServiceResult:
     if not producer_role.strip() or not consumer_role.strip():
@@ -242,6 +250,19 @@ def create_online_service(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError("producer_role and consumer_role must be non-empty."),
         )
+    if size is not None:
+        if not size.strip():
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("size must be non-empty when provided."),
+            )
+        if size.strip().upper() not in _VALID_ONLINE_SERVICE_SIZES:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"size must be one of {_VALID_ONLINE_SERVICE_SIZES} (case-insensitive), got {size!r}."
+                ),
+            )
     from snowflake.ml.feature_store.feature_view import (
         validate_postgres_online_schema_length,
     )
@@ -252,14 +273,16 @@ def create_online_service(
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT, original_exception=e
         ) from e
-    payload = json.dumps(
-        {
-            "roles": {
-                "producer_role_name": producer_role.strip(),
-                "consumer_role_name": consumer_role.strip(),
-            }
+    properties: dict[str, Any] = {
+        "roles": {
+            "producer_role_name": producer_role.strip(),
+            "consumer_role_name": consumer_role.strip(),
         }
-    )
+    }
+    # Omit the key entirely when unset so the server applies its own default size.
+    if size is not None:
+        properties["size"] = size.strip()
+    payload = json.dumps(properties)
     properties_escaped = snowpark_utils.escape_single_quotes(payload)  # type: ignore[no-untyped-call]
     loc = _escaped_feature_store_locator(database, schema)
     data, query_id = _call_system_function(
@@ -548,9 +571,10 @@ def _assert_online_service_running(
                 "then poll get_online_service_status() until RUNNING."
             ),
         )
-    # UPDATING means a redeploy is in progress; the service is still operational and
-    # serves reads/writes, so treat it like RUNNING as long as an endpoint is available.
-    if st.status not in ("RUNNING", "UPDATING"):
+    # UPDATING means a redeploy is in progress and UPDATING_SIZE means a size change is; the
+    # service is still operational and serves reads/writes in both, so treat them like RUNNING
+    # as long as an endpoint is available. A size change can stay in flight for hours.
+    if st.status not in ("RUNNING", "UPDATING", "UPDATING_SIZE"):
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError(

@@ -125,13 +125,11 @@ class PlanOptions(BaseModel):
     """Options that control plan generation behaviour.
 
     Attributes:
-        dev_mode: Auto-generate timestamp versions; skip version conflict checks.
         overwrite: Force apply even when version or column checks fail.
         allow_recreate: Allow destructive schema changes that require re-materialization.
         full_directory_mode: Only True when ``./...`` is specified; enables deletion detection.
     """
 
-    dev_mode: bool = False
     overwrite: bool = False
     allow_recreate: bool = False
     full_directory_mode: bool = False

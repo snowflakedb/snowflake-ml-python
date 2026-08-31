@@ -325,3 +325,25 @@ py_test(
         "//snowflake/ml/model/_packager/model_meta",
     ],
 )
+
+py_test(
+    name = "peft_adapter_handler_test",
+    srcs = ["peft_adapter_handler_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:openai_signatures",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_packager/model_handlers:peft_adapter",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
+        "//snowflake/ml/model/models:huggingface",
+        "//snowflake/ml/test_utils:exception_utils",
+    ],
+)

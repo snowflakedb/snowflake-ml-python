@@ -55,6 +55,36 @@ def compare_dataframe(
     )
 
 
+# AUTO may resolve to INCREMENTAL, ADAPTIVE, or FULL. These cover DTs that used to be INCREMENTAL.
+INCREMENTALIZABLE_REFRESH_MODES = frozenset({"INCREMENTAL", "ADAPTIVE"})
+
+
+def is_incrementalizable_refresh_mode(actual: Optional[str]) -> bool:
+    """Return whether ``actual`` is INCREMENTAL or ADAPTIVE.
+
+    Args:
+        actual: Refresh mode reported by Snowflake or ``list_feature_views``.
+
+    Returns:
+        True if ``actual`` is incrementalizable.
+    """
+    return actual in INCREMENTALIZABLE_REFRESH_MODES
+
+
+def is_list_refresh_modes_incrementalizable(actual_df: pd.DataFrame) -> bool:
+    """Return whether every ``REFRESH_MODE`` in ``actual_df`` is incrementalizable.
+
+    Args:
+        actual_df: Pandas frame from ``FeatureStore.list_feature_views()``.
+
+    Returns:
+        True if the column exists and every value is incrementalizable.
+    """
+    if "REFRESH_MODE" not in actual_df.columns:
+        return False
+    return all(is_incrementalizable_refresh_mode(mode) for mode in actual_df["REFRESH_MODE"])
+
+
 def compare_feature_views(actual_fvs: list[FeatureView], target_fvs: list[FeatureView]) -> None:
     assert len(actual_fvs) == len(target_fvs)
     for actual_fv, target_fv in zip(actual_fvs, target_fvs):

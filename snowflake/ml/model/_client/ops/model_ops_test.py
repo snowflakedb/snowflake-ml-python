@@ -2890,6 +2890,33 @@ class ModelOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
+    @parameterized.parameters(  # type: ignore[misc]
+        ("APP-INF-SNF_FRDM_DATA_SCIENCE",),
+        ("APP INF ROLE",),
+        ("123ROLE",),
+    )
+    def test_get_model_owner_quoted_role(self, stored_role: str) -> None:
+        m_list_res = [
+            Row(
+                created_on="06/01",
+                name="MODEL",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="v1",
+                owner=stored_role,
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res):
+            res = self.m_ops.get_model_owner(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier(stored_role, case_sensitive=True))
+
     def test_system_aliases(self) -> None:
         m_list_res = [
             Row(

@@ -60,6 +60,7 @@ py_test(
     deps = [
         ":function_generator",
         ":model_method",
+        "//snowflake/ml/model:type_hints",
     ],
 )
 
@@ -95,6 +96,7 @@ py_test(
         ":function_generator",
         ":model_method",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
     ],

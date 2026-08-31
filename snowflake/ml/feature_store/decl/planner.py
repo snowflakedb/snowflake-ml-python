@@ -296,18 +296,39 @@ def _refresh_freq_drifted(
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
     rem_spec = applied_payload.get("spec") if isinstance(applied_payload.get("spec"), dict) else {}
-    rem_target_lag_sec = rem_spec.get("target_lag_sec") if isinstance(rem_spec, dict) else None
-    if rem_target_lag_sec is None:
-        # Fall back to the top-level row-shaped key the imperative
-        # ``list_feature_views()`` returns; B-state surfaces it here
-        # for offline-only BFVs that lack a SPECIFICATION payload.
-        raw_top = applied_payload.get("refresh_freq")
-        if isinstance(raw_top, str) and raw_top.strip():
-            try:
-                _parsed_top = parse_duration_to_seconds(raw_top)
-                rem_target_lag_sec = int(_parsed_top) if _parsed_top is not None else None
-            except Exception:  # noqa: BLE001
-                rem_target_lag_sec = None
+    kind = applied_payload.get("kind") or (rem_spec.get("kind") if isinstance(rem_spec, dict) else None)
+    is_streaming = kind == "StreamingFeatureView"
+
+    # The applied-side comparand is the offline Dynamic Table cadence.
+    # Prefer the recovered authoring-form ``spec.refresh_freq`` (plumbed
+    # by ``state._inject_fv_refresh_freq_from_list_row`` from the deployed
+    # DT's ``REFRESH_FREQ``).  For a **streaming** FV, ``spec.target_lag_sec``
+    # is the Online Feature Table's ingest lag — the runtime stamps it to
+    # ``0`` regardless of the DT cadence — so it must NEVER be read as the
+    # DT cadence here (doing so drifts ``300 != 0`` and emits a spurious
+    # ``UPDATE_FV`` every replan).  Batch FVs keep the ``target_lag_sec``
+    # fallback (their wire value is the DT cadence).
+    rem_refresh_raw = rem_spec.get("refresh_freq") if isinstance(rem_spec, dict) else None
+    rem_target_lag_sec: int | None = None
+    if isinstance(rem_refresh_raw, str) and rem_refresh_raw.strip():
+        try:
+            _parsed_rem = parse_duration_to_seconds(rem_refresh_raw)
+            rem_target_lag_sec = int(_parsed_rem) if _parsed_rem is not None else None
+        except Exception:  # noqa: BLE001
+            rem_target_lag_sec = None
+    elif not is_streaming:
+        rem_target_lag_sec = rem_spec.get("target_lag_sec") if isinstance(rem_spec, dict) else None
+        if rem_target_lag_sec is None:
+            # Fall back to the top-level row-shaped key the imperative
+            # ``list_feature_views()`` returns; B-state surfaces it here
+            # for offline-only BFVs that lack a SPECIFICATION payload.
+            raw_top = applied_payload.get("refresh_freq")
+            if isinstance(raw_top, str) and raw_top.strip():
+                try:
+                    _parsed_top = parse_duration_to_seconds(raw_top)
+                    rem_target_lag_sec = int(_parsed_top) if _parsed_top is not None else None
+                except Exception:  # noqa: BLE001
+                    rem_target_lag_sec = None
 
     # Primary path: derive local seconds from ``refresh_freq`` (the
     # canonical DT cadence source) and compare against the applied

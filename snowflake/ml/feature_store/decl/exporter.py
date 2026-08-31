@@ -182,22 +182,35 @@ def _build_full_fidelity_fv(
     # the applied inner spec (``state._inject_fv_refresh_freq_from_list_row``
     # populates it from the deployed DT's ``REFRESH_FREQ``) and fall
     # back to deriving ``"<n> seconds"`` from the wire-form
-    # ``target_lag_sec`` when only that key is present.  Streaming and
-    # realtime kinds are excluded entirely: the runtime stamps
-    # ``target_lag_sec: 0`` regardless of the authored value, and the
-    # spec-validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
-    # now rejects authoring ``refresh_freq`` on those kinds entirely.
-    # The wire-form ``target_lag_sec`` is no longer emitted at the top
-    # level — ``refresh_freq`` is the single authoring surface for the
-    # DT refresh cadence after the
-    # ``feature_granularity`` / ``refresh_freq`` / ``target_lag``
-    # decoupling.
+    # ``target_lag_sec`` when only that key is present.  A **tiled**
+    # streaming FV also emits ``refresh_freq`` — it schedules an offline
+    # tile Dynamic Table whose ``REFRESH_FREQ`` state recovery plumbs onto
+    # ``spec.refresh_freq`` — but ONLY from the recovered ``refresh_freq``
+    # key, never derived from ``target_lag_sec`` (the OFT ingest lag the
+    # runtime stamps to ``0``).  Non-tiled streaming and realtime kinds
+    # are excluded entirely: they have no offline DT and the spec
+    # validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
+    # rejects authoring ``refresh_freq`` there, so emitting it would break
+    # the ``snow feature init`` -> ``snow feature plan`` round-trip.  The
+    # wire-form ``target_lag_sec`` is never emitted at the top level —
+    # ``refresh_freq`` is the single authoring surface for the DT refresh
+    # cadence after the ``feature_granularity`` / ``refresh_freq`` /
+    # ``target_lag`` decoupling.
+    _inner_features = inner.get("features") or []
+    _inner_is_tiled = any(
+        isinstance(f, dict) and (f.get("window_sec") is not None or f.get("window") is not None)
+        for f in _inner_features
+    )
     if kind == "BatchFeatureView":
         rf = inner.get("refresh_freq")
         if isinstance(rf, str) and rf:
             fv_doc["refresh_freq"] = rf
         elif "target_lag_sec" in inner and inner["target_lag_sec"] is not None:
             fv_doc["refresh_freq"] = f"{int(inner['target_lag_sec'])} seconds"
+    elif kind == "StreamingFeatureView" and _inner_is_tiled:
+        rf = inner.get("refresh_freq")
+        if isinstance(rf, str) and rf:
+            fv_doc["refresh_freq"] = rf
 
     sources = inner.get("sources")
     if isinstance(sources, list):
@@ -1222,6 +1235,23 @@ def export_specs(
     seen_entities: set[str] = set()
     created: list[str] = []
 
+    # Version-qualify the on-disk stem for versioned kinds so two versions of
+    # one name land in distinct files.  Identity is derived from the YAML
+    # body (``spec_key`` reads name+version), so the stem is cosmetic — but a
+    # name-only stem makes the second FV ``write_text`` overwrite the first and
+    # the FG loop skip the duplicate, so only one version survives on disk and
+    # a following ``plan ./...`` proposes a destructive DROP for the missing
+    # one.  ``version`` is regex-safe (``V1`` etc.), so the shared UDF ``.py``
+    # sidecar stem (allowlist ``[A-Za-z0-9_-]+``) stays valid.
+    def _versioned_stem(base: str, version: Any) -> str:
+        v = str(version or "").strip()
+        return f"{base}_{v}" if v else base
+
+    # Track stems per directory and hard-fail on a residual collision rather
+    # than silently overwriting / skipping a version — an error is recoverable,
+    # a dropped version is not.
+    seen_fv_stems: set[str] = set()
+
     for row in show_rows:
         raw_name = row.get("name", "")
         db = row.get("database_name", database)
@@ -1242,7 +1272,15 @@ def export_specs(
             fallback_database=db,
             fallback_schema=sch,
         )
-        file_stem = str(fv_doc.get("name") or fallback_name)
+        base_stem = str(fv_doc.get("name") or fallback_name)
+        file_stem = _versioned_stem(base_stem, fv_doc.get("version"))
+        if file_stem in seen_fv_stems:
+            raise ValueError(
+                f"FeatureView export stem collision on '{file_stem}.yaml': two "
+                f"feature views resolve to the same (name, version). Refusing to "
+                f"overwrite a version's YAML — resolve the duplicate before export."
+            )
+        seen_fv_stems.add(file_stem)
 
         # Extract UDF source into a sibling ``.py`` file before serializing the
         # YAML, so the YAML carries a ``file:`` reference instead of inlining
@@ -1287,9 +1325,14 @@ def export_specs(
         seen_fg_files: set[str] = set()
         for row in feature_group_rows:
             fg_doc = _build_fg_yaml_doc(row)
-            file_stem = str(fg_doc["name"])
+            file_stem = _versioned_stem(str(fg_doc["name"]), fg_doc.get("version"))
             if file_stem in seen_fg_files:
-                continue
+                raise ValueError(
+                    f"FeatureGroup export stem collision on '{file_stem}.yaml': "
+                    f"two feature groups resolve to the same (name, version). "
+                    f"Refusing to skip a version's YAML — resolve the duplicate "
+                    f"before export."
+                )
             seen_fg_files.add(file_stem)
             fg_path = feature_groups_dir / f"{file_stem}.yaml"
             fg_path.write_text(yaml.dump(_ordered_fg_doc(fg_doc), default_flow_style=False, sort_keys=False))

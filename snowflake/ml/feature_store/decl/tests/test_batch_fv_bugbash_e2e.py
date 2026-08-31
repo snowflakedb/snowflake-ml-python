@@ -25,8 +25,6 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.compiler import normalize_sql_whitespace
 from snowflake.ml.feature_store.decl.invariants import _full_spec_hash
@@ -35,6 +33,7 @@ from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
 from snowflake.ml.feature_store.decl.types import AppliedState, PlanOptions, SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Doc constants — keep verbatim with declarative_feature_store/BATCH_FV_BUG_BASH.md §5
@@ -970,7 +969,7 @@ class TestAppliedStateHashConvergence:
         local_hash = _full_spec_hash(local_compiled)
 
         applied = _online_applied_state()
-        key = f"BatchFeatureView:{_DB}.{_SCH}:{_TABLE_FV_NAME}"
+        key = f"BatchFeatureView:{_DB}.{_SCH}:{_TABLE_FV_NAME}:{_FV_VERSION}"
         assert key in applied.objects, sorted(applied.objects)
         applied_obj = applied.objects[key]
         assert applied_obj.content_hash == local_hash, (
@@ -986,7 +985,7 @@ class TestAppliedStateHashConvergence:
         local_hash = _full_spec_hash(local_compiled)
 
         applied = _online_applied_state()
-        key = f"BatchFeatureView:{_DB}.{_SCH}:{_SQL_FV_NAME}"
+        key = f"BatchFeatureView:{_DB}.{_SCH}:{_SQL_FV_NAME}:{_FV_VERSION}"
         assert key in applied.objects, sorted(applied.objects)
         applied_obj = applied.objects[key]
         assert applied_obj.content_hash == local_hash, (
@@ -995,4 +994,4 @@ class TestAppliedStateHashConvergence:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

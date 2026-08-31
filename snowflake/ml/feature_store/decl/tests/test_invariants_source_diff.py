@@ -30,6 +30,7 @@ from typing import Any
 import pytest
 
 from snowflake.ml.feature_store.decl.invariants import compute_source_diff_kind
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -414,4 +415,4 @@ class TestComputeSourceDiffKindQueryCanonicalization:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

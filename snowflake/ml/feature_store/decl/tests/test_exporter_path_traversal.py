@@ -20,6 +20,7 @@ from snowflake.ml.feature_store.decl.exporter import (
     _extract_udf_to_py_file,
     export_specs,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # Stems that must be rejected: parent-dir escapes, embedded separators, and
 # anything outside the ``[A-Za-z0-9_-]`` allowlist.
@@ -137,3 +138,7 @@ class TestExportSpecsRejectsTraversalName:
 
         # The crafted name must not have written a sidecar outside the tree.
         assert list(tmp_path.rglob("escape.py")) == []
+
+
+if __name__ == "__main__":
+    pytest_driver.main()

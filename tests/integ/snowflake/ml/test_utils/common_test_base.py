@@ -12,14 +12,11 @@ from absl.testing import absltest, parameterized
 from packaging import requirements, specifiers
 from typing_extensions import Concatenate, ParamSpec
 
-from snowflake.ml._internal import env, env_utils, file_utils, platform_capabilities
+from snowflake.ml._internal import env, env_utils, file_utils
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.snowpark import functions as F, session
 from snowflake.snowpark._internal import udf_utils, utils as snowpark_utils
 from tests.integ.snowflake.ml.test_utils import _snowml_requirements, test_env_utils
-
-# Force hidden live commit in registry integ tests until client release enables the server flag.
-_ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG = True
 
 _V = TypeVar("_V", bound="CommonTestBase")
 _T_args = ParamSpec("_T_args")
@@ -123,19 +120,8 @@ def get_modified_test_cases(
 class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self._hidden_live_commit_patcher: Optional[Any] = None
-        if _ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG:
-            self._hidden_live_commit_patcher = mock.patch.object(
-                platform_capabilities.PlatformCapabilities,
-                "is_hidden_live_commit_enabled",
-                return_value=True,
-            )
-            self._hidden_live_commit_patcher.start()
-
         self.session = test_env_utils.get_available_session()
-
-        if _ENABLE_HIDDEN_LIVE_COMMIT_IN_INTEG:
-            self._enable_hidden_live_version_session_parameters()
+        self._enable_hidden_live_version_session_parameters()
 
         try:
             snowflake_version = snowflake_env.get_current_snowflake_version(self.session)
@@ -149,12 +135,6 @@ class CommonTestBase(parameterized.TestCase):
         except ImportError:
             pass
 
-    def tearDown(self) -> None:
-        if self._hidden_live_commit_patcher is not None:
-            self._hidden_live_commit_patcher.stop()
-        if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            self.session.close()
-
     def _enable_hidden_live_version_session_parameters(self) -> None:
         """Enable server-side hidden live version support for the current session.
 
@@ -163,11 +143,15 @@ class CommonTestBase(parameterized.TestCase):
         live objects. Older deployments that do not recognize these parameters are
         tolerated so the client fallback path can still be exercised.
         """
-        for parameter in ("ENABLE_HIDDEN_LIVE_VERSION_IN_MODEL", "HIDE_LIVE_MODEL_AND_VERSIONS"):
+        for parameter in ["ENABLE_HIDDEN_LIVE_VERSION_IN_MODEL", "HIDE_LIVE_MODEL_AND_VERSIONS"]:
             try:
                 self.session.sql(f"ALTER SESSION SET {parameter} = TRUE").collect()
             except Exception as e:
                 logging.warning(f"Failed to set session parameter {parameter}: {e}")
+
+    def tearDown(self) -> None:
+        if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            self.session.close()
 
     def _enable_hf_hub_download_retry(self) -> None:
         """Patch HuggingFace Hub downloads with exponential backoff for this test.

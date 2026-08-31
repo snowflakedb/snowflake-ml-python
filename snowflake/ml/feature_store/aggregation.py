@@ -33,6 +33,12 @@ class AggregationType(Enum):
     - Sketch aggregations (APPROX_COUNT_DISTINCT, APPROX_PERCENTILE): Stored as mergeable state in tiles
     - List aggregations (LAST_N, LAST_DISTINCT_N, FIRST_N, FIRST_DISTINCT_N): Stored as arrays in tiles
     - Secondary-key array (_SECONDARY_KEY_ARRAY): Internal-only ARRAY_AGG of the secondary-key column
+
+    Each value is the short function token used in the imperative metadata
+    tag / FeatureView JSON and in auto-generated output column names. Snowflake
+    ``DESCRIBE ... TYPE = SPECIFICATION`` reports its own SQL spelling for some
+    functions (e.g. ``stddev`` for ``STD``); the declarative layer reconciles
+    that spelling on read/hash rather than changing these values.
     """
 
     SUM = "sum"
@@ -49,6 +55,25 @@ class AggregationType(Enum):
     FIRST_N = "first_n"
     FIRST_DISTINCT_N = "first_distinct_n"
     _SECONDARY_KEY_ARRAY = "secondary_key_array"
+
+    @classmethod
+    def _missing_(cls, value: object) -> AggregationType | None:
+        """Accept Snowflake's SPECIFICATION spelling ``stddev`` as ``STD``.
+
+        The imperative wire token stays ``"std"``; ``DESCRIBE ... TYPE =
+        SPECIFICATION`` reports ``"stddev"`` for the same function, so reads of
+        the applied spec must resolve that spelling back to ``STD``.
+
+        Args:
+            value: The raw value that failed direct enum lookup.
+
+        Returns:
+            ``STD`` when ``value`` is the string ``"stddev"`` (case-insensitive),
+            otherwise ``None`` to preserve the standard ``ValueError``.
+        """
+        if isinstance(value, str) and value.lower() == "stddev":
+            return cls.STD
+        return None
 
     def is_simple(self) -> bool:
         """Check if this is a simple aggregation (scalar result per tile).
@@ -223,7 +248,7 @@ class AggregationSpec:
                 AggregationType.VAR,
             )
             if self.function not in supported_lifetime_types:
-                supported_names = ", ".join(t.value.upper() for t in supported_lifetime_types)
+                supported_names = ", ".join(t.name for t in supported_lifetime_types)
                 raise ValueError(
                     f"Lifetime window is not supported for {self.function.value} aggregation "
                     f"'{self.output_column}'. Lifetime is only supported for: {supported_names}."

@@ -166,6 +166,16 @@ Same five touchpoints every time:
 
 Add a row to `tests/test_advanced_bvt_fields.py` and remove the `xfail` marker.
 
+**`aggregation_secondary_keys` is not tiled-only.** It is a structural BFV
+knob (`RECREATE_FV`, max length 1) that is valid on **both** tiled and
+non-tiled BFVs — on a tiled FV it adds a secondary group-by to each
+aggregation; on a non-tiled (passthrough) FV it is still a spec/OFT identity
+column (folded into `entity_columns` / `secondary_key_columns`, and the
+POSTGRES OFT primary key). Do not re-add a tiled-only authoring gate: the
+imperative side persists non-tiled SK and the exporter re-emits it, so a
+tiled-only reject would break the `snow feature init` round-trip. Only the
+length-1 cap (`BATCH_FV_SECONDARY_KEYS_MAX_LENGTH`) is enforced.
+
 ## Public API (`api.py`)
 
 ```python

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from snowflake.ml.feature_store.decl.queries import (
     describe_columns_query,
     describe_query,
@@ -13,6 +11,7 @@ from snowflake.ml.feature_store.decl.queries import (
     list_state_queries,
     state_queries,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # state_queries
@@ -380,4 +379,4 @@ class TestDynamicTablesQuery:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -118,6 +118,59 @@ class ManagerTest(parameterized.TestCase):
         _, call_kwargs = mock_create.call_args
         self.assertIs(call_kwargs.get("parallel"), True)
 
+    @staticmethod
+    def _get_logged_func_params(mock_telemetry_client: MagicMock, func_name_suffix: str) -> dict[str, Any]:
+        client = mock_telemetry_client.return_value
+        for call in client.send_function_usage_telemetry.call_args_list:
+            if call.kwargs["func_name"].endswith(func_name_suffix):
+                return dict(call.kwargs["func_params"] or {})
+        raise AssertionError(f"no usage telemetry was sent for {func_name_suffix}")
+
+    def test_submit_file_telemetry_logs_params_passed_as_kwargs(self) -> None:
+        """Job submission telemetry must capture the parameters that reach _submit_job through **kwargs.
+
+        Most of the job submission API surface is declared as **kwargs rather than as named parameters,
+        so telemetry has to read those values from the keyword arguments of the call. args and env_vars
+        are excluded because their values may carry user secrets or personal data.
+        """
+        with patch(
+            "snowflake.ml.jobs.manager.MLJobDefinition._create",
+            return_value=MagicMock(return_value=MagicMock()),
+        ), patch("snowflake.ml._internal.telemetry._get_snowflake_connection", return_value=MagicMock(),), patch(
+            "snowflake.ml._internal.telemetry._SourceTelemetryClient", autospec=True
+        ) as mock_telemetry_client:
+            jobs.submit_file(
+                "entry.py",
+                "POOL",
+                stage_name="@payload_stage",
+                args=["--epochs", "3"],
+                target_instances=2,
+                pip_requirements=["numpy"],
+                external_access_integrations=["PYPI_EAI"],
+                min_instances=1,
+                enable_metrics=True,
+                query_warehouse="TEST_WH",
+                runtime_environment="1.7.1",
+                env_vars={"SECRET_TOKEN": "do_not_log_me"},
+                spec_overrides={"spec": {}},
+                session=MagicMock(),
+            )
+
+        func_params = self._get_logged_func_params(mock_telemetry_client, "_submit_job")
+        self.assertEqual(
+            {
+                "pip_requirements": "['numpy']",
+                "external_access_integrations": "['PYPI_EAI']",
+                "target_instances": "2",
+                "min_instances": "1",
+                "enable_metrics": "True",
+                "query_warehouse": "'TEST_WH'",
+                "runtime_environment": "'1.7.1'",
+            },
+            func_params,
+        )
+        self.assertNotIn("do_not_log_me", repr(func_params))
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -48,6 +48,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
     SourceRef,
     StreamingFeatureView,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestFeatureViewAcceptsNewKeys:
@@ -338,4 +339,4 @@ class TestExporterEmitsAuthoringKeys:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -12,10 +12,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.api import enrich_list_results
 from snowflake.ml.feature_store.decl.types import ObjectKind
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -566,4 +565,4 @@ class TestEnrichListResultsBackwardCompat:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

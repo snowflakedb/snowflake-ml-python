@@ -17,6 +17,8 @@ import inspect
 
 import pytest
 
+from snowflake.ml.test_utils import pytest_driver
+
 _VALID_PANDAS_UDF = """
 import pandas as pd
 
@@ -121,4 +123,4 @@ class TestCompileUdfCallable:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -66,6 +66,10 @@ class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
         """
         st = self.fs.get_online_service_status()
         self.assertEqual(st.status, "RUNNING")
+        # The service was created without an explicit size, so the server default applies. Assert only
+        # that a size round-trips: the exact default is a server-side choice and accounts may cap it.
+        self.assertIsInstance(st.size, str)
+        self.assertTrue(st.size, "expected a size when status=RUNNING")
         self.assertTrue(st.endpoints, "expected at least one endpoint when status=RUNNING")
         for ep in st.endpoints:
             self.assertTrue(

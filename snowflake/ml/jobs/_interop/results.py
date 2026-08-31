@@ -55,13 +55,10 @@ class LoadedExecutionResult(ExecutionResult):
 class DistributedResult:
     """Aggregated result of a multi-node job that has no single result-bearing instance.
 
-    For jobs where every instance runs the entrypoint independently — no head/worker
-    split (e.g. submitted with parallel=True) — there is no single head result to read.
-    Instead this LEFT-JOINs every instance's per-instance record onto the authoritative
-    control-plane instance set.
+    Results are reduced over the submitted target instance range.
 
     Args:
-        success: True iff every instance in the control-plane set exited 0.
+        success: True iff all declared instances exited 0.
         exit_codes: instance_id -> exit code; None = lost (killed before writing a record).
         failed_instance: Earliest-failing instance id; None on success.
         return_value: The run's Python return value on success — persisted by instance 0, if the

@@ -27,6 +27,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.ml.test_utils import pytest_driver
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -256,8 +258,10 @@ class TestExecutorRefreshFreqOnlyFromBatchSchedule:
         # Tiled streaming FV with feature_granularity but no
         # refresh_freq.  Pre-fix: refresh_freq silently defaulted to
         # the granularity.  Post-fix: the executor passes no
-        # refresh_freq and the imperative FeatureView constructor
-        # raises (matching the imperative-API contract for tiled FVs).
+        # refresh_freq (granularity is never a cadence source) and the
+        # imperative FeatureView constructor raises — matching the
+        # imperative-API contract for tiled FVs and the decl
+        # STREAM_FV_TILING_REFRESH invariant.
         payload = _minimal_streaming_payload(
             feature_granularity_sec=300,
             feature_aggregation_method="tiles",
@@ -272,6 +276,27 @@ class TestExecutorRefreshFreqOnlyFromBatchSchedule:
         )
         kwargs = self._run(payload)
         assert "refresh_freq" not in kwargs
+
+    def test_refresh_freq_forwarded_for_streaming_tiled(self) -> None:
+        # A tiled streaming FV that authors refresh_freq: the executor
+        # forwards it to FeatureView(refresh_freq=...) — it drives the
+        # offline tile Dynamic Table's TARGET_LAG (distinct from the
+        # OFT's runtime-stamped ingest lag).
+        payload = _minimal_streaming_payload(
+            refresh_freq="1 minute",
+            feature_granularity_sec=300,
+            feature_aggregation_method="tiles",
+            features=[
+                {
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_1H", "type": "DoubleType"},
+                    "function": "sum",
+                    "window_sec": 3600,
+                }
+            ],
+        )
+        kwargs = self._run(payload)
+        assert kwargs.get("refresh_freq") == "1 minute"
 
     def test_feature_granularity_does_not_default_refresh_freq_for_batch_tiled(
         self,
@@ -583,4 +608,4 @@ class TestExporterEmitsBatchScheduleForDTRefresh:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

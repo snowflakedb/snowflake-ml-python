@@ -39,7 +39,10 @@ py_library(
     srcs = ["huggingface.py"],
     deps = [
         "//snowflake/ml/_internal:file_utils",
+        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal:type_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:compute_pool",
@@ -55,5 +58,21 @@ py_test(
     ],
     deps = [
         ":huggingface",
+    ],
+)
+
+py_test(
+    name = "peft_test",
+    srcs = ["peft_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":huggingface",
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/test_utils:exception_utils",
     ],
 )

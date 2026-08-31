@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -40,6 +41,91 @@ MODEL_LOG_PATH_TAG = "model_log_path"
 MODEL_LOG_PATH_LIVE_COMMIT = "live_commit"
 MODEL_LOG_PATH_FROM_STAGE = "from_stage"
 MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK = "live_commit_fallback"
+_TELEMETRY_PROJECT = "MLOps"
+_TELEMETRY_SUBPROJECT = "ModelManagement"
+
+
+def _sfqids_from_exception(exc: BaseException) -> list[str]:
+    sfqid = getattr(exc, "sfqid", None)
+    if isinstance(sfqid, str) and sfqid:
+        return [sfqid]
+    return []
+
+
+def _parse_sfqids_value(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(query_id) for query_id in value if query_id]
+    if isinstance(value, str) and value:
+        return [part for part in value.split(",") if part]
+    return []
+
+
+def _chain_sfqids_into_statement_params(
+    statement_params: Optional[dict[str, Any]],
+    sfqids: list[str],
+) -> Optional[dict[str, Any]]:
+    """Append query IDs onto statement params so later SQL can be joined to the live-commit attempt."""
+    if not statement_params or not sfqids:
+        return statement_params
+
+    existing_custom_tags = statement_params.get(telemetry.TelemetryField.KEY_CUSTOM_TAGS.value) or {}
+    existing_sfqids = _parse_sfqids_value(
+        existing_custom_tags.get(telemetry.TelemetryField.KEY_SFQIDS.value)
+        if isinstance(existing_custom_tags, dict)
+        else None
+    )
+    if not existing_sfqids:
+        existing_sfqids = _parse_sfqids_value(statement_params.get(telemetry.TelemetryField.KEY_SFQIDS.value))
+
+    chained_sfqids = list(existing_sfqids)
+    for query_id in sfqids:
+        if query_id and query_id not in chained_sfqids:
+            chained_sfqids.append(query_id)
+    if not chained_sfqids:
+        return statement_params
+
+    return telemetry.add_statement_params_custom_tags(
+        statement_params,
+        {telemetry.TelemetryField.KEY_SFQIDS.value: ",".join(chained_sfqids)},
+    )
+
+
+def _live_commit_fallback_func_name() -> str:
+    log_model_fn = ModelManager._log_model
+    module_name = getattr(log_model_fn, "__module__", None)
+    qualname = log_model_fn.__qualname__
+    func_name = f"{module_name}.{qualname}" if module_name else qualname
+    return f"{func_name}.live_commit_fallback"
+
+
+def _send_live_commit_fallback_telemetry(exc: BaseException, *, sfqids: list[str]) -> None:
+    """Emit client telemetry for a swallowed live-commit failure. Must not raise."""
+    try:
+        error_code = (
+            error_codes.INTERNAL_SNOWPARK_ERROR
+            if isinstance(exc, snowpark_exceptions.SnowparkSQLException)
+            else error_codes.INTERNAL_PYTHON_ERROR
+        )
+        telemetry.send_custom_usage(
+            project=_TELEMETRY_PROJECT,
+            telemetry_type=f"snowml_{telemetry.TelemetryField.TYPE_FUNCTION_USAGE.value}",
+            subproject=_TELEMETRY_SUBPROJECT,
+            data={
+                telemetry.TelemetryField.KEY_FUNC_NAME.value: _live_commit_fallback_func_name(),
+                telemetry.TelemetryField.KEY_CATEGORY.value: telemetry.TelemetryField.FUNC_CAT_USAGE.value,
+                telemetry.TelemetryField.KEY_SFQIDS.value: sfqids,
+                telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
+                    MODEL_LOG_PATH_TAG: MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                },
+            },
+            **{
+                telemetry.TelemetryField.KEY_ERROR_INFO.value: repr(exc),
+                telemetry.TelemetryField.KEY_ERROR_CODE.value: error_code,
+                telemetry.TelemetryField.KEY_STACK_TRACE.value: traceback.format_exc(),
+            },
+        )
+    except Exception:
+        logger.debug("live commit fallback telemetry emit failed", exc_info=True)
 
 
 def _validate_user_model_save_options(
@@ -285,9 +371,10 @@ class ModelManager:
                         statement_params=statement_params,
                     )
             except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
-                logger.info(
-                    f"Failed to create hidden live model version: {e}, falling back to regular model version creation"
-                )
+                live_commit_sfqids = _sfqids_from_exception(e)
+                _send_live_commit_fallback_telemetry(e, sfqids=live_commit_sfqids)
+                statement_params = _chain_sfqids_into_statement_params(statement_params, live_commit_sfqids)
+                logger.info("Hidden live model version creation failed; falling back to regular model version creation")
                 use_hidden_live_commit = False
                 checkout_model_name_id = model_name_id
                 checkout_version_name_id = None

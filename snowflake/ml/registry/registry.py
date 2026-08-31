@@ -218,6 +218,13 @@ class Registry:
                     Warehouse. It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
                 - function_type: Set the method function type globally. To set method function types individually see
                     function_type in model_options.
+                - case_sensitive: Set case sensitivity for all model methods globally. When True, method and feature
+                  names are treated as case-sensitive SQL identifiers and must be double-quoted. To set this per method
+                  see case_sensitive in method_options. Defaults to False. When both global and per-method values are
+                  specified, the per-method value takes precedence.
+                - max_batch_size: Set the warehouse vectorized batch size for all model methods. To set this per method
+                  see max_batch_size in method_options. Defaults to None (determined automatically). When both global
+                  and per-method values are specified, the per-method value takes precedence.
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
@@ -388,6 +395,13 @@ class Registry:
                   Defaults are set automatically based on model type: supported models (sklearn, xgboost, pytorch,
                   huggingface_pipeline, mlflow, etc.) default to IMMUTABLE, while custom models default to VOLATILE.
                   Individual method volatility can be set in method_options and will override this global setting.
+                - case_sensitive: Set case sensitivity for all model methods globally. When True, method and feature
+                  names are treated as case-sensitive SQL identifiers and must be double-quoted. To set this per method
+                  see case_sensitive in method_options. Defaults to False. When both global and per-method values are
+                  specified, the per-method value takes precedence.
+                - max_batch_size: Set the warehouse vectorized batch size for all model methods. To set this per method
+                  see max_batch_size in method_options. Defaults to None (determined automatically). When both global
+                  and per-method values are specified, the per-method value takes precedence.
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.

@@ -25,8 +25,13 @@ def get_function_generate_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> FunctionGenerateOptions:
     method_options = options.get("method_options", {}).get(target_method, {})
+    max_batch_size: Optional[int]
+    if "max_batch_size" in method_options:
+        max_batch_size = method_options["max_batch_size"]
+    else:
+        max_batch_size = options.get("max_batch_size")
     return FunctionGenerateOptions(
-        max_batch_size=method_options.get("max_batch_size", None),
+        max_batch_size=max_batch_size,
         function_type=method_options.get("function_type", "function"),
     )
 

@@ -30,6 +30,7 @@ from typing import Any, Optional, Sequence, cast
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.decl.invariants import (
+    _VERSIONED_KINDS,
     _full_spec_hash,
     structural_fingerprint_hash,
 )
@@ -265,6 +266,28 @@ def _inject_batch_fv_fields_from_list_row(
             inner["initialize"] = str(initialize).strip().upper() or None
 
 
+def _spec_has_aggregation_windows(inner: dict[str, Any]) -> bool:
+    """Whether an inner spec dict describes a tiled FV — i.e. any feature
+    declares an aggregation window.
+
+    Mirrors the compiler's ``has_windows`` check and the imperative
+    ``FeatureView.is_tiled``: a tiled FV materialises its tiles as a
+    managed Dynamic Table whose ``TARGET_LAG`` is driven by
+    ``refresh_freq``.
+
+    Args:
+        inner: The inner ``spec`` dict (``spec_payload["spec"]``).
+
+    Returns:
+        ``True`` if any ``features[]`` entry carries ``window`` or
+        ``window_sec``, else ``False``.
+    """
+    return any(
+        isinstance(f, dict) and (f.get("window_sec") is not None or f.get("window") is not None)
+        for f in (inner.get("features") or [])
+    )
+
+
 def _inject_fv_refresh_freq_from_list_row(
     spec_payload: dict[str, Any],
     row: dict[str, Any],
@@ -285,13 +308,19 @@ def _inject_fv_refresh_freq_from_list_row(
     online BFV without authored ``target_lag``) — the original BACKFILL
     re-plan invariant break.
 
-    Kind-aware: streaming and realtime spec_payloads are skipped
-    entirely, mirroring the spec-validator
-    (``FeatureView._reject_refresh_freq_on_stream_or_realtime``) that
-    rejects ``refresh_freq`` authoring on those kinds.  Without this
+    Kind-aware: realtime and **non-tiled** streaming spec_payloads are
+    skipped entirely.  A non-tiled streaming FV materialises to a
+    zero-lag VIEW and a realtime FV computes on lookup — neither has an
+    offline Dynamic Table to recover a cadence from, and the spec
+    validator (``FeatureView._reject_refresh_freq_on_stream_or_realtime``)
+    rejects ``refresh_freq`` authoring on those shapes.  Without this
     skip the runtime-stamped ``target_lag_sec=0`` would round-trip into
     YAML as ``refresh_freq: "0 seconds"`` and the next ``snow feature
-    plan`` would reject the file on load.
+    plan`` would reject the file on load.  A **tiled** streaming FV
+    (aggregation windows) DOES schedule an offline tile Dynamic Table, so
+    its ``REFRESH_FREQ`` is recovered here — otherwise the planner
+    compares the local cadence against the OFT ``target_lag_sec=0``
+    sentinel and emits a spurious ``UPDATE_FV`` on every replan.
 
     Additive: an existing ``spec.refresh_freq`` (e.g. one populated via
     a pre-enrichment path) is preserved.
@@ -308,11 +337,16 @@ def _inject_fv_refresh_freq_from_list_row(
             are tolerated.
     """
     kind = spec_payload.get("kind") if isinstance(spec_payload, dict) else None
-    if kind in ("StreamingFeatureView", "RealtimeFeatureView"):
+    if kind == "RealtimeFeatureView":
         return
 
     inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
     if inner is None:
+        return
+
+    # Non-tiled streaming FVs have no offline DT (zero-lag VIEW), so skip
+    # them; tiled streaming and batch always schedule a DT.
+    if kind == "StreamingFeatureView" and not _spec_has_aggregation_windows(inner):
         return
 
     if "refresh_freq" in inner:
@@ -708,7 +742,10 @@ def _build_offline_fv_object(
         _inject_batch_fv_fields_from_list_row(spec_payload, fv_row, fv_obj=fv_obj)
 
     content_hash = _full_spec_hash(spec_payload)
-    key = _build_spec_key(kind, spec_payload)
+    # Pass the authoritative row version as a top-level fallback so the
+    # key carries the ``:VERSION`` segment even when the enriched
+    # spec_text branch did not stamp ``metadata.version``.
+    key = _build_spec_key(kind, {**spec_payload, "version": version})
     return AppliedObject(
         key=key,
         kind=kind,
@@ -811,8 +848,10 @@ def _extract_spec_from_oft(row: dict[str, Any]) -> Optional[dict[str, Any]]:
 
 
 def _build_spec_key(kind: str, spec: dict[str, Any]) -> str:
-    """Build a canonical ``kind:DATABASE.SCHEMA:NAME`` key from spec metadata.
+    """Build a canonical key from spec metadata.
 
+    Versioned kinds key as ``kind:DATABASE.SCHEMA:NAME:VERSION`` and
+    unversioned kinds as ``kind:DATABASE.SCHEMA:NAME``.
     Mirrors :func:`snowflake.ml.feature_store.decl.invariants.spec_key` so
     the planner's batch-side keys (uppercased) and the applied-state side
     keys collide on identical objects.  Without this normalisation,
@@ -833,7 +872,14 @@ def _build_spec_key(kind: str, spec: dict[str, Any]) -> str:
     schema = (metadata.get("schema", "") or spec.get("schema", "") or "").upper()
     name = (metadata.get("name", "") or spec.get("name", "") or "").upper()
     qualifier = f"{db}.{schema}" if (db or schema) else ""
-    return f"{kind}:{qualifier}:{name}"
+    key = f"{kind}:{qualifier}:{name}"
+    # Mirror :func:`invariants.spec_key`: versioned kinds carry a trailing
+    # ``:VERSION`` segment so two versions of one name occupy two distinct
+    # applied-state slots instead of one shadowing the other.
+    version = metadata.get("version", "") or spec.get("version", "")
+    if kind in _VERSIONED_KINDS and version:
+        key = f"{key}:{str(version).upper()}"
+    return key
 
 
 def _describe_feature_cols(desc_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1390,6 +1436,18 @@ def fetch_applied_state(
                         # No-op for streaming / realtime kinds (the
                         # helper short-circuits internally).
                         _inject_fv_refresh_freq_from_list_row(spec_payload, matched_row)
+                elif kind == "StreamingFeatureView":
+                    # A tiled StreamingFeatureView schedules an offline
+                    # tile Dynamic Table whose ``TARGET_LAG`` is
+                    # ``refresh_freq``.  Recover that cadence onto
+                    # ``spec.refresh_freq`` so a genuine cadence edit is
+                    # detected by ``_refresh_freq_drifted`` (which, for
+                    # streaming, refuses to read the OFT ``target_lag_sec=0``
+                    # sentinel).  The helper self-guards: it is a no-op for
+                    # a non-tiled streaming FV (zero-lag VIEW, no DT).
+                    matched_row = fv_row_by_name_version.get((str(base_name).upper(), str(version)))
+                    if matched_row is not None:
+                        _inject_fv_refresh_freq_from_list_row(spec_payload, matched_row)
                 content_hash = _full_spec_hash(spec_payload)
                 spec_payloads_for_datasources.append(spec_payload)
             else:
@@ -1412,6 +1470,7 @@ def fetch_applied_state(
                     "database": db,
                     "schema": schema_val,
                     "name": base_name,
+                    "version": version,
                 },
             )
             objects[key] = AppliedObject(
@@ -1449,8 +1508,10 @@ def fetch_applied_state(
         }
         content_hash = structural_fingerprint_hash(fp_spec)
         kind = "StreamingFeatureView"
-        qualifier = f"{db}.{schema_val}" if (db or schema_val) else ""
-        key = f"{kind}:{qualifier}:{base_name}"
+        key = _build_spec_key(
+            kind,
+            {"database": db, "schema": schema_val, "name": base_name, "version": version},
+        )
 
         objects[key] = AppliedObject(
             key=key,
@@ -1614,11 +1675,10 @@ def _build_feature_group_object(
     }
 
     content_hash = fg_content_hash(spec_payload)
-    qualifier_db = (db or "").upper()
-    qualifier_schema = (schema or "").upper()
-    name_upper = name.upper()
-    qualifier = f"{qualifier_db}.{qualifier_schema}" if (qualifier_db or qualifier_schema) else ""
-    key = f"FeatureGroup:{qualifier}:{name_upper}"
+    key = _build_spec_key(
+        "FeatureGroup",
+        {"database": db, "schema": schema, "name": name, "version": version},
+    )
 
     return AppliedObject(
         key=key,

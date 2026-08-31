@@ -14,6 +14,8 @@ from common_utils import (
     create_mock_session,
     create_random_schema,
     execute_snapshot_refresh,
+    is_incrementalizable_refresh_mode,
+    is_list_refresh_modes_incrementalizable,
 )
 from pytimeparse.timeparse import timeparse
 
@@ -1211,8 +1213,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.update_default_warehouse(alternate_warehouse)
         fv1 = fs.register_feature_view(feature_view=fv1, version="FIRST")
 
+        listed_fvs = fs.list_feature_views().to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views().to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV0", "FV0", "FV1"],
                 "VERSION": ["FIRST", "SECOND", "FIRST"],
@@ -1221,7 +1225,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["my_fv0", "my_new_fv0", "my_fv1"],
                 "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'] * 3,
                 "REFRESH_FREQ": ["1 minute", "DOWNSTREAM", "5 minutes"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["SUSPENDED", "ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID"]', '["AID", "UID", "TS"]', '["AID", "UID"]'],
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}', '{"format": "snowflake"}'],
@@ -1235,6 +1238,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "ONLINE_CONFIG",
                 "STREAM_CONFIG",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
@@ -1245,8 +1249,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         fs.delete_feature_view(fs.get_feature_view("FV0", "FIRST"))
 
+        listed_fvs = fs.list_feature_views().to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views().to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV0", "FV1"],
                 "VERSION": ["SECOND", "FIRST"],
@@ -1255,7 +1261,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["my_new_fv0", "my_fv1"],
                 "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'] * 2,
                 "REFRESH_FREQ": ["DOWNSTREAM", "5 minutes"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID", "TS"]', '["AID", "UID"]'],
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
@@ -1269,6 +1274,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "ONLINE_CONFIG",
                 "STREAM_CONFIG",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
@@ -1963,8 +1969,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
         fs.register_feature_view(feature_view=fv4, version="v1")
 
+        listed_fvs = fs.list_feature_views().to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views().to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV1", "FV2", "FV3", "FV4"],
                 "VERSION": ["v1", "v1", "v1", "v1"],
@@ -1973,7 +1981,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["", "foobar", "foobar", "iceberg fv"],
                 "ENTITIES": ['[\n  "FOO"\n]', '[\n  "BAR"\n]', '[\n  "FOO",\n  "BAR"\n]', '[\n  "FOO"\n]'],
                 "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "DOWNSTREAM", "1 day"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]', '["ID"]'],
             },
@@ -1987,6 +1994,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STREAM_CONFIG",
                 "KIND",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
@@ -2002,8 +2010,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         for _, row in verbose_df.iterrows():
             self.assertIsNone(row["BACKUP_SOURCE"])
 
+        listed_fvs = fs.list_feature_views(entity_name="FOO").to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV1", "FV3", "FV4"],
                 "VERSION": ["v1", "v1", "v1"],
@@ -2012,7 +2022,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["", "foobar", "iceberg fv"],
                 "ENTITIES": ['[\n  "FOO"\n]', '[\n  "FOO",\n  "BAR"\n]', '[\n  "FOO"\n]'],
                 "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "1 day"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]', '["ID"]'],
             },
@@ -2026,11 +2035,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STREAM_CONFIG",
                 "KIND",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
+        listed_fvs = fs.list_feature_views(feature_view_name="FV2").to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views(feature_view_name="FV2").to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV2"],
                 "VERSION": ["v1"],
@@ -2039,7 +2051,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["foobar"],
                 "ENTITIES": ['[\n  "BAR"\n]'],
                 "REFRESH_FREQ": ["DOWNSTREAM"],
-                "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
                 "CLUSTER_BY": ['["NAME"]'],
             },
@@ -2053,11 +2064,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STREAM_CONFIG",
                 "KIND",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
+        listed_fvs = fs.list_feature_views(entity_name="BAR", feature_view_name="FV2").to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views(entity_name="BAR", feature_view_name="FV2").to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV2"],
                 "VERSION": ["v1"],
@@ -2066,7 +2080,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["foobar"],
                 "ENTITIES": ['[\n  "BAR"\n]'],
                 "REFRESH_FREQ": ["DOWNSTREAM"],
-                "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
                 "CLUSTER_BY": ['["NAME"]'],
             },
@@ -2080,11 +2093,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STREAM_CONFIG",
                 "KIND",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
+        listed_fvs = fs.list_feature_views(entity_name="FOO", feature_view_name="FV3").to_pandas()
+        self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())
         compare_dataframe(
-            actual_df=fs.list_feature_views(entity_name="FOO", feature_view_name="FV3").to_pandas(),
+            actual_df=listed_fvs,
             target_data={
                 "NAME": ["FV3"],
                 "VERSION": ["v1"],
@@ -2093,7 +2109,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "DESC": ["foobar"],
                 "ENTITIES": ['[\n  "FOO",\n  "BAR"\n]'],
                 "REFRESH_FREQ": ["DOWNSTREAM"],
-                "REFRESH_MODE": ["INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE"],
                 "CLUSTER_BY": ['["ID", "NAME"]'],
             },
@@ -2107,6 +2122,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STREAM_CONFIG",
                 "KIND",
                 "APPEND_ONLY",
+                "REFRESH_MODE",
             ],
         )
 
@@ -2788,7 +2804,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             physical_name: Physical object name to look up.
 
         Returns:
-            The ``refresh_mode`` string (e.g. ``"INCREMENTAL"`` / ``"FULL"``).
+            The ``refresh_mode`` string (e.g. ``"INCREMENTAL"`` / ``"ADAPTIVE"`` / ``"FULL"``).
         """
         rows = fs._find_object(object_type, physical_name)
         self.assertLen(rows, 1, f"expected exactly one {object_type} row named {physical_name}")
@@ -2799,9 +2815,8 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         Historically a UDF forced FULL refresh (the removed ``test_dynamic_table_full_refresh_warning``
         asserted the corresponding warning). As of the Jul 16, 2026 Snowflake GA, VOLATILE scalar UDFs
-        are incrementally refreshable in the SELECT clause, so both the offline dynamic table and the
-        online feature table now resolve to ``refresh_mode='INCREMENTAL'``. This test locks in that
-        end-to-end behavior for both the DT and the OFT.
+        are incrementally refreshable in the SELECT clause, so the offline dynamic table is
+        incrementalizable and the online feature table resolves to ``refresh_mode='INCREMENTAL'``.
         """
         temp_stage_name = "test_udf_feature_view_incremental_refresh_stage"
         self._session.sql(f"USE DATABASE {FS_INTEG_TEST_DB}").collect()
@@ -2838,7 +2853,8 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         dt_name = FeatureView._get_physical_name(SqlIdentifier("fv"), "V1")
         oft_name = FeatureView._get_online_table_name(SqlIdentifier("fv"), "V1")
-        self.assertEqual("INCREMENTAL", self._get_object_refresh_mode(fs, "DYNAMIC TABLES", dt_name))
+        dt_refresh_mode = self._get_object_refresh_mode(fs, "DYNAMIC TABLES", dt_name)
+        self.assertTrue(is_incrementalizable_refresh_mode(dt_refresh_mode), dt_refresh_mode)
         self.assertEqual("INCREMENTAL", self._get_object_refresh_mode(fs, "ONLINE FEATURE TABLES", oft_name))
 
     def test_switch_warehouse(self) -> None:
@@ -3791,7 +3807,8 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 )
             return fs.register_feature_view(feature_view=fv, version="v1")
 
-        self.assertEqual("INCREMENTAL", register(fs, "fv1").refresh_mode)
+        auto_refresh_mode = register(fs, "fv1").refresh_mode
+        self.assertTrue(is_incrementalizable_refresh_mode(auto_refresh_mode), auto_refresh_mode)
         self.assertEqual("FULL", register(fs, "fv2", "FULL").refresh_mode)
         self.assertEqual("INCREMENTAL", register(fs, "fv3", "INCREMENTAL").refresh_mode)
 
@@ -5000,10 +5017,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
     @parameterized.parameters("AWS", "AZURE")
     def test_iceberg_storage_rejects_online_config(self, provider: str) -> None:
-        """Test that Iceberg storage rejects hybrid-table (HT-OFT) online config.
+        """Test that Iceberg storage does not allow online feature tables.
 
-        Postgres OFT on Iceberg is covered by the spec-OFT bundle
-        (``test_iceberg_batch_fv_spec_oft_online_read_by_key``).
+        Online Feature Tables with Iceberg storage is not currently supported and
+        requires a dedicated investigation into compatibility.
         """
         fs = self._create_feature_store()
 
@@ -5015,7 +5032,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "only supported with the Postgres online store",
+            "Online storage is not supported with Iceberg",
         ):
             FeatureView(
                 name="iceberg_fv_online",

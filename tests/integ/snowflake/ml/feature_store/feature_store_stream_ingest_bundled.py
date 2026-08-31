@@ -405,10 +405,8 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             Feature.avg("AMOUNT", "2d").alias("F_AVG"),
             Feature.min("AMOUNT", "2d").alias("F_MIN"),
             Feature.max("AMOUNT", "2d").alias("F_MAX"),
-            # STDDEV online serving is pending Quake PR 424: SnowML sends the function token "std" while the
-            # online engine matches "stddev". Re-enable once an image including that PR is deployed.
-            # TODO: uncomment after the next Quake release (PR 424).
-            # Feature.stddev("AMOUNT", "2d").alias("F_STDDEV"),
+            Feature.stddev("AMOUNT", "2d").alias("F_STDDEV"),
+            Feature.var("AMOUNT", "2d").alias("F_VAR"),
             Feature.approx_count_distinct("CATEGORY", "2d").alias("F_ACD"),
             Feature.last_n("CATEGORY", "2d", n=3).alias("F_LAST_N"),
             Feature.first_n("CATEGORY", "2d", n=3).alias("F_FIRST_N"),
@@ -482,8 +480,8 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             self.assertAlmostEqual(float(row["F_AVG"]), 200.0, places=2)
             self.assertAlmostEqual(float(row["F_MIN"]), 100.0, places=2)
             self.assertAlmostEqual(float(row["F_MAX"]), 300.0, places=2)
-            # TODO: uncomment after the next Quake release (PR 424).
-            # self.assertAlmostEqual(float(row["F_STDDEV"]), 81.6497, places=1)
+            self.assertAlmostEqual(float(row["F_STDDEV"]), 81.6497, places=1)
+            self.assertAlmostEqual(float(row["F_VAR"]), 6666.6667, places=1)  # population; sample would be 10000
             self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
             self.assertEqual(_as_list(row["F_LAST_N"]), ["cat1", "cat1", "cat1"], f"last_n={row['F_LAST_N']!r}")
             self.assertEqual(_as_list(row["F_FIRST_N"]), ["cat1", "cat1", "cat1"], f"first_n={row['F_FIRST_N']!r}")

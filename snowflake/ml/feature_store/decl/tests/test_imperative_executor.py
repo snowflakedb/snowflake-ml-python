@@ -18,6 +18,7 @@ from snowflake.ml.feature_store.decl.imperative_executor import (
 )
 from snowflake.ml.feature_store.decl.types import Plan, PlanOp, PlanOptions
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.test_utils import pytest_driver
 
 
 class TestExecutePlanFeatureStoreConstruction:
@@ -418,12 +419,10 @@ class TestExecuteEntityOps:
         ), pytest.raises(snowml_exceptions.SnowflakeMLException):
             execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions(allow_recreate=True))
 
-    def test_update_entity_calls_fs_update_entity_with_join_keys_and_desc(self) -> None:
+    def test_update_entity_calls_fs_update_entity_with_desc(self) -> None:
         """``UPDATE_ENTITY`` dispatches to
-        ``FeatureStore.update_entity(name, desc=..., join_keys=...)``,
-        threading both fields from the payload through.  Pin the new
-        Phase 3 ``join_keys=`` keyword is wired correctly from the
-        declarative executor.
+        ``FeatureStore.update_entity(name, desc=...)``. Join keys are
+        not forwarded; the public API does not accept them.
         """
         session = MagicMock(name="session")
         fs = MagicMock(name="FeatureStore")
@@ -453,7 +452,7 @@ class TestExecuteEntityOps:
         else:
             assert call.kwargs.get("name") == "USER"
         assert call.kwargs.get("desc") == "Updated desc"
-        assert call.kwargs.get("join_keys") == ["USER_ID", "ORG_ID"]
+        assert "join_keys" not in call.kwargs
         for sql_call in session.sql.call_args_list:
             assert "ALTER TAG" not in sql_call.args[0].upper()
 
@@ -1814,35 +1813,35 @@ class TestBuildFeatureViewStreamingAggregation:
         # granularity (no synthetic default after decoupling).
         assert "refresh_freq" not in (fv_calls[0] if fv_calls else {})
 
-    def test_tiled_streaming_fv_drops_smuggled_refresh_freq(self) -> None:
-        """Even when a hand-built payload smuggles ``refresh_freq`` past
-        the spec validator (which now rejects authoring ``refresh_freq``
-        on streaming kinds), the executor's streaming branch must not
-        forward the kwarg to ``FeatureView(refresh_freq=...)``.  The
-        Snowflake runtime stamps ``target_lag_sec=0`` regardless of any
-        cadence string, so an authored value would have no effect.
+    def test_tiled_streaming_fv_forwards_refresh_freq(self) -> None:
+        """A tiled streaming FV materialises its tiles as an offline
+        Dynamic Table whose ``TARGET_LAG`` is ``refresh_freq`` — the
+        imperative ``FeatureView._validate`` requires it — so the
+        executor's streaming branch MUST forward the authored
+        ``refresh_freq`` to ``FeatureView(refresh_freq=...)``.
 
-        Defence-in-depth pin for the rename's kind-aware forwarding gate
-        (``payload["kind"] == "BatchFeatureView"`` in
-        ``_build_feature_view``).
+        Pin for the tiling-aware forwarding gate in
+        ``_build_feature_view`` (tiled streaming joins BatchFeatureView).
         """
         payload = _streaming_fv_payload()
-        payload["refresh_freq"] = "USING CRON 0 * * * * UTC"
+        payload["refresh_freq"] = "1 minute"
         fv_calls, _ = self._run_build(payload)
-        assert "refresh_freq" not in fv_calls[0], (
-            "Streaming FV branch must drop refresh_freq; got " f"refresh_freq={fv_calls[0].get('refresh_freq')!r}."
+        assert fv_calls[0].get("refresh_freq") == "1 minute", (
+            "Tiled streaming FV branch must forward refresh_freq; got "
+            f"refresh_freq={fv_calls[0].get('refresh_freq')!r}."
         )
 
-    def test_tiled_streaming_fv_drops_target_lag_sec_and_refresh_freq(self) -> None:
-        """Both ``target_lag_sec`` and ``refresh_freq`` are dropped on the
-        streaming branch — the runtime always stamps target_lag_sec=0
-        and the validator rejects refresh_freq.
+    def test_tiled_streaming_fv_forwards_refresh_freq_and_drops_target_lag_sec(self) -> None:
+        """``refresh_freq`` (offline tile DT cadence) is forwarded on a
+        tiled streaming FV; ``target_lag_sec`` (the OFT's runtime-stamped
+        ingest lag) is NOT — the two knobs stay decoupled.
         """
         payload = _streaming_fv_payload()
         payload["target_lag_sec"] = 600
-        payload["refresh_freq"] = "USING CRON 0 * * * * UTC"
+        payload["refresh_freq"] = "1 minute"
         fv_calls, _ = self._run_build(payload)
-        assert "refresh_freq" not in fv_calls[0]
+        assert fv_calls[0].get("refresh_freq") == "1 minute"
+        assert "target_lag_sec" not in fv_calls[0]
 
     def test_non_tiled_streaming_fv_keeps_no_refresh_freq_default(self) -> None:
         """Non-aggregated streaming FVs (no features) must NOT receive the
@@ -3812,12 +3811,13 @@ class TestRefreshFreqForwarding:
     read the renamed authoring key ``refresh_freq`` (not the legacy
     ``refresh_freq``) from the plan payload.
 
-    The forwarding is also kind-gated as defence-in-depth: streaming and
-    realtime FVs never receive the kwarg, mirroring the spec-validator
-    rejection of ``refresh_freq`` on those kinds.  Even a hand-built
-    payload that smuggles ``refresh_freq`` past the validator must not
-    end up driving the imperative constructor / update on the wrong
-    kind.
+    The forwarding is tiling-and-kind aware: BatchFeatureView and
+    **tiled** StreamingFeatureView (which schedule an offline Dynamic
+    Table) receive the kwarg; non-tiled streaming and all realtime FVs
+    never do, mirroring the spec-validator rejection of ``refresh_freq``
+    on those kinds.  Even a hand-built payload that smuggles
+    ``refresh_freq`` past the validator must not end up driving the
+    imperative constructor / update on a kind that has no offline DT.
     """
 
     def _patch_fv_constructor(self) -> tuple[list[dict[str, Any]], Any]:
@@ -3860,10 +3860,11 @@ class TestRefreshFreqForwarding:
             f"all kwargs={sorted(fv_calls[0].keys())}."
         )
 
-    def test_build_streaming_fv_does_not_forward_refresh_freq(self) -> None:
-        """Streaming-kind payload must never set ``refresh_freq`` on the
-        FeatureView constructor — even when the field is present in the
-        payload (defence-in-depth against hand-built bypass).
+    def test_build_tiled_streaming_fv_forwards_refresh_freq(self) -> None:
+        """A tiled streaming payload sets ``refresh_freq`` on the
+        FeatureView constructor — it drives the offline tile Dynamic
+        Table's ``TARGET_LAG``, which the imperative ``_validate``
+        requires for tiled kinds.
         """
         fv_calls, fake_fv = self._patch_fv_constructor()
         sc_calls, fake_sc = self._patch_stream_config()
@@ -3872,6 +3873,35 @@ class TestRefreshFreqForwarding:
         fs.get_entity.return_value = _registered_entity("USER_ID")
 
         payload = _streaming_fv_payload(name="SFV_REFRESH_FREQ_FORWARD")
+        payload["refresh_freq"] = "1 minute"
+
+        with patch("snowflake.ml.feature_store.feature_view.FeatureView", side_effect=fake_fv,), patch(
+            "snowflake.ml.feature_store.stream_config.StreamConfig",
+            side_effect=fake_sc,
+        ):
+            _build_feature_view(payload, session, "DB", "SCH", "WH", fs=fs)
+
+        assert len(fv_calls) == 1, fv_calls
+        assert fv_calls[0].get("refresh_freq") == "1 minute", (
+            "Tiled streaming FV branch of _build_feature_view must forward "
+            "refresh_freq to the FeatureView constructor (offline tile DT "
+            f"cadence).  Got refresh_freq={fv_calls[0].get('refresh_freq')!r}."
+        )
+
+    def test_build_non_tiled_streaming_fv_does_not_forward_refresh_freq(self) -> None:
+        """A non-tiled streaming payload (no aggregation windows) has no
+        offline Dynamic Table to schedule, so even a smuggled
+        ``refresh_freq`` must not reach the constructor.
+        """
+        fv_calls, fake_fv = self._patch_fv_constructor()
+        sc_calls, fake_sc = self._patch_stream_config()
+        session = _mock_fv_session()
+        fs = MagicMock(name="FeatureStore")
+        fs.get_entity.return_value = _registered_entity("USER_ID")
+
+        payload = _streaming_fv_payload(name="SFV_NON_TILED", features=[])
+        payload.pop("feature_granularity_sec", None)
+        payload.pop("feature_aggregation_method", None)
         payload["refresh_freq"] = "5 minutes"
 
         with patch("snowflake.ml.feature_store.feature_view.FeatureView", side_effect=fake_fv,), patch(
@@ -3882,11 +3912,8 @@ class TestRefreshFreqForwarding:
 
         assert len(fv_calls) == 1, fv_calls
         assert "refresh_freq" not in fv_calls[0], (
-            "Streaming FV branch of _build_feature_view must NOT forward "
-            "refresh_freq to the FeatureView constructor — the runtime "
-            "stamps target_lag_sec=0 regardless, so the authored value "
-            "has no effect.  Got "
-            f"refresh_freq={fv_calls[0].get('refresh_freq')!r}."
+            "Non-tiled streaming FV branch must NOT forward refresh_freq "
+            f"(no offline DT).  Got refresh_freq={fv_calls[0].get('refresh_freq')!r}."
         )
 
     def test_update_batch_fv_forwards_refresh_freq_kwarg(self) -> None:
@@ -3921,10 +3948,11 @@ class TestRefreshFreqForwarding:
             f"got kwargs={kwargs!r}."
         )
 
-    def test_update_streaming_fv_does_not_forward_refresh_freq(self) -> None:
-        """Defence-in-depth: even if a hand-built UPDATE_FV payload for a
-        streaming kind carries ``refresh_freq``, the executor must not
-        forward it.  Mirrors the realtime gate already present.
+    def test_update_non_tiled_streaming_fv_does_not_forward_refresh_freq(self) -> None:
+        """Defence-in-depth: a non-tiled streaming UPDATE_FV payload (no
+        aggregation windows) has no offline Dynamic Table, so even a
+        hand-built ``refresh_freq`` must not be forwarded.  Mirrors the
+        realtime gate already present.
         """
         from snowflake.ml.feature_store.decl.imperative_executor import (
             _execute_update_feature_view,
@@ -3950,10 +3978,49 @@ class TestRefreshFreqForwarding:
         if fs.update_feature_view.called:
             _, kwargs = fs.update_feature_view.call_args
             assert "refresh_freq" not in kwargs, (
-                "Streaming UPDATE_FV must not forward refresh_freq — the "
-                "kind gate must drop the kwarg.  Got "
-                f"kwargs={kwargs!r}."
+                "Non-tiled streaming UPDATE_FV must not forward refresh_freq "
+                f"— the tiling gate must drop the kwarg.  Got kwargs={kwargs!r}."
             )
+
+    def test_update_tiled_streaming_fv_forwards_refresh_freq(self) -> None:
+        """A tiled streaming UPDATE_FV payload (aggregation windows)
+        forwards ``refresh_freq`` — it alters the offline tile Dynamic
+        Table's ``TARGET_LAG`` (``ALTER DYNAMIC TABLE … SET TARGET_LAG``).
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="SFV",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "SFV",
+                "version": "V1",
+                "refresh_freq": "1 minute",
+                "description": "x",
+                "features": [
+                    {
+                        "function": "sum",
+                        "window_sec": 3600,
+                        "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                        "output_column": {"name": "AMOUNT_1H", "type": "DoubleType"},
+                    }
+                ],
+            },
+        )
+        _execute_update_feature_view(fs, op, "WH0")
+
+        fs.update_feature_view.assert_called_once()
+        _, kwargs = fs.update_feature_view.call_args
+        assert kwargs.get("refresh_freq") == "1 minute", (
+            "Tiled streaming UPDATE_FV must forward refresh_freq (offline " f"tile DT cadence).  Got kwargs={kwargs!r}."
+        )
 
 
 class TestBuildFeaturesIncomplete:
@@ -3983,6 +4050,29 @@ class TestBuildFeaturesIncomplete:
         )
         assert len(features) == 1
         assert features[0]._window == "3600s"
+
+    def test_specification_stddev_spelling_resolves_to_std(self) -> None:
+        """Apply consumes Snowflake's SPECIFICATION spelling ``stddev``.
+
+        ``DESCRIBE … TYPE = SPECIFICATION`` reports ``"stddev"`` for the
+        stddev aggregation while the imperative enum value stays ``"std"``;
+        ``AggregationType._missing_`` must map the SPECIFICATION spelling
+        back to ``AggregationType.STD`` so apply does not raise.
+        """
+        from snowflake.ml.feature_store.aggregation import AggregationType
+
+        features = _build_features(
+            [
+                {
+                    "function": "stddev",
+                    "window_sec": 3600,
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_STD_1H", "type": "DoubleType"},
+                }
+            ]
+        )
+        assert len(features) == 1
+        assert features[0]._function is AggregationType.STD
 
     def test_bare_numeric_window_raises(self) -> None:
         with pytest.raises(ValueError, match="window"):
@@ -4035,5 +4125,92 @@ class TestBuildFeaturesIncomplete:
             )
 
 
+class TestBuildFeatureViewUnmockedTiledStreamingValidate:
+    """Close the constructor-mock blind spot for tiled streaming FVs.
+
+    Every other executor test in this module patches the ``FeatureView``
+    constructor, so the decl unit suite never observes snowml-core's
+    ``_validate()`` — that is exactly how the decl surface drifted into
+    *rejecting* ``refresh_freq`` on tiled streaming while the imperative
+    ``_validate`` came to *require* it (a dead-lock only reproducible at
+    ``execute_plan`` time).
+
+    These tests drive :func:`_build_feature_view` for a tiled streaming
+    payload through the **real** ``FeatureView`` constructor (no mock) and
+    then invoke ``_validate()`` the same way ``register_feature_view``
+    does after the streaming preamble.  A tiled streaming FV skips
+    ``_validate()`` in ``__init__`` (only batch FVs validate eagerly), so
+    the cadence requirement is enforced at ``_validate()`` — we reproduce
+    that call site here.
+    """
+
+    def _build_real_fv(self, payload: dict[str, Any]) -> Any:
+        """Drive ``_build_feature_view`` unmocked and return the FeatureView.
+
+        Args:
+            payload: A tiled StreamingFeatureView CREATE_FV payload.
+
+        Returns:
+            The real ``FeatureView`` instance the executor constructed.
+        """
+        session = _mock_fv_session()
+        fs = MagicMock(name="FeatureStore")
+        fs.get_entity.return_value = _registered_entity("USER_ID")
+        fv, _version = _build_feature_view(payload, session, "DB", "SCH", "WH", fs=fs)
+        return fv
+
+    @staticmethod
+    def _infer_schema_df() -> Any:
+        """Return a stub udf-transformed DataFrame for ``_validate``.
+
+        Mirrors the ``feature_view_test`` pattern: ``_validate`` reads
+        ``_infer_schema_df.columns`` (join-key membership) and
+        ``.queries`` (RESULT_SCAN guard), which a ``MagicMock`` with those
+        two attributes satisfies without a live Snowpark round-trip.
+
+        Returns:
+            A ``MagicMock`` shaped like the post-preamble udf-transformed
+            DataFrame.
+        """
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT * FROM UDF_TRANSFORMED"]}
+        mock_df.columns = ["USER_ID", "TIMESTAMP", "ENGAGEMENT_SCORE", "IS_CONVERSION"]
+        return mock_df
+
+    def test_tiled_streaming_with_refresh_freq_validates(self) -> None:
+        """A decl-authored tiled streaming FV that carries ``refresh_freq``
+        builds a real FeatureView that passes ``_validate()`` — the managed
+        tile Dynamic Table path.
+        """
+        payload = _streaming_fv_payload(name="SFV_UNMOCKED_OK")
+        payload["refresh_freq"] = "1 minute"
+
+        fv = self._build_real_fv(payload)
+        fv._initialize_from_feature_df(self._infer_schema_df())
+        fv._validate()  # must not raise
+
+        assert fv.refresh_freq == "1 minute", (
+            "The authored refresh_freq must reach the real FeatureView so "
+            "the offline tile Dynamic Table gets a TARGET_LAG. Got "
+            f"refresh_freq={fv.refresh_freq!r}."
+        )
+        assert fv.is_tiled, "Expected a tiled streaming FV (aggregation windows present)."
+
+    def test_tiled_streaming_without_refresh_freq_raises_in_validate(self) -> None:
+        """A decl-authored tiled streaming FV that omits ``refresh_freq``
+        builds a real FeatureView, but ``_validate()`` raises the imperative
+        ``refresh_freq is required for tile-based aggregations`` error — the
+        exact dead-lock the decl validator + STREAM_FV_TILING_REFRESH
+        invariant now prevent at authoring time.
+        """
+        payload = _streaming_fv_payload(name="SFV_UNMOCKED_MISSING")
+        payload.pop("refresh_freq", None)
+
+        fv = self._build_real_fv(payload)
+        fv._initialize_from_feature_df(self._infer_schema_df())
+        with pytest.raises(ValueError, match="refresh_freq is required for tile-based aggregations"):
+            fv._validate()
+
+
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+    pytest_driver.main()

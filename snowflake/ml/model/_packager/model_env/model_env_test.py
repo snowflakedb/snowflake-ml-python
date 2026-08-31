@@ -865,7 +865,7 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.conda_dependencies, [])
 
     def test_save_as_dict_gpu_pytorch_has_extra_index_url(self) -> None:
-        """Test that packaged GPU PyTorch model has correct extra index URL in requirements.txt."""
+        """Test that packaged GPU PyTorch model stores extra index URL in env_dict, not requirements.txt."""
         with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
@@ -873,16 +873,21 @@ class ModelEnvTest(absltest.TestCase):
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 base_dir = pathlib.Path(tmpdir)
-                env.save_as_dict(base_dir, is_gpu=True)
+                env_dict = env.save_as_dict(base_dir, is_gpu=True)
 
                 # Read the generated requirements.txt
                 req_path = base_dir / env.pip_requirements_rel_path
                 with open(req_path) as f:
                     content = f.read()
 
-                lines = content.strip().split("\n")
-                # Check extra index URL is at the top
-                self.assertEqual(lines[0], "--extra-index-url https://download.pytorch.org/whl/cu124")
+                # --extra-index-url must NOT be in requirements.txt (SPCS rejects non-PEP-508 lines)
+                self.assertNotIn("--extra-index-url", content)
+                # Extra index URL must be stored in env_dict instead
+                self.assertIn("pip_extra_index_urls", env_dict)
+                self.assertEqual(
+                    env_dict["pip_extra_index_urls"],
+                    ["https://download.pytorch.org/whl/cu124"],
+                )
                 # Check torch is pinned to CUDA variant
                 self.assertIn("torch==2.5.0+cu124", content)
                 # Check numpy is unchanged

@@ -81,7 +81,12 @@ def _infer_structtype_from_pandas(pdf: pd.DataFrame) -> StructType:
     return StructType(fields)
 
 
-def _snowpark_type_to_sql(dt: Any) -> str:
+# Iceberg TIME/TIMESTAMP columns reject Snowflake's default scale of 9.
+_ICEBERG_TIMESTAMP_SQL_TYPE = "TIMESTAMP_NTZ(6)"
+_ICEBERG_TIME_SQL_TYPE = "TIME(6)"
+
+
+def _snowpark_type_to_sql(dt: Any, *, iceberg: bool = False) -> str:
     """Convert a Snowpark DataType to a SQL type string for DDL.
 
     Shared utility used by streaming registration (empty table creation)
@@ -89,6 +94,8 @@ def _snowpark_type_to_sql(dt: Any) -> str:
 
     Args:
         dt: A Snowpark DataType instance.
+        iceberg: When True, emit Iceberg-compatible TIME/TIMESTAMP scales
+            (max 6). Snowflake's default scale of 9 is rejected by Iceberg.
 
     Returns:
         SQL type string (e.g., ``VARCHAR``, ``NUMBER(38,0)``, ``FLOAT``).
@@ -106,11 +113,11 @@ def _snowpark_type_to_sql(dt: Any) -> str:
     if isinstance(dt, sp_types.BooleanType):
         return "BOOLEAN"
     if isinstance(dt, sp_types.TimestampType):
-        return "TIMESTAMP_NTZ"
+        return _ICEBERG_TIMESTAMP_SQL_TYPE if iceberg else "TIMESTAMP_NTZ"
     if isinstance(dt, sp_types.DateType):
         return "DATE"
     if isinstance(dt, sp_types.TimeType):
-        return "TIME"
+        return _ICEBERG_TIME_SQL_TYPE if iceberg else "TIME"
     return str(dt)
 
 

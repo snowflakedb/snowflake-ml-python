@@ -20,14 +20,13 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import structural_fingerprint_hash
 from snowflake.ml.feature_store.decl.state import (
     _build_stream_source_object,
     fetch_applied_state,
 )
 from snowflake.ml.feature_store.decl.types import ObjectKind
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _row(
@@ -434,4 +433,4 @@ class TestFetchAppliedStateStreamSourceMerge:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

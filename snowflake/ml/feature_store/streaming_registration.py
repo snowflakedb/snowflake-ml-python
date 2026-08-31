@@ -24,6 +24,8 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewVersion,
+    StorageConfig,
+    StorageFormat,
     _FeatureViewMetadata,
 )
 from snowflake.ml.feature_store.metadata_manager import (
@@ -396,6 +398,7 @@ def run_streaming_preamble(
         schema=udf_output_schema,
         overwrite=overwrite,
         telemetry_stmp=telemetry_stmp,
+        storage_config=feature_view.storage_config,
     )
     _create_empty_table(
         session=session,
@@ -403,6 +406,7 @@ def run_streaming_preamble(
         schema=udf_output_schema,
         overwrite=overwrite,
         telemetry_stmp=telemetry_stmp,
+        storage_config=feature_view.storage_config,
     )
 
     return StreamingPreambleResult(
@@ -532,10 +536,11 @@ def run_streaming_postamble(
     backfill_df = stream_config.backfill_df
     udf_output_schema = session.table(preamble.fq_udf_table).schema
     input_schema = backfill_df.schema
+    iceberg = _is_iceberg_storage(feature_view.storage_config)
     input_col_names = [SqlIdentifier(f.name).resolved() for f in input_schema.fields]
-    input_col_types = [_snowpark_type_to_sql(f.datatype) for f in input_schema.fields]
+    input_col_types = [_snowpark_type_to_sql(f.datatype, iceberg=iceberg) for f in input_schema.fields]
     output_col_names = [SqlIdentifier(f.name).resolved() for f in udf_output_schema.fields]
-    output_col_types = [_snowpark_type_to_sql(f.datatype) for f in udf_output_schema.fields]
+    output_col_types = [_snowpark_type_to_sql(f.datatype, iceberg=iceberg) for f in udf_output_schema.fields]
 
     # Create the per-FV permanent UDTF. Permanent (not TEMPORARY) because
     # Snowflake disallows CREATE TEMPORARY FUNCTION inside a stored
@@ -1325,6 +1330,22 @@ def _build_streaming_feature_view_spec(
 # ---------------------------------------------------------------------------
 
 
+def _is_iceberg_storage(storage_config: Optional[StorageConfig]) -> bool:
+    """Return True when the FV's offline storage is Iceberg.
+
+    ``$UDF_TRANSFORMED`` and ``$BACKFILL`` stay regular Snowflake tables.
+    This flag only selects Iceberg-compatible TIME/TIMESTAMP scales in DDL
+    so a Dynamic Iceberg Table can ``SELECT`` from them.
+
+    Args:
+        storage_config: Feature view storage config, or None.
+
+    Returns:
+        True if format is Iceberg.
+    """
+    return storage_config is not None and storage_config.format == StorageFormat.ICEBERG
+
+
 def _create_empty_table(
     *,
     session: Session,
@@ -1332,13 +1353,30 @@ def _create_empty_table(
     schema: StructType,
     overwrite: bool,
     telemetry_stmp: dict[str, Any],
+    storage_config: Optional[StorageConfig] = None,
 ) -> None:
-    """Create an empty table with the given schema."""
+    """Create an empty Snowflake table with the given schema.
+
+    Always a regular table. When ``storage_config.format`` is Iceberg,
+    TIME/TIMESTAMP columns use scale 6 so a later Dynamic Iceberg Table
+    can ``SELECT`` from this table.
+
+    Args:
+        session: Snowpark session.
+        fq_table_name: Fully-qualified table name.
+        schema: Column schema for the empty table.
+        overwrite: When True, emit ``CREATE OR REPLACE``.
+        telemetry_stmp: Telemetry statement parameters.
+        storage_config: Optional FV storage config. Iceberg FVs emit
+            Iceberg-compatible TIME/TIMESTAMP scales; the table itself
+            is still a Snowflake table.
+    """
     overwrite_clause = "OR REPLACE " if overwrite else ""
+    iceberg = _is_iceberg_storage(storage_config)
 
     col_defs = []
     for field in schema.fields:
-        col_defs.append(f'"{field.name}" {_snowpark_type_to_sql(field.datatype)}')
+        col_defs.append(f'"{field.name}" {_snowpark_type_to_sql(field.datatype, iceberg=iceberg)}')
     col_defs_str = ", ".join(col_defs)
 
     query = f"CREATE {overwrite_clause}TABLE {fq_table_name} ({col_defs_str})"

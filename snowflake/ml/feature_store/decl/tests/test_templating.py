@@ -3,8 +3,6 @@
 import os
 import tempfile
 
-import pytest
-
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 from snowflake.ml.feature_store.decl.templating import (
     detect_and_render,
@@ -12,6 +10,7 @@ from snowflake.ml.feature_store.decl.templating import (
     load_config,
     render_template,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # is_template
@@ -182,4 +181,4 @@ class TestDetectAndRender:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

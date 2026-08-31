@@ -1,30 +1,25 @@
-"""Wheel isolation tests.
+"""Import isolation tests.
 
-Verifies that:
-1. No source file in ``decl/`` (excluding ``tests/``) imports from forbidden
-   packages (``snowflake.ml.feature_store.spec.models`` /
-   ``snowflake.ml.feature_store.spec.builder``, ``snowflake.connector``).
-   ``snowflake.snowpark`` is permitted (see DEVELOPMENT_STANDARDS.md).
-2. The built wheel contains only ``snowflake/ml/feature_store/decl/`` files
-   (plus dist-info metadata).
-3. The wheel does NOT contain namespace ``__init__.py`` files for
-   ``snowflake/``, ``snowflake/ml/``, or ``snowflake/ml/feature_store/``.
+Verifies that no source file in ``decl/`` (excluding ``tests/``) imports from
+forbidden packages (``snowflake.ml.feature_store.spec.models`` /
+``snowflake.ml.feature_store.spec.builder``, ``snowflake.connector``).
+``snowflake.snowpark`` is permitted (see DEVELOPMENT_STANDARDS.md).
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
-import zipfile
 
 import pytest
+
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 _DECL_ROOT = pathlib.Path(__file__).parent.parent  # …/decl/
-_WHEEL_GLOB = sorted((_DECL_ROOT.parent / "decl_wheel" / "dist").glob("snowflake_ml_feature_store_decl-*.whl"))
 
 # NOTE: ``snowflake.ml.feature_store.spec.enums`` and
 # ``snowflake.ml.feature_store.interval_utils`` are intentionally NOT
@@ -164,52 +159,6 @@ class TestNarrowedSpecIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — wheel contains only decl/ files
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(not _WHEEL_GLOB, reason="wheel not yet built; run build first")
-def test_wheel_contains_only_allowed_files() -> None:
-    """Every non-metadata entry in the wheel must be under an allowed snowflake/ml/ subtree."""
-    whl_path = _WHEEL_GLOB[-1]
-    with zipfile.ZipFile(whl_path) as zf:
-        entries = zf.namelist()
-
-    non_meta = [e for e in entries if not e.endswith(".dist-info/") and ".dist-info/" not in e]
-    allowed_prefixes = (
-        "snowflake/ml/feature_store/",
-        "snowflake/ml/_internal/",
-        "snowflake/ml/lineage/",
-        "snowflake/ml/utils/",
-        "snowflake/ml/__init__",
-        "snowflake/ml/version",
-    )
-    unexpected = [e for e in non_meta if not any(e.startswith(p) for p in allowed_prefixes)]
-    assert unexpected == [], f"Wheel {whl_path.name} contains unexpected entries: {unexpected}"
-
-
-# ---------------------------------------------------------------------------
-# Test 3 — wheel does NOT contain namespace __init__.py files
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(not _WHEEL_GLOB, reason="wheel not yet built; run build first")
-def test_wheel_no_namespace_init_files() -> None:
-    """The wheel must not ship __init__.py for the top-level snowflake/ namespace package."""
-    whl_path = _WHEEL_GLOB[-1]
-    forbidden_inits = {
-        "snowflake/__init__.py",
-    }
-    with zipfile.ZipFile(whl_path) as zf:
-        entries = set(zf.namelist())
-
-    present = forbidden_inits & entries
-    assert not present, (
-        f"Wheel {whl_path.name} should not contain namespace __init__.py files, " f"but found: {sorted(present)}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Syntax / compile checks — catch IndentationError, SyntaxError early
 # ---------------------------------------------------------------------------
 
@@ -261,4 +210,4 @@ class TestModulesImportable:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

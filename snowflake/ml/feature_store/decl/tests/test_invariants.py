@@ -9,8 +9,6 @@ from __future__ import annotations
 import copy
 from typing import Any, cast
 
-import pytest
-
 from snowflake.ml.feature_store.decl.invariants import (
     _check_column_evolution,
     _check_database_schema_mismatch,
@@ -26,6 +24,7 @@ from snowflake.ml.feature_store.decl.invariants import (
     validate_specs,
 )
 from snowflake.ml.feature_store.decl.types import AppliedObject, AppliedState, SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -198,6 +197,42 @@ class TestSpecKey:
         #    context must keep working unchanged).
         assert spec_key({"kind": "Entity", "name": "USER"}) == "Entity::USER"
 
+    def test_versioned_kinds_include_version_segment(self) -> None:
+        """FeatureView / FeatureGroup identity is (name, version).
+
+        The key MUST carry a trailing ``:VERSION`` segment for versioned
+        kinds so distinct versions of the same name are keyed (and
+        therefore planned / validated / applied) independently instead of
+        shadowing each other in ``AppliedState.objects``.
+        """
+        fv = {"kind": "BatchFeatureView", "name": "fv1", "version": "V2", "database": "DB", "schema": "SCH"}
+        assert spec_key(fv) == "BatchFeatureView:DB.SCH:FV1:V2"
+
+        fg = {"kind": "FeatureGroup", "name": "fg1", "version": "v3", "database": "DB", "schema": "SCH"}
+        # Version is uppercased for a case-stable key.
+        assert spec_key(fg) == "FeatureGroup:DB.SCH:FG1:V3"
+
+    def test_unversioned_kinds_omit_version_segment(self) -> None:
+        """Entity / Datasource are schema-level, unversioned objects.
+
+        Their key stays ``kind:DB.SCHEMA:NAME`` even if a stray ``version``
+        field is present, so the applied-state lookup remains name-only.
+        """
+        ent = {"kind": "Entity", "name": "user", "version": "V9", "database": "DB", "schema": "SCH"}
+        assert spec_key(ent) == "Entity:DB.SCH:USER"
+
+        src = {"kind": "StreamingSource", "name": "clicks", "database": "DB", "schema": "SCH"}
+        assert spec_key(src) == "Datasource:DB.SCH:CLICKS"
+
+    def test_versioned_kind_without_version_stays_name_only(self) -> None:
+        """A versioned kind missing its version keeps the name-only key.
+
+        The absent version is an error surfaced by ``MISSING_VERSION`` in
+        ``validate_specs`` — the key builder must not invent a segment.
+        """
+        fv = {"kind": "BatchFeatureView", "name": "fv1", "database": "DB", "schema": "SCH"}
+        assert spec_key(fv) == "BatchFeatureView:DB.SCH:FV1"
+
 
 # ---------------------------------------------------------------------------
 # _spec_hash / _content_hash tests
@@ -231,59 +266,41 @@ class TestHashing:
 
 
 class TestCheckVersions:
-    def test_missing_version_non_dev_mode_is_error(self) -> None:
+    def test_missing_version_is_error(self) -> None:
         spec = _make_fv_spec(version=None)
-        results = _check_versions(spec, None, dev_mode=False)
+        results = _check_versions(spec, None)
         assert any(r.severity == "ERROR" and "version" in r.code.lower() for r in results)
 
-    def test_missing_version_dev_mode_is_ok(self) -> None:
-        spec = _make_fv_spec(version=None)
-        results = _check_versions(spec, None, dev_mode=True)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert len(errors) == 0
+    def test_lower_local_version_is_not_a_conflict(self) -> None:
+        """The downgrade rule is gone: a lower local version is a distinct object.
 
-    def test_version_not_greater_than_deployed_is_error(self) -> None:
+        Under ``(name, version)`` identity a local V1 no longer conflicts with a
+        deployed V2 (they are separate objects); ``_check_versions`` must stay
+        silent.  Previously this tripped ``VERSION_CONFLICT``.
+        """
         spec = _make_fv_spec(version="V1")
         applied_spec = _make_fv_spec(version="V2")
         applied = _make_applied_object(applied_spec)
-        results = _check_versions(spec, applied, dev_mode=False)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert len(errors) >= 1
-        assert any("VERSION_CONFLICT" in r.code for r in errors)
+        results = _check_versions(spec, applied)
+        assert not any("VERSION_CONFLICT" in r.code for r in results)
+        assert [r for r in results if r.severity == "ERROR"] == []
 
-    def test_version_equal_to_deployed_is_not_a_validator_error(self) -> None:
-        """Equal versions never fire VERSION_CONFLICT in the validator.
+    def test_same_version_present_is_ok(self) -> None:
+        """A versioned kind with its version present is always valid.
 
-        ``_check_versions`` flags only *strictly lower* local versions as
-        VERSION_CONFLICT (re-plan-of-identical-spec semantics — see
-        ``plans/planner_revalidate_identical_spec.plan.md``).  When
-        ``version == applied_version`` and the content actually differs
-        the planner emits a destructive ``RECREATE_FV`` op (gated by
-        ``--allow-recreate``); the validator stays silent.  When the
-        content matches, ``_check_idempotency`` short-circuits to
-        ``NO_CHANGE`` upstream and ``_check_versions`` is never invoked.
+        Same-version content edits are handled downstream as a destructive
+        recreate, not a validator error.
         """
         spec = _make_fv_spec(version="V1")
         applied_spec = _make_fv_spec(version="V1")
         applied = _make_applied_object(applied_spec)
         applied.content_hash = "different_hash"
-        results = _check_versions(spec, applied, dev_mode=False)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert not any(
-            "VERSION_CONFLICT" in r.code for r in errors
-        ), f"VERSION_CONFLICT must not fire for equal versions; got errors={errors!r}"
-
-    def test_version_greater_than_deployed_ok(self) -> None:
-        spec = _make_fv_spec(version="V2")
-        applied_spec = _make_fv_spec(version="V1")
-        applied = _make_applied_object(applied_spec)
-        results = _check_versions(spec, applied, dev_mode=False)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert len(errors) == 0
+        results = _check_versions(spec, applied)
+        assert [r for r in results if r.severity == "ERROR"] == []
 
     def test_new_object_no_version_conflict(self) -> None:
         spec = _make_fv_spec(version="V1")
-        results = _check_versions(spec, None, dev_mode=False)
+        results = _check_versions(spec, None)
         assert len(results) == 0
 
 
@@ -296,7 +313,7 @@ class TestCheckIdempotency:
     def test_same_spec_is_up_to_date(self) -> None:
         spec = _make_fv_spec(version="V1")
         applied = _make_applied_object(spec)
-        is_up_to_date, results = _check_idempotency(_normalize(spec), applied, dev_mode=False)
+        is_up_to_date, results = _check_idempotency(_normalize(spec), applied)
         assert is_up_to_date is True
         assert any(r.code == "NO_CHANGE" for r in results)
 
@@ -304,27 +321,12 @@ class TestCheckIdempotency:
         spec = _make_fv_spec(version="V2")
         applied_spec = _make_fv_spec(version="V1")
         applied = _make_applied_object(applied_spec)
-        is_up_to_date, results = _check_idempotency(_normalize(spec), applied, dev_mode=False)
+        is_up_to_date, results = _check_idempotency(_normalize(spec), applied)
         assert is_up_to_date is False
-
-    def test_dev_mode_version_excluded_hash_match(self) -> None:
-        spec_v1 = _make_fv_spec(version="V1")
-        spec_devver = _make_fv_spec(version="dev-20240101T120000Z")
-        # content is the same except version — content_hash should match
-        applied = AppliedObject(
-            key=spec_key(spec_v1),
-            kind="StreamingFeatureView",
-            name="click_features",
-            version="V1",
-            content_hash=_content_hash(spec_v1),
-            spec_payload=spec_v1,
-        )
-        is_up_to_date, results = _check_idempotency(spec_devver, applied, dev_mode=True)
-        assert is_up_to_date is True
 
     def test_no_applied_object_is_not_up_to_date(self) -> None:
         spec = _make_fv_spec()
-        is_up_to_date, results = _check_idempotency(spec, None, dev_mode=False)
+        is_up_to_date, results = _check_idempotency(spec, None)
         assert is_up_to_date is False
 
 
@@ -493,6 +495,37 @@ class TestCheckDestructive:
         errors = [r for r in results if r.severity == "ERROR"]
         assert len(errors) == 0
 
+    def test_stddev_std_spelling_not_destructive(self) -> None:
+        """Authored ``std`` vs applied ``stddev`` on the same column is not destructive.
+
+        The imperative wire token stays ``"std"`` while Snowflake's
+        SPECIFICATION reports ``"stddev"``; ``_check_destructive`` must
+        canonicalize the spelling so a clean round-trip does not flag a
+        phantom function change.
+        """
+        applied_spec = _make_fv_spec(
+            features=[
+                {
+                    "source_column": {"name": "amount", "type": "FloatType"},
+                    "output_column": {"name": "amount_std_1h", "type": "FloatType"},
+                    "function": "stddev",  # SPECIFICATION spelling
+                }
+            ]
+        )
+        local_spec = _make_fv_spec(
+            features=[
+                {
+                    "source_column": {"name": "amount", "type": "FloatType"},
+                    "output_column": {"name": "amount_std_1h", "type": "FloatType"},
+                    "function": "std",  # imperative wire token
+                }
+            ]
+        )
+        applied = _make_applied_object(applied_spec)
+        results = _check_destructive(local_spec, applied)
+        errors = [r for r in results if r.severity == "ERROR"]
+        assert len(errors) == 0
+
     def test_no_applied_no_destructive_error(self) -> None:
         spec = _make_fv_spec()
         results = _check_destructive(spec, None)
@@ -560,16 +593,42 @@ class TestValidateSpecs:
         no_change = [r for r in results if r.code == "NO_CHANGE"]
         assert len(no_change) >= 1
 
-    def test_version_conflict_produces_error(self) -> None:
-        spec = _make_fv_spec(version="V1")
-        deployed_spec = _make_fv_spec(version="V2")
-        applied = _applied_with(deployed_spec)
-        # Ensure hash is different so idempotency doesn't trigger
-        applied.objects[spec_key(_normalize(deployed_spec))].content_hash = "different"
-        batch = _batch(spec)
+    def test_editing_v1_while_v2_deployed_does_not_conflict(self) -> None:
+        """Both V1 and V2 of the same FV are deployed; editing V1 is clean.
+
+        With (name, version) identity, a local V1 edit resolves to the
+        deployed V1 object (not the shadowing V2), so it never trips the
+        (removed) VERSION_CONFLICT / STATE_DRIFT cross-version guards.
+        Before the fix, the version-free key let V2 shadow V1 in applied
+        state and the V1 edit falsely surfaced VERSION_CONFLICT.
+        """
+        v1_deployed = _make_fv_spec(version="V1")
+        v2_deployed = _make_fv_spec(version="V2")
+        applied = _applied_with(v1_deployed)
+        v2_obj = _make_applied_object(v2_deployed)
+        applied.objects[v2_obj.key] = v2_obj
+        # Two distinct versions must occupy two distinct applied slots.
+        assert len(applied.objects) == 2
+
+        # Locally edit V1 (add a column so it is a real diff, not NO_CHANGE).
+        v1_local = _make_fv_spec(
+            version="V1",
+            features=[
+                {
+                    "source_column": {"name": "event", "type": "StringType"},
+                    "output_column": {"name": "event", "type": "StringType"},
+                },
+                {
+                    "source_column": {"name": "extra", "type": "StringType"},
+                    "output_column": {"name": "extra", "type": "StringType"},
+                },
+            ],
+        )
+        batch = _batch(v1_local)
         results = validate_specs(batch, applied)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert any(r.code == "VERSION_CONFLICT" for r in errors)
+        codes = {r.code for r in results}
+        assert "VERSION_CONFLICT" not in codes
+        assert "STATE_DRIFT" not in codes
 
     def test_column_added_is_warning(self) -> None:
         old_spec = _make_fv_spec(
@@ -582,7 +641,7 @@ class TestValidateSpecs:
             ],
         )
         new_spec = _make_fv_spec(
-            version="V2",
+            version="V1",  # same version: a column added to an existing (name, version)
             features=[
                 {
                     "source_column": {"name": "event", "type": "StringType"},
@@ -599,18 +658,6 @@ class TestValidateSpecs:
         results = validate_specs(batch, applied)
         warnings = [r for r in results if r.severity == "WARNING"]
         assert any(r.code == "COLUMN_ADDED" for r in warnings)
-
-    def test_state_drift_detection(self) -> None:
-        """Object exists at unexpected (higher) version → StateDrift ERROR."""
-        spec = _make_fv_spec(version="V2")
-        applied_spec = _make_fv_spec(version="V3")
-        applied = _applied_with(applied_spec)
-        # Different content to avoid idempotency skip
-        applied.objects[spec_key(_normalize(applied_spec))].content_hash = "something_else"
-        batch = _batch(spec)
-        results = validate_specs(batch, applied)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert any(r.code == "STATE_DRIFT" for r in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -1812,5 +1859,72 @@ class TestFeatureIncomplete:
         assert not any(r.code == "FEATURE_INCOMPLETE" for r in results)
 
 
+# ---------------------------------------------------------------------------
+# Tiled streaming FVs require refresh_freq (STREAM_FV_TILING_REFRESH)
+# ---------------------------------------------------------------------------
+
+
+class TestStreamingTilingRefresh:
+    """A tiled (aggregation-window) StreamingFeatureView materialises its
+    tiles as a managed Dynamic Table whose ``TARGET_LAG`` is
+    ``refresh_freq`` — the imperative ``FeatureView._validate`` requires
+    it. The decl layer must surface a friendly ``STREAM_FV_TILING_REFRESH``
+    error at plan time rather than letting the FV fail late at apply. This
+    mirrors the ``BATCH_FV_TILING_REFRESH`` invariant.
+
+    A non-tiled streaming FV (1:1 passthrough features) has no offline DT
+    and must NOT be flagged.
+    """
+
+    def _tiled_streaming_fv(self, **overrides: Any) -> dict[str, Any]:
+        spec: dict[str, Any] = {
+            "kind": "StreamingFeatureView",
+            "name": "click_agg",
+            "database": "DB",
+            "schema": "SCH",
+            "version": "V1",
+            "entities": ["user_id"],
+            "sources": [{"name": "clicks", "source_type": "Stream"}],
+            "timestamp_col": "event_ts",
+            "feature_granularity_sec": 3600,
+            "feature_aggregation_method": "tiles",
+            "udf": {
+                "name": "transform",
+                "output_columns": [{"name": "AMOUNT", "type": "DoubleType"}],
+            },
+            "features": [_agg_feature()],
+        }
+        spec.update(overrides)
+        return spec
+
+    def _codes(self, fv_spec: dict[str, Any]) -> list[str]:
+        batch = _batch(_make_entity_spec(), _make_source_spec(), fv_spec)
+        results = validate_specs(batch, _empty_applied())
+        return [r.code for r in results]
+
+    def test_tiled_streaming_without_refresh_freq_is_error(self) -> None:
+        codes = self._codes(self._tiled_streaming_fv())
+        assert "STREAM_FV_TILING_REFRESH" in codes
+
+    def test_tiled_streaming_with_refresh_freq_is_ok(self) -> None:
+        codes = self._codes(self._tiled_streaming_fv(refresh_freq="1 minute"))
+        assert "STREAM_FV_TILING_REFRESH" not in codes
+
+    def test_non_tiled_streaming_without_refresh_freq_is_ok(self) -> None:
+        """A non-tiled streaming FV (1:1 passthrough features, no windows)
+        has no offline DT to schedule and must not be flagged.
+        """
+        non_tiled = self._tiled_streaming_fv(
+            features=[
+                {
+                    "source_column": {"name": "event", "type": "StringType"},
+                    "output_column": {"name": "event", "type": "StringType"},
+                }
+            ],
+        )
+        codes = self._codes(non_tiled)
+        assert "STREAM_FV_TILING_REFRESH" not in codes
+
+
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+    pytest_driver.main()

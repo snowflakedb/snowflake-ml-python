@@ -20,13 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.exporter import export_specs
 from snowflake.ml.feature_store.decl.invariants import fg_content_hash, model_to_dict
 from snowflake.ml.feature_store.decl.loader import load_from_project
 from snowflake.ml.feature_store.decl.spec_models import FeatureGroup
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _fg_row_with_advanced_bfv_source(name: str = "USER_FRAUD_FG") -> dict[str, Any]:
@@ -111,7 +110,7 @@ class TestExportThenLoadFGRoundTrip:
         )
 
         # On-disk YAML carries an explicit, non-null ``version: V1``.
-        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG.yaml"
+        fg_yaml = tmp_path / "sources" / "feature_groups" / "USER_FRAUD_FG_V1.yaml"
         assert fg_yaml.exists()
         text = fg_yaml.read_text()
         assert "version: V1" in text, f"expected literal 'version: V1' in exported FG YAML; got:\n{text}"
@@ -149,10 +148,10 @@ class TestExportThenLoadFGRoundTrip:
             default_database="MYDB",
             default_schema="PUBLIC",
         )
-        ao = state.objects["FeatureGroup:MYDB.PUBLIC:USER_FRAUD_FG"]
+        ao = state.objects["FeatureGroup:MYDB.PUBLIC:USER_FRAUD_FG:V1"]
         # The planner's NO_CHANGE branch fires iff these two hashes match.
         assert local_hash == ao.content_hash
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

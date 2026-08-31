@@ -37,6 +37,7 @@ from snowflake.ml.feature_store.decl.project_paths import (
     FSProjectPaths,
     find_project_root,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _touch_manifest(root: pathlib.Path) -> pathlib.Path:
@@ -258,4 +259,4 @@ class TestModuleIsolation:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

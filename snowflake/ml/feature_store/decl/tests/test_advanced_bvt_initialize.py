@@ -71,6 +71,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
@@ -99,7 +100,7 @@ def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
 def _applied_state_for(local: dict[str, Any]) -> AppliedState:
     compiled = compile_to_spec(local, "DB1", "SC1")
     h = _full_spec_hash(compiled)
-    key = "BatchFeatureView:DB1.SC1:BFV_INIT"
+    key = "BatchFeatureView:DB1.SC1:BFV_INIT:V1"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -297,4 +298,4 @@ def test_state_inject_initialize_from_imperative_api() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

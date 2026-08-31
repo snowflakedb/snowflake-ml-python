@@ -443,7 +443,6 @@ def _submit_job(
     func_params_to_log=[
         # TODO: Log the source type (callable, file, directory, etc)
         # TODO: Log instance type of compute pool used
-        # TODO: Log lengths of args, env_vars, and spec_overrides values
         "pip_requirements",
         "external_access_integrations",
         "num_instances",  # deprecated
@@ -453,6 +452,8 @@ def _submit_job(
         "query_warehouse",
         "runtime_environment",
     ],
+    # args and env_vars are deliberately absent: their values may carry user secrets or personal data.
+    # Their sizes are logged as custom tags on job submission instead, see MLJobDefinition.__call__.
 )
 def _submit_job(
     source: Union[str, Callable[..., T]],

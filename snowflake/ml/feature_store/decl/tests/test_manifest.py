@@ -38,6 +38,7 @@ from snowflake.ml.feature_store.decl.manifest import (
     ManifestNotFoundError,
     TargetContext,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _valid_target_data(**overrides: Any) -> Any:
@@ -542,4 +543,4 @@ class TestPublicSurface:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

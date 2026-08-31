@@ -136,6 +136,7 @@ py_library(
     name = "model_version_impl",
     srcs = ["model_version_impl.py"],
     deps = [
+        ":_loaded_model_telemetry",
         ":batch_inference_job_specs",
         ":batch_inference_specs",
         ":inference_engine_utils",
@@ -190,5 +191,25 @@ py_library(
     deps = [
         "//snowflake/ml/model:inference_engine",
         "//snowflake/ml/model/_client/ops:service_ops",
+    ],
+)
+
+py_library(
+    name = "_loaded_model_telemetry",
+    srcs = ["_loaded_model_telemetry.py"],
+    deps = [
+        "//snowflake/ml/_internal:telemetry",
+    ],
+)
+
+py_test(
+    name = "_loaded_model_telemetry_test",
+    srcs = ["_loaded_model_telemetry_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":_loaded_model_telemetry",
     ],
 )

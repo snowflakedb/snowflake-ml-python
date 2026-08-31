@@ -10,6 +10,7 @@ import pytest
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.imperative_executor import _execute_op
 from snowflake.ml.feature_store.decl.types import PlanOp, PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 
 def test_update_fv_calls_update_feature_view_for_batch() -> None:
@@ -248,4 +249,4 @@ def test_build_feature_view_propagates_target_lag_sec_hour_value_to_online_confi
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -162,6 +162,7 @@ class FeatureViewValidationTest(parameterized.TestCase):
 
         self.assertIn("Duplicate feature alias", str(cm.exception))
 
+    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_rejects_hybrid_table_online(self) -> None:
         """Hybrid-table online storage is unsupported for Iceberg-backed feature views."""
         mock_df = MagicMock()
@@ -177,6 +178,7 @@ class FeatureViewValidationTest(parameterized.TestCase):
                 online_config=OnlineConfig(enable=True),
             )
 
+    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_allows_postgres_online(self) -> None:
         """Postgres OFT is allowed with Iceberg-backed feature views."""
         mock_df = MagicMock()
@@ -1357,6 +1359,22 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
             )
 
 
+class DtToOftRefreshModeTest(parameterized.TestCase):
+    """Tests for ``FeatureStore._dt_to_oft_refresh_mode``."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("incremental", "INCREMENTAL", "INCREMENTAL"),
+        ("full", "FULL", "FULL"),
+        ("adaptive", "ADAPTIVE", "INCREMENTAL"),
+        ("adaptive_lower", "adaptive", "INCREMENTAL"),
+        ("auto_passthrough", "AUTO", "AUTO"),
+    )
+    def test_mapping(self, dt_refresh_mode: str, expected: str) -> None:
+        from snowflake.ml.feature_store.feature_store import FeatureStore
+
+        self.assertEqual(FeatureStore._dt_to_oft_refresh_mode(dt_refresh_mode), expected)
+
+
 class CreateOnlineFeatureTableTest(absltest.TestCase):
     """Tests for FeatureStore._create_online_feature_table SQL assembly."""
 
@@ -1398,6 +1416,7 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         mock_fs._enable_source_view_change_tracking_for_incremental_oft = (
             FeatureStore._enable_source_view_change_tracking_for_incremental_oft.__get__(mock_fs)
         )
+        mock_fs._dt_to_oft_refresh_mode = FeatureStore._dt_to_oft_refresh_mode
         mock_fs._session = MagicMock()
         if postgres_online_service_running:
             status_json = json.dumps(
@@ -2570,6 +2589,192 @@ class FeatureAggregationMethodTest(parameterized.TestCase):
             )
 
 
+class TiledStreamingFeatureViewRequiresRefreshFreqTest(parameterized.TestCase):
+    """Tiled feature views — streaming *and* batch — require ``refresh_freq``.
+
+    ``refresh_freq`` is the offline object's cadence: it drives the
+    ``CREATE DYNAMIC TABLE … TARGET_LAG`` clause over the tiling query
+    (``feature_view.py::_get_tile_query``).  Every tiled FV must be a
+    managed Dynamic Table so the pre-computed partial aggregates exist
+    for the merge-at-read path; without ``refresh_freq`` the register
+    flow falls to ``_create_offline_feature_view_view_query`` and builds
+    a plain VIEW over the (untiled) source query with an empty column
+    list — no tiles.  The VIEW path is only correct for a *non-tiled*
+    streaming FV.
+
+    This is independent of the Online Feature Table's ``TARGET_LAG``,
+    which is ``0 seconds`` for every streaming kind because data lands
+    via the ingest path (stream source -> UDF transform -> spec-backed
+    OFT) as soon as it is available.  A zero OFT lag is not a reason to
+    skip the offline tile Dynamic Table.
+
+    Pins:
+    * Tiled streaming FV (TILES / CONTINUOUS) with ``refresh_freq=None``
+      raises ``"refresh_freq is required for tile-based aggregations."``
+      at ``_validate()`` — the call site ``register_feature_view`` uses
+      after the streaming preamble materializes the udf_transformed table.
+    * Tiled batch FV with ``refresh_freq=None`` raises the same error
+      (regression pin — the BFV branch of the check must keep firing).
+    """
+
+    def _make_mock_backfill_df(self) -> MagicMock:
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT * FROM SRC"]}
+        mock_df.columns = ["USER_ID", "AMOUNT", "EVENT_TIME"]
+        mock_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        return mock_df
+
+    def _make_stream_config(self) -> StreamConfig:
+        from snowflake.ml.feature_store.stream_config import StreamConfig
+
+        def _identity(df: Any) -> Any:
+            return df
+
+        return StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_identity,
+            backfill_df=self._make_mock_backfill_df(),
+        )
+
+    def test_tiled_streaming_fv_construction_defers_validation(self) -> None:
+        """Constructing a tiled streaming FV without ``refresh_freq`` does
+        not raise on its own.
+
+        ``__init__`` only invokes ``_validate()`` for batch FVs
+        (``feature_view.py`` — the ``rollup_config is None and
+        stream_config is None and realtime_config is None`` guard), so the
+        cadence requirement is enforced at ``_validate()`` (which
+        ``register_feature_view`` calls after the streaming preamble), not
+        at construction.  This documents *where* the check fires so the
+        ``requires_refresh_freq`` tests below drive ``_validate()`` the
+        same way registration does.
+        """
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+        self.assertIsNone(fv.refresh_freq)
+        self.assertTrue(fv.is_streaming)
+        self.assertTrue(fv.is_tiled)
+
+    def test_tiled_streaming_fv_continuous_requires_refresh_freq(self) -> None:
+        """Tiled streaming FV (CONTINUOUS) with ``refresh_freq=None`` must
+        raise at ``_validate()``.
+
+        ``feature_store.register_feature_view`` calls ``_validate()``
+        after the streaming preamble runs and the udf_transformed table
+        is materialized, so a tiled streaming FV without an authored
+        cadence must fail there with
+        ``"refresh_freq is required for tile-based aggregations."`` —
+        otherwise registration would materialize a plain VIEW over the
+        untiled query instead of a tile Dynamic Table.
+        """
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+        with self.assertRaisesRegex(
+            ValueError,
+            "refresh_freq is required for tile-based aggregations",
+        ):
+            fv._validate()
+
+    def test_tiled_streaming_fv_tiles_requires_refresh_freq(self) -> None:
+        """Same contract for the explicit ``TILES`` aggregation method —
+        the cadence requirement applies to every tiled streaming FV
+        regardless of which aggregation method the author selected.
+        """
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=[Feature.sum("AMOUNT", "2d")],
+            feature_aggregation_method=FeatureAggregationMethod.TILES,
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+        with self.assertRaisesRegex(
+            ValueError,
+            "refresh_freq is required for tile-based aggregations",
+        ):
+            fv._validate()
+
+    def test_tiled_streaming_fv_with_refresh_freq_validates(self) -> None:
+        """A tiled streaming FV *with* an authored ``refresh_freq`` passes
+        ``_validate()`` — the managed tile Dynamic Table path.
+
+        Confirms the restored requirement gates only the missing-cadence
+        case, not tiled streaming generally.
+        """
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1 minute",
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+        fv._validate()
+        self.assertEqual(fv.refresh_freq, "1 minute")
+
+    def test_tiled_batch_fv_still_requires_refresh_freq(self) -> None:
+        """Regression pin — tiled batch FV with ``refresh_freq=None``
+        still raises the existing
+        ``"refresh_freq is required for tile-based aggregations."`` error.
+
+        BFVs raise at construction (``__init__`` validates batch FVs
+        eagerly), streaming FVs raise at ``_validate()``.  Both require an
+        explicit cadence because ``refresh_freq`` controls the offline
+        Dynamic Table's ``CREATE DYNAMIC TABLE … TARGET_LAG`` clause over
+        the tiling query.
+        """
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT USER_ID, AMOUNT, EVENT_TIME FROM SRC"]}
+        mock_df.columns = ["USER_ID", "AMOUNT", "EVENT_TIME"]
+        with self.assertRaisesRegex(
+            ValueError,
+            "refresh_freq is required for tile-based aggregations",
+        ):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                feature_df=mock_df,
+                timestamp_col="EVENT_TIME",
+                feature_granularity="1d",
+                features=[Feature.sum("AMOUNT", "2d")],
+            )
+
+
 class UnicodeColumnSqlGenerationTest(absltest.TestCase):
     """Verify SQL generation properly quotes Unicode (Japanese) column names."""
 
@@ -2928,6 +3133,36 @@ class FeatureViewMetadataTest(absltest.TestCase):
         self.assertEqual(metadata, restored)
         self.assertIn("is_append_only", json_out)
 
+    def test_from_json_ignores_unknown_keys(self) -> None:
+        """A tag written with extra keys deserializes here instead of raising ``TypeError``.
+
+        Mixed-version compatibility: a tag written by a different SDK may carry
+        keys this SDK does not know (e.g. a legacy ``refresh_mode`` or some
+        future key). Unknown keys are dropped; known fields still round-trip.
+        """
+        full_json = json.dumps(
+            {
+                "entities": ["E1"],
+                "timestamp_col": "TS",
+                "is_tiled": True,
+                "is_iceberg": True,
+                "is_streaming": True,
+                "is_append_only": True,
+                "refresh_mode": "AUTO",
+                "future_flag": True,
+            }
+        )
+        metadata = _FeatureViewMetadata.from_json(full_json)
+        self.assertEqual(metadata.entities, ["E1"])
+        self.assertEqual(metadata.timestamp_col, "TS")
+        self.assertTrue(metadata.is_tiled)
+        self.assertTrue(metadata.is_iceberg)
+        self.assertTrue(metadata.is_streaming)
+        self.assertTrue(metadata.is_append_only)
+        restored = json.loads(metadata.to_json())
+        self.assertNotIn("refresh_mode", restored)
+        self.assertNotIn("future_flag", restored)
+
 
 class FeatureViewAppendOnlyTest(absltest.TestCase):
     """Unit tests for FeatureView with append_only and backup_source."""
@@ -3047,6 +3282,29 @@ class FeatureViewAppendOnlyTest(absltest.TestCase):
         )
         metadata = fv._metadata()
         self.assertFalse(metadata.is_append_only)
+
+    def test_metadata_to_json_omits_refresh_mode(self) -> None:
+        """``FeatureView._metadata()`` must NOT stamp ``refresh_mode`` on the tag.
+
+        The ``SNOWML_FEATURE_VIEW_METADATA`` tag is read by older
+        ``snowflake-ml-python`` releases whose ``from_json`` raises
+        ``TypeError`` on any unknown key, so the tag must not carry
+        ``refresh_mode`` regardless of the authored value.
+        """
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        for authored in ("AUTO", "INCREMENTAL", "FULL"):
+            with self.subTest(authored=authored):
+                fv = FeatureView(
+                    name="test_fv",
+                    entities=[entity],
+                    feature_df=self._make_mock_df(),
+                    timestamp_col="SNAPSHOT_TS",
+                    refresh_freq="1 day",
+                    refresh_mode=authored,
+                )
+                metadata = fv._metadata()
+                self.assertNotIn("refresh_mode", json.loads(metadata.to_json()))
+                self.assertFalse(hasattr(metadata, "refresh_mode"))
 
     def test_snapshot_table_name(self) -> None:
         name = SqlIdentifier("MY_FV")

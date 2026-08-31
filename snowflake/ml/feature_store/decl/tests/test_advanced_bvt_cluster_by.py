@@ -35,8 +35,6 @@ import copy
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.exporter import _build_full_fidelity_fv
 from snowflake.ml.feature_store.decl.imperative_executor import _build_feature_view
@@ -55,6 +53,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
@@ -83,7 +82,7 @@ def _minimal_batch_fv_authoring(**overrides: Any) -> dict[str, Any]:
 def _applied_state_for(local: dict[str, Any]) -> AppliedState:
     compiled = compile_to_spec(local, "DB1", "SC1")
     h = _full_spec_hash(compiled)
-    key = "BatchFeatureView:DB1.SC1:BFV_CB"
+    key = "BatchFeatureView:DB1.SC1:BFV_CB:V1"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -286,4 +285,4 @@ def test_state_inject_cluster_by_from_list_row() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -43,6 +43,7 @@ from snowflake.ml.feature_store.decl.loader import load_specs
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
 from snowflake.ml.feature_store.decl.types import PlanOptions
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Fixtures — SPECIFICATION-shape JSON dicts (one per FV kind)
@@ -1424,7 +1425,7 @@ def _limitation_applied_state(
     kind = applied_authoring["kind"]
     name = applied_authoring["name"]
     version = applied_authoring["version"]
-    key = f"{kind}:{database.upper()}.{schema.upper()}:{name.upper()}"
+    key = f"{kind}:{database.upper()}.{schema.upper()}:{name.upper()}:{version.upper()}"
     return AppliedState(
         objects={
             key: AppliedObject(
@@ -2047,4 +2048,4 @@ class TestLimitationFixturesPlan:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

@@ -467,6 +467,27 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.assertNotIn(constants.PREFLIGHT_ENV_VAR, result.spec_options.env_vars)
         self.assertNotIn(constants.PREFLIGHT_REFERENCE_STEP_ENV_VAR, result.spec_options.env_vars)
 
+    def test_call_reports_argument_and_env_var_counts_without_values(self) -> None:
+        """Job submission must report how many arguments and environment variables were supplied, not their values.
+
+        Argument and environment variable values may carry user secrets or personal data, so only their
+        counts belong in telemetry.
+        """
+        job_def: job_definition.MLJobDefinition[..., Any] = self._expected_definition("test_runtime")
+        # Distinct counts so that reporting one under the other's key cannot pass.
+        job_def.env_vars = {"SECRET_TOKEN": "do_not_log_me", "REGION": "us-west-2", "RANK": "0"}
+
+        with patch(
+            "snowflake.ml.jobs.job_definition.query_helper.run_query",
+            return_value=[["TEST_DB.TEST_SCHEMA.JOB"]],
+        ) as mock_run_query:
+            job_def("--epochs", "3")
+
+        custom_tags = mock_run_query.call_args.kwargs["statement_params"]["custom_tags"]
+        self.assertEqual(2, custom_tags["job_args_count"])
+        self.assertEqual(3, custom_tags["env_vars_count"])
+        self.assertNotIn("do_not_log_me", repr(custom_tags))
+
 
 if __name__ == "__main__":
     absltest.main()

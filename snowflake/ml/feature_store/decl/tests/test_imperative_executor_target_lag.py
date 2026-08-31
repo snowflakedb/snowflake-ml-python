@@ -31,13 +31,12 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl.imperative_executor import (
     _build_feature_view,
     _execute_update_feature_view,
     _resolve_online_target_lag,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # _resolve_online_target_lag — unit-level precedence tests.
@@ -393,4 +392,4 @@ def test_update_batch_fv_without_target_lag_keeps_imperative_default() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

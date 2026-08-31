@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
@@ -26,6 +24,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOptions,
     SpecBatch,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,7 +55,7 @@ def _source_model(name: str = "clicks") -> StreamingSource:
     )
 
 
-def _fv_model(name: str = "click_fv", version: str = "V1") -> FeatureView:
+def _fv_model(name: str = "click_fv", version: str = "V1", output_name: str = "event") -> FeatureView:
     return FeatureView.model_validate(
         {
             "kind": "StreamingFeatureView",
@@ -69,7 +68,7 @@ def _fv_model(name: str = "click_fv", version: str = "V1") -> FeatureView:
             "features": [
                 {
                     "source_column": {"name": "event", "type": "StringType"},
-                    "output_column": {"name": "event", "type": "StringType"},
+                    "output_column": {"name": output_name, "type": "StringType"},
                 }
             ],
         }
@@ -136,9 +135,14 @@ class TestGeneratePlan:
         assert OpKind.NO_CHANGE in kinds
 
     def test_updated_spec_produces_recreate_fv_op(self) -> None:
-        """Changed spec always produces RECREATE since OFTs cannot be updated in place."""
+        """A content change at the *same* version produces RECREATE (OFTs
+        cannot be updated in place).
+
+        Identity is ``(name, version)``, so the edit must keep ``V1`` on
+        both sides — a version bump would instead be a brand-new object.
+        """
         old_fv = _fv_model(version="V1")
-        new_fv = _fv_model(version="V2")
+        new_fv = _fv_model(version="V1", output_name="event_renamed")  # same version, changed content
         applied = _applied_with_model(old_fv)
         batch = _batch(new_fv)
         plan = generate_plan(batch, applied, _opts())
@@ -195,13 +199,14 @@ class TestGeneratePlan:
             "name": "click_fv",
             "database": "DB",
             "schema_": "SCH",
-            "version": "V2",
+            "version": "V1",  # same version, changed content → destructive recreate
             "entities": ["user_id"],
             "sources": [{"name": "clicks", "source_type": "Stream"}],
             "features": [
                 {
                     "source_column": {"name": "event", "type": "StringType"},
-                    "output_column": {"name": "event_upper", "type": "StringType"},
+                    # Renamed output column → real structural change at same version.
+                    "output_column": {"name": "event_renamed", "type": "StringType"},
                     "function": "upper",
                 }
             ],
@@ -237,14 +242,14 @@ class TestGeneratePlan:
             "name": "click_fv",
             "database": "DB",
             "schema_": "SCH",
-            "version": "V2",
+            "version": "V1",  # same version, changed content → destructive
             "entities": ["user_id"],
             "sources": [{"name": "clicks", "source_type": "Stream"}],
             "features": [
                 {
                     "source_column": {"name": "event", "type": "StringType"},
-                    "output_column": {"name": "event_upper", "type": "StringType"},
-                    "function": "upper",  # changed function → destructive
+                    # Renamed output column → real structural change at same version.
+                    "output_column": {"name": "event_renamed", "type": "StringType"},
                 }
             ],
         }
@@ -726,6 +731,25 @@ class TestPlannerFullSpecDiff:
         update_op = next(op for op in plan.ops if op.kind == OpKind.UPDATE_ENTITY)
         assert update_op.destructive is False
         assert update_op.name == "user"
+
+    def test_missing_spec_payload_falls_back_to_generic_reason(self) -> None:
+        """When applied.spec_payload is absent the reason must not crash and must still
+        contain the 'full-spec' marker so existing callers that check for that string keep
+        passing."""
+        deployed_dict = _fv_dict_with_udf(udf_body="def transform(x):\n    return x")
+        applied = _applied_from_compiled(deployed_dict)
+        # Wipe the payload so the diff path has nothing to compare against.
+        applied_obj = next(iter(applied.objects.values()))
+        applied_obj.spec_payload = None  # type: ignore[assignment]
+
+        local_dict = _fv_dict_with_udf(udf_body="def transform(x):\n    return x.upper()")
+        local_fv = FeatureView.model_validate(local_dict)
+        plan = generate_plan(_batch(local_fv), applied, _opts())
+
+        recreate_ops = [op for op in plan.ops if op.kind == OpKind.RECREATE_FV]
+        assert len(recreate_ops) == 1
+        reason = recreate_ops[0].reason
+        assert "full-spec" in reason.lower(), f"Generic fallback must mention 'full-spec': {reason!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1629,6 +1653,58 @@ class TestRefreshFreqDriftRoutesAsUpdateFv:
         )
 
 
+class TestRefreshFreqDriftStreamingCarveOut:
+    """A tiled streaming FV's ``refresh_freq`` (the offline tile Dynamic
+    Table cadence) must be compared against the applied *recovered*
+    ``spec.refresh_freq`` — NOT the applied ``spec.target_lag_sec``, which
+    for a streaming FV is the Online Feature Table's ingest lag that the
+    Snowflake runtime always stamps to ``0``.
+
+    Without this carve-out, a deployed tiled streaming FV authored
+    ``refresh_freq="5 minutes"`` would drift ``300 != 0`` against the OFT
+    sentinel on every replan and emit a spurious ``UPDATE_FV``.
+    """
+
+    def _drifted(self, local_refresh_freq: str, applied_refresh_freq: str | None) -> bool:
+        from snowflake.ml.feature_store.decl.planner import _refresh_freq_drifted
+
+        local = _streaming_fv_authoring_dict(refresh_freq=local_refresh_freq)
+        # Make the local FV tiled so it is a shape that legitimately
+        # carries refresh_freq (aggregation window).
+        local["features"] = [
+            {
+                "function": "sum",
+                "window_sec": 3600,
+                "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                "output_column": {"name": "AMOUNT_1H", "type": "DoubleType"},
+            }
+        ]
+        applied_spec: dict[str, Any] = {"target_lag_sec": 0}
+        if applied_refresh_freq is not None:
+            applied_spec["refresh_freq"] = applied_refresh_freq
+        applied_payload = {"kind": "StreamingFeatureView", "spec": applied_spec}
+        return _refresh_freq_drifted(local, applied_payload, "DB", "SCH")
+
+    def test_identical_streaming_refresh_freq_is_not_drift(self) -> None:
+        assert self._drifted("5 minutes", "5 minutes") is False, (
+            "A tiled streaming FV whose recovered applied refresh_freq "
+            "equals the local cadence must not drift — the OFT "
+            "target_lag_sec=0 sentinel must not be read as the DT cadence."
+        )
+
+    def test_changed_streaming_refresh_freq_is_drift(self) -> None:
+        assert self._drifted("10 minutes", "5 minutes") is True, (
+            "A genuine tiled streaming refresh_freq edit must be detected " "as drift so the planner emits UPDATE_FV."
+        )
+
+    def test_unrecovered_streaming_cadence_is_not_spurious_drift(self) -> None:
+        """When the applied side has not recovered ``refresh_freq`` (only
+        the OFT ``target_lag_sec=0`` sentinel), the planner must NOT treat
+        the local cadence as drift — that is the spurious-UPDATE_FV bug.
+        """
+        assert self._drifted("5 minutes", None) is False
+
+
 # ---------------------------------------------------------------------------
 # PR A — cosmetic SQL edits on a query-backed BatchFV route to NO_CHANGE
 # ---------------------------------------------------------------------------
@@ -1707,4 +1783,4 @@ class TestQueryBackedBatchFvCosmeticSqlEdits:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

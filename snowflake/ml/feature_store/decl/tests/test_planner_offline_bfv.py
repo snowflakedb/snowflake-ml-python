@@ -22,8 +22,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_models import (
     BatchSource,
@@ -33,6 +31,7 @@ from snowflake.ml.feature_store.decl.spec_models import (
 )
 from snowflake.ml.feature_store.decl.state import fetch_applied_state
 from snowflake.ml.feature_store.decl.types import PlanOptions, SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 _DB = "JKEW_DB"
 _SCH = "JKEW_SCHEMA"
@@ -348,4 +347,4 @@ class TestPlannerOfflineBfvReplanIdempotency:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

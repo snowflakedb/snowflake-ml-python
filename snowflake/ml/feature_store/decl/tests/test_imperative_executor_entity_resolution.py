@@ -14,6 +14,7 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml.feature_store.decl.imperative_executor import (
     _get_entity_for_feature_view_ref,
 )
+from snowflake.ml.test_utils import pytest_driver
 
 
 def test_get_entity_direct_hit_when_name_equals_ref() -> None:
@@ -71,4 +72,4 @@ def test_get_entity_join_key_ambiguous_raises() -> None:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

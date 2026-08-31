@@ -44,6 +44,7 @@ from snowflake.ml.feature_store.decl.manifest import (
 )
 from snowflake.ml.feature_store.decl.project_paths import FSProjectPaths
 from snowflake.ml.feature_store.decl.types import SpecBatch
+from snowflake.ml.test_utils import pytest_driver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -607,4 +608,4 @@ class TestPublicSurface:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

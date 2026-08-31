@@ -17,6 +17,11 @@ class ModelSaveOptionsTest(absltest.TestCase):
             frozenset({"case_sensitive", "function_type", "max_batch_size", "volatility"}),
         )
 
+    def test_base_model_save_option_includes_global_method_keys(self) -> None:
+        base_keys = model_save_options._typed_dict_annotation_keys(model_types.BaseModelSaveOption)
+        self.assertIn("case_sensitive", base_keys)
+        self.assertIn("max_batch_size", base_keys)
+
     def test_typed_dict_annotation_keys_includes_keys_from_typed_dict_bases(self) -> None:
         class _ParentOption(TypedDict):
             parent_key: NotRequired[str]
@@ -97,6 +102,8 @@ class ModelSaveOptionsTest(absltest.TestCase):
             options={
                 "relax_version": True,
                 "target_methods": ["predict"],
+                "case_sensitive": True,
+                "max_batch_size": 32,
             },
         )
 

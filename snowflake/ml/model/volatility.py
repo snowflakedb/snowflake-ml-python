@@ -23,6 +23,7 @@ DEFAULT_VOLATILITY_BY_MODEL_TYPE = {
     "huggingface_pipeline": Volatility.IMMUTABLE,
     "keras": Volatility.IMMUTABLE,
     "lightgbm": Volatility.IMMUTABLE,
+    "peft_adapter": Volatility.IMMUTABLE,
     "mlflow": Volatility.IMMUTABLE,
     "pytorch": Volatility.IMMUTABLE,
     "sentence_transformers": Volatility.IMMUTABLE,

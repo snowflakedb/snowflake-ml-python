@@ -85,18 +85,32 @@ class FeatureViewMetadataConfig:
 
 @dataclass
 class AggregationMetadata:
-    """Aggregation configuration for tiled feature views."""
+    """Aggregation configuration for tiled feature views.
 
-    feature_granularity: str
-    features: list[AggregationSpec]
+    ``aggregation_secondary_keys`` was promoted from a tiling-time-only
+    detail to authoritative metadata so the applied-state recovery path
+    can rehydrate it without re-deriving from the synthesized
+    ``_SECONDARY_KEY_ARRAY`` aggregation specs (which is lossy on the
+    ordering boundary and forced an UPDATE_FV on round-trip). See plan
+    section A2.
+
+    Non-tiled BFVs that only carry ``aggregation_secondary_keys`` have
+    ``feature_granularity`` and ``features`` set to None. They still serialize
+    both keys (as null and []) so older clients can read the row, and a null
+    ``feature_granularity`` marks the row as passthrough on read.
+    """
+
+    feature_granularity: Optional[str] = None
+    features: Optional[list[AggregationSpec]] = None
     feature_aggregation_method: Optional[str] = None
     aggregation_secondary_keys: Optional[list[str]] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
+        # Always emit keys so older from_dict can parse SK-only rows.
         d: dict[str, Any] = {
             "feature_granularity": self.feature_granularity,
-            "features": [f.to_dict() for f in self.features],
+            "features": [f.to_dict() for f in (self.features or [])],
         }
         if self.feature_aggregation_method is not None:
             d["feature_aggregation_method"] = self.feature_aggregation_method
@@ -108,9 +122,10 @@ class AggregationMetadata:
     def from_dict(cls, data: dict[str, Any]) -> AggregationMetadata:
         """Create from dictionary."""
         raw_secondary_keys = data.get("aggregation_secondary_keys")
+        raw_features = data.get("features")
         return cls(
-            feature_granularity=data["feature_granularity"],
-            features=[AggregationSpec.from_dict(f) for f in data["features"]],
+            feature_granularity=data.get("feature_granularity"),
+            features=[AggregationSpec.from_dict(f) for f in raw_features] if raw_features is not None else None,
             feature_aggregation_method=data.get("feature_aggregation_method"),
             aggregation_secondary_keys=list(raw_secondary_keys) if raw_secondary_keys is not None else None,
         )

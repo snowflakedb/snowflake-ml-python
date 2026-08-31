@@ -100,6 +100,35 @@ def _normalize_column_name(name: str) -> str:
     return name.strip('"').upper()
 
 
+def _is_populated_cell(cell: Any) -> bool:
+    """Whether an online-read cell holds real data, as opposed to a null or an empty array.
+
+    Secondary-key aggregates come back as arrays with one element per secondary-key
+    bucket. An empty array means the online feature table has a row for the join key
+    but no tile data behind it yet, which is a partially-propagated read rather than a
+    materialized one. Readiness polls must keep waiting in that case, otherwise they
+    exit early and assert against values that were never populated.
+
+    Args:
+        cell: A single cell value from the online-read DataFrame.
+
+    Returns:
+        True when the cell holds a non-null scalar or a non-empty array.
+    """
+    # ``x != x`` detects float NaN without importing math.
+    if cell is None or (isinstance(cell, float) and cell != cell):
+        return False
+    try:
+        # Decode the JSON-string form first: ``len('[]')`` is 2, so an empty array
+        # left as text would otherwise read as populated.
+        coerced = json.loads(cell) if isinstance(cell, str) else cell
+        return len(coerced) > 0
+    except (ValueError, TypeError):
+        # A malformed or scalar cell is the shape regression this test asserts on
+        # later; accept it here so the poll ends and the assertion reports it.
+        return True
+
+
 class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
     """End-to-end FG CRUD against a live Postgres OFT."""
 
@@ -1164,10 +1193,11 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                         candidate = pdf.iloc[0][sum_col] if sum_col is not None else None
                         count_candidate = pdf.iloc[0][count_col] if count_col is not None else None
                         keys_candidate = pdf.iloc[0][keys_col] if keys_col is not None else None
-                        # ``x != x`` detects float NaN without importing math; arrays
-                        # are object-dtype so this only trips on a scalar-null cell.
-                        is_nan = isinstance(candidate, float) and candidate != candidate
-                        if candidate is not None and not is_nan:
+                        # Require every column to be populated before accepting the read.
+                        # A row whose arrays are still empty means the OFT registered the
+                        # join key ahead of the tile data; breaking on it would assert
+                        # against a half-propagated read instead of waiting it out.
+                        if all(_is_populated_cell(c) for c in (candidate, count_candidate, keys_candidate)):
                             value = candidate
                             count_value = count_candidate
                             keys_value = keys_candidate
@@ -1198,7 +1228,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
 
             self.assertIsNotNone(
                 value,
-                f"secondary-key value column '{sum_col_token}' did not materialize a non-null value "
+                f"secondary-key value column '{sum_col_token}' did not materialize a non-empty value "
                 f"within 600s; cannot verify the array-shape regression guard. last_err={last_err!r}",
             )
             # The secondary-key value columns come back as arrays (one element per
@@ -1212,7 +1242,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # as LongType the read succeeds and returns an array (one per AD_ID).
             self.assertIsNotNone(
                 count_value,
-                f"secondary-key COUNT column '{count_col_token}' did not materialize a non-null value "
+                f"secondary-key COUNT column '{count_col_token}' did not materialize a non-empty value "
                 f"within 600s; cannot verify the COUNT element-type regression guard.",
             )
             coerced_count = json.loads(count_value) if isinstance(count_value, str) else count_value
@@ -1221,7 +1251,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # Seeded AD_IDs {'ad_a','ad_b'} -> length 2.
             self.assertIsNotNone(
                 keys_value,
-                f"secondary-key keys array '{keys_col_token}' did not materialize a non-null value within 600s.",
+                f"secondary-key keys array '{keys_col_token}' did not materialize a non-empty value within 600s.",
             )
             coerced_keys = json.loads(keys_value) if isinstance(keys_value, str) else keys_value
             keys_list = list(coerced_keys)

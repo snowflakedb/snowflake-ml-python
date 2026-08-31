@@ -52,6 +52,7 @@ _HANDLER_OPTION_TYPED_DICT: dict[model_types.SupportedModelHandlerType, type] = 
     "torchscript": model_types.TorchScriptSaveOptions,
     "xgboost": model_types.XGBModelSaveOptions,
     "keras": model_types.KerasSaveOptions,
+    "peft_adapter": model_types.PeftAdapterSaveOptions,
 }
 
 _HANDLER_SPECIFIC_SAVE_OPTION_KEYS: dict[model_types.SupportedModelHandlerType, frozenset[str]] = {

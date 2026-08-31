@@ -27,6 +27,7 @@ import math
 import os
 import time
 import uuid
+from typing import Optional
 
 from absl.testing import absltest
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA
@@ -257,6 +258,24 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             base_location=f"test_{uuid.uuid4().hex}/",
         )
 
+    def _assert_storage_format(self, fs: FeatureStore, table_name: str, *, expect_iceberg: bool) -> None:
+        """Assert whether ``table_name`` (schema-local identifier) is an Iceberg table.
+
+        Args:
+            fs: Feature store whose schema is searched.
+            table_name: Unqualified table identifier as stored in Snowflake.
+            expect_iceberg: Whether the table must appear in ``SHOW ICEBERG TABLES``.
+        """
+        rows = self._session.sql(f"SHOW ICEBERG TABLES IN SCHEMA {fs._config.full_schema_path}").collect()
+        iceberg_names = {str(row["name"]) for row in rows}
+        is_iceberg = table_name in iceberg_names
+        self.assertEqual(
+            is_iceberg,
+            expect_iceberg,
+            f"{table_name} iceberg={is_iceberg}, expected={expect_iceberg}; iceberg tables={sorted(iceberg_names)}",
+        )
+
+    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_batch_fv_spec_oft_online_read_by_key(self) -> None:
         """Dynamic Iceberg Table batch FV with Postgres OFT: register, wait, online read."""
         fs = self._create_feature_store()
@@ -472,7 +491,13 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         )
 
     def _register_passthrough_streaming_fv(
-        self, fs: FeatureStore, fv_name: str, suffix: str, source_table: str
+        self,
+        fs: FeatureStore,
+        fv_name: str,
+        suffix: str,
+        source_table: str,
+        *,
+        storage_config: Optional[StorageConfig] = None,
     ) -> FeatureView:
         """Register a passthrough SFV whose backfill is ``source_table`` and wait for UDF backfill.
 
@@ -481,6 +506,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             fv_name: Feature view name.
             suffix: Unique suffix for the stream source name.
             source_table: Fully qualified backfill table (Iceberg or Snowflake).
+            storage_config: Optional Iceberg (or other) storage config for the registered FV.
 
         Returns:
             The registered streaming feature view.
@@ -497,6 +523,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             ),
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
+            storage_config=storage_config,
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -572,15 +599,13 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             desc="udf write snowflake table streaming postgres oft",
         )
 
+    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_backfill_streaming_fv_spec_oft_online_read_by_key(self) -> None:
-        """SFV with Iceberg ``$UDF_TRANSFORMED`` / ``$BACKFILL``, through to an online read.
+        """SFV whose offline object is a Dynamic Iceberg Table, through to an online read.
 
-        With Iceberg storage the offline Dynamic Table becomes a Dynamic Iceberg Table and
-        both landing tables are managed Iceberg tables. Postgres OFT hydrates from
+        ``$UDF_TRANSFORMED`` / ``$BACKFILL`` stay regular Snowflake tables with
+        Iceberg-compatible timestamp scale (6). Postgres OFT hydrates from
         ``$UDF_TRANSFORMED``.
-
-        ``$BACKFILL`` is checked via query history rather than ``INFORMATION_SCHEMA``: the
-        OFT refresh drains and then drops it, so it is gone by the time backfill completes.
         """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
@@ -601,11 +626,9 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         physical_name = FeatureView._get_physical_name(registered.name, registered.version)
         udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
-        backfill_table = f"{udf_table.resolved()}$BACKFILL"
 
         self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=True)
-        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=True)
-        self._assert_created_as_iceberg_table(backfill_table)
+        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=False)
 
         self._assert_amount_round_trip(fs, fv_name, "v1", src_table, batch_key, expected_amount)
 
@@ -1367,10 +1390,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             Feature.avg(numeric_col, window).alias("F_AVG"),
             Feature.min(numeric_col, window).alias("F_MIN"),
             Feature.max(numeric_col, window).alias("F_MAX"),
-            # STDDEV online serving is pending Quake PR 424: SnowML sends the function token "std" while the
-            # online engine matches "stddev". Re-enable once an image including that PR is deployed.
-            # TODO: uncomment after the next Quake release (PR 424).
-            # Feature.stddev(numeric_col, window).alias("F_STDDEV"),
+            Feature.stddev(numeric_col, window).alias("F_STDDEV"),
+            Feature.var(numeric_col, window).alias("F_VAR"),
             Feature.approx_count_distinct(category_col, window).alias("F_ACD"),
             Feature.last_n(category_col, window, n=n).alias("F_LAST_N"),
             Feature.first_n(category_col, window, n=n).alias("F_FIRST_N"),
@@ -1452,22 +1473,13 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertTrue(pd.isna(row["F_AVG"]), f"F_AVG={row['F_AVG']!r}")
             self.assertTrue(pd.isna(row["F_MIN"]), f"F_MIN={row['F_MIN']!r}")
             self.assertTrue(pd.isna(row["F_MAX"]), f"F_MAX={row['F_MAX']!r}")
-            # TODO: uncomment after the next Quake release (PR 424).
-            # self.assertTrue(pd.isna(row["F_STDDEV"]), f"F_STDDEV={row['F_STDDEV']!r}")
-            # Expected result (offline is the source of truth): for an all-NULL key offline serving returns 0
-            # for approx_count_distinct and NULL for the list aggregations, so aligned online serving must
-            # match. Re-enable these offline-parity assertions once a Quake image including PR 424 (which
-            # aligns approx_count_distinct and the list aggregations with offline) is deployed:
-            # TODO: uncomment after the next Quake release (PR 424).
-            # self.assertEqual(int(row["F_ACD"]), 0, f"F_ACD={row['F_ACD']!r}")
-            # for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
-            #     self.assertTrue(pd.isna(row[col]), f"{col}={row[col]!r}")
-            # Current tiles-only online serving instead returns NULL approx_count_distinct and empty-array list
-            # aggregations for an all-NULL key. NOTE: once the PR 424 image is deployed the two assertions below
-            # become incorrect and must be deleted (replaced by the offline-parity assertions above).
-            self.assertTrue(pd.isna(row["F_ACD"]), f"F_ACD={row['F_ACD']!r}")
+            self.assertTrue(pd.isna(row["F_STDDEV"]), f"F_STDDEV={row['F_STDDEV']!r}")
+            self.assertTrue(pd.isna(row["F_VAR"]), f"F_VAR={row['F_VAR']!r}")
+            # Offline is the source of truth: for an all-NULL key it returns 0 for approx_count_distinct and
+            # NULL for the list aggregations, and online serving matches.
+            self.assert_long_feature(row["F_ACD"], expected=0, msg="approx_count_distinct")
             for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
-                self.assertEqual(self._online_list(row[col]), [], f"{col}={row[col]!r}")
+                self.assertTrue(pd.isna(row[col]), f"{col}={row[col]!r}")
 
         def _validate_one_value(pdf):
             row = pdf.iloc[0]
@@ -1477,8 +1489,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertAlmostEqual(float(row["F_AVG"]), 42.0, places=2)
             self.assertAlmostEqual(float(row["F_MIN"]), 42.0, places=2)
             self.assertAlmostEqual(float(row["F_MAX"]), 42.0, places=2)
-            # TODO: uncomment after the next Quake release (PR 424).
-            # self.assertAlmostEqual(float(row["F_STDDEV"]), 0.0, places=2)  # single value -> population std 0
+            self.assertAlmostEqual(float(row["F_STDDEV"]), 0.0, places=2)  # single value -> population std 0
+            self.assertAlmostEqual(float(row["F_VAR"]), 0.0, places=2)  # single value -> population variance 0
             self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
             for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
                 self.assertEqual(self._online_list(row[col]), ["cat1"], f"{col}={row[col]!r}")

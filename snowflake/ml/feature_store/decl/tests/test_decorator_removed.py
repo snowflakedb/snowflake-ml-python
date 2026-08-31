@@ -24,6 +24,8 @@ import importlib
 
 import pytest
 
+from snowflake.ml.test_utils import pytest_driver
+
 
 class TestDecoratorModuleRemoved:
     """The legacy decorator submodule is gone."""
@@ -83,4 +85,4 @@ class TestLoaderDoesNotReadFeatureViewAttribute:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

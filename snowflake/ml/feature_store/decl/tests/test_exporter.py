@@ -9,6 +9,8 @@ from typing import Any, Optional
 import pytest
 import yaml
 
+from snowflake.ml.test_utils import pytest_driver
+
 # ---------------------------------------------------------------------------
 # Helpers — shared test data
 # ---------------------------------------------------------------------------
@@ -141,7 +143,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         assert fv_path.exists()
         data = yaml.safe_load(fv_path.read_text())
 
@@ -158,7 +160,7 @@ class TestExportSpecsFullFidelity:
         assert "language" not in data["udf"]
         assert data["udf"]["output_columns"] == [{"name": "event_count", "type": "IntegerType"}]
         assert "function_definition" not in data["udf"]
-        assert data["udf"]["file"] == "user_clicks.py"
+        assert data["udf"]["file"] == "user_clicks_v1.py"
 
     def test_full_spec_writes_udf_py_file_with_original_source(self, tmp_path: Path) -> None:
         """The sibling .py file must contain the original ``function_definition`` source."""
@@ -172,7 +174,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        py_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.py"
+        py_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py"
         assert py_path.exists()
         assert py_path.read_text() == "def transform(x):\n    return len(x)"
 
@@ -188,7 +190,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        py_path = str(tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.py")
+        py_path = str(tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py")
         assert py_path in result["files"]
 
     def test_full_spec_udf_file_path_is_relative_to_yaml(self, tmp_path: Path) -> None:
@@ -203,14 +205,14 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         ref = data["udf"]["file"]
         # Must be a bare filename, not absolute and not navigating up.
         assert "/" not in ref
         assert "\\" not in ref
         assert not ref.startswith("/")
-        assert ref == "user_clicks.py"
+        assert ref == "user_clicks_v1.py"
 
     def test_no_udf_py_file_when_function_definition_missing(self, tmp_path: Path) -> None:
         """When the spec carries no UDF source, no .py file is written and ``file:`` is omitted."""
@@ -242,10 +244,10 @@ class TestExportSpecsFullFidelity:
             specification_map={"USER_CLICKS$V1$ONLINE": spec_no_source},
         )
         fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
-        assert (fv_dir / "user_clicks.yaml").exists()
-        assert not (fv_dir / "user_clicks.py").exists()
+        assert (fv_dir / "user_clicks_v1.yaml").exists()
+        assert not (fv_dir / "user_clicks_v1.py").exists()
 
-        data = yaml.safe_load((fv_dir / "user_clicks.yaml").read_text())
+        data = yaml.safe_load((fv_dir / "user_clicks_v1.yaml").read_text())
         assert "udf" in data
         assert "file" not in data["udf"]
         assert "function_definition" not in data["udf"]
@@ -280,7 +282,7 @@ class TestExportSpecsFullFidelity:
             specification_map={"USER_CLICKS$V1$ONLINE": spec_empty_source},
         )
         fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
-        assert not (fv_dir / "user_clicks.py").exists()
+        assert not (fv_dir / "user_clicks_v1.py").exists()
 
     def test_round_trip_inline_udf_source_resolves_exported_file(self, tmp_path: Path) -> None:
         """``compiler.inline_udf_source`` must resolve the exporter's ``file:`` reference."""
@@ -296,7 +298,7 @@ class TestExportSpecsFullFidelity:
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
         fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
-        fv_path = fv_dir / "user_clicks.yaml"
+        fv_path = fv_dir / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
 
         # Loader resolves ``udf.file`` against the YAML's directory.
@@ -315,7 +317,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "sources" in data
         assert len(data["sources"]) == 1
@@ -336,7 +338,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "features" in data
         assert len(data["features"]) == 1
@@ -358,7 +360,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data["kind"] == "StreamingFeatureView"
         assert data["name"] == "user_clicks"
@@ -427,7 +429,7 @@ class TestExportSpecsFullFidelity:
             schema="PUBLIC",
             specification_map={"USER_REALTIME$V2$ONLINE": _REALTIME_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime_v2.yaml"
         assert fv_path.exists()
         data = yaml.safe_load(fv_path.read_text())
         assert data["kind"] == "RealtimeFeatureView"
@@ -518,7 +520,7 @@ class TestExportSpecsOmitsTargetLagForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": self._streaming_spec_with_target_lag(0)},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "target_lag_sec" not in data
         assert "target_lag" not in data
@@ -537,7 +539,7 @@ class TestExportSpecsOmitsTargetLagForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": self._streaming_spec_with_target_lag(3600)},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "target_lag_sec" not in data
         assert "target_lag" not in data
@@ -566,7 +568,7 @@ class TestExportSpecsOmitsTargetLagForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_REALTIME$V2$ONLINE": realtime_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime_v2.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "target_lag_sec" not in data
         assert "target_lag" not in data
@@ -606,10 +608,44 @@ class TestExportSpecsOmitsTargetLagForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": batch_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data.get("refresh_freq") == "3600 seconds"
         assert "target_lag_sec" not in data
+
+    def _tiled_streaming_spec_with_refresh_freq(self, refresh_freq: str) -> dict[str, Any]:
+        import copy
+
+        spec = copy.deepcopy(_FULL_SPEC)
+        # Runtime always stamps the OFT lag to 0; the offline tile DT
+        # cadence rides on refresh_freq (recovered by state.py).
+        spec["spec"]["target_lag_sec"] = 0
+        spec["spec"]["refresh_freq"] = refresh_freq
+        return spec
+
+    def test_exported_tiled_streaming_fv_yaml_emits_refresh_freq(self, tmp_path: Path) -> None:
+        # A tiled streaming FV whose applied spec carries a recovered
+        # refresh_freq (the offline tile DT cadence) must round-trip that
+        # cadence into the exported YAML so `snow feature init` -> re-apply
+        # preserves it.  target_lag_sec (OFT ingest lag, stamped 0) stays
+        # stripped.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": self._tiled_streaming_spec_with_refresh_freq("1 minute")},
+        )
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+        assert data.get("refresh_freq") == "1 minute", (
+            "Tiled streaming FV export must emit the recovered refresh_freq; " f"got {data.get('refresh_freq')!r}."
+        )
+        assert "target_lag_sec" not in data
+        assert "target_lag" not in data
 
     def test_exported_streaming_fv_yaml_roundtrips_through_loader(self, tmp_path: Path) -> None:
         # End-to-end: an exported streaming FV YAML (with the
@@ -675,7 +711,7 @@ class TestExportSpecsOmitsOnlineForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "online" not in data
 
@@ -697,7 +733,7 @@ class TestExportSpecsOmitsOnlineForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_REALTIME$V2$ONLINE": _REALTIME_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime_v2.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "online" not in data
 
@@ -723,7 +759,7 @@ class TestExportSpecsOmitsOnlineForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": batch_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data["online"] is True
 
@@ -748,7 +784,7 @@ class TestExportSpecsOmitsOnlineForStreamingAndRealtime:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": batch_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data["online"] is False
 
@@ -824,7 +860,7 @@ class TestExportSpecsOmitsSchedulingState:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "scheduling_state" not in data
 
@@ -845,7 +881,7 @@ class TestExportSpecsOmitsSchedulingState:
             schema="PUBLIC",
             specification_map={"USER_REALTIME$V2$ONLINE": _REALTIME_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime_v2.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "scheduling_state" not in data
 
@@ -865,7 +901,7 @@ class TestExportSpecsOmitsSchedulingState:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": batch_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "scheduling_state" not in data
 
@@ -890,7 +926,7 @@ class TestExportSpecsOmitsSchedulingState:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "scheduling_state" not in data
 
@@ -1565,7 +1601,7 @@ class TestExportSpecsEntityRows:
             "(callers must forward decl_api.fetch_entity_rows output to get entity emission)"
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         assert fv_path.exists(), "FV YAML must still be written when entity_rows is omitted"
         from pathlib import Path
 
@@ -1757,7 +1793,7 @@ class TestExportSpecsSourcesLayout:
         assert not (
             tmp_path / "MYDB.PUBLIC"
         ).exists(), "layout='sources' must NOT create the legacy <DB>.<SCHEMA>/ tree"
-        fv_path = tmp_path / "sources" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "sources" / "feature_views" / "user_clicks_v1.yaml"
         assert fv_path.exists()
         data = yaml.safe_load(fv_path.read_text())
         assert data["kind"] == "StreamingFeatureView"
@@ -1776,7 +1812,7 @@ class TestExportSpecsSourcesLayout:
             entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
             layout="sources",
         )
-        py_path = tmp_path / "sources" / "feature_views" / "user_clicks.py"
+        py_path = tmp_path / "sources" / "feature_views" / "user_clicks_v1.py"
         assert py_path.exists()
         assert py_path.read_text() == "def transform(x):\n    return len(x)"
 
@@ -1889,7 +1925,7 @@ class TestExportSpecsSourcesLayout:
             entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
         )
         # Legacy layout still wins when layout is unspecified.
-        assert (tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml").exists()
+        assert (tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml").exists()
         assert not (tmp_path / "sources").exists()
 
     def test_sources_layout_unknown_value_raises(self, tmp_path: Path) -> None:
@@ -2101,7 +2137,7 @@ class TestBackfillRoundTrip:
             specification_map={"USER_CLICKS_BF$V1$ONLINE": spec},
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         backfill = data.get("backfill")
         assert isinstance(backfill, dict), (
@@ -2130,7 +2166,7 @@ class TestBackfillRoundTrip:
             specification_map={"USER_CLICKS_BF$V1$ONLINE": spec},
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "backfill" not in data, (
             "exporter must NOT emit a backfill: block when the applied "
@@ -2166,7 +2202,7 @@ class TestBackfillRoundTrip:
             specification_map={"USER_CLICKS_BF$V1$ONLINE": spec},
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         backfill = data.get("backfill") or {}
         assert "overwrite" not in backfill, (
@@ -2196,7 +2232,7 @@ class TestBackfillRoundTrip:
             specification_map={"USER_CLICKS_BF$V1$ONLINE": spec},
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "USER_CLICKS_BF_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         backfill = data.get("backfill")
         assert isinstance(backfill, dict)
@@ -2357,8 +2393,8 @@ class TestAppliedStateForward:
         )
 
         # Both FVs must produce a YAML on disk.
-        fv_a_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "FV_A.yaml"
-        fv_b_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "FV_B.yaml"
+        fv_a_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "FV_A_V1.yaml"
+        fv_b_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "FV_B_V1.yaml"
         assert fv_a_path.exists(), "FV_A (in applied_state) must be exported; " f"got files={result['files']!r}"
         assert fv_b_path.exists(), (
             "FV_B (NOT in applied_state) must still be exported via "
@@ -2595,7 +2631,7 @@ class TestExportSpecsWithAppliedState:
             applied_state=applied_state,
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_BATCH_FV.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_BATCH_FV_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data["kind"] == "BatchFeatureView"
         sources = data.get("sources")
@@ -2631,7 +2667,7 @@ class TestExportSpecsWithAppliedState:
             applied_state=applied_state,
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_BATCH_FV.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_BATCH_FV_V1.yaml"
         sources = yaml.safe_load(fv_path.read_text()).get("sources") or []
         assert sources and sources[0].get("table") == "RAW_EVENTS"
 
@@ -2679,7 +2715,7 @@ class TestExportSpecsWithAppliedState:
             applied_state=applied_state,
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "OFFLINE_BFV.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "OFFLINE_BFV_V1.yaml"
         assert fv_path.exists(), (
             "Offline-only BFV (surfaced via applied_state only) must be " f"exported; got files={result['files']!r}"
         )
@@ -2733,7 +2769,7 @@ class TestExportSpecsWithAppliedState:
             applied_state=applied_state,
         )
 
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_ADV_BFV.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_ADV_BFV_V1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data["cluster_by"] == ["USER_ID", "EVENT_TS"]
         assert data["refresh_mode"] == "INCREMENTAL"
@@ -2761,7 +2797,7 @@ class TestExportSpecsWithAppliedState:
             specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
         )
         assert result["status"] == "exported"
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         assert fv_path.exists()
 
 
@@ -2823,7 +2859,7 @@ class TestRefreshFreqEmitted:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": batch_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert data.get("refresh_freq") == "3600 seconds", (
             "Exported BFV YAML must carry the renamed authoring key "
@@ -2856,7 +2892,7 @@ class TestRefreshFreqEmitted:
             schema="PUBLIC",
             specification_map={"USER_CLICKS$V1$ONLINE": self._streaming_spec_with_target_lag(0)},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "refresh_freq" not in data, (
             "Streaming FV exports must omit refresh_freq (the validator "
@@ -2894,11 +2930,11 @@ class TestRefreshFreqEmitted:
             schema="PUBLIC",
             specification_map={"USER_REALTIME$V2$ONLINE": realtime_spec},
         )
-        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime.yaml"
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_realtime_v2.yaml"
         data = yaml.safe_load(fv_path.read_text())
         assert "refresh_freq" not in data
         assert "batch_schedule" not in data
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest_driver.main()

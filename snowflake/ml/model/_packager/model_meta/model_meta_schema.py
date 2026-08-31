@@ -30,6 +30,7 @@ class ModelRuntimeDict(TypedDict):
 class ModelEnvDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
+    pip_extra_index_urls: NotRequired[list[str]]
     artifact_repository_map: NotRequired[Optional[dict[str, str]]]
     resource_constraint: NotRequired[Optional[dict[str, str]]]
     python_version: Required[str]
@@ -98,6 +99,14 @@ class ProphetModelBlobOptions(BaseModelBlobOptions):
     target_column: NotRequired[Optional[str]]
 
 
+class PeftAdapterModelBlobOptions(BaseModelBlobOptions):
+    base_model_name: Required[str]
+    base_model_version: Required[str]
+    peft_type: NotRequired[str]
+    lora_rank: NotRequired[int]
+    lora_extra_vocab_size: NotRequired[int]
+
+
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
     CatBoostModelBlobOptions,
@@ -109,6 +118,7 @@ ModelBlobOptions = Union[
     TensorflowModelBlobOptions,
     SentenceTransformersModelBlobOptions,
     ProphetModelBlobOptions,
+    PeftAdapterModelBlobOptions,
 ]
 
 
@@ -141,6 +151,7 @@ class ModelMetadataDict(TypedDict):
     explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
     function_properties: NotRequired[dict[str, dict[str, Any]]]
     method_options: NotRequired[dict[str, dict[str, Any]]]
+    case_sensitive: NotRequired[bool]
 
 
 class ModelExplainAlgorithm(Enum):

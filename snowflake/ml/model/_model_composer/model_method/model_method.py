@@ -50,11 +50,17 @@ def get_model_method_options_from_options(
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
-    case_sensitive = method_option.get("case_sensitive", False)
+    global_case_sensitive = bool(options.get("case_sensitive", False))
+    if "case_sensitive" in method_option:
+        case_sensitive = bool(method_option["case_sensitive"])
+    else:
+        case_sensitive = global_case_sensitive
     if target_method == "explain":
         default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
         case_sensitive = utils.determine_explain_case_sensitive_from_method_options(
-            options.get("method_options", {}), target_method
+            options.get("method_options", {}),
+            target_method,
+            default=global_case_sensitive,
         )
     elif model_type == "prophet":
         # Prophet models always require TABLE_FUNCTION because they need entire time series context
