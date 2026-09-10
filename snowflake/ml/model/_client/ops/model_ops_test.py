@@ -1,6 +1,6 @@
 import json
 import pathlib
-from typing import Optional, cast
+from typing import cast
 from unittest import mock
 
 import numpy as np
@@ -12,6 +12,7 @@ from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
+from snowflake.ml.model._client.model_spec import model_extension_spec
 from snowflake.ml.model._client.ops import model_ops
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -118,7 +119,7 @@ class ModelOpsTest(parameterized.TestCase):
     def _make_mock_describe_service_row(
         self,
         dns_name: str,
-        spec: Optional[str] = None,
+        spec: str | None = None,
     ) -> Row:
         """Helper to create a mock Row for describe_service results."""
         row_data = {
@@ -3323,6 +3324,72 @@ class ModelOpsTest(parameterized.TestCase):
                 model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
             )
 
+    @mock.patch.object(model_meta.ModelMetadata, "_validate_model_metadata", autospec=True)
+    def test_get_functions_from_model_spec_v2_without_reading_stage(self, validate_model_metadata: mock.Mock) -> None:
+        raw_model_spec = {
+            "version": "2.0",
+            "model": {
+                "type": "USER_MODEL",
+                "framework": "CUSTOM_RUNTIME",
+                "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
+                "target_platforms": ["SNOWPARK_CONTAINER_SERVICES"],
+            },
+            "serving": {
+                "functions": {
+                    "predict": {
+                        "signature": _DUMMY_SIG["predict"].to_dict(),
+                    },
+                    "predict_table": {
+                        "signature": _DUMMY_SIG["predict_table"].to_dict(),
+                        "properties": {"is_partition": False},
+                    },
+                }
+            },
+        }
+        show_versions_result = [Row(model_spec=yaml.safe_dump(raw_model_spec), runnable_in='["WAREHOUSE"]')]
+        show_functions_result = [
+            Row(name="predict", return_type="NUMBER"),
+            Row(name="predict_table", return_type="TABLE (RESULTS VARCHAR)"),
+        ]
+        with (
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                return_value=show_versions_result,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=show_functions_result,
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "get_model_version_manifest",
+                autospec=True,
+            ) as get_model_version_manifest,
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "get_file",
+                autospec=True,
+            ) as get_file,
+        ):
+            result = self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+        validate_model_metadata.assert_not_called()
+        get_model_version_manifest.assert_not_called()
+        get_file.assert_not_called()
+        function_info_by_method = {function["target_method"]: function for function in result}
+        self.assertEqual(function_info_by_method["predict"]["signature"], _DUMMY_SIG["predict"])
+        self.assertFalse(function_info_by_method["predict_table"]["is_partitioned"])
+
     @parameterized.parameters(  # type: ignore[misc]
         ("NUMBER(38,0)", False),
         ("FLOAT", False),
@@ -3366,9 +3433,7 @@ class ModelOpsTest(parameterized.TestCase):
         {"runnable_in": None, "expected": None},
         {"runnable_in": '["SNOWPARK_CONTAINER_SERVICES"]', "expected": ["SNOWPARK_CONTAINER_SERVICES"]},
     )
-    def test_fetch_model_spec_and_target_platforms(
-        self, runnable_in: Optional[str], expected: Optional[list[str]]
-    ) -> None:
+    def test_fetch_model_spec_and_target_platforms(self, runnable_in: str | None, expected: list[str] | None) -> None:
         m_spec = {
             "signatures": {
                 "predict": _DUMMY_SIG["predict"].to_dict(),
@@ -3405,8 +3470,47 @@ class ModelOpsTest(parameterized.TestCase):
                 check_model_details=True,
                 statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
             )
-            self.assertEqual(model_spec, m_spec)
+            self.assertEqual(model_spec.raw_spec, m_spec)
             self.assertEqual(target_platforms, expected)
+
+    @mock.patch.object(model_meta.ModelMetadata, "_validate_model_metadata", autospec=True)
+    def test_runnable_in_column_overrides_model_spec_v2_target_platforms(
+        self, validate_model_metadata: mock.Mock
+    ) -> None:
+        raw_model_spec = {
+            "version": "2.0",
+            "model": {
+                "type": "USER_MODEL",
+                "framework": "CUSTOM_RUNTIME",
+                "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
+                "target_platforms": ["SNOWPARK_CONTAINER_SERVICES"],
+            },
+            "serving": {
+                "functions": {
+                    "predict": {
+                        "signature": _DUMMY_SIG["predict"].to_dict(),
+                    }
+                }
+            },
+        }
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "show_versions",
+            autospec=True,
+            return_value=[Row(model_spec=yaml.safe_dump(raw_model_spec), runnable_in='["WAREHOUSE"]')],
+        ):
+            parsed_model_spec, target_platforms = self.m_ops._fetch_model_spec_and_target_platforms(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+        self.assertIsInstance(parsed_model_spec, model_extension_spec.ModelExtensionSpecV2)
+        self.assertEqual(parsed_model_spec.raw_spec, raw_model_spec)
+        self.assertEqual(target_platforms, ["WAREHOUSE"])
+        validate_model_metadata.assert_not_called()
 
     def test_fetch_model_spec(self) -> None:
         m_spec = {

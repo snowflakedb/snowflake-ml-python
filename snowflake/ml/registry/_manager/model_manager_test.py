@@ -1,4 +1,5 @@
-from typing import Any, Optional, Union, cast
+import uuid
+from typing import Any, cast
 from unittest import mock
 
 import pandas as pd
@@ -22,6 +23,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class ModelManagerTest(parameterized.TestCase):
+    log_model_operation_id = "0123456789abcdef0123456789abcdef"
     base_statement_params = {
         "project": "MLOps",
         "subproject": "UnitTest",
@@ -38,12 +40,13 @@ class ModelManagerTest(parameterized.TestCase):
         model_version_name: str,
         *,
         model_log_path: str = model_manager.MODEL_LOG_PATH_FROM_STAGE,
-        sfqids: Optional[str] = None,
+        sfqids: str | None = None,
     ) -> dict[str, Any]:
         custom_tags: dict[str, Any] = {
             **self.model_md_telemetry,
             "model_version_name": sql_identifier.SqlIdentifier(model_version_name),
             model_manager.MODEL_LOG_PATH_TAG: model_log_path,
+            model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
         }
         statement_params: dict[str, Any] = {
             **self.base_statement_params,
@@ -58,6 +61,7 @@ class ModelManagerTest(parameterized.TestCase):
             **self.base_statement_params,
             telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
                 model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT,
+                model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
             },
         }
 
@@ -87,6 +91,10 @@ class ModelManagerTest(parameterized.TestCase):
         )
         self._pypi_shared_repo_access_patcher.start()
         self.addCleanup(self._pypi_shared_repo_access_patcher.stop)
+        uuid_patcher = mock.patch.object(uuid, "uuid4")
+        mock_uuid4 = uuid_patcher.start()
+        mock_uuid4.return_value.hex = self.log_model_operation_id
+        self.addCleanup(uuid_patcher.stop)
         platform_capabilities.PlatformCapabilities.set_mock_features({})
         self.addCleanup(platform_capabilities.PlatformCapabilities.clear_mock_features)
         self.m_r = model_manager.ModelManager(
@@ -248,6 +256,7 @@ class ModelManagerTest(parameterized.TestCase):
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
             ),
+            mock.patch.object(telemetry, "send_custom_usage") as mock_send_custom_usage,
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -296,6 +305,7 @@ class ModelManagerTest(parameterized.TestCase):
             )
             mock_list_models_or_versions.assert_not_called()
             mock_hrid_generate.assert_called_once_with()
+            mock_send_custom_usage.assert_not_called()
             self.assertEqual(
                 mv,
                 model_version_impl.ModelVersion._ref(
@@ -730,7 +740,7 @@ class ModelManagerTest(parameterized.TestCase):
     )
     def test_log_model_target_platform_constant(
         self,
-        target_platform_constant: list[Union[target_platform.TargetPlatform, str]],
+        target_platform_constant: list[target_platform.TargetPlatform | str],
     ) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
@@ -989,14 +999,18 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                target_platforms=target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES,
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"relax_version": False, "volatility": Volatility.IMMUTABLE},
+                options={
+                    "embed_local_ml_library": True,
+                    "relax_version": True,
+                    "volatility": Volatility.IMMUTABLE,
+                },
                 task=task.Task.UNKNOWN,
-                prefer_pip_for_automatic_dependencies=True,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 
@@ -1676,7 +1690,7 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
             ) as mock_prepare_model_temp_stage_path,
-            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata),
+            mock.patch.object(model_composer, "ModelComposer", autospec=True) as mock_model_composer,
             mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
             mock.patch.object(self.m_r._model_ops, "commit_live_version") as mock_commit_live_version,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
@@ -1687,6 +1701,7 @@ class ModelManagerTest(parameterized.TestCase):
             ),
             mock.patch.object(telemetry, "send_custom_usage") as mock_send_custom_usage,
         ):
+            mock_model_composer.return_value.save.return_value = m_model_metadata
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -1701,8 +1716,8 @@ class ModelManagerTest(parameterized.TestCase):
                 version_name=live_version,
                 statement_params=self._build_expected_live_version_statement_params(),
             )
-            mock_send_custom_usage.assert_called_once()
-            send_kwargs = mock_send_custom_usage.call_args.kwargs
+            self.assertEqual(mock_send_custom_usage.call_count, 2)
+            send_kwargs = mock_send_custom_usage.call_args_list[0].kwargs
             self.assertEqual(send_kwargs["project"], model_manager._TELEMETRY_PROJECT)
             self.assertEqual(send_kwargs["subproject"], model_manager._TELEMETRY_SUBPROJECT)
             self.assertEqual(
@@ -1717,6 +1732,7 @@ class ModelManagerTest(parameterized.TestCase):
                     telemetry.TelemetryField.KEY_SFQIDS.value: [live_commit_sfqid],
                     telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
                         model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                        model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
                     },
                 },
             )
@@ -1726,6 +1742,26 @@ class ModelManagerTest(parameterized.TestCase):
                 error_codes.INTERNAL_SNOWPARK_ERROR,
             )
             self.assertIn("SnowparkSQLException", send_kwargs[telemetry.TelemetryField.KEY_STACK_TRACE.value])
+            outcome_kwargs = mock_send_custom_usage.call_args_list[1].kwargs
+            self.assertEqual(outcome_kwargs["project"], model_manager._TELEMETRY_PROJECT)
+            self.assertEqual(outcome_kwargs["subproject"], model_manager._TELEMETRY_SUBPROJECT)
+            self.assertEqual(
+                outcome_kwargs["data"],
+                {
+                    telemetry.TelemetryField.KEY_FUNC_NAME.value: (
+                        model_manager._live_commit_fallback_outcome_func_name()
+                    ),
+                    telemetry.TelemetryField.KEY_CATEGORY.value: telemetry.TelemetryField.FUNC_CAT_USAGE.value,
+                    telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
+                        model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                        model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
+                        model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_TAG: (
+                            model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_SUCCESS
+                        ),
+                    },
+                },
+            )
+            self.assertGreaterEqual(outcome_kwargs[telemetry.TelemetryField.KEY_DURATION.value], 0)
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
@@ -1733,9 +1769,23 @@ class ModelManagerTest(parameterized.TestCase):
                     **self.base_statement_params,
                     telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
                         model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                        model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
                         telemetry.TelemetryField.KEY_SFQIDS.value: live_commit_sfqid,
                     },
                 },
+            )
+            mock_model_composer.assert_called_once_with(
+                self.m_r._model_ops._session,
+                stage_path=m_stage_path,
+                statement_params={
+                    **self.base_statement_params,
+                    telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
+                        model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                        model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
+                        telemetry.TelemetryField.KEY_SFQIDS.value: live_commit_sfqid,
+                    },
+                },
+                save_location=None,
             )
             mock_commit_live_version.assert_not_called()
             mock_create_from_stage.assert_called_once_with(
@@ -1751,6 +1801,89 @@ class ModelManagerTest(parameterized.TestCase):
                 ),
             )
             self.assertEqual(mv, self.m_mv)
+
+    def test_log_model_hidden_live_fallback_failure_telemetry(self) -> None:
+        m_model = mock.MagicMock()
+        pending_model = sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL")
+        live_version = sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION")
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        live_commit_error = snowpark_exceptions.SnowparkSQLException("live version SQL is not supported")
+        live_commit_error.sfqid = "qid-live"
+        packaging_error = ValueError("invalid model")
+
+        with (
+            mock.patch.object(snowpark_utils, "is_in_stored_procedure", return_value=False),
+            mock.patch.object(
+                platform_capabilities.PlatformCapabilities,
+                "is_hidden_live_commit_enabled",
+                return_value=True,
+            ),
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_pending_model_name",
+                return_value=pending_model,
+            ),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_live_version_name",
+                return_value=live_version,
+            ),
+            mock.patch.object(
+                self.m_r._model_ops,
+                "create_live_version",
+                side_effect=live_commit_error,
+            ),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", side_effect=packaging_error),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+            mock.patch.object(telemetry, "send_custom_usage") as mock_send_custom_usage,
+        ):
+            with self.assertRaisesRegex(ValueError, "invalid model") as raised:
+                self.m_r.log_model(
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="V1",
+                    statement_params=self.base_statement_params,
+                    progress_status=create_mock_progress_status(),
+                )
+
+            self.assertIs(raised.exception, packaging_error)
+            self.assertEqual(mock_send_custom_usage.call_count, 2)
+            outcome_kwargs = mock_send_custom_usage.call_args_list[1].kwargs
+            self.assertEqual(
+                outcome_kwargs["data"],
+                {
+                    telemetry.TelemetryField.KEY_FUNC_NAME.value: (
+                        model_manager._live_commit_fallback_outcome_func_name()
+                    ),
+                    telemetry.TelemetryField.KEY_CATEGORY.value: telemetry.TelemetryField.FUNC_CAT_USAGE.value,
+                    telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
+                        model_manager.MODEL_LOG_PATH_TAG: model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                        model_manager.LOG_MODEL_OPERATION_ID_TAG: self.log_model_operation_id,
+                        model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_TAG: (
+                            model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_FAILED
+                        ),
+                        model_manager.LIVE_COMMIT_FALLBACK_FAILURE_PHASE_TAG: (
+                            model_manager.LIVE_COMMIT_FALLBACK_PHASE_MODEL_PACKAGING
+                        ),
+                    },
+                },
+            )
+            self.assertGreaterEqual(outcome_kwargs[telemetry.TelemetryField.KEY_DURATION.value], 0)
+            self.assertEqual(
+                outcome_kwargs[telemetry.TelemetryField.KEY_ERROR_INFO.value],
+                repr(packaging_error),
+            )
+            self.assertEqual(
+                outcome_kwargs[telemetry.TelemetryField.KEY_ERROR_CODE.value],
+                error_codes.UNDEFINED,
+            )
+            self.assertIn("ValueError: invalid model", outcome_kwargs[telemetry.TelemetryField.KEY_STACK_TRACE.value])
 
     def test_log_huggingface_model_with_snapshot_dir(self) -> None:
         """Test HuggingFace model with repo_snapshot_dir uses regular logging path."""

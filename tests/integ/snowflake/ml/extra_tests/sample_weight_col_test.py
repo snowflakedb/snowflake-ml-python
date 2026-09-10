@@ -8,9 +8,9 @@ from importlib_resources import files
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from xgboost import XGBClassifier as XGB_XGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.model_selection import GridSearchCV
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 numerical_columns = [

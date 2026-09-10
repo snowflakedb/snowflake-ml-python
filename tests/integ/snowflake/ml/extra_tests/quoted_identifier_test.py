@@ -5,6 +5,7 @@ from absl.testing import absltest, parameterized
 from scipy.stats import randint
 
 from snowflake.ml._internal.env_utils import SNOWML_SPROC_ENV
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.compose import ColumnTransformer
 from snowflake.ml.modeling.ensemble import RandomForestClassifier
 from snowflake.ml.modeling.impute import SimpleImputer
@@ -17,7 +18,6 @@ from snowflake.ml.modeling.preprocessing import (
     StandardScaler,
 )
 from snowflake.ml.registry import Registry
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

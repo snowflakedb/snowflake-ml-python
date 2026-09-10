@@ -8,11 +8,11 @@ from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from sklearn.svm import SVR as SkSVR
 from xgboost import XGBRegressor as xgboost_regressor
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.linear_model.logistic_regression import LogisticRegression
 from snowflake.ml.modeling.model_selection import GridSearchCV
 from snowflake.ml.modeling.svm import SVR
 from snowflake.ml.modeling.xgboost import XGBRegressor
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

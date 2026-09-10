@@ -1,8 +1,8 @@
 from absl.testing import parameterized
 from absl.testing.absltest import main
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml._internal.utils.parallelize import map_dataframe_by_column
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
 
 

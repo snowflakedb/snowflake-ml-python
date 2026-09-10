@@ -217,6 +217,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC = core.ModelSignature(
         core.ParamSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         core.ParamSpec(name="presence_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         _RESPONSE_FORMAT_PARAM_SPEC,
+        core.ParamSpec(name="model", dtype=core.DataType.STRING, default_value=None),
     ],
 )
 
@@ -329,6 +330,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING = core.ModelS
         core.ParamSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         core.ParamSpec(name="presence_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         _RESPONSE_FORMAT_PARAM_SPEC,
+        core.ParamSpec(name="model", dtype=core.DataType.STRING, default_value=None),
     ],
 )
 

@@ -7,8 +7,7 @@ from requests.exceptions import HTTPError
 from snowflake import snowpark
 from snowflake.cortex import Complete, CompleteOptions
 from snowflake.cortex.json_mode_test_utils import schema_utils
-from snowflake.ml._internal.utils import snowflake_env
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params, snowflake_env
 from snowflake.snowpark import Session, functions
 from tests.integ.snowflake.ml.test_utils import common_test_base, test_env_utils
 

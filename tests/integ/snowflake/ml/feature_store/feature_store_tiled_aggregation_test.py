@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -76,7 +76,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: str | None = None) -> FeatureStore:
         current_schema = (
             create_random_schema(self._session, "FS_TILED_TEST", database=self.test_db) if name is None else name
         )
@@ -1860,11 +1860,10 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         ("new", False),
     )
     def test_last_distinct_n_aggregation_values(self, legacy: bool) -> None:
-        """LAST_DISTINCT_N returns the most-recent distinct values.
+        """LAST_DISTINCT_N returns the most-recent distinct values, oldest-first.
 
-        Both versions keep the same *set* of distinct values (the most-recent N),
-        but they order the output differently: legacy emits most-recent-first
-        while the new version emits oldest-first (matching FIRST_DISTINCT_N).
+        Legacy-format tiles are no longer readable: every offline read of such a
+        feature view is rejected instead of returning values.
         """
         fs = self._create_feature_store()
 
@@ -1888,18 +1887,25 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
 
         # User 1 events within the 3h window before query_ts=03:00, by time:
         #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
-        # last_distinct_n(n=3) distinct set (most-recent): {cat2, cat3, cat1}.
-        #   legacy ordering (most-recent-first): cat2, cat3, cat1
-        #   new ordering (oldest-first by event time): cat1, cat3, cat2
+        # last_distinct_n(n=3) distinct set (most-recent): {cat2, cat3, cat1},
+        # emitted oldest-first by event time: cat1, cat3, cat2.
         # User 2 events within the 3h window before query_ts=03:00 (complete tiles
         # only, so the 03:00 event is excluded), by time: cat1(01:00), cat2(02:00).
-        # last_distinct_n(n=3) distinct set: {cat2, cat1}.
-        #   legacy ordering (most-recent-first): cat2, cat1
-        #   new ordering (oldest-first by event time): cat1, cat2
+        # last_distinct_n(n=3) distinct set: {cat2, cat1} -> cat1, cat2.
         spine_df = self._session.create_dataframe(
             [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 3, 0, 0))],
             schema=["user_id", "query_ts"],
         )
+
+        if legacy:
+            with self.assertRaisesRegex(ValueError, "uses a legacy implementation of last_distinct_n"):
+                fs.generate_training_set(
+                    spine_df=spine_df,
+                    features=[registered_fv],
+                    spine_timestamp_col="query_ts",
+                    join_method="cte",
+                )
+            return
 
         result_df = fs.generate_training_set(
             spine_df=spine_df,
@@ -1912,8 +1918,8 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(len(result_pd), 2)
         self.assertIn("RECENT_CATEGORIES", result_pd.columns)
         by_user = {int(row["USER_ID"]): json.loads(row["RECENT_CATEGORIES"]) for _, row in result_pd.iterrows()}
-        self.assertEqual(by_user[1], ["cat2", "cat3", "cat1"] if legacy else ["cat1", "cat3", "cat2"])
-        self.assertEqual(by_user[2], ["cat2", "cat1"] if legacy else ["cat1", "cat2"])
+        self.assertEqual(by_user[1], ["cat1", "cat3", "cat2"])
+        self.assertEqual(by_user[2], ["cat1", "cat2"])
 
         # Ingest 5 more (irregularly-spaced, unevenly-distributed) events for user
         # 1, then refresh the tiles and re-query at 07:00. The 3h window before
@@ -1922,11 +1928,9 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         #   cat1(04:07), cat1(04:52), cat2(04:58)   <- tile 04:00 (3 events)
         #   cat3(06:11), cat2(06:43)                <- tile 06:00 (2 events)
         # Most-recent occurrence per value: cat2(06:43, t06), cat3(06:11, t06),
-        # cat1(04:52, t04). This deliberately hits the legacy raw-row cap quirk:
-        # in most-recent-first order the duplicate cat2(04:58) sits at raw rank 3,
-        # pushing cat1's first occurrence to rank 4, so legacy drops cat1.
-        #   legacy (raw-row cap rn<=3 drops cat1): [cat2, cat3]
-        #   new (distinct-rank cap keeps cat1, oldest-first display): [cat1, cat3, cat2]
+        # cat1(04:52, t04). The distinct-rank cap keeps all three even though the
+        # duplicate cat2(04:58) pushes cat1's first occurrence past raw rank 3.
+        # Emitted oldest-first: [cat1, cat3, cat2]
         self._session.sql(
             f"""INSERT INTO {self._events_table} (user_id, event_ts, amount, page_id, category)
                 VALUES
@@ -1951,7 +1955,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         result_pd_2 = result_df_2.to_pandas()
         self.assertEqual(len(result_pd_2), 1)
         result_2 = json.loads(result_pd_2.iloc[0]["RECENT_CATEGORIES"])
-        self.assertEqual(result_2, ["cat2", "cat3"] if legacy else ["cat1", "cat3", "cat2"])
+        self.assertEqual(result_2, ["cat1", "cat3", "cat2"])
 
     @parameterized.named_parameters(
         ("legacy", True),
@@ -1960,15 +1964,12 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
     def test_first_distinct_n_aggregation_values(self, legacy: bool) -> None:
         """FIRST_DISTINCT_N returns the oldest distinct values.
 
-        This case intentionally exercises the divergence between the legacy and
-        new merge logic. Both keep the first occurrence of each distinct value,
-        oldest-first, but they cap differently:
+        Values are capped on the DISTINCT rank, so the true first ``n`` distinct
+        values are returned even when earlier duplicates push a value's first
+        occurrence past position ``n``.
 
-        * legacy caps on the raw pre-dedup row number (``rn <= n``), so a distinct
-          value whose first occurrence sits past position ``n`` is wrongly dropped.
-        * new caps on the DISTINCT rank, returning the true first ``n`` distinct
-          values.
-
+        Legacy-format tiles are no longer readable: every offline read of such a
+        feature view is rejected instead of returning values.
         """
         fs = self._create_feature_store()
 
@@ -1993,17 +1994,25 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         # User 1 events within the 3h window before query_ts=03:00, by time:
         #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
         # The 3 distinct values, oldest-first, are cat1, cat2, cat3. cat3's first
-        # occurrence is the 4th row overall (two earlier duplicates push it down).
-        #   * legacy: rn <= 3 cap drops cat3 -> [cat1, cat2]
-        #   * new:    distinct-rank cap keeps it -> [cat1, cat2, cat3]
+        # occurrence is the 4th row overall (two earlier duplicates push it down),
+        # but the distinct-rank cap keeps it -> [cat1, cat2, cat3]
         # User 2 events within the 3h window before query_ts=03:00 (complete tiles
         # only, so the 03:00 event is excluded), by time: cat1(01:00), cat2(02:00).
-        # Only 2 distinct values (no cap pressure), oldest-first: [cat1, cat2] for
-        # both versions.
+        # Only 2 distinct values (no cap pressure), oldest-first: [cat1, cat2].
         spine_df = self._session.create_dataframe(
             [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 3, 0, 0))],
             schema=["user_id", "query_ts"],
         )
+
+        if legacy:
+            with self.assertRaisesRegex(ValueError, "uses a legacy implementation of last_distinct_n"):
+                fs.generate_training_set(
+                    spine_df=spine_df,
+                    features=[registered_fv],
+                    spine_timestamp_col="query_ts",
+                    join_method="cte",
+                )
+            return
 
         result_df = fs.generate_training_set(
             spine_df=spine_df,
@@ -2016,7 +2025,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(len(result_pd), 2)
         self.assertIn("FIRST_CATEGORIES", result_pd.columns)
         by_user = {int(row["USER_ID"]): json.loads(row["FIRST_CATEGORIES"]) for _, row in result_pd.iterrows()}
-        self.assertEqual(by_user[1], ["cat1", "cat2"] if legacy else ["cat1", "cat2", "cat3"])
+        self.assertEqual(by_user[1], ["cat1", "cat2", "cat3"])
         self.assertEqual(by_user[2], ["cat1", "cat2"])
 
         # Ingest 5 more (irregularly-spaced, unevenly-distributed) events for user
@@ -2026,10 +2035,8 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         #   cat1(04:07), cat1(04:52), cat2(04:58)   <- tile 04:00 (3 events)
         #   cat3(06:11), cat2(06:43)                <- tile 06:00 (2 events)
         # The 3 distinct values, oldest-first by first occurrence, are cat1, cat2,
-        # cat3. This deliberately hits the legacy raw-row cap quirk: the duplicate
-        # cat1(04:52) sits at raw rank 2, pushing cat3's first occurrence to rank 4.
-        #   legacy (raw-row cap rn<=3 drops cat3): [cat1, cat2]
-        #   new (distinct-rank cap keeps cat3): [cat1, cat2, cat3]
+        # cat3. The duplicate cat1(04:52) sits at raw rank 2, pushing cat3's first
+        # occurrence to rank 4, but the distinct-rank cap keeps it: [cat1, cat2, cat3]
         self._session.sql(
             f"""INSERT INTO {self._events_table} (user_id, event_ts, amount, page_id, category)
                 VALUES
@@ -2054,7 +2061,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         result_pd_2 = result_df_2.to_pandas()
         self.assertEqual(len(result_pd_2), 1)
         result_2 = json.loads(result_pd_2.iloc[0]["FIRST_CATEGORIES"])
-        self.assertEqual(result_2, ["cat1", "cat2"] if legacy else ["cat1", "cat2", "cat3"])
+        self.assertEqual(result_2, ["cat1", "cat2", "cat3"])
 
     def test_all_aggregations_combined(self) -> None:
         """Test all aggregation types in a single feature view."""
@@ -3324,9 +3331,10 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         metadata use the legacy (shared-column, merge-time-dedup) format; the
         new FV uses the current version (per-N pre-deduplicated tiles).
 
-        Both versions select the same *set* of distinct values (the most-recent
-        N), but they order the output differently: legacy emits most-recent-first
-        while the new version emits oldest-first.
+        Legacy-format tiles are no longer readable, so the whole call is rejected
+        even though the other feature view in the same request is readable. The
+        new FV on its own is covered by the ``new`` cases of
+        ``test_last_distinct_n_aggregation_values``.
         """
         fs = self._create_feature_store()
 
@@ -3372,30 +3380,13 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
 
         spine_df = self._session.create_dataframe([(1, datetime(2024, 1, 1, 3, 0, 0))], schema=["user_id", "query_ts"])
 
-        result_df = fs.generate_training_set(
-            spine_df=spine_df,
-            features=[legacy_fv, new_fv],
-            spine_timestamp_col="query_ts",
-            join_method="cte",
-        )
-
-        result_pd = result_df.to_pandas()
-        self.assertEqual(len(result_pd), 1)
-        self.assertIn("LEGACY_CATEGORIES", result_pd.columns)
-        self.assertIn("NEW_CATEGORIES", result_pd.columns)
-
-        # User 1 events within the 3h window before query_ts=03:00, by time:
-        #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
-        # last_distinct_n(n=3) distinct set (most-recent): {cat2, cat3, cat1}.
-        #   legacy ordering (most-recent-first): cat2, cat3, cat1
-        #   new ordering (oldest-first by event time): cat1, cat3, cat2
-        legacy_result = json.loads(result_pd.iloc[0]["LEGACY_CATEGORIES"])
-        new_result = json.loads(result_pd.iloc[0]["NEW_CATEGORIES"])
-
-        # Same distinct set, different (version-specific) ordering.
-        self.assertEqual(legacy_result, ["cat2", "cat3", "cat1"])
-        self.assertEqual(new_result, ["cat1", "cat3", "cat2"])
-        self.assertEqual(set(legacy_result), set(new_result))
+        with self.assertRaisesRegex(ValueError, "uses a legacy implementation of last_distinct_n"):
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[legacy_fv, new_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            )
 
 
 class LifetimeAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -3889,10 +3880,6 @@ class LifetimeAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase)
         self.assertEqual(jan6_sum, 150.0)
 
 
-@absltest.skip(
-    "Quarantined until the GS-side change for ARRAY-typed feature columns "
-    "(snowflake-eng/snowflake#437446) rolls to prod."
-)  # type: ignore[misc]
 class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase):
     """Integration tests for secondary key aggregation feature views."""
 
@@ -3945,7 +3932,7 @@ class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestC
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: str | None = None) -> FeatureStore:
         current_schema = (
             create_random_schema(self._session, "FS_SECONDARY_KEY_TEST", database=self.test_db)
             if name is None
@@ -4077,9 +4064,9 @@ class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestC
         assert retrieved_fv.aggregation_specs is not None
         self.assertEqual(len(retrieved_fv.aggregation_specs), 2)
 
-        # aggregation_secondary_keys is recovered on load from the synthesized
-        # _SECONDARY_KEY_ARRAY specs (each carries source_column = secondary_key);
-        # there is no separate top-level field in stored metadata.
+        # aggregation_secondary_keys is persisted as its own field in the stored
+        # aggregation metadata, so the registered order is restored verbatim
+        # rather than re-derived from the synthesized _SECONDARY_KEY_ARRAY specs.
         self.assertEqual(retrieved_fv.aggregation_secondary_keys, ["AD_ID"])
 
     # =========================================================================

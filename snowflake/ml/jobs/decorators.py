@@ -1,5 +1,5 @@
 import copy
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, TypeVar
 
 from typing_extensions import ParamSpec
 
@@ -20,9 +20,9 @@ def remote(
     *,
     stage_name: str,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> Callable[[Callable[_Args, _ReturnValue]], jd.MLJobDefinition[_Args, _ReturnValue]]:
     """
@@ -52,6 +52,8 @@ def remote(
                 resolving pip requirements. Each entry is the name of a Snowflake artifact repository.
             name (str): The name of the job. If not specified, a name will be generated based on the
                 entrypoint file name or function name. A unique suffix is appended to the final name.
+            comment (str): A comment to attach to the job. Defaults to the application name
+                configured on the session, if any.
 
     Returns:
         Decorator that dispatches invocations of the decorated function as remote jobs.

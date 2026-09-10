@@ -8,10 +8,10 @@ import pandas as pd
 from absl.testing import absltest
 
 import snowflake.snowpark.types as spt
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._signatures import core, snowpark_handler
 from snowflake.ml.test_utils import exception_utils, mock_session
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
 

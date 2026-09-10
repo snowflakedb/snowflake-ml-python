@@ -6,9 +6,9 @@ from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
 from sklearn.model_selection import RandomizedSearchCV as SkRandomizedSearchCV
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.ensemble import RandomForestClassifier
 from snowflake.ml.modeling.model_selection import RandomizedSearchCV
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

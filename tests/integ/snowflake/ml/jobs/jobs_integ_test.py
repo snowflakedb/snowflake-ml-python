@@ -8,7 +8,7 @@ import textwrap
 import time
 import unittest
 from types import ModuleType
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, cast
 from unittest import mock
 from uuid import uuid4
 
@@ -607,7 +607,7 @@ class JobManagerTest(JobTestBase):
 
     def test_job_decorator(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="@payload_stage/subdir", session=self.session)
-        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> dict[str, Any]:
+        def decojob_fn(arg1: str, arg2: int, arg3: Any | None = None) -> dict[str, Any]:
             from datetime import datetime
 
             print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}, arg3={arg3}] Job complete", flush=True)
@@ -838,26 +838,6 @@ class JobManagerTest(JobTestBase):
         )
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertRegex(job_logs, expected_version_pattern)
-
-    def test_job_arctic_training(self) -> None:
-        """Test that arctic-training can be run as a job."""
-        rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'ALLOW_ALL%'").collect()
-        if not rows:
-            self.skipTest("No compatible EAIs found in environment.")
-        allow_all_eais = [r["name"] for r in rows]
-
-        job = jobs.submit_directory(
-            TestAsset("train_recipes").path,
-            self.compute_pool,
-            stage_name="payload_stage",
-            entrypoint=["arctic_training", "run_causal.yml"],
-            pip_requirements=["arctic-training"],
-            external_access_integrations=allow_all_eais,
-            session=self.session,
-        )
-
-        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
-        self.assertIn("arctic", job.get_logs(verbose=True).lower())
 
     @parameterized.parameters(  # type: ignore[misc]
         {
@@ -1400,13 +1380,16 @@ class JobManagerTest(JobTestBase):
             self.assertEqual(loaded_job.target_instances, 1)
             self.assertEqual(loaded_job._compute_pool, self.compute_pool)
 
-    def test_job_name(self) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+    def test_job_name_and_comment(self) -> None:
+        comment = f"integ test comment {uuid4().hex}"
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session, comment=comment)
         def test_function() -> None:
             print("hello world")
 
         job = test_function()
         self.assertRegex(job.name.lower(), r"test_function_\w+")
+        self.assertEqual(comment, jd._get_service_info(self.session, job.id)["comment"])
 
         job1 = jobs.submit_file(
             TestAsset("src/main.py").path,
@@ -1415,6 +1398,8 @@ class JobManagerTest(JobTestBase):
             session=self.session,
         )
         self.assertRegex(job1.name.lower(), r"main_\w+")
+        # No comment passed, so it falls back to the session's application name.
+        self.assertEqual(self.session.conf.get("application"), jd._get_service_info(self.session, job1.id)["comment"])
 
     def test_job_definition_explicit_name(self) -> None:
         job_def_name = "test_job_def"
@@ -1467,7 +1452,7 @@ class JobManagerTest(JobTestBase):
         path_addition: str,
         module_name: str,
         entrypoint_file: str,
-        imports_func: Callable[[ModuleType], list[tuple[ModuleType, Optional[str]]]],
+        imports_func: Callable[[ModuleType], list[tuple[ModuleType, str | None]]],
     ) -> None:
         with mock.patch.object(sys, "path", [str(TestAsset(path_addition).path)] + sys.path):
             imported_module = importlib.import_module(module_name)

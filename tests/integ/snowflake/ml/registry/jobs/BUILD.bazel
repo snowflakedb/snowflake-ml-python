@@ -12,20 +12,6 @@ py_library(
     srcs = ["registry_batch_inference_test_base.py"],
     deps = [
         "//snowflake/ml/model:type_hints",
-        "//snowflake/ml/model/_client/model:model_version_impl",
-        "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/batch",
-        "//tests/integ/snowflake/ml/registry:registry_spcs_test_base",
-        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_library(
-    name = "registry_execute_inference_job_service_test_base",
-    testonly = True,
-    srcs = ["registry_execute_inference_job_service_test_base.py"],
-    deps = [
-        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:batch_inference_job_specs",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_packager/model_env",
@@ -35,50 +21,15 @@ py_library(
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_functional_test",
+    name = "registry_batch_inference_functional_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_functional_test.py"],
+    srcs = ["registry_batch_inference_functional_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/jobs:job_manager",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_privilege_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_privilege_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/registry",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_additional_import_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_additional_import_test.py"],
-    data = ["//tests/integ/snowflake/ml/registry/model:ext_module"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_case_sensitivity_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_case_sensitivity_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
     ],
 )
 
@@ -86,34 +37,12 @@ py_test(
     name = "registry_batch_inference_task_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_task_test.py"],
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/batch",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_task_v2_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_task_v2_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
         "//snowflake/ml/model/batch_inference",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_task_v2_vllm_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_task_v2_vllm_test.py"],
-    optional_dependencies = ["transformers"],
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/batch_inference",
     ],
 )
 
@@ -125,233 +54,16 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/batch",
+        "//snowflake/ml/model/batch_inference",
     ],
 )
 
 py_test(
-    name = "registry_batch_inference_failure_mode_test",
+    name = "registry_batch_inference_explainability_test",
     timeout = "eternal",
-    srcs = ["registry_batch_inference_failure_mode_test.py"],
+    srcs = ["registry_batch_inference_explainability_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_functional_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_functional_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/jobs:job_manager",
-    ],
-)
-
-py_test(
-    name = "registry_custom_model_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_custom_model_batch_inference_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_pip_only_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_pip_only_batch_inference_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
-    ],
-)
-
-py_test(
-    name = "registry_pip_only_gpu_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_pip_only_gpu_batch_inference_test.py"],
-    optional_dependencies = ["torch"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/_packager/model_env",
-        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
-    ],
-)
-
-py_test(
-    name = "registry_custom_model_with_params_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_custom_model_with_params_batch_inference_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_backwards_compat_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_backwards_compat_batch_inference_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_xgboost_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_xgboost_batch_inference_test.py"],
-    shard_count = 3,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_sentence_transformers_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_sentence_transformers_batch_inference_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/models:huggingface",
-    ],
-)
-
-py_test(
-    name = "registry_lightgbm_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_lightgbm_batch_inference_test.py"],
-    optional_dependencies = ["lightgbm"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_tensorflow_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_tensorflow_batch_inference_test.py"],
-    optional_dependencies = [
-        "tensorflow",
-    ],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/_signatures:numpy_handler",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-        "//snowflake/ml/model/_signatures:tensorflow_handler",
-        "//tests/integ/snowflake/ml/test_utils:model_factory",
-    ],
-)
-
-py_test(
-    name = "registry_pytorch_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_pytorch_batch_inference_test.py"],
-    optional_dependencies = [
-        "torch",
-    ],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/model/_signatures:pytorch_handler",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-        "//tests/integ/snowflake/ml/test_utils:model_factory",
-    ],
-)
-
-py_test(
-    name = "registry_catboost_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_catboost_batch_inference_test.py"],
-    optional_dependencies = [
-        "catboost",
-    ],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_keras_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_keras_batch_inference_test.py"],
-    optional_dependencies = [
-        "keras",
-    ],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/_signatures:numpy_handler",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-    ],
-)
-
-py_test(
-    name = "registry_mlflow_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_mlflow_batch_inference_test.py"],
-    optional_dependencies = ["mlflow"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/_internal:env",
-        "//snowflake/ml/model/_signatures:numpy_handler",
-    ],
-)
-
-py_test(
-    name = "registry_modeling_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_modeling_batch_inference_test.py"],
-    optional_dependencies = [
-        "lightgbm",
-    ],
-    shard_count = 8,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
-        "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/modeling/pipeline",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/xgboost:xgb_regressor",
-    ],
-)
-
-py_test(
-    name = "registry_sklearn_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_sklearn_batch_inference_test.py"],
-    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -362,31 +74,8 @@ py_test(
     name = "registry_batch_inference_wide_input_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_wide_input_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_huggingface_pipeline_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_huggingface_pipeline_batch_inference_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_huggingface_pipeline_vllm_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_huggingface_pipeline_vllm_batch_inference_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -397,6 +86,7 @@ py_test(
     name = "registry_batch_inference_empty_struct_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_empty_struct_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
@@ -405,108 +95,11 @@ py_test(
 )
 
 py_test(
-    name = "registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test",
+    name = "registry_batch_inference_custom_model_test",
     timeout = "eternal",
-    srcs = ["registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_multi_modality_vllm_external_stage_test",
-    timeout = "eternal",
-    srcs = ["registry_multi_modality_vllm_external_stage_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
-    shard_count = 3,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_multi_modality_hugging_face_pipeline_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_multi_modality_hugging_face_pipeline_batch_inference_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/utils:stage_file",
-    ],
-)
-
-py_test(
-    name = "registry_new_hf_tasks_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_new_hf_tasks_batch_inference_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 7,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_multi_modality_audio_video_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_multi_modality_audio_video_batch_inference_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["transformers"],
+    srcs = ["registry_batch_inference_custom_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_custom_multi_modality_batch_inference_test",
-    timeout = "eternal",
-    srcs = ["registry_custom_multi_modality_batch_inference_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_explainability_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_explainability_test.py"],
-    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -529,6 +122,77 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_failure_mode_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_failure_mode_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_additional_import_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_additional_import_test.py"],
+    data = ["//tests/integ/snowflake/ml/registry/model:ext_module"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_custom_multi_modality_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_custom_multi_modality_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
+    ],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_pip_only_gpu_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_pip_only_gpu_test.py"],
+    optional_dependencies = [
+        "torch",
+        "xgboost",
+    ],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_packager/model_env",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_case_sensitivity_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_case_sensitivity_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_external_stage_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_external_stage_test.py"],
@@ -536,6 +200,77 @@ py_test(
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
     ],
     optional_dependencies = ["transformers"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_pip_only_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_pip_only_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_privilege_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_privilege_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_backwards_compat_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_backwards_compat_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_modeling_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_modeling_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
+    shard_count = 8,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
+        "//snowflake/ml/modeling/linear_model:logistic_regression",
+        "//snowflake/ml/modeling/pipeline",
+        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
+        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
+        "//snowflake/ml/modeling/xgboost:xgb_regressor",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_custom_model_with_params_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_custom_model_with_params_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -556,296 +291,80 @@ py_test(
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_explainability_test",
+    name = "registry_batch_inference_sklearn_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_explainability_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_wide_input_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_wide_input_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_empty_struct_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_empty_struct_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_custom_model_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_custom_model_test.py"],
+    srcs = ["registry_batch_inference_sklearn_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_cse_stage_test",
+    name = "registry_batch_inference_xgboost_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_cse_stage_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_failure_mode_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_failure_mode_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_additional_import_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_additional_import_test.py"],
-    data = ["//tests/integ/snowflake/ml/registry/model:ext_module"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_custom_multi_modality_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_custom_multi_modality_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_pip_only_gpu_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_pip_only_gpu_test.py"],
-    optional_dependencies = ["torch"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-        "//snowflake/ml/model/_packager/model_env",
-        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_case_sensitivity_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_case_sensitivity_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_external_stage_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_external_stage_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_pip_only_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_pip_only_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_privilege_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_privilege_test.py"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-        "//snowflake/ml/registry",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_backwards_compat_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_backwards_compat_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_modeling_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_modeling_test.py"],
-    optional_dependencies = [
-        "lightgbm",
-    ],
-    shard_count = 8,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
-        "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/modeling/pipeline",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/xgboost:xgb_regressor",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_custom_model_with_params_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_custom_model_with_params_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_partitioned_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_partitioned_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 6,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_sklearn_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_sklearn_test.py"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_execute_inference_job_service_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_execute_inference_job_service_xgboost_test",
-    timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_xgboost_test.py"],
+    srcs = ["registry_batch_inference_xgboost_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 3,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_lightgbm_test",
+    name = "registry_batch_inference_lightgbm_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_lightgbm_test.py"],
+    srcs = ["registry_batch_inference_lightgbm_test.py"],
     optional_dependencies = ["lightgbm"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_catboost_test",
+    name = "registry_batch_inference_catboost_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_catboost_test.py"],
+    srcs = ["registry_batch_inference_catboost_test.py"],
     optional_dependencies = [
         "catboost",
     ],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_mlflow_test",
+    name = "registry_batch_inference_mlflow_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_mlflow_test.py"],
+    srcs = ["registry_batch_inference_mlflow_test.py"],
     optional_dependencies = ["mlflow"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/model/_signatures:numpy_handler",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_pytorch_test",
+    name = "registry_batch_inference_pytorch_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_pytorch_test.py"],
+    srcs = ["registry_batch_inference_pytorch_test.py"],
     optional_dependencies = [
         "torch",
     ],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:pytorch_handler",
         "//snowflake/ml/model/_signatures:snowpark_handler",
@@ -854,16 +373,16 @@ py_test(
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_tensorflow_test",
+    name = "registry_batch_inference_tensorflow_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_tensorflow_test.py"],
+    srcs = ["registry_batch_inference_tensorflow_test.py"],
     optional_dependencies = [
         "tensorflow",
     ],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:snowpark_handler",
         "//snowflake/ml/model/_signatures:tensorflow_handler",
@@ -872,50 +391,50 @@ py_test(
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_keras_test",
+    name = "registry_batch_inference_keras_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_keras_test.py"],
+    srcs = ["registry_batch_inference_keras_test.py"],
     optional_dependencies = [
         "keras",
     ],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:snowpark_handler",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_sentence_transformers_test",
+    name = "registry_batch_inference_sentence_transformers_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_sentence_transformers_test.py"],
+    srcs = ["registry_batch_inference_sentence_transformers_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/model/models:huggingface",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_huggingface_pipeline_test",
+    name = "registry_batch_inference_huggingface_pipeline_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_huggingface_pipeline_test.py"],
+    srcs = ["registry_batch_inference_huggingface_pipeline_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_new_hf_tasks_test",
+    name = "registry_batch_inference_new_hf_tasks_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_new_hf_tasks_test.py"],
+    srcs = ["registry_batch_inference_new_hf_tasks_test.py"],
     data = [
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
     ],
@@ -923,14 +442,14 @@ py_test(
     shard_count = 7,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_multi_modality_audio_video_test",
+    name = "registry_batch_inference_multi_modality_audio_video_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_multi_modality_audio_video_test.py"],
+    srcs = ["registry_batch_inference_multi_modality_audio_video_test.py"],
     data = [
         "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
         "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
@@ -939,14 +458,14 @@ py_test(
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_multi_modality_hugging_face_pipeline_test",
+    name = "registry_batch_inference_multi_modality_hugging_face_pipeline_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_multi_modality_hugging_face_pipeline_test.py"],
+    srcs = ["registry_batch_inference_multi_modality_hugging_face_pipeline_test.py"],
     data = [
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
     ],
@@ -954,27 +473,27 @@ py_test(
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
         "//snowflake/ml/utils:stage_file",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_huggingface_pipeline_vllm_test",
+    name = "registry_batch_inference_huggingface_pipeline_vllm_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_huggingface_pipeline_vllm_test.py"],
+    srcs = ["registry_batch_inference_huggingface_pipeline_vllm_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_multi_modality_vllm_external_stage_test",
+    name = "registry_batch_inference_multi_modality_vllm_external_stage_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_multi_modality_vllm_external_stage_test.py"],
+    srcs = ["registry_batch_inference_multi_modality_vllm_external_stage_test.py"],
     data = [
         "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
@@ -984,14 +503,14 @@ py_test(
     shard_count = 3,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )
 
 py_test(
-    name = "registry_execute_inference_job_service_multi_modality_vllm_hugging_face_pipeline_test",
+    name = "registry_batch_inference_multi_modality_vllm_hugging_face_pipeline_test",
     timeout = "eternal",
-    srcs = ["registry_execute_inference_job_service_multi_modality_vllm_hugging_face_pipeline_test.py"],
+    srcs = ["registry_batch_inference_multi_modality_vllm_hugging_face_pipeline_test.py"],
     data = [
         "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
@@ -1001,6 +520,6 @@ py_test(
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_execute_inference_job_service_test_base",
+        ":registry_batch_inference_test_base",
     ],
 )

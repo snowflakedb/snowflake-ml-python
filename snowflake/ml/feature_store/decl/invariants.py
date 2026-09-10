@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Mapping, Optional, cast
 
 from snowflake.ml.feature_store.decl.compiler import canonicalize_sql_for_hash
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
@@ -1269,7 +1269,13 @@ def _full_spec_hash(spec: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def compute_local_spec_hash(model_dict: dict[str, Any], database: str, schema: str) -> str:
+def compute_local_spec_hash(
+    model_dict: dict[str, Any],
+    database: str,
+    schema: str,
+    *,
+    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+) -> str:
     """Compile a local FV spec dict and return its full-spec hash.
 
     The local model dict (produced by :func:`model_to_dict`) is run
@@ -1286,6 +1292,11 @@ def compute_local_spec_hash(model_dict: dict[str, Any], database: str, schema: s
         model_dict: Spec dict from :func:`model_to_dict`.
         database: Snowflake database name (used as ``metadata.database``).
         schema: Snowflake schema name (used as ``metadata.schema``).
+        entity_join_keys: Optional entity-name → join-key-columns map
+            forwarded to :func:`compile_to_spec` so the wire field
+            ``ordered_entity_column_names`` matches the applied side.  When
+            omitted, the authored ``entities`` list is compiled verbatim
+            (preserving hashes for callers that do not supply the map).
 
     Returns:
         64-character lowercase hex SHA-256 digest of the compiled spec.
@@ -1294,7 +1305,7 @@ def compute_local_spec_hash(model_dict: dict[str, Any], database: str, schema: s
     # at package-load time.
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
-    compiled = compile_to_spec(model_dict, database, schema)
+    compiled = compile_to_spec(model_dict, database, schema, entity_join_keys=entity_join_keys)
     return _full_spec_hash(compiled)
 
 
@@ -1585,6 +1596,8 @@ def _check_idempotency(
     applied: Optional[AppliedObject],
     target_database: str = "",
     target_schema: str = "",
+    *,
+    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
 ) -> tuple[bool, list[ValidationResult]]:
     """Content-hash idempotency check.
 
@@ -1597,6 +1610,12 @@ def _check_idempotency(
     :func:`state.fetch_applied_state`.  Otherwise the legacy
     structural-fingerprint comparison is used.
 
+    ``entity_join_keys`` must be threaded through (as the planner does), or a
+    FeatureView whose entity **name** differs from its join-key **column**
+    compiles a name-based ``ordered_entity_column_names`` that never matches
+    the column-based applied hash — and ``NO_CHANGE`` never short-circuits for
+    exactly the projects entity-name resolution (``6c1``) fixes.
+
     Args:
         spec: The normalized spec dict to check.
         applied: The currently-deployed object, or ``None`` for new objects.
@@ -1606,6 +1625,9 @@ def _check_idempotency(
         target_schema: Connection target schema used when compiling the local
             spec for the full-spec hash path.  Falls back to
             ``spec["schema"]`` / ``spec["schema_"]`` if empty.
+        entity_join_keys: Optional entity-name → join-key-columns map forwarded
+            to :func:`compute_local_spec_hash` so the desired-side hash matches
+            the applied side (and the planner).
 
     Returns:
         Tuple of ``(is_up_to_date, results)``.
@@ -1620,7 +1642,9 @@ def _check_idempotency(
         db_for_compile = target_database or spec.get("database", "") or ""
         sch_for_compile = target_schema or spec.get("schema", "") or spec.get("schema_", "") or ""
         try:
-            current_hash = compute_local_spec_hash(spec, db_for_compile, sch_for_compile)
+            current_hash = compute_local_spec_hash(
+                spec, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
+            )
         except Exception:  # noqa: BLE001 — defensive fallback (mirrors planner)
             current_hash = structural_fingerprint_hash(spec)
     elif kind == "FeatureGroup":
@@ -1806,14 +1830,22 @@ def _check_dependencies(
     name = spec.get("name", "")
     kind = spec.get("kind", "")
 
-    # Collect all entity join-keys from applied state
+    # Collect entity **names** and **join-key columns** from applied state
+    # (callers merge batch entities into ``applied_state`` before calling, so
+    # this covers both the current batch and the deployed state).  A FeatureView
+    # may reference an entity either by its authored **name** or by a join-key
+    # **column**; both are valid, so index both and accept either below.
     applied_entity_join_keys: set[str] = set()
+    applied_entity_names: set[str] = set()
     applied_source_names: set[str] = set()
     applied_fv_names: set[str] = set()
     for obj in applied_state.objects.values():
         payload = obj.spec_payload
         obj_kind = payload.get("kind", "")
         if obj_kind == "Entity":
+            entity_name = payload.get("name", "")
+            if entity_name:
+                applied_entity_names.add(entity_name)
             for jk in payload.get("join_keys", []):
                 jk_name = jk.get("name", "")
                 if jk_name:
@@ -1828,19 +1860,20 @@ def _check_dependencies(
                 applied_fv_names.add(fv_name)
 
     if "FeatureView" in kind:
-        # Entity column validation
-        entity_cols = spec.get("entities", [])
-        # Collect entity join-keys from the batch as well (by scanning applied state entities)
-        # batch_names contains object names — but we need to check via applied state for join keys
-        # We pass batch entity join keys via applied_state for simplicity; callers should merge.
-        for ecol in entity_cols:
-            if ecol not in applied_entity_join_keys:
+        # Entity reference validation.  A FeatureView's ``entities`` list may
+        # name an entity by its authored **name** or by a join-key **column**
+        # (the two coincide in the common case).  Accept either — callers merge
+        # batch entities into ``applied_state`` so both the current batch and
+        # the deployed state are covered.
+        entity_refs = spec.get("entities", [])
+        for eref in entity_refs:
+            if eref not in applied_entity_join_keys and eref not in applied_entity_names:
                 results.append(
                     _result(
                         "ERROR",
                         "MISSING_ENTITY",
-                        f"{name}: references entity column '{ecol}' but no entity with that "
-                        "join key exists in the current batch or applied state.",
+                        f"{name}: references entity '{eref}' but no entity with that "
+                        "name or join key exists in the current batch or applied state.",
                         name,
                     )
                 )
@@ -2027,6 +2060,83 @@ def _check_feature_group_sources(
                 break  # one violation per ref is enough
 
     return results
+
+
+def _ordered_join_key_names(payload: Any) -> list[str]:
+    """Ordered, upper-cased join-key column names from an Entity payload.
+
+    Accepts the authoring/applied Entity shape where ``join_keys`` is a list
+    of ``{"name": ..., "type": ...}`` dicts (or bare column-name strings).
+    Order is preserved — it is the OFT primary-key order.
+
+    Args:
+        payload: The Entity spec dict (authoring or applied ``spec_payload``).
+
+    Returns:
+        The ordered, upper-cased join-key column names.
+    """
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("join_keys")
+    if not isinstance(raw, list):
+        return []
+    cols: list[str] = []
+    for jk in raw:
+        if isinstance(jk, dict) and jk.get("name"):
+            cols.append(str(jk["name"]).upper())
+        elif isinstance(jk, str) and jk:
+            cols.append(jk.upper())
+    return cols
+
+
+def _check_entity_join_keys_immutable(
+    spec: dict[str, Any],
+    applied: Optional[AppliedObject],
+) -> list[ValidationResult]:
+    """Reject join-key edits on an already-deployed entity at plan time.
+
+    Join keys are identity for a registered entity: ``FeatureStore.update_entity``
+    is description-only (``ALTER TAG ... SET COMMENT``), so an edited YAML can
+    never change the deployed key set.  Left unchecked, a rename / add / drop /
+    **reorder** flips a dependent FeatureView's ``ordered_entity_column_names``
+    and loops it on a destructive ``RECREATE_FV`` that never converges (the
+    executor rebuilds the FV from the live entity, which still has the old
+    keys).
+
+    Order is significant — it is the OFT primary-key order — so this compares
+    the **ordered** column names (case insensitive), unlike the sorted Entity
+    structural fingerprint.  Callers must run this **before** any idempotency
+    skip, since a reorder hashes identically under that sorted fingerprint.
+
+    Args:
+        spec: The local Entity spec dict being validated.
+        applied: The deployed applied object, or ``None`` for new entities.
+
+    Returns:
+        List of ``ValidationResult`` objects (may be empty).
+    """
+    if applied is None:
+        return []
+    if spec.get("kind", "") != "Entity":
+        return []
+
+    spec_jks = _ordered_join_key_names(spec)
+    applied_jks = _ordered_join_key_names(applied.spec_payload)
+    if spec_jks == applied_jks:
+        return []
+
+    name = spec.get("name", "")
+    return [
+        _result(
+            "ERROR",
+            "ENTITY_JOIN_KEY_IMMUTABLE",
+            f"{name}: entity join keys cannot be changed after creation. "
+            f"Deployed: {applied_jks}, requested: {spec_jks}. "
+            "To change join keys, drop all dependent feature views, "
+            "delete the entity, and re-apply.",
+            name,
+        )
+    ]
 
 
 def _check_destructive(
@@ -2232,6 +2342,8 @@ def batch_feature_view_structural_equivalent(
     applied_payload: dict[str, Any],
     database: str,
     schema: str,
+    *,
+    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
 ) -> bool:
     """Return True if local and deployed batch FVs differ only operationally.
 
@@ -2246,6 +2358,10 @@ def batch_feature_view_structural_equivalent(
         applied_payload: Full ``AppliedObject.spec_payload`` from state fetch.
         database: Target database for local compile.
         schema: Target schema for local compile.
+        entity_join_keys: Optional entity-name → join-key-columns map forwarded
+            to :func:`compile_to_spec` so the local wire field
+            ``ordered_entity_column_names`` matches the applied side's join-key
+            columns.
 
     Returns:
         ``True`` when structural projections match; ``False`` otherwise or on
@@ -2254,7 +2370,7 @@ def batch_feature_view_structural_equivalent(
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
     try:
-        local_compiled = compile_to_spec(local_authoring, database, schema)
+        local_compiled = compile_to_spec(local_authoring, database, schema, entity_join_keys=entity_join_keys)
     except Exception:
         return False
     _li = local_compiled.get("spec")
@@ -2753,6 +2869,17 @@ def validate_specs(
         if d.get("kind") == "BatchSource" and d.get("name"):
             batch_source_specs[d["name"]] = d
 
+    # Entity-name → join-key-columns map, mirroring ``planner.generate_plan``.
+    # ``_check_idempotency`` compiles each local FV through
+    # ``compute_local_spec_hash``; without this map an FV whose entity name
+    # differs from its join-key column hashes on the authored name and never
+    # matches the column-based applied hash, so ``NO_CHANGE`` never short-
+    # circuits for those projects (contradicting the planner).
+    from snowflake.ml.feature_store.decl.spec_compiler import build_entity_join_key_map
+
+    all_batch_dicts = [model_to_dict(s) for s in batch.specs]
+    entity_join_keys = build_entity_join_key_map(all_batch_dicts, applied_state)
+
     for spec_obj in batch.specs:
         data = model_to_dict(spec_obj)
         # See ``planner.generate_plan`` for the rationale: connection
@@ -2768,12 +2895,19 @@ def validate_specs(
         if "FeatureView" in str(data.get("kind", "")):
             results.extend(_check_feature_aggregations(data))
 
+        # Entity join keys are immutable after create.  Run this BEFORE the
+        # idempotency skip: a composite-key reorder hashes identically under
+        # the sorted Entity structural fingerprint, so it would otherwise be
+        # skipped as up-to-date while a dependent FV loops on RECREATE_FV.
+        results.extend(_check_entity_join_keys_immutable(data, applied))
+
         # 1. Idempotency — check first; if up-to-date, skip remaining checks.
         is_up_to_date, idem_results = _check_idempotency(
             data,
             applied,
             target_database=target_database,
             target_schema=target_schema,
+            entity_join_keys=entity_join_keys,
         )
         results.extend(idem_results)
         if is_up_to_date:

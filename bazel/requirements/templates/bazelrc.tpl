@@ -23,7 +23,6 @@ build:_all --platforms //bazel/platforms:all_conda_env --host_platform //bazel/p
 
 # Python environment flag, should use in combination with other configs
 
-build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
 build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
 build:py3.11 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.11
 build:py3.12 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.12
@@ -64,6 +63,7 @@ build --action_env=HF_HUB_DOWNLOAD_TIMEOUT=86400
 build --action_env=HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/huggingfaceml/huggingface-remote
 build --action_env=HF_TOKEN
 
+build --test_env=SNOWFLAKE_PAT
 build --test_env=PRIVATE_PYPI_USERNAME
 build --test_env=PRIVATE_PYPI_PASSWORD
 

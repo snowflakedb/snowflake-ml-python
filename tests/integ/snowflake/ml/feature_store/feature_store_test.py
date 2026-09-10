@@ -2,7 +2,7 @@ import datetime
 import json as _json
 import random
 import string
-from typing import Any, Literal, Optional, Union, cast
+from typing import Any, Literal, Union, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -22,6 +22,7 @@ from pytimeparse.timeparse import timeparse
 import snowflake.ml.feature_store.feature_view as fv_mod
 from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml import dataset
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import (
@@ -38,7 +39,6 @@ from snowflake.ml.feature_store.feature_view import (
     StorageConfig,
     StorageFormat,
 )
-from snowflake.ml.utils import connection_params
 from snowflake.ml.version import VERSION
 from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
@@ -201,8 +201,8 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
     def _create_feature_store(
         self,
-        name: Optional[str] = None,
-        default_iceberg_external_volume: Optional[str] = None,
+        name: str | None = None,
+        default_iceberg_external_volume: str | None = None,
     ) -> FeatureStore:
         current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db) if name is None else name
         fs = FeatureStore(
@@ -1397,7 +1397,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         ("0 0 * * * America/Los_Angeles", None),  # Regular DT with cron
         ("1d", "AWS"),  # Iceberg DT with auto base_location
     )
-    def test_refresh_feature_view(self, refresh_freq: str, iceberg_provider: Optional[str]) -> None:
+    def test_refresh_feature_view(self, refresh_freq: str, iceberg_provider: str | None) -> None:
         fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
@@ -2924,7 +2924,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         (None,),  # Regular managed FV
         ("AWS",),  # Iceberg FV
     )
-    def test_update_managed_feature_view(self, iceberg_provider: Optional[str]) -> None:
+    def test_update_managed_feature_view(self, iceberg_provider: str | None) -> None:
         """Test update_feature_view for both regular and Iceberg managed FVs."""
         fs = self._create_feature_store()
 
@@ -3788,7 +3788,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         e = Entity("foo", ["id"])
         fs.register_entity(e)
 
-        def register(fs: FeatureStore, name: str, refresh_mode: Optional[str] = None) -> FeatureView:
+        def register(fs: FeatureStore, name: str, refresh_mode: str | None = None) -> FeatureView:
             sql = f"SELECT id, name, title FROM {self._mock_table}"
             if refresh_mode:
                 fv = FeatureView(
@@ -3819,9 +3819,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         e = Entity("foo", ["id"])
         fs.register_entity(e)
 
-        def register(
-            fs: FeatureStore, name: str, refresh_freq: Optional[str] = None, initialize: str = ""
-        ) -> FeatureView:
+        def register(fs: FeatureStore, name: str, refresh_freq: str | None = None, initialize: str = "") -> FeatureView:
             fv = FeatureView(
                 name=name,
                 entities=[e],
@@ -4149,7 +4147,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self,
         fs: FeatureStore,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         test_name: str,
         **kwargs: Any,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -4958,7 +4956,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         volume_name = self._create_iceberg_external_volume(provider)
 
         if location_type == "custom":
-            base_location: Optional[str] = f"test_path_{uuid4().hex}/"
+            base_location: str | None = f"test_path_{uuid4().hex}/"
             # Track for cloud storage cleanup
             if not hasattr(self, "_iceberg_storage_paths"):
                 self._iceberg_storage_paths = []

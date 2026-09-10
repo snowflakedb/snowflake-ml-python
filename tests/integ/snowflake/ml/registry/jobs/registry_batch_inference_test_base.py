@@ -3,7 +3,7 @@ import inspect
 import json
 import logging
 import uuid
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal
 
 import pandas as pd
 from absl.testing import absltest
@@ -11,7 +11,7 @@ from absl.testing import absltest
 from snowflake import snowpark
 from snowflake.ml.jobs import job
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
-from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
@@ -92,6 +92,8 @@ def create_openai_chat_completion_output_validator(
 
 
 class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
+    """Base class for batch inference integration tests."""
+
     _INDEX_COL = "INDEX"
     _BATCH_IMAGE_OVERRIDE_MODE: BatchImageOverrideMode = "full"
 
@@ -100,7 +102,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
     _SNOWHOUSE_LOGGING_PARAM = "SPCS_MODEL_ENABLE_SNOWHOUSE_LOGGING_FOR_BATCH_INFERENCE"
 
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
-        overrides: dict[str, Optional[str]] = {
+        overrides: dict[str, str | None] = {
             "SPCS_MODEL_BUILD_CONTAINER_URL": self.BUILDER_IMAGE_PATH,
             "SPCS_MODEL_BASE_CPU_BATCH_INFERENCE_CONTAINER_URL": self.BASE_BATCH_CPU_IMAGE_PATH,
             "SPCS_MODEL_BASE_GPU_BATCH_INFERENCE_CONTAINER_URL": self.BASE_BATCH_GPU_IMAGE_PATH,
@@ -132,26 +134,31 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         model: model_types.SupportedModelType,
         X: snowpark.DataFrame,
         *,
-        compute_pool: Optional[str] = None,
-        input_spec: Optional[InputSpec] = None,
-        output_spec: OutputSpec,
-        job_spec: Optional[JobSpec] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        expected_predictions: Optional[pd.DataFrame] = None,
+        output_spec: batch_inference_job_specs.OutputSpec,
+        compute_pool: str | None = None,
+        input_spec: batch_inference_job_specs.InputSpec | None = None,
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None = None,
+        inference_spec: batch_inference_job_specs.InferenceSpec | None = None,
+        image_build_spec: batch_inference_job_specs.ImageBuildSpec | None = None,
+        function_name: str | None = None,
+        job_name: str | None = None,
+        replicas: int | None = None,
+        async_: bool = True,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        additional_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        expected_predictions: pd.DataFrame | None = None,
         blocking: bool = True,
-        prediction_assert_fn: Optional[Any] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        assert_container_count: Optional[int] = None,
-        target_platforms: Optional[list[str]] = None,
+        prediction_assert_fn: Any | None = None,
+        assert_container_count: int | None = None,
+        target_platforms: list[str] | None = None,
         skip_row_count_check: bool = False,
-        model_name: Optional[str] = None,
-        version_name: Optional[str] = None,
-        python_version: Optional[str] = None,
-        conda_dependencies: Optional[list[str]] = None,
+        model_name: str | None = None,
+        version_name: str | None = None,
+        python_version: str | None = None,
+        conda_dependencies: list[str] | None = None,
     ) -> job.MLJob[Any]:
         # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
         # Pass an empty list to skip conda dependencies (for pip-only tests).
@@ -183,19 +190,24 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         return self._deploy_batch_inference(
             mv,
             X=X,
+            output_spec=output_spec,
             compute_pool=compute_pool,
             input_spec=input_spec,
-            output_spec=output_spec,
-            job_spec=job_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+            function_name=function_name,
+            job_name=job_name,
+            replicas=replicas,
+            async_=async_,
             expected_predictions=expected_predictions,
             blocking=blocking,
             prediction_assert_fn=prediction_assert_fn,
-            inference_engine_options=inference_engine_options,
             assert_container_count=assert_container_count,
             skip_row_count_check=skip_row_count_check,
         )
 
-    def _has_image_override(self, mode: Optional[BatchImageOverrideMode] = None) -> bool:
+    def _has_image_override(self, mode: BatchImageOverrideMode | None = None) -> bool:
         """Return whether session image overrides are enabled for the given mode.
 
         Args:
@@ -243,44 +255,68 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
 
         raise ValueError(f"Unknown batch image override mode: {effective_mode!r}")
 
+    @staticmethod
+    def _resolve_job_output_stage_location(output_stage_location: str, batch_job: job.MLJob[Any]) -> str:
+        """Resolve the job-scoped output location for a completed batch inference job.
+
+        The server treats ``output.stage_location`` as a base and writes results under a
+        per-job subdirectory (``<stage_location>/<job_name>/``). The subdirectory is the
+        resolved unqualified job name, i.e. the trailing identifier of ``batch_job.id``.
+
+        Args:
+            output_stage_location: The base output stage location passed to the job.
+            batch_job: The launched batch inference job, used to resolve the job name.
+
+        Returns:
+            The job-scoped output location, ``<output_stage_location>/<job_name>/``.
+        """
+        resolved_job_name = batch_job.id.split(".")[-1].strip('"')
+        return output_stage_location.rstrip("/") + "/" + resolved_job_name + "/"
+
     def _deploy_batch_inference(
         self,
         mv: ModelVersion,
         X: snowpark.DataFrame,
         *,
-        compute_pool: Optional[str] = None,
-        input_spec: Optional[InputSpec] = None,
-        output_spec: OutputSpec,
-        job_spec: Optional[JobSpec] = None,
-        expected_predictions: Optional[pd.DataFrame] = None,
+        output_spec: batch_inference_job_specs.OutputSpec,
+        compute_pool: str | None = None,
+        input_spec: batch_inference_job_specs.InputSpec | None = None,
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None = None,
+        inference_spec: batch_inference_job_specs.InferenceSpec | None = None,
+        image_build_spec: batch_inference_job_specs.ImageBuildSpec | None = None,
+        function_name: str | None = None,
+        job_name: str | None = None,
+        replicas: int | None = None,
+        async_: bool = True,
+        expected_predictions: pd.DataFrame | None = None,
         blocking: bool = True,
-        prediction_assert_fn: Optional[Any] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        assert_container_count: Optional[int] = None,
+        prediction_assert_fn: Any | None = None,
+        assert_container_count: int | None = None,
         skip_row_count_check: bool = False,
     ) -> job.MLJob[Any]:
-        # Resolve compute pool if not provided
-        job_spec = job_spec or JobSpec()
+        # Resolve compute pool if not provided.
+        gpu_requests = resources_spec.gpu_requests if resources_spec is not None else None
         if compute_pool is None:
-            compute_pool = self._TEST_CPU_COMPUTE_POOL if job_spec.gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
+            compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
         batch_job = mv.run_batch(
             X,
             compute_pool=compute_pool,
-            input_spec=input_spec,
             output_spec=output_spec,
-            job_spec=job_spec,
-            inference_engine_options=inference_engine_options,
+            input_spec=input_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+            function_name=function_name,
+            job_name=job_name,
+            replicas=replicas,
+            async_=async_,
         )
 
         if not blocking:
             return batch_job
 
-        if output_spec.base_stage_location is not None:
-            base = output_spec.base_stage_location.rstrip("/")
-            output_stage_location = f"{base}/{batch_job.name}/"
-        else:
-            output_stage_location = output_spec.stage_location
+        output_stage_location = output_spec.stage_location
 
         try:
             batch_job.wait(timeout=1800)
@@ -304,6 +340,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                         container_logs = _get_logs(self.session, batch_job.id, limit=100, container_name=container_name)
                         msg += f"\n\nLast 100 lines of {container_name} logs:\n{container_logs}"
                     except Exception as e:
+                        logger.warning("Failed to fetch %s container logs: %s", container_name, e)
                         msg += f"\n\nFailed to get {container_name} logs: {e}"
         else:
             msg = None
@@ -318,17 +355,19 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                 f"Expected {assert_container_count} containers but got {len(containers)}: {containers}",
             )
 
-        success_file_path = output_stage_location.rstrip("/") + "/_SUCCESS"
+        job_output_stage_location = self._resolve_job_output_stage_location(output_stage_location, batch_job)
+        success_file_path = job_output_stage_location.rstrip("/") + "/_SUCCESS"
         list_results = self.session.sql(f"LIST {success_file_path}").collect()
         self.assertGreater(len(list_results), 0, f"Batch job did not produce success file at: {success_file_path}")
 
-        # todo: add more logic to validate the outcome
-        df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
+        df = self.session.read.option("on_error", "CONTINUE").parquet(job_output_stage_location)
         if not skip_row_count_check:
+            output_count = df.count()
+            input_count = X.count()
             self.assertEqual(
-                df.count(),
-                X.count(),
-                f"Output row count ({df.count()}) does not match input row count ({X.count()})",
+                output_count,
+                input_count,
+                f"Output row count ({output_count}) does not match input row count ({input_count})",
             )
 
         # Apply custom validation function if provided

@@ -1,0 +1,61 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "model_extension_spec_schema",
+    srcs = ["model_extension_spec_schema.py"],
+)
+
+py_library(
+    name = "model_spec",
+    srcs = ["model_spec.py"],
+)
+
+py_library(
+    name = "legacy_model_spec",
+    srcs = ["legacy_model_spec.py"],
+    deps = [
+        ":model_spec",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_library(
+    name = "model_extension_spec",
+    srcs = ["model_extension_spec.py"],
+    deps = [
+        ":model_extension_spec_schema",
+        ":model_spec",
+        "//snowflake/ml/model:target_platform",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)
+
+py_library(
+    name = "model_spec_parser",
+    srcs = ["model_spec_parser.py"],
+    deps = [
+        ":legacy_model_spec",
+        ":model_extension_spec",
+        ":model_spec",
+        "//snowflake/ml/model/_packager/model_meta",
+    ],
+)
+
+py_test(
+    name = "model_spec_parser_test",
+    srcs = ["model_spec_parser_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":legacy_model_spec",
+        ":model_extension_spec",
+        ":model_spec_parser",
+        "//snowflake/ml/model:target_platform",
+        "//snowflake/ml/model/_packager/model_meta",
+        "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+    ],
+)

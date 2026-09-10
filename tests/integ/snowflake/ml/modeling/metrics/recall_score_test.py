@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 import numpy as np
 import numpy.typing as npt
 from absl.testing import parameterized
@@ -7,8 +5,8 @@ from absl.testing.absltest import main
 from sklearn import exceptions, metrics as sklearn_metrics
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling import metrics as snowml_metrics
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 from tests.integ.snowflake.ml.modeling.metrics import generator
 
@@ -40,7 +38,7 @@ class RecallScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
         labels=[None, [2, 0, 4]],
     )
-    def test_labels(self, data_index: int, labels: Optional[npt.ArrayLike]) -> None:
+    def test_labels(self, data_index: int, labels: npt.ArrayLike | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_r = snowml_metrics.recall_score(
@@ -62,7 +60,7 @@ class RecallScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
         pos_label=[0, 2, 4],
     )
-    def test_pos_label(self, data_index: int, pos_label: Union[str, int]) -> None:
+    def test_pos_label(self, data_index: int, pos_label: str | int) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_r = snowml_metrics.recall_score(
@@ -84,7 +82,7 @@ class RecallScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
         average=[None, "micro", "macro", "weighted"],
     )
-    def test_average_multiclass(self, data_index: int, average: Optional[str]) -> None:
+    def test_average_multiclass(self, data_index: int, average: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_r = snowml_metrics.recall_score(
@@ -109,9 +107,9 @@ class RecallScoreTest(parameterized.TestCase):
     )
     def test_average_binary_samples(
         self,
-        y_true: Union[str, list[str]],
-        y_pred: Union[str, list[str]],
-        average: Optional[str],
+        y_true: str | list[str],
+        y_pred: str | list[str],
+        average: str | None,
         data_index: int,
     ) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
@@ -133,7 +131,7 @@ class RecallScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
         sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL],
     )
-    def test_sample_weight_binary(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight_binary(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_r = snowml_metrics.recall_score(
@@ -156,7 +154,7 @@ class RecallScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
         sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL],
     )
-    def test_sample_weight_multiclass(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight_multiclass(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_r = snowml_metrics.recall_score(
@@ -178,7 +176,7 @@ class RecallScoreTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         zero_division=[0, 1],
     )
-    def test_zero_division(self, zero_division: Union[str, int]) -> None:
+    def test_zero_division(self, zero_division: str | int) -> None:
         data = [
             [0, 0, 1, 0, 0, 0],
             [1, 0, 0, 0, 0, 0],

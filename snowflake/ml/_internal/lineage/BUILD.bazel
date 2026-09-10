@@ -19,6 +19,6 @@ py_test(
     ],
     deps = [
         ":lineage_utils",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )

@@ -8,7 +8,6 @@ the deployment logic.
 
 import logging
 import tempfile
-from typing import Optional
 
 import snowflake.snowpark.exceptions
 from tests.integ.snowflake.ml.registry.services import (
@@ -17,6 +16,18 @@ from tests.integ.snowflake.ml.registry.services import (
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 logger = logging.getLogger(__name__)
+
+# Privilege-denial errors for AISQL against an SPCS service. Includes Cortex Model
+# RBAC (behavior change bundle 2026_07, SQL 399217).
+AISQL_BYOM_DENY_ERROR_RE = (
+    r"Insufficient privileges|"
+    r"does not exist or not authorized|"
+    r"does not exist or is not authorized|"
+    r"invalid argument|"
+    r"unavailable|"
+    r"unknown model|"
+    r"Not authorized to access model"
+)
 
 
 class AISQLBYOMTestBase(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
@@ -43,8 +54,8 @@ class AISQLBYOMTestBase(registry_model_deployment_test_base.RegistryModelDeploym
     #   "DEPLOYING"   — deployment in progress (another setUp is running _do_deploy)
     #   "DEPLOY_FAILED" — deployment failed; subsequent tests will be skipped
     #   <fq_name>     — fully-qualified service name, service is ready
-    _service_name: Optional[str] = None
-    _model_fq_name: Optional[str] = None
+    _service_name: str | None = None
+    _model_fq_name: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -81,7 +92,7 @@ class AISQLBYOMTestBase(registry_model_deployment_test_base.RegistryModelDeploym
         # in tearDownClass after all test methods complete.
         pass
 
-    def _aisql_byom_make_limited_role(self, suffix: str, *, service_fqn: Optional[str] = None) -> str:
+    def _aisql_byom_make_limited_role(self, suffix: str, *, service_fqn: str | None = None) -> str:
         """Create a minimal role for AISQL BYOM permission tests.
 
         Grants only the structural privileges needed to execute queries. Callers

@@ -13,6 +13,7 @@ from typing import Any
 
 from snowflake.ml.feature_store.decl.dependencies import (
     extract_dependencies,
+    order_specs_for_drop,
     topological_sort,
 )
 from snowflake.ml.test_utils import pytest_driver
@@ -117,6 +118,49 @@ class TestTopologicalSortFeatureGroupVersionAware:
         names = [s["name"] for s in sorted_specs]
         assert names.index("customer") < names.index("click_fv")
         assert names.index("click_fv") < names.index("MY_FG")
+
+
+# ---------------------------------------------------------------------------
+# order_specs_for_drop — reverse-topological teardown order
+# ---------------------------------------------------------------------------
+
+
+class TestOrderSpecsForDrop:
+    """``order_specs_for_drop`` is the safe teardown order — the reverse of
+    ``topological_sort``.  A FeatureGroup must precede its member FeatureViews
+    so Snowflake's online FG table (which references each member FV's online
+    table) is torn down before the members it depends on.
+    """
+
+    def test_fg_before_member_fv(self) -> None:
+        fv = _fv("click_fv")
+        fg = _fg("MY_FG", fv_refs=[{"name": "click_fv", "version": "V1"}])
+        ordered = order_specs_for_drop([fv, fg])
+        names = [s["name"] for s in ordered]
+        assert names.index("MY_FG") < names.index("click_fv")
+
+    def test_full_chain_reverse(self) -> None:
+        entity = _entity("customer")
+        fv = _fv("click_fv")
+        fg = _fg("MY_FG", fv_refs=[{"name": "click_fv", "version": "V1"}])
+        ordered = order_specs_for_drop([fg, fv, entity])
+        names = [s["name"] for s in ordered]
+        # FeatureGroup → FeatureView → Entity (reverse of create order).
+        assert names.index("MY_FG") < names.index("click_fv")
+        assert names.index("click_fv") < names.index("customer")
+
+    def test_empty_input(self) -> None:
+        assert order_specs_for_drop([]) == []
+
+    def test_two_versions_of_one_fv_name_both_survive(self) -> None:
+        # (name, version) identity — both versions must survive the sort so
+        # neither DROP is silently lost (6b1 index-keyed nodes).
+        fv_v1 = {"kind": "BatchFeatureView", "name": "FV", "version": "V1"}
+        fv_v2 = {"kind": "BatchFeatureView", "name": "FV", "version": "V2"}
+        ordered = order_specs_for_drop([fv_v1, fv_v2])
+        assert len(ordered) == 2
+        versions = {s["version"] for s in ordered}
+        assert versions == {"V1", "V2"}
 
 
 if __name__ == "__main__":

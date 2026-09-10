@@ -1,7 +1,7 @@
 import json
 import pathlib
 import warnings
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -20,26 +20,24 @@ class ModelDeploymentSpec:
 
     DEPLOY_SPEC_FILE_REL_PATH = "deploy.yml"
 
-    def __init__(self, workspace_path: Optional[pathlib.Path] = None) -> None:
+    def __init__(self, workspace_path: pathlib.Path | None = None) -> None:
         self.workspace_path = workspace_path
         self._models: list[model_deployment_spec_schema.Model] = []
-        self._image_build: Optional[model_deployment_spec_schema.ImageBuild] = None
-        self._service: Optional[model_deployment_spec_schema.Service] = None
-        self._job: Optional[model_deployment_spec_schema.Job] = None
-        self._model_loggings: Optional[list[model_deployment_spec_schema.ModelLogging]] = None
+        self._image_build: model_deployment_spec_schema.ImageBuild | None = None
+        self._service: model_deployment_spec_schema.Service | None = None
+        self._model_loggings: list[model_deployment_spec_schema.ModelLogging] | None = None
         # this is referring to custom inference engine spec (vllm, sglang, etc)
-        self._inference_engine_spec: Optional[model_deployment_spec_schema.InferenceEngineSpec] = None
-        self._inference_spec: dict[str, Any] = {}  # Common inference spec for service/job
+        self._inference_engine_spec: model_deployment_spec_schema.InferenceEngineSpec | None = None
+        self._inference_spec: dict[str, Any] = {}  # Common inference spec for the service
 
-        self.database: Optional[sql_identifier.SqlIdentifier] = None
-        self.schema: Optional[sql_identifier.SqlIdentifier] = None
+        self.database: sql_identifier.SqlIdentifier | None = None
+        self.schema: sql_identifier.SqlIdentifier | None = None
 
     def clear(self) -> None:
         """Reset the deployment spec to its initial state."""
         self._models = []
         self._image_build = None
         self._service = None
-        self._job = None
         self._model_loggings = None
         self._inference_spec = {}
         self.database = None
@@ -76,10 +74,10 @@ class ModelDeploymentSpec:
 
     def add_image_build_spec(
         self,
-        image_build_compute_pool_name: Optional[sql_identifier.SqlIdentifier] = None,
-        fully_qualified_image_repo_name: Optional[str] = None,
+        image_build_compute_pool_name: sql_identifier.SqlIdentifier | None = None,
+        fully_qualified_image_repo_name: str | None = None,
         force_rebuild: bool = False,
-        external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        external_access_integrations: list[sql_identifier.SqlIdentifier] | None = None,
     ) -> "ModelDeploymentSpec":
         """Add image build specification to the deployment spec.
 
@@ -112,11 +110,11 @@ class ModelDeploymentSpec:
 
     def _add_inference_spec(
         self,
-        cpu: Optional[str],
-        memory: Optional[str],
-        gpu: Optional[Union[str, int]],
-        num_workers: Optional[int],
-        max_batch_rows: Optional[int],
+        cpu: str | None,
+        memory: str | None,
+        gpu: str | int | None,
+        num_workers: int | None,
+        max_batch_rows: int | None,
     ) -> None:
         """Internal helper to store common inference specs."""
         if cpu:
@@ -138,18 +136,18 @@ class ModelDeploymentSpec:
         self,
         service_name: sql_identifier.SqlIdentifier,
         inference_compute_pool_name: sql_identifier.SqlIdentifier,
-        service_database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        service_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
+        service_database_name: sql_identifier.SqlIdentifier | None = None,
+        service_schema_name: sql_identifier.SqlIdentifier | None = None,
         ingress_enabled: bool = True,
         min_instances: int = 0,
         max_instances: int = 1,
-        cpu: Optional[str] = None,
-        memory: Optional[str] = None,
-        gpu: Optional[Union[str, int]] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
-        autocapture: Optional[bool] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
+        cpu: str | None = None,
+        memory: str | None = None,
+        gpu: str | int | None = None,
+        num_workers: int | None = None,
+        max_batch_rows: int | None = None,
+        autocapture: bool | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
     ) -> "ModelDeploymentSpec":
         """Add service specification to the deployment spec.
 
@@ -173,15 +171,9 @@ class ModelDeploymentSpec:
                 FeatureView per function, but the list shape is preserved so a future relaxation does not require a
                 client change. Pass ``None`` (default) to omit the block entirely.
 
-        Raises:
-            ValueError: If a job spec already exists.
-
         Returns:
             Self for chaining.
         """
-        if self._job:
-            raise ValueError("Cannot add a service spec when a job spec already exists.")
-
         saved_service_database = service_database_name or self.database
         saved_service_schema = service_schema_name or self.schema
         assert saved_service_database is not None
@@ -208,121 +200,19 @@ class ModelDeploymentSpec:
             self._service.feature_retrieval = _build_feature_retrieval_config(feature_sources_per_function)
         return self
 
-    def add_job_spec(
-        self,
-        *,
-        inference_compute_pool_name: sql_identifier.SqlIdentifier,
-        function_name: str,
-        completion_filename: str,
-        input_file_pattern: str,
-        input_stage_location: Optional[str] = None,
-        output_stage_location: Optional[str] = None,
-        base_stage_location: Optional[str] = None,
-        column_handling: Optional[str] = None,
-        params: Optional[str] = None,
-        partition_columns: Optional[list[str]] = None,
-        warehouse: sql_identifier.SqlIdentifier,
-        job_name: Optional[sql_identifier.SqlIdentifier] = None,
-        job_database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
-        name_prefix: Optional[str] = None,
-        cpu: Optional[str] = None,
-        memory: Optional[str] = None,
-        gpu: Optional[str] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
-        replicas: Optional[int] = None,
-        block: bool,
-    ) -> "ModelDeploymentSpec":
-        """Add job specification to the deployment spec.
-
-        Args:
-            inference_compute_pool_name: Compute pool for inference.
-            function_name: Function name.
-            completion_filename: Name of completion file (default: "completion.txt").
-            input_file_pattern: Pattern for input files (optional).
-            input_stage_location: Stage location for input data.
-            output_stage_location: Stage location for output data.
-                Mutually exclusive with base_stage_location.
-            base_stage_location: Base stage location; server derives per-job paths.
-                Mutually exclusive with output_stage_location.
-            column_handling: Column handling mode for input data.
-            params: Additional parameters for the job.
-            partition_columns: Partition columns for the input data.
-            warehouse: Warehouse for the job.
-            job_name: Name of the job. Optional when name_prefix is provided.
-            job_database_name: Database name for the job.
-            job_schema_name: Schema name for the job.
-            name_prefix: Prefix for server-side job name generation. Optional.
-            cpu: CPU requirement.
-            memory: Memory requirement.
-            gpu: GPU requirement.
-            num_workers: Number of workers.
-            max_batch_rows: Maximum batch rows for inference.
-            replicas: Number of replicas.
-            block: Whether the job runs synchronously or asynchronously.
-
-        Raises:
-            ValueError: If a service spec already exists.
-
-        Returns:
-            Self for chaining.
-        """
-        if self._service:
-            raise ValueError("Cannot add a job spec when a service spec already exists.")
-
-        fq_job_name: Optional[str] = None
-        if job_name is not None:
-            saved_job_database = job_database_name or self.database
-            saved_job_schema = job_schema_name or self.schema
-
-            assert saved_job_database is not None
-            assert saved_job_schema is not None
-
-            fq_job_name = identifier.get_schema_level_object_identifier(
-                saved_job_database.identifier(), saved_job_schema.identifier(), job_name.identifier()
-            )
-
-        self._add_inference_spec(cpu, memory, gpu, num_workers, max_batch_rows)
-
-        self._job = model_deployment_spec_schema.Job(
-            name=fq_job_name,
-            name_prefix=name_prefix,
-            compute_pool=inference_compute_pool_name.identifier(),
-            warehouse=warehouse.identifier() if warehouse else None,
-            function_name=function_name,
-            input=model_deployment_spec_schema.Input(
-                input_stage_location=input_stage_location,
-                input_file_pattern=input_file_pattern,
-                column_handling=column_handling,
-                params=params,
-                partition_columns=partition_columns,
-            ),
-            output=model_deployment_spec_schema.Output(
-                output_stage_location=output_stage_location,
-                base_stage_location=base_stage_location,
-                completion_filename=completion_filename,
-            ),
-            replicas=replicas,
-            # TODO(SNOW-3321349): Change to sync=block once server-side support is fully rolled out.
-            sync=True if block else None,
-            **self._inference_spec,
-        )
-        return self
-
     def add_hf_logger_spec(
         self,
         hf_model_name: str,
-        hf_task: Optional[str] = None,
-        hf_token: Optional[str] = None,
-        hf_tokenizer: Optional[str] = None,
-        hf_revision: Optional[str] = None,
-        hf_trust_remote_code: Optional[bool] = False,
-        pip_requirements: Optional[list[str]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        target_platforms: Optional[list[str]] = None,
-        comment: Optional[str] = None,
-        warehouse: Optional[str] = None,
+        hf_task: str | None = None,
+        hf_token: str | None = None,
+        hf_tokenizer: str | None = None,
+        hf_revision: str | None = None,
+        hf_trust_remote_code: bool | None = False,
+        pip_requirements: list[str] | None = None,
+        conda_dependencies: list[str] | None = None,
+        target_platforms: list[str] | None = None,
+        comment: str | None = None,
+        warehouse: str | None = None,
         **kwargs: Any,
     ) -> "ModelDeploymentSpec":
         """Add Hugging Face logger specification.
@@ -393,9 +283,9 @@ class ModelDeploymentSpec:
     def add_inference_engine_spec(
         self,
         inference_engine: inference_engine_module.InferenceEngine,
-        inference_engine_args: Optional[list[str]] = None,
+        inference_engine_args: list[str] | None = None,
     ) -> "ModelDeploymentSpec":
-        """Add inference engine specification. This must be called after self.add_service_spec() or self.add_job_spec().
+        """Add inference engine specification. This must be called after self.add_service_spec().
 
         Args:
             inference_engine: Inference engine.
@@ -408,10 +298,8 @@ class ModelDeploymentSpec:
             ValueError: If inference engine specification is called before add_service_spec().
             ValueError: If the argument does not have a '--' prefix.
         """
-        if self._service is None and self._job is None:
-            raise ValueError(
-                "Inference engine specification must be called after add_service_spec() or add_job_spec()."
-            )
+        if self._service is None:
+            raise ValueError("Inference engine specification must be called after add_service_spec().")
 
         if inference_engine_args is None:
             inference_engine_args = []
@@ -468,8 +356,6 @@ class ModelDeploymentSpec:
 
         if self._service:
             self._service.inference_engine_spec = inference_engine_spec
-        elif self._job:
-            self._job.inference_engine_spec = inference_engine_spec
 
         return self
 
@@ -477,8 +363,7 @@ class ModelDeploymentSpec:
         """Constructs the final deployment spec from added components and saves it.
 
         Raises:
-            ValueError: If required components are missing or conflicting specs are added.
-            RuntimeError: If no service or job spec is found despite validation.
+            ValueError: If required components are missing.
 
         Returns:
             The path to the saved YAML file as a string, or the YAML content as a string
@@ -487,35 +372,16 @@ class ModelDeploymentSpec:
         # Validations
         if not self._models:
             raise ValueError("Model specification is required. Call add_model_spec().")
-        if not self._service and not self._job:
-            raise ValueError(
-                "Either service or job specification is required. Call add_service_spec() or add_job_spec()."
-            )
-        if self._service and self._job:
-            # This case should be prevented by checks in add_service_spec/add_job_spec, but double-check
-            raise ValueError("Cannot have both service and job specifications.")
+        if not self._service:
+            raise ValueError("Service specification is required. Call add_service_spec().")
 
         # Construct the final spec object
-        if self._service:
-            model_deployment_spec: Union[
-                model_deployment_spec_schema.ModelServiceDeploymentSpec,
-                model_deployment_spec_schema.ModelJobDeploymentSpec,
-            ] = model_deployment_spec_schema.ModelServiceDeploymentSpec(
-                models=self._models,
-                image_build=self._image_build,
-                service=self._service,
-                model_loggings=self._model_loggings,
-            )
-        elif self._job:
-            model_deployment_spec = model_deployment_spec_schema.ModelJobDeploymentSpec(
-                models=self._models,
-                image_build=self._image_build,
-                job=self._job,
-                model_loggings=self._model_loggings,
-            )
-        else:
-            # Should not happen due to earlier validation
-            raise RuntimeError("Internal error: No service or job spec found despite validation.")
+        model_deployment_spec = model_deployment_spec_schema.ModelServiceDeploymentSpec(
+            models=self._models,
+            image_build=self._image_build,
+            service=self._service,
+            model_loggings=self._model_loggings,
+        )
 
         # Serialize and save/return
         yaml_content = model_deployment_spec.model_dump(exclude_none=True)

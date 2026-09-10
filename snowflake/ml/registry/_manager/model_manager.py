@@ -1,8 +1,10 @@
 import json
 import logging
+import time
 import traceback
+import uuid
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 import yaml
@@ -41,8 +43,42 @@ MODEL_LOG_PATH_TAG = "model_log_path"
 MODEL_LOG_PATH_LIVE_COMMIT = "live_commit"
 MODEL_LOG_PATH_FROM_STAGE = "from_stage"
 MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK = "live_commit_fallback"
+LOG_MODEL_OPERATION_ID_TAG = "log_model_operation_id"
+LIVE_COMMIT_FALLBACK_OUTCOME_TAG = "live_commit_fallback_outcome"
+LIVE_COMMIT_FALLBACK_FAILURE_PHASE_TAG = "live_commit_fallback_failure_phase"
+LIVE_COMMIT_FALLBACK_OUTCOME_SUCCESS = "success"
+LIVE_COMMIT_FALLBACK_OUTCOME_FAILED = "failed"
+LIVE_COMMIT_FALLBACK_PHASE_STAGE_PREPARATION = "stage_preparation"
+LIVE_COMMIT_FALLBACK_PHASE_PARAMETER_RECONCILIATION = "parameter_reconciliation"
+LIVE_COMMIT_FALLBACK_PHASE_MODEL_PACKAGING = "model_packaging"
+LIVE_COMMIT_FALLBACK_PHASE_MODEL_CREATION = "model_creation"
+LIVE_COMMIT_FALLBACK_PHASE_MODEL_REFERENCE = "model_reference"
+LIVE_COMMIT_FALLBACK_PHASE_METADATA_UPDATE = "metadata_update"
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
+
+
+class _LiveCommitFallbackTelemetryState:
+    """Track a live-commit fallback across the remainder of model logging."""
+
+    def __init__(self, operation_id: str) -> None:
+        self.operation_id = operation_id
+        self.did_fallback = False
+        self.started_at: float | None = None
+        self.phase: str | None = None
+
+    def start(self) -> None:
+        self.did_fallback = True
+        self.started_at = time.perf_counter()
+
+    def set_phase(self, phase: str) -> None:
+        if self.did_fallback:
+            self.phase = phase
+
+    def duration(self) -> float:
+        if self.started_at is None:
+            return 0.0
+        return time.perf_counter() - self.started_at
 
 
 def _sfqids_from_exception(exc: BaseException) -> list[str]:
@@ -61,9 +97,9 @@ def _parse_sfqids_value(value: Any) -> list[str]:
 
 
 def _chain_sfqids_into_statement_params(
-    statement_params: Optional[dict[str, Any]],
+    statement_params: dict[str, Any] | None,
     sfqids: list[str],
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Append query IDs onto statement params so later SQL can be joined to the live-commit attempt."""
     if not statement_params or not sfqids:
         return statement_params
@@ -98,7 +134,24 @@ def _live_commit_fallback_func_name() -> str:
     return f"{func_name}.live_commit_fallback"
 
 
-def _send_live_commit_fallback_telemetry(exc: BaseException, *, sfqids: list[str]) -> None:
+def _live_commit_fallback_outcome_func_name() -> str:
+    return f"{_live_commit_fallback_func_name()}_outcome"
+
+
+def _telemetry_error_code(exc: BaseException) -> str:
+    if isinstance(exc, exceptions.SnowflakeMLException):
+        return exc.error_code
+    if isinstance(exc, snowpark_exceptions.SnowparkClientException):
+        return error_codes.INTERNAL_SNOWPARK_ERROR
+    return error_codes.UNDEFINED
+
+
+def _send_live_commit_fallback_telemetry(
+    exc: BaseException,
+    *,
+    sfqids: list[str],
+    operation_id: str,
+) -> None:
     """Emit client telemetry for a swallowed live-commit failure. Must not raise."""
     try:
         error_code = (
@@ -116,6 +169,7 @@ def _send_live_commit_fallback_telemetry(exc: BaseException, *, sfqids: list[str
                 telemetry.TelemetryField.KEY_SFQIDS.value: sfqids,
                 telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
                     MODEL_LOG_PATH_TAG: MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                    LOG_MODEL_OPERATION_ID_TAG: operation_id,
                 },
             },
             **{
@@ -128,9 +182,59 @@ def _send_live_commit_fallback_telemetry(exc: BaseException, *, sfqids: list[str
         logger.debug("live commit fallback telemetry emit failed", exc_info=True)
 
 
+def _send_live_commit_fallback_outcome_telemetry(
+    state: _LiveCommitFallbackTelemetryState,
+    *,
+    exc: BaseException | None = None,
+) -> None:
+    """Emit the final outcome of a live-commit fallback. Must not raise."""
+    if not state.did_fallback:
+        return
+
+    try:
+        outcome = LIVE_COMMIT_FALLBACK_OUTCOME_FAILED if exc is not None else LIVE_COMMIT_FALLBACK_OUTCOME_SUCCESS
+        custom_tags = {
+            MODEL_LOG_PATH_TAG: MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+            LOG_MODEL_OPERATION_ID_TAG: state.operation_id,
+            LIVE_COMMIT_FALLBACK_OUTCOME_TAG: outcome,
+        }
+        if exc is not None and state.phase is not None:
+            custom_tags[LIVE_COMMIT_FALLBACK_FAILURE_PHASE_TAG] = state.phase
+
+        data: dict[str, Any] = {
+            telemetry.TelemetryField.KEY_FUNC_NAME.value: _live_commit_fallback_outcome_func_name(),
+            telemetry.TelemetryField.KEY_CATEGORY.value: telemetry.TelemetryField.FUNC_CAT_USAGE.value,
+            telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: custom_tags,
+        }
+        telemetry_kwargs: dict[str, Any] = {
+            telemetry.TelemetryField.KEY_DURATION.value: state.duration(),
+        }
+        if exc is not None:
+            sfqids = _sfqids_from_exception(exc)
+            if sfqids:
+                data[telemetry.TelemetryField.KEY_SFQIDS.value] = sfqids
+            telemetry_kwargs.update(
+                {
+                    telemetry.TelemetryField.KEY_ERROR_INFO.value: repr(exc),
+                    telemetry.TelemetryField.KEY_ERROR_CODE.value: _telemetry_error_code(exc),
+                    telemetry.TelemetryField.KEY_STACK_TRACE.value: traceback.format_exc(),
+                }
+            )
+
+        telemetry.send_custom_usage(
+            project=_TELEMETRY_PROJECT,
+            telemetry_type=f"snowml_{telemetry.TelemetryField.TYPE_FUNCTION_USAGE.value}",
+            subproject=_TELEMETRY_SUBPROJECT,
+            data=data,
+            **telemetry_kwargs,
+        )
+    except Exception:
+        logger.debug("live commit fallback outcome telemetry emit failed", exc_info=True)
+
+
 def _validate_user_model_save_options(
     model: type_hints.SupportedModelType,
-    options: Optional[type_hints.ModelSaveOption],
+    options: type_hints.ModelSaveOption | None,
 ) -> None:
     """Reject unknown user ``options`` keys before reconciliation or remote logging."""
     handler = model_handler.find_handler(model)
@@ -164,27 +268,27 @@ class ModelManager:
     def log_model(
         self,
         *,
-        model: Union[type_hints.SupportedModelType, model_version_impl.ModelVersion],
+        model: type_hints.SupportedModelType | model_version_impl.ModelVersion,
         model_name: str,
         progress_status: type_hints.ProgressStatus,
-        version_name: Optional[str] = None,
-        comment: Optional[str] = None,
-        metrics: Optional[dict[str, Any]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]] = None,
-        python_version: Optional[str] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[type_hints.SupportedDataType] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[type_hints.CodePathLike]] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
+        version_name: str | None = None,
+        comment: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[type_hints.SupportedTargetPlatformType] | None = None,
+        python_version: str | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: type_hints.SupportedDataType | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        code_paths: list[type_hints.CodePathLike] | None = None,
+        ext_modules: list[ModuleType] | None = None,
         task: type_hints.Task = task.Task.UNKNOWN,
         experiment_info: Optional["ExperimentInfo"] = None,
-        options: Optional[type_hints.ModelSaveOption] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        options: type_hints.ModelSaveOption | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
 
@@ -247,30 +351,38 @@ class ModelManager:
                 + "To auto-generate `version_name`, skip that argument."
             )
 
-        return self._log_model(
-            model=model,
-            model_name=model_name,
-            version_name=version_name,
-            model_exists=model_exists,
-            comment=comment,
-            metrics=metrics,
-            conda_dependencies=conda_dependencies,
-            pip_requirements=pip_requirements,
-            artifact_repository_map=artifact_repository_map,
-            resource_constraint=resource_constraint,
-            target_platforms=target_platforms,
-            python_version=python_version,
-            signatures=signatures,
-            sample_input_data=sample_input_data,
-            user_files=user_files,
-            code_paths=code_paths,
-            ext_modules=ext_modules,
-            task=task,
-            experiment_info=experiment_info,
-            options=options,
-            statement_params=statement_params,
-            progress_status=progress_status,
-        )
+        fallback_telemetry_state = _LiveCommitFallbackTelemetryState(uuid.uuid4().hex)
+        try:
+            result = self._log_model(
+                model=model,
+                model_name=model_name,
+                version_name=version_name,
+                model_exists=model_exists,
+                comment=comment,
+                metrics=metrics,
+                conda_dependencies=conda_dependencies,
+                pip_requirements=pip_requirements,
+                artifact_repository_map=artifact_repository_map,
+                resource_constraint=resource_constraint,
+                target_platforms=target_platforms,
+                python_version=python_version,
+                signatures=signatures,
+                sample_input_data=sample_input_data,
+                user_files=user_files,
+                code_paths=code_paths,
+                ext_modules=ext_modules,
+                task=task,
+                experiment_info=experiment_info,
+                options=options,
+                statement_params=statement_params,
+                progress_status=progress_status,
+                fallback_telemetry_state=fallback_telemetry_state,
+            )
+        except Exception as e:
+            _send_live_commit_fallback_outcome_telemetry(fallback_telemetry_state, exc=e)
+            raise
+        _send_live_commit_fallback_outcome_telemetry(fallback_telemetry_state)
+        return result
 
     def _log_model(
         self,
@@ -280,23 +392,24 @@ class ModelManager:
         version_name: str,
         model_exists: bool,
         progress_status: type_hints.ProgressStatus,
-        comment: Optional[str] = None,
-        metrics: Optional[dict[str, Any]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]] = None,
-        python_version: Optional[str] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[type_hints.SupportedDataType] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[type_hints.CodePathLike]] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
+        comment: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[type_hints.SupportedTargetPlatformType] | None = None,
+        python_version: str | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: type_hints.SupportedDataType | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        code_paths: list[type_hints.CodePathLike] | None = None,
+        ext_modules: list[ModuleType] | None = None,
         task: type_hints.Task = task.Task.UNKNOWN,
         experiment_info: Optional["ExperimentInfo"] = None,
-        options: Optional[type_hints.ModelSaveOption] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        options: type_hints.ModelSaveOption | None = None,
+        statement_params: dict[str, Any] | None = None,
+        fallback_telemetry_state: _LiveCommitFallbackTelemetryState,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
@@ -332,14 +445,18 @@ class ModelManager:
         use_hidden_live_commit = (
             not snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
         ) and platform_capabilities.PlatformCapabilities.get_instance().is_hidden_live_commit_enabled()
+        statement_params = telemetry.add_statement_params_custom_tags(
+            statement_params,
+            {LOG_MODEL_OPERATION_ID_TAG: fallback_telemetry_state.operation_id},
+        )
         if use_hidden_live_commit:
             logger.info("Using hidden live commit model version")
         else:
             logger.info("Using non-live commit model version")
 
         checkout_model_name_id = model_name_id
-        checkout_version_name_id: Optional[sql_identifier.SqlIdentifier] = None
-        rename_model_to_id: Optional[sql_identifier.SqlIdentifier] = None
+        checkout_version_name_id: sql_identifier.SqlIdentifier | None = None
+        rename_model_to_id: sql_identifier.SqlIdentifier | None = None
         attempted_hidden_live_commit = False
 
         if use_hidden_live_commit:
@@ -371,8 +488,13 @@ class ModelManager:
                         statement_params=statement_params,
                     )
             except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
+                fallback_telemetry_state.start()
                 live_commit_sfqids = _sfqids_from_exception(e)
-                _send_live_commit_fallback_telemetry(e, sfqids=live_commit_sfqids)
+                _send_live_commit_fallback_telemetry(
+                    e,
+                    sfqids=live_commit_sfqids,
+                    operation_id=fallback_telemetry_state.operation_id,
+                )
                 statement_params = _chain_sfqids_into_statement_params(statement_params, live_commit_sfqids)
                 logger.info("Hidden live model version creation failed; falling back to regular model version creation")
                 use_hidden_live_commit = False
@@ -398,12 +520,14 @@ class ModelManager:
             )
         else:
             # using a temp path to write files and then upload to the model version's stage
+            fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_STAGE_PREPARATION)
             stage_path = self._model_ops.prepare_model_temp_stage_path(
                 database_name=database_name_id,
                 schema_name=schema_name_id,
                 statement_params=statement_params,
             )
 
+        fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_PARAMETER_RECONCILIATION)
         reconciler = model_parameter_reconciler.ModelParameterReconciler(
             model=model,
             session=self._model_ops._session,
@@ -424,6 +548,7 @@ class ModelManager:
         artifact_repository_map = model_params.artifact_repository_map
         save_location = model_params.save_location
 
+        fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_MODEL_PACKAGING)
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
         progress_status.update("packaging model...")
         progress_status.increment()
@@ -474,6 +599,7 @@ class ModelManager:
         progress_status.update("creating model object in Snowflake...")
         progress_status.increment()
 
+        fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_MODEL_CREATION)
         if use_hidden_live_commit:
             assert checkout_version_name_id is not None
             self._model_ops.commit_live_version(
@@ -495,6 +621,7 @@ class ModelManager:
                 statement_params=statement_params,
             )
 
+        fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_MODEL_REFERENCE)
         mv = self._create_model_version_ref(
             database_name_id=database_name_id,
             schema_name_id=schema_name_id,
@@ -505,6 +632,7 @@ class ModelManager:
         progress_status.update("setting model metadata...")
         progress_status.increment()
 
+        fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_METADATA_UPDATE)
         if comment:
             mv.comment = comment
 
@@ -527,16 +655,16 @@ class ModelManager:
         model: huggingface.TransformersPipeline,
         model_name: str,
         version_name: str,
-        database_name_id: Optional[sql_identifier.SqlIdentifier],
-        schema_name_id: Optional[sql_identifier.SqlIdentifier],
+        database_name_id: sql_identifier.SqlIdentifier | None,
+        schema_name_id: sql_identifier.SqlIdentifier | None,
         model_name_id: sql_identifier.SqlIdentifier,
         version_name_id: sql_identifier.SqlIdentifier,
-        comment: Optional[str],
-        conda_dependencies: Optional[list[str]],
-        pip_requirements: Optional[list[str]],
-        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]],
-        options: Optional[type_hints.ModelSaveOption],
-        statement_params: Optional[dict[str, Any]],
+        comment: str | None,
+        conda_dependencies: list[str] | None,
+        pip_requirements: list[str] | None,
+        target_platforms: list[type_hints.SupportedTargetPlatformType] | None,
+        options: type_hints.ModelSaveOption | None,
+        statement_params: dict[str, Any] | None,
         progress_status: type_hints.ProgressStatus,
     ) -> model_version_impl.ModelVersion:
         """Log HuggingFace model remotely using SYSTEM$IMPORT_MODEL."""
@@ -593,7 +721,7 @@ class ModelManager:
         self,
         model_name: str,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> model_impl.Model:
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
         if self._model_ops.validate_existence(
@@ -621,7 +749,7 @@ class ModelManager:
     def models(
         self,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[model_impl.Model]:
         model_names = self._model_ops.list_models_or_versions(
             database_name=None,
@@ -640,7 +768,7 @@ class ModelManager:
     def show_models(
         self,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> pd.DataFrame:
         rows = self._model_ops.show_models_or_versions(
             database_name=None,
@@ -653,7 +781,7 @@ class ModelManager:
         self,
         model_name: str,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
 
@@ -666,8 +794,8 @@ class ModelManager:
 
     def _create_model_version_ref(
         self,
-        database_name_id: Optional[sql_identifier.SqlIdentifier],
-        schema_name_id: Optional[sql_identifier.SqlIdentifier],
+        database_name_id: sql_identifier.SqlIdentifier | None,
+        schema_name_id: sql_identifier.SqlIdentifier | None,
         model_name_id: sql_identifier.SqlIdentifier,
         version_name_id: sql_identifier.SqlIdentifier,
     ) -> model_version_impl.ModelVersion:
@@ -695,6 +823,7 @@ class ModelManager:
             ),
             model_name=model_name_id,
             version_name=version_name_id,
+            retry=True,
         )
 
     def _build_import_model_yaml_spec(
@@ -703,10 +832,10 @@ class ModelManager:
         fq_model_name: str,
         version_name: str,
         compute_pool: str,
-        comment: Optional[str],
-        conda_dependencies: Optional[list[str]],
-        pip_requirements: Optional[list[str]],
-        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]],
+        comment: str | None,
+        conda_dependencies: list[str] | None,
+        pip_requirements: list[str] | None,
+        target_platforms: list[type_hints.SupportedTargetPlatformType] | None,
     ) -> str:
         """Build YAML spec for SYSTEM$IMPORT_MODEL.
 
@@ -765,8 +894,8 @@ class ModelManager:
         return yaml.safe_dump(import_spec.model_dump(exclude_none=True))
 
     def _convert_target_platforms_to_list(
-        self, target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]]
-    ) -> Optional[list[str]]:
+        self, target_platforms: list[type_hints.SupportedTargetPlatformType] | None
+    ) -> list[str] | None:
         """Convert target_platforms to list of strings.
 
         Args:
@@ -790,9 +919,7 @@ class ModelManager:
 
     def _parse_fully_qualified_name(
         self, model_name: str
-    ) -> tuple[
-        Optional[sql_identifier.SqlIdentifier], Optional[sql_identifier.SqlIdentifier], sql_identifier.SqlIdentifier
-    ]:
+    ) -> tuple[sql_identifier.SqlIdentifier | None, sql_identifier.SqlIdentifier | None, sql_identifier.SqlIdentifier]:
         try:
             return sql_identifier.parse_fully_qualified_name(model_name)
         except ValueError:

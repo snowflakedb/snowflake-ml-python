@@ -32,6 +32,7 @@ py_library(
 py_test(
     name = "model_test",
     srcs = ["model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -61,6 +62,7 @@ py_library(
 py_test(
     name = "model_version_test",
     srcs = ["model_version_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -141,6 +143,7 @@ py_library(
 py_test(
     name = "service_test",
     srcs = ["service_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

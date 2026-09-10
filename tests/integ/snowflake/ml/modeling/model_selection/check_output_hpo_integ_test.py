@@ -4,7 +4,7 @@ to match all kinds of input and output for GridSearchCV/RandomSearchCV.
 """
 
 import inspect
-from typing import Any, Union
+from typing import Any
 from unittest import mock
 
 import cloudpickle as cp
@@ -24,13 +24,13 @@ from sklearn.metrics import (
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV, KFold
 from sklearn.model_selection._split import BaseCrossValidator
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.linear_model import (  # type: ignore[attr-defined]
     LinearRegression,
 )
 from snowflake.ml.modeling.model_selection import (  # type: ignore[attr-defined]
     GridSearchCV,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
@@ -356,8 +356,8 @@ class HPOCorrectness(parameterized.TestCase):
         self,
         mock_is_single_node: mock.MagicMock,
         is_single_node: bool,
-        params: Union[dict[str, Any], list[dict[str, Any]]],
-        cv: Union[int, BaseCrossValidator, list[tuple[Union[list[int], npt.NDArray[np.int_]]]]],
+        params: dict[str, Any] | list[dict[str, Any]],
+        cv: int | BaseCrossValidator | list[tuple[list[int] | npt.NDArray[np.int_]]],
         kwargs: dict[str, Any],
     ) -> None:
         mock_is_single_node.return_value = is_single_node

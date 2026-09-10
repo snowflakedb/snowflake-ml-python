@@ -7,9 +7,7 @@ import tempfile
 import threading
 import time
 import uuid
-import warnings
-from collections.abc import Sequence
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, cast
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
@@ -17,17 +15,13 @@ from snowflake.ml._internal.utils import identifier, service_logger, sql_identif
 from snowflake.ml.feature_store import feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
-from snowflake.ml.model._client.model import (
-    batch_inference_job_specs,
-    batch_inference_serialization,
-)
-from snowflake.ml.model._client.ops import deployment_step, param_utils
+from snowflake.ml.model._client.model import batch_inference_job_specs
+from snowflake.ml.model._client.ops import deployment_step
 from snowflake.ml.model._client.service import (
     inference_job_service_spec,
     model_deployment_spec,
 )
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
-from snowflake.ml.model._signatures import core
 from snowflake.snowpark import async_job, dataframe, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -57,8 +51,8 @@ _StageLocationParts = tuple[
 
 def _normalize_stage_location(
     stage_path: str,
-    default_database: Optional[sql_identifier.SqlIdentifier],
-    default_schema: Optional[sql_identifier.SqlIdentifier],
+    default_database: sql_identifier.SqlIdentifier | None,
+    default_schema: sql_identifier.SqlIdentifier | None,
 ) -> _StageLocationParts:
     """Split an ``@`` stage path into (database, schema, stage, path).
 
@@ -91,7 +85,7 @@ def validate_batch_inference_stage_locations(
     *,
     session: snowpark.Session,
     output_stage_location: str,
-    input_stage_location: Optional[str],
+    input_stage_location: str | None,
 ) -> None:
     """Reject malformed stage paths, and an input path nested inside the output location.
 
@@ -157,11 +151,11 @@ def normalize_output_stage_location(
 
 def build_inference_job_service_yaml(
     *,
-    input_spec: Optional[batch_inference_job_specs.InputSpec],
+    input_spec: batch_inference_job_specs.InputSpec | None,
     output_spec: batch_inference_job_specs.OutputSpec,
-    resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
-    inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
-    image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
+    resources_spec: batch_inference_job_specs.ResourcesSpec | None,
+    inference_spec: batch_inference_job_specs.InferenceSpec | None,
+    image_build_spec: batch_inference_job_specs.ImageBuildSpec | None,
 ) -> str:
     """Assemble the ``WITH SPECIFICATION`` YAML body from the spec blocks.
 
@@ -195,14 +189,14 @@ def build_batch_inference_task_definition(
     version_name: str,
     compute_pool: str,
     function_name: str,
-    query: Optional[str],
-    input_stage_location: Optional[str],
-    input_spec: Optional[batch_inference_job_specs.InputSpec],
+    query: str | None,
+    input_stage_location: str | None,
+    input_spec: batch_inference_job_specs.InputSpec | None,
     output_spec: batch_inference_job_specs.OutputSpec,
-    resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
-    inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
-    image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
-    replicas: Optional[int],
+    resources_spec: batch_inference_job_specs.ResourcesSpec | None,
+    inference_spec: batch_inference_job_specs.InferenceSpec | None,
+    image_build_spec: batch_inference_job_specs.ImageBuildSpec | None,
+    replicas: int | None,
 ) -> str:
     """Build the ``EXECUTE INFERENCE JOB SERVICE`` text used as a task definition.
 
@@ -268,8 +262,8 @@ def build_batch_inference_task_definition(
 
 @dataclasses.dataclass
 class ServiceLogInfo:
-    database_name: Optional[sql_identifier.SqlIdentifier]
-    schema_name: Optional[sql_identifier.SqlIdentifier]
+    database_name: sql_identifier.SqlIdentifier | None
+    schema_name: sql_identifier.SqlIdentifier | None
     service_name: sql_identifier.SqlIdentifier
     deployment_step: deployment_step.DeploymentStep
     instance_id: str = "0"
@@ -287,7 +281,7 @@ class ServiceLogInfo:
         self,
         service_client: service_sql.ServiceSQLClient,
         offset: int,
-        statement_params: Optional[dict[str, Any]],
+        statement_params: dict[str, Any] | None,
     ) -> tuple[str, int]:
         service_logs = service_client.get_service_logs(
             database_name=self.database_name,
@@ -308,7 +302,7 @@ class ServiceLogInfo:
 class ServiceLogMetadata:
     service_logger: logging.Logger
     service: ServiceLogInfo
-    service_status: Optional[service_sql.ServiceStatus]
+    service_status: service_sql.ServiceStatus | None
     is_model_build_service_done: bool
     is_model_logger_service_done: bool
     log_offset: int
@@ -342,22 +336,22 @@ class ServiceLogMetadata:
 @dataclasses.dataclass
 class HFModelArgs:
     hf_model_name: str
-    hf_task: Optional[str] = None
-    hf_tokenizer: Optional[str] = None
-    hf_revision: Optional[str] = None
-    hf_token: Optional[str] = None
+    hf_task: str | None = None
+    hf_tokenizer: str | None = None
+    hf_revision: str | None = None
+    hf_token: str | None = None
     hf_trust_remote_code: bool = False
-    hf_model_kwargs: Optional[dict[str, Any]] = None
-    pip_requirements: Optional[list[str]] = None
-    conda_dependencies: Optional[list[str]] = None
-    comment: Optional[str] = None
-    warehouse: Optional[str] = None
+    hf_model_kwargs: dict[str, Any] | None = None
+    pip_requirements: list[str] | None = None
+    conda_dependencies: list[str] | None = None
+    comment: str | None = None
+    warehouse: str | None = None
 
 
 @dataclasses.dataclass
 class InferenceEngineArgs:
     inference_engine: inference_engine_module.InferenceEngine
-    inference_engine_args_override: Optional[list[str]] = None
+    inference_engine_args_override: list[str] | None = None
 
 
 class ServiceOperator:
@@ -403,38 +397,38 @@ class ServiceOperator:
     def create_service(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        service_database_name: Optional[sql_identifier.SqlIdentifier],
-        service_schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_database_name: sql_identifier.SqlIdentifier | None,
+        service_schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
         image_build_compute_pool_name: sql_identifier.SqlIdentifier,
         service_compute_pool_name: sql_identifier.SqlIdentifier,
-        image_repo_name: Optional[str],
+        image_repo_name: str | None,
         ingress_enabled: bool,
         min_instances: int,
         max_instances: int,
-        cpu_requests: Optional[str],
-        memory_requests: Optional[str],
-        gpu_requests: Optional[Union[int, str]],
-        num_workers: Optional[int],
-        max_batch_rows: Optional[int],
+        cpu_requests: str | None,
+        memory_requests: str | None,
+        gpu_requests: int | str | None,
+        num_workers: int | None,
+        max_batch_rows: int | None,
         force_rebuild: bool,
-        build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
+        build_external_access_integrations: list[sql_identifier.SqlIdentifier] | None,
         block: bool,
         progress_status: type_hints.ProgressStatus,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
         # hf model
-        hf_model_args: Optional[HFModelArgs] = None,
+        hf_model_args: HFModelArgs | None = None,
         # inference engine model
-        inference_engine_args: Optional[InferenceEngineArgs] = None,
+        inference_engine_args: InferenceEngineArgs | None = None,
         # inference table
-        autocapture: Optional[bool] = None,
+        autocapture: bool | None = None,
         # feature retrieval
-        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
-    ) -> Union[str, async_job.AsyncJob]:
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+    ) -> str | async_job.AsyncJob:
         # Generate operation ID for this deployment
         operation_id = service_logger.get_operation_id()
 
@@ -571,7 +565,7 @@ class ServiceOperator:
             statement_params=statement_params,
         )
 
-        model_build_service: Optional[ServiceLogInfo] = None
+        model_build_service: ServiceLogInfo | None = None
         if is_enable_image_build:
             # stream service logs in a thread
             model_build_service_name = sql_identifier.SqlIdentifier(
@@ -596,7 +590,7 @@ class ServiceOperator:
             log_color=service_logger.LogColor.BLUE,
         )
 
-        model_logger_service: Optional[ServiceLogInfo] = None
+        model_logger_service: ServiceLogInfo | None = None
         if hf_model_args:
             model_logger_service_name = sql_identifier.SqlIdentifier(
                 deployment_step.get_service_id_from_deployment_step(
@@ -688,10 +682,10 @@ class ServiceOperator:
 
     @staticmethod
     def _get_image_repo_fqn(
-        image_repo_name: Optional[str],
+        image_repo_name: str | None,
         database_name: sql_identifier.SqlIdentifier,
         schema_name: sql_identifier.SqlIdentifier,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get the fully qualified name of the image repository."""
         if image_repo_name is None or image_repo_name.strip() == "":
             return None
@@ -712,14 +706,14 @@ class ServiceOperator:
     def _start_service_log_streaming(
         self,
         async_job: snowpark.AsyncJob,
-        model_logger_service: Optional[ServiceLogInfo],
-        model_build_service: Optional[ServiceLogInfo],
+        model_logger_service: ServiceLogInfo | None,
+        model_build_service: ServiceLogInfo | None,
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
         operation_id: str,
-        statement_params: Optional[dict[str, Any]] = None,
-        stop_event: Optional[threading.Event] = None,
+        statement_params: dict[str, Any] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> threading.Thread:
         """Start the service log streaming in a separate thread."""
         # TODO: create a DAG of services and stream logs in the order of the DAG
@@ -745,10 +739,10 @@ class ServiceOperator:
         self,
         force_rebuild: bool,
         service_log_meta: ServiceLogMetadata,
-        model_build_service: Optional[ServiceLogInfo],
+        model_build_service: ServiceLogInfo | None,
         model_inference_service: ServiceLogInfo,
         operation_id: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Helper function to fetch logs and update the service log metadata if needed.
 
@@ -889,58 +883,17 @@ class ServiceOperator:
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
 
-    def _enforce_save_mode(self, output_mode: batch_inference_job_specs.SaveMode, output_stage_location: str) -> None:
-        """Enforce the save mode for the output stage location.
-
-        Args:
-            output_mode: The output mode
-            output_stage_location: The output stage location to check/clean.
-
-        Raises:
-            FileExistsError: When ERROR mode is specified and files exist in the output stage location.
-            RuntimeError: When operations fail (checking files or removing files).
-            ValueError: When an invalid SaveMode is specified.
-        """
-        list_results = self._stage_client.list_stage(output_stage_location)
-
-        if output_mode == batch_inference_job_specs.SaveMode.ERROR:
-            if len(list_results) > 0:
-                raise FileExistsError(
-                    f"Output stage location '{output_stage_location}' is not empty. "
-                    f"Found {len(list_results)} existing files. When using ERROR mode, the output stage location "
-                    f"must be empty. Please clear the existing files or use OVERWRITE mode."
-                )
-        elif output_mode == batch_inference_job_specs.SaveMode.OVERWRITE:
-            if len(list_results) > 0:
-                warnings.warn(
-                    f"Output stage location '{output_stage_location}' is not empty. "
-                    f"Found {len(list_results)} existing files. OVERWRITE mode will remove all existing files "
-                    f"in the output stage location before running the batch inference job.",
-                    stacklevel=2,
-                )
-                try:
-                    self._session.sql(f"REMOVE {output_stage_location}").collect()
-                except Exception as e:
-                    raise RuntimeError(
-                        f"OVERWRITE was specified. However, failed to remove existing files in output stage "
-                        f"{output_stage_location}: {e}. Please clear up the existing files manually and retry "
-                        f"the operation."
-                    )
-        else:
-            valid_modes = list(batch_inference_job_specs.SaveMode)
-            raise ValueError(f"Invalid SaveMode: {output_mode}. Must be one of {valid_modes}")
-
     def _stream_service_logs(
         self,
         async_job: snowpark.AsyncJob,
-        model_logger_service: Optional[ServiceLogInfo],
-        model_build_service: Optional[ServiceLogInfo],
+        model_logger_service: ServiceLogInfo | None,
+        model_build_service: ServiceLogInfo | None,
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
         operation_id: str,
-        statement_params: Optional[dict[str, Any]] = None,
-        stop_event: Optional[threading.Event] = None,
+        statement_params: dict[str, Any] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
         """Stream service logs while the async job is running."""
 
@@ -1042,7 +995,7 @@ class ServiceOperator:
         service_logger: logging.Logger,
         service: ServiceLogInfo,
         offset: int,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Fetch service logs after the async job is done to ensure no logs are missed."""
         try:
@@ -1064,10 +1017,10 @@ class ServiceOperator:
         self,
         service_name: sql_identifier.SqlIdentifier,
         target_status: service_sql.ServiceStatus,
-        service_database_name: Optional[sql_identifier.SqlIdentifier],
-        service_schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_database_name: sql_identifier.SqlIdentifier | None,
+        service_schema_name: sql_identifier.SqlIdentifier | None,
         async_job: snowpark.AsyncJob,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
         timeout_minutes: int = 30,
     ) -> None:
         """Wait for service to reach the specified status while monitoring async job for failures.
@@ -1155,11 +1108,11 @@ class ServiceOperator:
 
     def _show_service(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> Optional[row.Row]:
+        statement_params: dict[str, Any] | None = None,
+    ) -> row.Row | None:
         """Return the SHOW SERVICES row for an exact service-name match, or None.
 
         Wraps show_services with STARTS WITH plus a Python-side exact-name
@@ -1190,11 +1143,11 @@ class ServiceOperator:
 
     def _get_service_status(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> Optional[service_sql.ServiceStatus]:
+        statement_params: dict[str, Any] | None = None,
+    ) -> service_sql.ServiceStatus | None:
         """Return the service's top-level status, or None if it does not exist.
 
         Args:
@@ -1219,10 +1172,10 @@ class ServiceOperator:
 
     def _check_if_service_exists(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> bool:
         return (
             self._show_service(
@@ -1234,159 +1187,11 @@ class ServiceOperator:
             is not None
         )
 
-    def invoke_batch_job_method(
-        self,
-        *,
-        function_name: str,
-        model_name: sql_identifier.SqlIdentifier,
-        version_name: sql_identifier.SqlIdentifier,
-        job_name: Optional[str],
-        compute_pool_name: sql_identifier.SqlIdentifier,
-        warehouse: sql_identifier.SqlIdentifier,
-        image_repo_name: Optional[str],
-        input_file_pattern: str,
-        column_handling: Optional[dict[str, batch_inference_job_specs.ColumnHandlingOptions]],
-        params: Optional[dict[str, Any]],
-        partition_columns: Optional[list[str]],
-        signature_params: Optional[Sequence[core.BaseParamSpec]],
-        completion_filename: str,
-        force_rebuild: bool,
-        num_workers: Optional[int],
-        max_batch_rows: Optional[int],
-        cpu_requests: Optional[str],
-        memory_requests: Optional[str],
-        gpu_requests: Optional[str],
-        replicas: Optional[int],
-        block: bool,
-        input_stage_location: Optional[str] = None,
-        output_stage_location: Optional[str] = None,
-        base_stage_location: Optional[str] = None,
-        job_name_prefix: Optional[str] = None,
-        statement_params: Optional[dict[str, Any]] = None,
-        inference_engine_args: Optional[InferenceEngineArgs] = None,
-    ) -> job.MLJob[Any]:
-        # Validate and encode params
-        param_utils.validate_params(params, signature_params)
-        params_encoded = batch_inference_serialization.encode_params(params)
-        column_handling_encoded = batch_inference_serialization.encode_column_handling(column_handling)
-
-        database_name = self._database_name
-        schema_name = self._schema_name
-
-        job_database_name: Optional[sql_identifier.SqlIdentifier] = None
-        job_schema_name: Optional[sql_identifier.SqlIdentifier] = None
-        parsed_job_name: Optional[sql_identifier.SqlIdentifier] = None
-
-        if job_name is not None:
-            job_database_name, job_schema_name, parsed_job_name = sql_identifier.parse_fully_qualified_name(job_name)
-        job_database_name = job_database_name or database_name
-        job_schema_name = job_schema_name or schema_name
-
-        # Qualify name_prefix with db.schema for server-side job name generation.
-        # Append trailing _ as the server concatenates prefix + UUID directly.
-        qualified_name_prefix: Optional[str] = None
-        if job_name_prefix is not None:
-            assert job_database_name is not None
-            assert job_schema_name is not None
-            qualified_name_prefix = identifier.get_schema_level_object_identifier(
-                job_database_name.identifier(), job_schema_name.identifier(), job_name_prefix + "_"
-            )
-
-        self._model_deployment_spec.clear()
-
-        self._model_deployment_spec.add_model_spec(
-            database_name=database_name,
-            schema_name=schema_name,
-            model_name=model_name,
-            version_name=version_name,
-        )
-
-        self._model_deployment_spec.add_job_spec(
-            job_database_name=job_database_name,
-            job_schema_name=job_schema_name,
-            job_name=parsed_job_name,
-            name_prefix=qualified_name_prefix,
-            inference_compute_pool_name=compute_pool_name,
-            num_workers=num_workers,
-            max_batch_rows=max_batch_rows,
-            input_stage_location=input_stage_location,
-            input_file_pattern=input_file_pattern,
-            column_handling=column_handling_encoded,
-            params=params_encoded,
-            partition_columns=partition_columns,
-            output_stage_location=output_stage_location,
-            base_stage_location=base_stage_location,
-            completion_filename=completion_filename,
-            function_name=function_name,
-            warehouse=warehouse,
-            cpu=cpu_requests,
-            memory=memory_requests,
-            gpu=gpu_requests,
-            replicas=replicas,
-            block=block,
-        )
-
-        if inference_engine_args:
-            self._model_deployment_spec.add_inference_engine_spec(
-                inference_engine=inference_engine_args.inference_engine,
-                inference_engine_args=inference_engine_args.inference_engine_args_override,
-            )
-        else:
-            self._model_deployment_spec.add_image_build_spec(
-                image_build_compute_pool_name=compute_pool_name,
-                fully_qualified_image_repo_name=self._get_image_repo_fqn(image_repo_name, database_name, schema_name),
-                force_rebuild=force_rebuild,
-            )
-
-        spec_yaml_str_or_path = self._model_deployment_spec.save()
-
-        if self._workspace:
-            module_logger.info("using workspace")
-            stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
-            file_utils.upload_directory_to_stage(
-                self._session,
-                local_path=pathlib.Path(self._workspace.name),
-                stage_path=pathlib.PurePosixPath(stage_path),
-                statement_params=statement_params,
-            )
-        else:
-            module_logger.info("not using workspace")
-            stage_path = None
-
-        _, async_job = self._service_client.deploy_model(
-            stage_path=stage_path if self._workspace else None,
-            model_deployment_spec_file_rel_path=(
-                model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
-            ),
-            model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
-            statement_params=statement_params,
-        )
-
-        # Block until the async job is done
-        result = async_job.result()
-
-        if job_name is not None:
-            assert parsed_job_name is not None
-            fq_job_name = sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, parsed_job_name)
-        else:
-            # When using name_prefix, parse the server-generated job name from the deploy response.
-            # Response format: "Batch inference job {job_name} with model ..."
-            response_msg = cast(str, cast(list[row.Row], result)[0][0])
-            match = re.search(r"Batch inference job (\S+)", response_msg)
-            if match is None:
-                raise RuntimeError(f"Failed to parse job name from deploy response: {response_msg}")
-            fq_job_name = match.group(1)
-
-        return job.MLJob(
-            id=fq_job_name,
-            session=self._session,
-        )
-
     def _create_temp_stage(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        statement_params: Optional[dict[str, Any]] = None,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        statement_params: dict[str, Any] | None = None,
     ) -> str:
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
@@ -1402,21 +1207,21 @@ class ServiceOperator:
     def execute_inference_job_service(
         self,
         *,
-        X: Optional[dataframe.DataFrame] = None,
-        input_stage_location: Optional[str] = None,
+        X: dataframe.DataFrame | None = None,
+        input_stage_location: str | None = None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         compute_pool_name: sql_identifier.SqlIdentifier,
-        input_spec: Optional[batch_inference_job_specs.InputSpec],
+        input_spec: batch_inference_job_specs.InputSpec | None,
         output_spec: batch_inference_job_specs.OutputSpec,
-        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
-        inference_spec: Optional[batch_inference_job_specs.InferenceSpec],
-        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec],
-        function_name: Optional[str],
-        job_name: Optional[str],
-        replicas: Optional[int],
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None,
+        inference_spec: batch_inference_job_specs.InferenceSpec | None,
+        image_build_spec: batch_inference_job_specs.ImageBuildSpec | None,
+        function_name: str | None,
+        job_name: str | None,
+        replicas: int | None,
         async_: bool,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> job.MLJob[Any]:
         """Build the YAML body and run ``EXECUTE INFERENCE JOB SERVICE``.
 
@@ -1485,7 +1290,7 @@ class ServiceOperator:
         # Resolve the FROM path: a user-supplied stage path is read in place; an input DataFrame is
         # materialized under the reserved subdirectory, with a UUID to avoid collisions between
         # concurrent calls into the same output stage.
-        staged_input_to_cleanup: Optional[str] = None
+        staged_input_to_cleanup: str | None = None
         if input_stage_location is not None:
             from_stage_path = input_stage_location if input_stage_location.endswith("/") else input_stage_location + "/"
         else:
@@ -1505,10 +1310,10 @@ class ServiceOperator:
             self._database_name.identifier(), self._schema_name.identifier(), model_name.identifier()
         )
 
-        job_fqn: Optional[str] = None
-        job_database_name: Optional[sql_identifier.SqlIdentifier] = None
-        job_schema_name: Optional[sql_identifier.SqlIdentifier] = None
-        parsed_job_name: Optional[sql_identifier.SqlIdentifier] = None
+        job_fqn: str | None = None
+        job_database_name: sql_identifier.SqlIdentifier | None = None
+        job_schema_name: sql_identifier.SqlIdentifier | None = None
+        parsed_job_name: sql_identifier.SqlIdentifier | None = None
         if job_name is not None:
             job_database_name, job_schema_name, parsed_job_name = sql_identifier.parse_fully_qualified_name(job_name)
             job_database_name = job_database_name or self._database_name

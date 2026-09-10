@@ -23,6 +23,7 @@ from sklearn.preprocessing import (
     StandardScaler as SklearnStandardScaler,
 )
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.modeling import pipeline as snowml_pipeline
 from snowflake.ml.modeling.ensemble import IsolationForest
@@ -35,7 +36,6 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     MinMaxScaler,
     StandardScaler,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (

@@ -1,10 +1,11 @@
 from inspect import isclass
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from common_utils import create_mock_table, get_test_warehouse_name
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.feature_store.access_manager import (
     _configure_pre_init_privileges,
     _FeatureStoreRole as Role,
@@ -14,7 +15,6 @@ from snowflake.ml.feature_store.access_manager import (
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -225,9 +225,9 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         method: Callable[[], Any],
         required_access: Role,
         test_access: Role,
-        expected_result: Optional[Union[type[Exception], Callable[[Any], Optional[bool]], Any]] = None,
+        expected_result: type[Exception] | Callable[[Any], bool | None] | Any | None = None,
         expected_access_exception: type[Exception] = RuntimeError,
-        access_exception_dict: Optional[dict[Role, type[Exception]]] = None,
+        access_exception_dict: dict[Role, type[Exception]] | None = None,
     ) -> Any:
         """
         Test a Feature Store API given a specified access level.
@@ -311,7 +311,7 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         init_args: dict[str, Any],
         required_access: Role,
         test_access: Role,
-        expected_result: Optional[type[Exception]],
+        expected_result: type[Exception] | None,
     ) -> None:
         # Generate unique schema name
         schema = "FS_TEST_" + uuid4().hex.upper()

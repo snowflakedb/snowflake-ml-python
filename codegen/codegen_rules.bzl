@@ -40,7 +40,10 @@ def autogen_init_file_for_module(module):
     py_library(
         name = "init",
         srcs = [":generate_init_file"],
-        deps = ["//snowflake/ml/_internal:init_utils"],
+        deps = [
+            "//snowflake/ml/_internal:init_utils",
+            "//snowflake/ml/modeling/_internal:optional_dependency",
+        ],
     )
 
 def get_genrule_cmd(gen_mode, template_path, module, output_path):
@@ -123,9 +126,15 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
         output_path = TEST_OUTPUT_PATH,
     )
 
-    optional_dependencies = None
+    # All modeling estimators depend on scikit-learn (the modeling framework is built on it),
+    # which is an optional ("ml" extra) dependency as of 2.0. xgboost/lightgbm estimators
+    # additionally require their respective optional packages. Declaring these routes the
+    # generated tests to the "ml" conda environment instead of "core".
+    optional_dependencies = ["scikit-learn"]
     if module == "lightgbm":
-        optional_dependencies = ["lightgbm"]
+        optional_dependencies = ["lightgbm", "scikit-learn"]
+    elif module == "xgboost":
+        optional_dependencies = ["xgboost", "scikit-learn"]
 
     for e in estimator_info_list:
         py_genrule(
@@ -142,7 +151,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             srcs = [":generate_test_{}".format(e.normalized_class_name)],
             deps = [
                 "//{}:{}".format(module_root_dir, e.normalized_class_name),
-                "//snowflake/ml/utils:connection_params",
+                "//snowflake/ml/_internal/utils:connection_params",
             ],
             timeout = "long",
             legacy_create_init = 0,

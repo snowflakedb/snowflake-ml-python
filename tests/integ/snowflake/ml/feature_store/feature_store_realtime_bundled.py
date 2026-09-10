@@ -773,8 +773,8 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         """End-to-end read against an RTFV with two Postgres upstreams that share ``USER_ID``.
 
         Exercises :func:`resolve_realtime_join_key_fields` across multiple
-        upstreams. ``BALANCE = 100.0`` + ``SCORE = 7.5`` + ``WEIGHT = 3.0``
-        -> ``COMBINED = 307.5``.
+        upstreams. ``BALANCE = 100.0``, ``SCORE = 7.5``, ``WEIGHT = 3.0``
+        -> ``COMBINED = BALANCE * WEIGHT + SCORE = 307.5``.
         """
         s = uuid.uuid4().hex[:8].upper()
         user_id = f"U_RD3_{s}"
@@ -790,6 +790,18 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             feature_value=7.5,
             user_id=user_id,
         )
+        # Wait for both upstreams' OFT sides to be online-readable before wiring them
+        # into the RTFV, so the RTFV wait budget covers RTFV propagation only. Without
+        # this, a read can succeed while one upstream is still missing and compute_fn
+        # substitutes 0.0 for its feature.
+        for upstream_name, desc in ((upstream_balance, "RD3A"), (upstream_score, "RD3B")):
+            self._poll_online_read(
+                self.fs,
+                upstream_name,
+                "v1",
+                keys=[[user_id]],
+                desc=f"RTFV upstream BFV ({desc})",
+            )
         balance_fv = self.fs.get_feature_view(upstream_balance, "v1")
         score_fv = self.fs.get_feature_view(upstream_score, "v1")
 
@@ -811,10 +823,25 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             rtfv_live = self.fs.get_feature_view(rtfv_name, version)
 
             request_context = pd.DataFrame({"WEIGHT": [3.0]})
+
+            def _validate_combined(pdf: pd.DataFrame) -> None:
+                # Keep polling until COMBINED reflects both upstreams; a freshly
+                # registered RTFV can transiently see one upstream as a key miss,
+                # which compute_fn turns into 0.0 for that feature.
+                combined_col = next((c for c in pdf.columns if c.upper() == "COMBINED"), None)
+                self.assertIsNotNone(combined_col, "COMBINED column missing from RTFV read")
+                self.assertAlmostEqual(
+                    float(pdf.iloc[0][combined_col]),
+                    307.5,
+                    places=4,
+                    msg=f"COMBINED was {pdf.iloc[0][combined_col]!r}, expected 307.5",
+                )
+
             pdf = self._wait_until_rtfv_read_returns_rows(
                 rtfv_live,
                 keys=[[user_id]],
                 request_context=request_context,
+                validate_fn=_validate_combined,
             )
 
             self.assertEqual(len(pdf), 1)

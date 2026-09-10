@@ -8,6 +8,7 @@ def get_build_rules_for_native_impl():
         ],
         deps = [
             "//snowflake/ml/_internal:init_utils",
+            "//snowflake/ml/modeling/_internal:optional_dependency",
         ],
     )
 

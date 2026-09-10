@@ -7,10 +7,10 @@ import numpy as np
 from absl.testing import absltest, parameterized
 from sklearn import svm
 
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.model import ExportMode
 from snowflake.ml.model.type_hints import Task
 from snowflake.ml.registry import registry
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 

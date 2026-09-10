@@ -5,8 +5,8 @@ py_library(
     testonly = True,
     srcs = ["_integ_test_base.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/experiment",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -15,6 +15,7 @@ py_test(
     name = "experiment_tracking_crud_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_crud_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -29,6 +30,7 @@ py_test(
     name = "experiment_tracking_source_info_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_source_info_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -44,6 +46,7 @@ py_test(
     name = "experiment_tracking_metrics_params_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_metrics_params_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -57,6 +60,7 @@ py_test(
     name = "experiment_tracking_model_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_model_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -74,6 +78,7 @@ py_test(
         "test_artifact.json",
         "test_artifact_dir",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -87,6 +92,7 @@ py_test(
     name = "experiment_tracking_serialization_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_serialization_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
@@ -101,15 +107,16 @@ py_test(
     name = "experiment_lineage_integ_test",
     timeout = "long",
     srcs = ["experiment_lineage_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
         "//snowflake/ml/model",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -118,10 +125,10 @@ py_library(
     name = "autolog_integ_test_base",
     srcs = ["autolog_integ_test_base.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
         "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -161,6 +168,7 @@ py_test(
     name = "autolog_xgboost_integ_test",
     timeout = "long",
     srcs = ["autolog_xgboost_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",
         "short_regress",

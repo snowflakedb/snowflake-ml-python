@@ -50,7 +50,6 @@ dependencies:
   - scikit-learn==1.5.1
   - scipy==1.11.3
   - setuptools==80.10.2
-  - shap==0.46.0
   - snowflake-connector-python==3.18.0
   - snowflake-snowpark-python==1.38.0
   - snowflake.core==1.12.0
@@ -68,7 +67,6 @@ dependencies:
   - typing-extensions==4.11.0
   - utf8proc==2.6.1
   - werkzeug==2.3.8
-  - xgboost==2.1.4
   - pip
   - pip:
       - datasets==3.3.2

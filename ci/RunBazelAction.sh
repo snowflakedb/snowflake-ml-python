@@ -19,7 +19,7 @@
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
-#   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.11)
+#   -p: specify the Python version (e.g., 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.11)
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
 #   --with-spcs-image: build and push all spcs images for testing.
 #   --build-spcs-images: comma-separated list of specific images to build and push. Implies --with-spcs-image.
@@ -50,7 +50,7 @@ help() {
     echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]"
     echo ""
     echo "Options:"
-    echo "  -p <version>           Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
+    echo "  -p <version>           Specify Python version (e.g., 3.10, 3.11, 3.12, 3.13, 3.14)"
     echo "  --tags <tags>          Specify bazel tag filters (comma-separated)"
     echo "  --with-spcs-image            Build and push all SPCS images for testing."
     echo "  --build-spcs-images <images> Build and push only these SPCS images (comma-separated). Implies --with-spcs-image."
@@ -259,12 +259,12 @@ python_config=""
 if [[ -n "${PYTHON_VERSION}" ]]; then
     # Validate Python version is one of the supported versions
     case "${PYTHON_VERSION}" in
-        3.9|3.10|3.11|3.12|3.13|3.14)
+        3.10|3.11|3.12|3.13|3.14)
             python_config="--config=py${PYTHON_VERSION}"
             echo "Running with Python version: ${PYTHON_VERSION}"
             ;;
         *)
-            echo "Error: Unsupported Python version '${PYTHON_VERSION}'. Supported versions: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14"
+            echo "Error: Unsupported Python version '${PYTHON_VERSION}'. Supported versions: 3.10, 3.11, 3.12, 3.13, 3.14"
             exit 1
             ;;
     esac

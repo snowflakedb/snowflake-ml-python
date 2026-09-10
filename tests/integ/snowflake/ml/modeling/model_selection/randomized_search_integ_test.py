@@ -16,12 +16,12 @@ from sklearn.model_selection import RandomizedSearchCV as SkRandomizedSearchCV
 from sklearn.svm import SVC as SkSVC
 from xgboost import XGBClassifier as SkXGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.decomposition import PCA
 from snowflake.ml.modeling.ensemble import IsolationForest, RandomForestClassifier
 from snowflake.ml.modeling.model_selection import RandomizedSearchCV
 from snowflake.ml.modeling.svm import SVC
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

@@ -1,6 +1,6 @@
 import pathlib
 import tempfile
-from typing import Union, cast
+from typing import cast
 
 import yaml
 from absl.testing import absltest, parameterized
@@ -269,176 +269,6 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
 
-    def test_job(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
-            mds.add_model_spec(
-                database_name=sql_identifier.SqlIdentifier("db"),
-                schema_name=sql_identifier.SqlIdentifier("schema"),
-                model_name=sql_identifier.SqlIdentifier("model"),
-                version_name=sql_identifier.SqlIdentifier("version"),
-            )
-            mds.add_image_build_spec(
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
-                force_rebuild=True,
-                external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
-            )
-            mds.add_job_spec(
-                job_database_name=sql_identifier.SqlIdentifier("job_db"),
-                job_schema_name=sql_identifier.SqlIdentifier("job_schema"),
-                job_name=sql_identifier.SqlIdentifier("job"),
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
-                cpu="1",
-                memory="1GiB",
-                gpu="1",
-                num_workers=10,
-                max_batch_rows=1024,
-                warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                function_name="function_name",
-                input_stage_location="input_stage_location",
-                output_stage_location="output_stage_location",
-                completion_filename="completion_filename",
-                input_file_pattern="*",
-                column_handling=None,
-                params=None,
-                block=False,
-            )
-            file_path_str = mds.save()
-
-            assert mds.workspace_path
-            file_path = pathlib.Path(file_path_str)
-            with file_path.open("r", encoding="utf-8") as f:
-                result = yaml.safe_load(f)
-                self.assertDictEqual(
-                    result,
-                    {
-                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
-                        "image_build": {
-                            "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
-                            "image_repo": "IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
-                            "force_rebuild": True,
-                            "external_access_integrations": ["EXTERNAL_ACCESS_INTEGRATION"],
-                        },
-                        "job": {
-                            "name": "JOB_DB.JOB_SCHEMA.JOB",
-                            "compute_pool": "JOB_COMPUTE_POOL",
-                            "cpu": "1",
-                            "memory": "1GiB",
-                            "gpu": "1",
-                            "num_workers": 10,
-                            "max_batch_rows": 1024,
-                            "warehouse": "WAREHOUSE",
-                            "function_name": "function_name",
-                            "input": {
-                                "input_stage_location": "input_stage_location",
-                                "input_file_pattern": "*",
-                            },
-                            "output": {
-                                "output_stage_location": "output_stage_location",
-                                "completion_filename": "completion_filename",
-                            },
-                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
-                        },
-                    },
-                )
-
-    def test_job_with_name_prefix(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
-            mds.add_model_spec(
-                database_name=sql_identifier.SqlIdentifier("db"),
-                schema_name=sql_identifier.SqlIdentifier("schema"),
-                model_name=sql_identifier.SqlIdentifier("model"),
-                version_name=sql_identifier.SqlIdentifier("version"),
-            )
-            mds.add_image_build_spec(
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
-            )
-            mds.add_job_spec(
-                job_database_name=sql_identifier.SqlIdentifier("job_db"),
-                job_schema_name=sql_identifier.SqlIdentifier("job_schema"),
-                job_name=sql_identifier.SqlIdentifier("job"),
-                name_prefix="CUSTOM_PREFIX",
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
-                warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                function_name="function_name",
-                input_stage_location="input_stage_location",
-                output_stage_location="output_stage_location",
-                completion_filename="completion_filename",
-                input_file_pattern="*",
-                block=False,
-            )
-            file_path_str = mds.save()
-
-            assert mds.workspace_path
-            file_path = pathlib.Path(file_path_str)
-            with file_path.open("r", encoding="utf-8") as f:
-                result = yaml.safe_load(f)
-                self.assertDictEqual(
-                    result,
-                    {
-                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
-                        "image_build": {
-                            "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
-                            "force_rebuild": False,
-                            "image_repo": "DB.SCHEMA.IMAGE_REPO",
-                        },
-                        "job": {
-                            "name": "JOB_DB.JOB_SCHEMA.JOB",
-                            "name_prefix": "CUSTOM_PREFIX",
-                            "compute_pool": "JOB_COMPUTE_POOL",
-                            "warehouse": "WAREHOUSE",
-                            "function_name": "function_name",
-                            "input": {
-                                "input_stage_location": "input_stage_location",
-                                "input_file_pattern": "*",
-                            },
-                            "output": {
-                                "output_stage_location": "output_stage_location",
-                                "completion_filename": "completion_filename",
-                            },
-                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
-                        },
-                    },
-                )
-
-    def test_job_with_name_prefix_only(self) -> None:
-        """Test job spec with name_prefix but no job_name."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
-            mds.add_model_spec(
-                database_name=sql_identifier.SqlIdentifier("db"),
-                schema_name=sql_identifier.SqlIdentifier("schema"),
-                model_name=sql_identifier.SqlIdentifier("model"),
-                version_name=sql_identifier.SqlIdentifier("version"),
-            )
-            mds.add_image_build_spec(
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
-            )
-            mds.add_job_spec(
-                name_prefix="CUSTOM_PREFIX",
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
-                warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                function_name="function_name",
-                input_stage_location="input_stage_location",
-                output_stage_location="output_stage_location",
-                completion_filename="completion_filename",
-                input_file_pattern="*",
-                block=False,
-            )
-            file_path_str = mds.save()
-
-            assert mds.workspace_path
-            file_path = pathlib.Path(file_path_str)
-            with file_path.open("r", encoding="utf-8") as f:
-                result = yaml.safe_load(f)
-                # name should be omitted (None excluded)
-                self.assertNotIn("name", result["job"])
-                self.assertEqual(result["job"]["name_prefix"], "CUSTOM_PREFIX")
-
     def test_hf_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
@@ -592,7 +422,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
 
-    def test_missing_service_or_job_spec_raises(self) -> None:
+    def test_missing_service_spec_raises(self) -> None:
         mds = model_deployment_spec.ModelDeploymentSpec()
         mds.add_model_spec(
             database_name=sql_identifier.SqlIdentifier("db"),
@@ -604,62 +434,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
             fully_qualified_image_repo_name=sql_identifier.SqlIdentifier("repo"),
         )
-        with self.assertRaisesRegex(ValueError, "Either service or job specification is required"):
+        with self.assertRaisesRegex(ValueError, "Service specification is required"):
             mds.save()
-
-    def test_both_service_and_job_spec_raises_on_add(self) -> None:
-        mds_service = model_deployment_spec.ModelDeploymentSpec()
-        mds_service.add_model_spec(
-            database_name=sql_identifier.SqlIdentifier("db"),
-            schema_name=sql_identifier.SqlIdentifier("schema"),
-            model_name=sql_identifier.SqlIdentifier("model"),
-            version_name=sql_identifier.SqlIdentifier("version"),
-        )
-        mds_service.add_service_spec(
-            service_name=sql_identifier.SqlIdentifier("service"),
-            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-        )
-        with self.assertRaisesRegex(ValueError, "Cannot add a job spec when a service spec already exists"):
-            mds_service.add_job_spec(
-                job_name=sql_identifier.SqlIdentifier("job"),
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-                warehouse=sql_identifier.SqlIdentifier("wh"),
-                function_name="function_name",
-                input_stage_location="input_stage_location",
-                output_stage_location="output_stage_location",
-                completion_filename="completion_filename",
-                input_file_pattern="*",
-                column_handling=None,
-                params=None,
-                block=False,
-            )
-
-        mds_job = model_deployment_spec.ModelDeploymentSpec()
-        mds_job.add_model_spec(
-            database_name=sql_identifier.SqlIdentifier("db"),
-            schema_name=sql_identifier.SqlIdentifier("schema"),
-            model_name=sql_identifier.SqlIdentifier("model"),
-            version_name=sql_identifier.SqlIdentifier("version"),
-        )
-        mds_job.add_job_spec(
-            job_name=sql_identifier.SqlIdentifier("job"),
-            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-            warehouse=sql_identifier.SqlIdentifier("wh"),
-            function_name="function_name",
-            input_stage_location="input_stage_location",
-            output_stage_location="output_stage_location",
-            completion_filename="completion_filename",
-            input_file_pattern="*",
-            column_handling=None,
-            params=None,
-            num_workers=1,
-            block=False,
-        )
-        with self.assertRaisesRegex(ValueError, "Cannot add a service spec when a job spec already exists"):
-            mds_job.add_service_spec(
-                service_name=sql_identifier.SqlIdentifier("service"),
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-            )
 
     def test_clear_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -871,76 +647,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 )
         mds.clear()
 
-    def test_inference_engine_spec_with_job(self) -> None:
-        """Test add_inference_engine_spec works with job spec."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
-            mds.add_model_spec(
-                database_name=sql_identifier.SqlIdentifier("db"),
-                schema_name=sql_identifier.SqlIdentifier("schema"),
-                model_name=sql_identifier.SqlIdentifier("model"),
-                version_name=sql_identifier.SqlIdentifier("version"),
-            )
-            mds.add_job_spec(
-                job_name=sql_identifier.SqlIdentifier("batch_job"),
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-                function_name="predict",
-                input_stage_location="@input_stage/",
-                output_stage_location="@output_stage/",
-                completion_filename="_SUCCESS",
-                input_file_pattern="*.parquet",
-                warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                gpu="4",
-                replicas=2,
-                block=False,
-            )
-            mds.add_inference_engine_spec(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args=[
-                    "--tensor_parallel_size=4",
-                    "--max-model-len=4096",
-                ],
-            )
-            file_path_str = mds.save()
-
-            assert mds.workspace_path
-            file_path = pathlib.Path(file_path_str)
-            with file_path.open("r", encoding="utf-8") as f:
-                result = yaml.safe_load(f)
-                self.assertDictEqual(
-                    result,
-                    {
-                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
-                        "job": {
-                            "name": "DB.SCHEMA.BATCH_JOB",
-                            "compute_pool": "POOL",
-                            "warehouse": "WAREHOUSE",
-                            "function_name": "predict",
-                            "gpu": "4",
-                            "input": {
-                                "input_stage_location": "@input_stage/",
-                                "input_file_pattern": "*.parquet",
-                            },
-                            "output": {
-                                "output_stage_location": "@output_stage/",
-                                "completion_filename": "_SUCCESS",
-                            },
-                            "replicas": 2,
-                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
-                            "inference_engine_spec": {
-                                "inference_engine_name": "vllm",
-                                "inference_engine_args": [
-                                    "--tensor_parallel_size=4",
-                                    "--max-model-len=4096",
-                                ],
-                            },
-                        },
-                    },
-                )
-        mds.clear()
-
-    def test_inference_engine_spec_requires_service_or_job(self) -> None:
-        """Test add_inference_engine_spec raises error when called before add_service_spec or add_job_spec."""
+    def test_inference_engine_spec_requires_service(self) -> None:
+        """Test add_inference_engine_spec raises error when called before add_service_spec."""
         mds = model_deployment_spec.ModelDeploymentSpec()
         mds.add_model_spec(
             database_name=sql_identifier.SqlIdentifier("db"),
@@ -955,88 +663,9 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
 
         self.assertIn(
-            "Inference engine specification must be called after add_service_spec() or add_job_spec().",
+            "Inference engine specification must be called after add_service_spec().",
             str(cm.exception),
         )
-
-    def test_inference_engine_spec_with_job_skip_image_build(self) -> None:
-        """Test that job spec with inference engine skips image build and produces valid yaml."""
-        mds = model_deployment_spec.ModelDeploymentSpec()  # No workspace path - inline yaml
-        mds.add_model_spec(
-            database_name=sql_identifier.SqlIdentifier("db"),
-            schema_name=sql_identifier.SqlIdentifier("schema"),
-            model_name=sql_identifier.SqlIdentifier("model"),
-            version_name=sql_identifier.SqlIdentifier("version"),
-        )
-        mds.add_job_spec(
-            job_name=sql_identifier.SqlIdentifier("batch_job"),
-            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-            function_name="predict",
-            input_stage_location="@input_stage/",
-            output_stage_location="@output_stage/",
-            completion_filename="_SUCCESS",
-            input_file_pattern="*.parquet",
-            warehouse=sql_identifier.SqlIdentifier("warehouse"),
-            block=False,
-        )
-        mds.add_inference_engine_spec(
-            inference_engine=inference_engine.InferenceEngine.VLLM,
-            inference_engine_args=None,  # No args
-        )
-        yaml_str = mds.save()
-
-        assert yaml_str
-        result = yaml.safe_load(yaml_str)
-        # Verify no image_build key present
-        self.assertNotIn("image_build", result)
-        # Verify inference_engine_spec is in job
-        self.assertIn("inference_engine_spec", result["job"])
-        self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_name"], "vllm")
-        self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_args"], [])
-
-    def test_job_with_partition_columns(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
-            mds.add_model_spec(
-                database_name=sql_identifier.SqlIdentifier("db"),
-                schema_name=sql_identifier.SqlIdentifier("schema"),
-                model_name=sql_identifier.SqlIdentifier("model"),
-                version_name=sql_identifier.SqlIdentifier("version"),
-            )
-            mds.add_image_build_spec(
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
-                force_rebuild=True,
-            )
-            mds.add_job_spec(
-                job_database_name=sql_identifier.SqlIdentifier("job_db"),
-                job_schema_name=sql_identifier.SqlIdentifier("job_schema"),
-                job_name=sql_identifier.SqlIdentifier("job"),
-                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
-                cpu="1",
-                memory="1GiB",
-                gpu="1",
-                num_workers=10,
-                max_batch_rows=1024,
-                warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                function_name="function_name",
-                input_stage_location="input_stage_location",
-                output_stage_location="output_stage_location",
-                completion_filename="completion_filename",
-                input_file_pattern="*",
-                column_handling=None,
-                params=None,
-                partition_columns=["PARTITION_COL"],
-                block=False,
-            )
-            file_path_str = mds.save()
-
-            assert mds.workspace_path
-            file_path = pathlib.Path(file_path_str)
-            with file_path.open("r", encoding="utf-8") as f:
-                result = yaml.safe_load(f)
-                # Verify partition_columns appears under job.input
-                self.assertEqual(result["job"]["input"]["partition_columns"], ["PARTITION_COL"])
 
     def _make_fake_feature_view(
         self,
@@ -1342,7 +971,7 @@ class _FakeFeatureView:
         *,
         database: str,
         schema: str,
-        name: Union[str, sql_identifier.SqlIdentifier],
+        name: str | sql_identifier.SqlIdentifier,
         version: object,
     ) -> None:
         self.database = sql_identifier.SqlIdentifier(database) if database else None

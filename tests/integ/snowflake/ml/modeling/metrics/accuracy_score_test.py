@@ -1,13 +1,11 @@
-from typing import Optional
-
 import numpy as np
 from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling import metrics as snowml_metrics
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 from tests.integ.snowflake.ml.modeling.metrics import generator
 
@@ -39,7 +37,7 @@ class AccuracyScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
         sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL],
     )
-    def test_sample_weight_binary(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight_binary(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_score = snowml_metrics.accuracy_score(
@@ -60,7 +58,7 @@ class AccuracyScoreTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
         sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL],
     )
-    def test_sample_weight_multiclass(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight_multiclass(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_score = snowml_metrics.accuracy_score(

@@ -13,7 +13,7 @@ extra columns, and invalid inputs.
 import logging
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -35,22 +35,46 @@ logger = logging.getLogger(__name__)
 _SMALL_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 
-def _signature_has_response_format(signature: dict[str, model_signature.ModelSignature]) -> bool:
-    """True when the deployed signature includes a response_format param column.
+def _param_specs(signature: dict[str, model_signature.ModelSignature]) -> list[model_signature.BaseParamSpec]:
+    return list(signature["__call__"].params or [])
 
-    Flat REST payloads must include that trailing column whenever it is present in
-    the signature; the proxy validates expectedCols against GetParameterSpecs.
+
+def _flat_column_specs(signature: dict[str, model_signature.ModelSignature]) -> list[Any]:
+    """Columns of a flat row after the row index, in the order the proxy expects.
+
+    The proxy validates a flat row against 1 + len(inputs) + len(params). The OpenAI
+    params sit in inputs on some chat signatures and in params on others, so both are
+    walked here rather than assuming a particular shape.
     """
-    params = signature["__call__"].params
-    if not params:
-        return False
-    return any(param.name == "response_format" for param in params)
+    call_signature = signature["__call__"]
+    return list(call_signature.inputs) + list(call_signature.params or [])
 
 
-def _params_for_logging(params: dict[str, Any], *, include_response_format: bool) -> dict[str, Any]:
-    if include_response_format:
-        return params
-    return {name: value for name, value in params.items() if name != "response_format"}
+def _deployed_signature(mv: Any) -> dict[str, model_signature.ModelSignature]:
+    """Read back the signature the model version was actually logged with.
+
+    Remote logging goes through SYSTEM$IMPORT_MODEL, which derives the signature
+    server-side and ignores the signature requested by the client, so the deployed
+    param list can lag the client's openai_signatures. Request payloads must be
+    built against this signature rather than the requested one.
+    """
+    functions = mv.show_functions()
+    call_function = next((f for f in functions if f["target_method"] == "__call__"), None)
+    if call_function is None:
+        raise AssertionError(f"__call__ not found among logged functions: {[f['target_method'] for f in functions]}")
+    return {"__call__": call_function["signature"]}
+
+
+def _params_in_signature(
+    signature: dict[str, model_signature.ModelSignature], params: dict[str, Any]
+) -> dict[str, Any]:
+    """Drop params the deployed signature does not declare.
+
+    Passing a param the signature does not know about is rejected client-side, so
+    signatures predating a given param (e.g. response_format) must not receive it.
+    """
+    declared = {spec.name for spec in _param_specs(signature)}
+    return {name: value for name, value in params.items() if name in declared}
 
 
 # All OpenAI params — n=2 so we can verify params actually reach the model
@@ -193,26 +217,23 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
     def _flat_payload(
         self,
+        signature: dict[str, model_signature.ModelSignature],
         messages: list[dict[str, Any]],
-        *,
-        include_response_format: bool,
         **params: Any,
     ) -> dict[str, Any]:
-        """Flat format: row_index followed by messages and all param columns in signature order."""
-        row: list[Any] = [
-            0,
-            messages,
-            params.get("temperature", 1.0),
-            params.get("max_completion_tokens", 250),
-            params.get("stop", None),
-            params.get("n", 1),
-            params.get("stream", False),
-            params.get("top_p", 1.0),
-            params.get("frequency_penalty", 0.0),
-            params.get("presence_penalty", 0.0),
-        ]
-        if include_response_format:
-            row.append(params.get("response_format", None))
+        """Flat format: row_index, then one column per signature input and param, in order.
+
+        The proxy rejects any row whose column count differs from the deployed signature,
+        so the columns are derived from the signature rather than hardcoded. A column the
+        caller does not supply falls back to the spec default, or to None for input
+        columns, which the proxy omits so the engine default applies.
+        """
+        row: list[Any] = [0]
+        for spec in _flat_column_specs(signature):
+            if spec.name == "messages":
+                row.append(messages)
+            else:
+                row.append(params.get(spec.name, getattr(spec, "default_value", None)))
         return {"data": [row]}
 
     # ========================================================================
@@ -222,7 +243,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     def _deploy(
         self,
         engine: InferenceEngine,
-        compute_pool_for_log: Optional[str],
+        compute_pool_for_log: str | None,
         signature: dict[str, model_signature.ModelSignature],
     ) -> tuple[Any, str]:
         logging_style = "remote" if compute_pool_for_log else "local"
@@ -265,11 +286,11 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         messages: list[dict[str, Any]],
         ctx: str,
         *,
-        include_response_format: bool,
+        signature: dict[str, model_signature.ModelSignature],
     ) -> None:
         service_name = mv.list_services().loc[0, "name"]
         input_df = pd.DataFrame.from_records([{"messages": messages}])
-        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
+        full_params = _params_in_signature(signature, _FULL_PARAMS)
 
         with self.subTest("mv_run / full"):
             res = mv.run(input_df, function_name="__call__", service_name=service_name, params=full_params)
@@ -297,13 +318,12 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         messages: list[dict[str, Any]],
         ctx: str,
         *,
-        include_response_format: bool,
+        signature: dict[str, model_signature.ModelSignature],
     ) -> None:
-        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
         with self.subTest("rest_flat / full"):
             self._assert_rest_ok(
                 endpoint,
-                self._flat_payload(messages, include_response_format=include_response_format, **full_params),
+                self._flat_payload(signature, messages, **_FULL_PARAMS),
                 2,
                 f"{ctx}/flat/full",
             )
@@ -311,7 +331,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         with self.subTest("rest_flat / partial"):
             self._assert_rest_ok(
                 endpoint,
-                self._flat_payload(messages, include_response_format=include_response_format, **_PARTIAL_PARAMS),
+                self._flat_payload(signature, messages, **_PARTIAL_PARAMS),
                 3,
                 f"{ctx}/flat/partial",
             )
@@ -319,7 +339,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         with self.subTest("rest_flat / default"):
             self._assert_rest_ok(
                 endpoint,
-                self._flat_payload(messages, include_response_format=include_response_format),
+                self._flat_payload(signature, messages),
                 1,
                 f"{ctx}/flat/default",
             )
@@ -329,15 +349,15 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         # TODO(SNOW-3186308): Uncomment this test when we have proxy-side type validation.
         # with self.subTest("rest_flat / invalid_type"):
         #     self._assert_rest_400(
-        #         endpoint, self._flat_payload(messages, temperature="not_a_float"), f"{ctx}/flat/invalid_type"
+        #         endpoint,
+        #         self._flat_payload(signature, messages, temperature="not_a_float"),
+        #         f"{ctx}/flat/invalid_type",
         #     )
 
         with self.subTest("rest_flat / too_many_cols"):
-            row: list[Any] = [0, messages, 0.8, 50, None, 1, False, 0.9, 0.05, 0.05]
-            if include_response_format:
-                row.append(None)
-            row.append("extra")
-            self._assert_rest_400(endpoint, {"data": [row]}, f"{ctx}/flat/too_many_cols")
+            payload = self._flat_payload(signature, messages, **_FULL_PARAMS)
+            payload["data"][0].append("extra")
+            self._assert_rest_400(endpoint, payload, f"{ctx}/flat/too_many_cols")
 
         with self.subTest("rest_flat / too_few_cols"):
             self._assert_rest_400(endpoint, {"data": [[0, messages, 0.8]]}, f"{ctx}/flat/too_few_cols")
@@ -348,10 +368,10 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         messages: list[dict[str, Any]],
         ctx: str,
         *,
-        include_response_format: bool,
+        signature: dict[str, model_signature.ModelSignature],
     ) -> None:
         base = {"dataframe_split": {"index": [0], "columns": ["messages"], "data": [[messages]]}}
-        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
+        full_params = _params_in_signature(signature, _FULL_PARAMS)
 
         with self.subTest("rest_split / full"):
             self._assert_rest_ok(endpoint, {**base, "params": full_params}, 2, f"{ctx}/split/full")
@@ -392,10 +412,10 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         messages: list[dict[str, Any]],
         ctx: str,
         *,
-        include_response_format: bool,
+        signature: dict[str, model_signature.ModelSignature],
     ) -> None:
         base: dict[str, Any] = {"dataframe_records": [{"messages": messages}]}
-        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
+        full_params = _params_in_signature(signature, _FULL_PARAMS)
 
         with self.subTest("rest_records / full"):
             self._assert_rest_ok(endpoint, {**base, "params": full_params}, 2, f"{ctx}/records/full")
@@ -456,7 +476,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     def test_params(
         self,
         engine: InferenceEngine,
-        compute_pool_for_log: Optional[str],
+        compute_pool_for_log: str | None,
         signature: dict[str, model_signature.ModelSignature],
     ) -> None:
         """Deploy once, then run all param variants across every invocation path."""
@@ -466,16 +486,18 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
         mv, endpoint = self._deploy(engine, compute_pool_for_log, signature)
         messages = _get_messages(signature)
-        include_response_format = _signature_has_response_format(signature)
+        # Payloads follow the signature the model was logged with, which is not always the
+        # one requested above: remote logging derives it server-side.
+        deployed_signature = _deployed_signature(mv)
 
         with self.subTest("mv_run"):
-            self._test_mv_run(mv, messages, ctx, include_response_format=include_response_format)
+            self._test_mv_run(mv, messages, ctx, signature=deployed_signature)
         with self.subTest("rest_flat"):
-            self._test_rest_flat(endpoint, messages, ctx, include_response_format=include_response_format)
+            self._test_rest_flat(endpoint, messages, ctx, signature=deployed_signature)
         with self.subTest("rest_split"):
-            self._test_rest_split(endpoint, messages, ctx, include_response_format=include_response_format)
+            self._test_rest_split(endpoint, messages, ctx, signature=deployed_signature)
         with self.subTest("rest_records"):
-            self._test_rest_records(endpoint, messages, ctx, include_response_format=include_response_format)
+            self._test_rest_records(endpoint, messages, ctx, signature=deployed_signature)
 
 
 if __name__ == "__main__":

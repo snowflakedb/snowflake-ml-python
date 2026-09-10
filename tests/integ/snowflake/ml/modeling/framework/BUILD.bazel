@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 py_test(
     name = "base_test",
     srcs = ["base_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -12,9 +13,9 @@ py_test(
     deps = [
         ":utils",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 

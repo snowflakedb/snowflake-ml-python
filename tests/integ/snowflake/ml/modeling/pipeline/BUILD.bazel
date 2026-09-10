@@ -10,12 +10,14 @@ py_test(
     name = "pipeline_test",
     timeout = TIMEOUT,
     srcs = ["pipeline_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
@@ -23,7 +25,6 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:label_encoder",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )

@@ -49,6 +49,7 @@ py_library(
 py_test(
     name = "pandas_test",
     srcs = ["pandas_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -75,6 +76,7 @@ py_library(
 py_test(
     name = "numpy_test",
     srcs = ["numpy_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -161,6 +163,7 @@ py_library(
 py_test(
     name = "builtins_test",
     srcs = ["builtins_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -192,6 +195,7 @@ py_test(
     deps = [
         ":core",
         ":utils",
+        "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/test_utils:exception_utils",
     ],
 )
@@ -212,6 +216,7 @@ py_library(
 py_test(
     name = "snowpark_test",
     srcs = ["snowpark_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -219,10 +224,10 @@ py_test(
     deps = [
         ":core",
         ":snowpark_handler",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/test_utils:exception_utils",
         "//snowflake/ml/test_utils:mock_session",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -242,6 +247,7 @@ py_library(
 py_test(
     name = "dmatrix_test",
     srcs = ["dmatrix_test.py"],
+    optional_dependencies = ["xgboost"],
     tags = [
         "feature:model_registry",
         "short_regress",

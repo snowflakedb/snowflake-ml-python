@@ -5,8 +5,8 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.ml._internal.exceptions import fileset_errors
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.fileset import snowfs
-from snowflake.ml.utils import connection_params
 
 
 class TestSnowFileSystem(absltest.TestCase):

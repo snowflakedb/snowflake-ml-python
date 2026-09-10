@@ -13,8 +13,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.preprocessing import Normalizer as SklearnNormalizer
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.preprocessing import Normalizer  # type: ignore[attr-defined]
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils

@@ -56,8 +56,8 @@ py_library(
     deps = [
         ":stage_fs",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 

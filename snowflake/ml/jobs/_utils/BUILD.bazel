@@ -138,9 +138,9 @@ py_test(
         ":constants",
         ":payload_scripts",
         ":test_file_helper",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/jobs/_interop:legacy",
         "//snowflake/ml/jobs/_interop:utils",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -156,8 +156,8 @@ py_test(
         ":constants",
         ":payload_scripts",
         ":test_file_helper",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/jobs/_interop:legacy",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 

@@ -47,13 +47,7 @@ def _enable_lora_adapters(fn: Any) -> Any:
 
 
 def _with_model_signature() -> model_signature.ModelSignature:
-    base = openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE["__call__"]
-    return model_signature.ModelSignature(
-        inputs=base.inputs,
-        outputs=base.outputs,
-        params=list(base.params)
-        + [model_signature.ParamSpec(name="model", dtype=model_signature.DataType.STRING, default_value=None)],
-    )
+    return openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE["__call__"]
 
 
 def _make_base() -> model_version_impl.ModelVersion:

@@ -3,8 +3,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling.metrics import metrics_utils
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100

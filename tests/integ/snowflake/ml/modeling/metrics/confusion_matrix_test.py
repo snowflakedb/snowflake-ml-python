@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 import numpy.typing as npt
 from absl.testing import parameterized
@@ -7,9 +5,9 @@ from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling import metrics as snowml_metrics
 from snowflake.ml.modeling.metrics import metrics_utils
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 from tests.integ.snowflake.ml.modeling.metrics import generator
 
@@ -35,7 +33,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_DATA_LIST))), labels=[None, [2, 0, 4]]
     )
-    def test_labels(self, data_index: int, labels: Optional[npt.ArrayLike]) -> None:
+    def test_labels(self, data_index: int, labels: npt.ArrayLike | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_cm = snowml_metrics.confusion_matrix(
@@ -54,7 +52,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_DATA_LIST))), sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL]
     )
-    def test_sample_weight(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_cm = snowml_metrics.confusion_matrix(
@@ -74,7 +72,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_DATA_LIST))), normalize=["true", "pred", "all", None]
     )
-    def test_normalize(self, data_index: int, normalize: Optional[str]) -> None:
+    def test_normalize(self, data_index: int, normalize: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_cm = snowml_metrics.confusion_matrix(
@@ -93,7 +91,7 @@ class ConfusionMatrixTest(parameterized.TestCase):
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_DATA_LIST))), labels=[None, [], [100, -10]], normalize=[None, "invalid"]
     )
-    def test_invalid_params(self, data_index: int, labels: Optional[npt.ArrayLike], normalize: Optional[str]) -> None:
+    def test_invalid_params(self, data_index: int, labels: npt.ArrayLike | None, normalize: str | None) -> None:
         input_df = self._session.create_dataframe(_REGULAR_DATA_LIST[data_index], schema=_SF_SCHEMA)
 
         if labels is not None or normalize is not None:

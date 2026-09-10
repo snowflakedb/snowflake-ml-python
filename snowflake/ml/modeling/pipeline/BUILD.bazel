@@ -9,6 +9,7 @@ py_library(
     ],
     deps = [
         "//snowflake/ml/_internal:init_utils",
+        "//snowflake/ml/modeling/_internal:optional_dependency",
     ],
 )
 

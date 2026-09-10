@@ -5,9 +5,9 @@ from sklearn.datasets import make_multilabel_classification
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
 from xgboost import XGBClassifier as SkXGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.ensemble import RandomForestClassifier
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
 

@@ -4,6 +4,7 @@ from absl.testing import absltest
 from sklearn.datasets import load_iris
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling._internal.local_implementations.pandas_handlers import (
     PandasTransformHandlers,
 )
@@ -13,7 +14,6 @@ from snowflake.ml.modeling._internal.model_transformer_builder import (
 from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_handlers import (
     SnowparkTransformHandlers,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 
 
 class ModelTransformBuilderTest(absltest.TestCase):

@@ -8,11 +8,10 @@ anywhere. It includes two components: Snowflake File system and Snowflake FileSe
 
 ### Configure Snowflake credentials
 
-`snowflake.ml.utils.connection_params` provides `SnowflakeLoginOptions()` function to help load Snowflake credentials
-into Snowflake Python connector or Snowpark session. It recognizes the local SnowSQL configuration file and converts
-the config into a dict of parameters. Follow the [guide](
-    https://docs.snowflake.com/en/user-guide/snowsql-start.html#configuring-default-connection-settings) to get your
-SnowSQL config file ready for the following steps.
+Configure a named connection in your Snowflake configuration file (`connections.toml`) so it can be loaded by the
+Snowflake Python connector or a Snowpark session. Follow the [guide](
+    https://docs.snowflake.com/en/developer-guide/python-connector/python-connector-connect#using-the-connections-toml-file)
+to set up your `connections.toml` file ready for the following steps.
 
 ### Setup Snowflake connection
 
@@ -26,18 +25,15 @@ To start a Snowflake Python connection:
 
 ```Python
 import snowflake.connector
-from snowflake.ml.utils import connection_params
-conn = snowflake.connector.connect(
-    **connection_params.SnowflakeLoginOptions())
+conn = snowflake.connector.connect(connection_name="my_connection")
 ```
 
 To start a Snowpark session:
 
 ```Python
 import snowflake.snowpark
-from snowflake.ml.utils import connection_params
-session = snowflake.snowpark.Session.builder.configs(
-    connection_params.SnowflakeLoginOptions()
+session = snowflake.snowpark.Session.builder.config(
+    "connection_name", "my_connection"
 ).create()
 ```
 

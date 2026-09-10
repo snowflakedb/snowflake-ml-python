@@ -4,9 +4,9 @@ import inflection
 from absl.testing import absltest
 from sklearn.datasets import load_iris
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.model_selection import GridSearchCV, RandomizedSearchCV
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

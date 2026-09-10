@@ -4,6 +4,7 @@ from typing import Any
 import numpy as np
 from absl.testing.absltest import TestCase, main
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.impute import SimpleImputer  # type: ignore[attr-defined]
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
@@ -17,7 +18,6 @@ from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     RobustScaler,
     StandardScaler,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (

@@ -6,7 +6,7 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn import datasets, linear_model
 
-from snowflake.ml.model.batch import JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -20,30 +20,8 @@ T = TypeVar("T")
 class RegistryBatchInferencePrivilegeTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     """Integration tests verifying privilege requirements for batch inference via SPCS Jobs.
 
-    Validates that a user with READ privilege on a model can invoke
-    batch inference via mv.run_batch().
-
-    Required privileges for batch inference:
-        - USAGE on DATABASE and SCHEMA containing the model
-        - USAGE on WAREHOUSE
-        - READ on MODEL (required for accessing model artifacts/stage files during job creation)
-        - USAGE on COMPUTE POOL
-        - READ/WRITE on output stage
-        - READ/WRITE on IMAGE REPOSITORY (for user operations)
-        - SERVICE READ/SERVICE WRITE on IMAGE REPOSITORY (for MODEL_BUILD service to push images)
-        - CREATE SERVICE on SCHEMA
-        - BIND SERVICE ENDPOINT on ACCOUNT (for service to bind to endpoints)
-
-    Note: USAGE privilege alone is NOT sufficient for batch inference because
-    run_batch() needs to access model artifacts (stage files) which requires READ.
-
-    Note: The MODEL_BUILD service (which uses Kaniko to build container images)
-    requires SERVICE WRITE privilege on the image repository, not just WRITE.
-    SERVICE READ/WRITE are special privileges for container services.
-
-    Test Isolation:
-        Each test method gets a fresh session (see CommonTestBase.setUp/tearDown),
-        so role changes do not leak between tests or affect parallel execution.
+    Validates that a user with READ privilege on a model can invoke batch inference via
+    ``mv.run_batch``.
     """
 
     def setUp(self) -> None:
@@ -163,7 +141,6 @@ class RegistryBatchInferencePrivilegeTest(registry_batch_inference_test_base.Reg
             logger.warning(f"Could not grant BIND SERVICE ENDPOINT on account: {e}")
 
         def _test_batch_inference() -> None:
-            """Test batch inference via mv.run_batch()."""
             input_df = self.session.create_dataframe(iris_pandas_df)
 
             reg = registry.Registry(self.session)
@@ -173,20 +150,21 @@ class RegistryBatchInferencePrivilegeTest(registry_batch_inference_test_base.Reg
             batch_job = mv_as_read.run_batch(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=OutputSpec(stage_location=output_stage_location),
-                job_spec=JobSpec(
-                    job_name=job_name,
-                    num_workers=1,
-                    replicas=1,
-                    function_name="predict",
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
+                image_build_spec=batch_inference_job_specs.ImageBuildSpec(
                     image_repo=f"{self._test_db}.{self._test_schema}.{self._test_image_repo}",
                 ),
+                function_name="predict",
+                job_name=job_name,
+                replicas=1,
             )
 
             batch_job.wait()
             self.assertEqual(batch_job.status, "DONE", f"Job status is {batch_job.status}, expected DONE")
 
-            output_df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
+            job_output_stage_location = self._resolve_job_output_stage_location(output_stage_location, batch_job)
+            output_df = self.session.read.option("on_error", "CONTINUE").parquet(job_output_stage_location)
             self.assertEqual(output_df.count(), input_df.count())
 
         self._run_as_role(self._read_role, _test_batch_inference)

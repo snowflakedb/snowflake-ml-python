@@ -2,8 +2,8 @@ import uuid
 
 from absl.testing import parameterized
 
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.experiment import ExperimentTracking, _logging as experiment_logging
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
 

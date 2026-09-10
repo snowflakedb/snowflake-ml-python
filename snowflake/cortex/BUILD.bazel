@@ -49,7 +49,7 @@ py_test(
     deps = [
         ":classify_text",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -80,7 +80,7 @@ py_test(
         ":complete",
         ":schema_utils",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -104,7 +104,7 @@ py_test(
     deps = [
         ":extract_answer",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -128,7 +128,7 @@ py_test(
     deps = [
         ":sentiment",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -152,7 +152,7 @@ py_test(
     deps = [
         ":summarize",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -190,7 +190,7 @@ py_test(
     deps = [
         ":test_util",
         ":translate",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -214,7 +214,7 @@ py_test(
     deps = [
         ":embed_text_768",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -238,7 +238,7 @@ py_test(
     deps = [
         ":embed_text_1024",
         ":test_util",
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
     ],
 )
 
@@ -262,8 +262,8 @@ py_test(
     deps = [
         "//snowflake/cortex:cortex_pkg",
         "//snowflake/cortex:test_util",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/test_utils:mock_session",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 

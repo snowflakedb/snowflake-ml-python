@@ -7,8 +7,8 @@ from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling import metrics as snowml_metrics
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 
 _ROWS = 100

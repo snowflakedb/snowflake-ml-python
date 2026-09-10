@@ -2,8 +2,8 @@ import inflection
 from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_iris
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.linear_model import LogisticRegression
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

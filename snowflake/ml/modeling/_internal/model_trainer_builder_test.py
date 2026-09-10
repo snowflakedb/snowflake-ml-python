@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import GridSearchCV
 from xgboost import XGBRegressor
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling._internal.model_trainer_builder import ModelTrainerBuilder
 from snowflake.ml.modeling._internal.snowpark_implementations.distributed_hpo_trainer import (
     DistributedHPOTrainer,
@@ -18,7 +19,6 @@ from snowflake.ml.modeling._internal.snowpark_implementations.snowpark_trainer i
 from snowflake.ml.modeling._internal.snowpark_implementations.xgboost_external_memory_trainer import (
     XGBoostExternalMemoryTrainer,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
 
 

@@ -9,7 +9,7 @@ from packaging import version as pkg_version
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
-from snowflake.ml.model.batch import JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 _XGBOOST_SHAP_BROKEN = pkg_version.parse(xgboost.__version__) >= pkg_version.parse("3.1.0")
@@ -51,8 +51,9 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             signatures=sig,
             X=input_df,
             expected_predictions=expected_predictions,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(job_name=job_name, function_name="explain"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            function_name="explain",
+            job_name=job_name,
         )
 
 

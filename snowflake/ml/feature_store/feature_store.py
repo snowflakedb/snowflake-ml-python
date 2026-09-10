@@ -15,7 +15,6 @@ from typing import (
     Iterable,
     Literal,
     NamedTuple,
-    Optional,
     TypeVar,
     Union,
     cast,
@@ -111,6 +110,7 @@ from snowflake.ml.feature_store.tile_sql_generator import (
     _TILE_START_COL,
     MergingSqlGenerator,
     RollupSqlGenerator,
+    has_legacy_distinct_n_aggregations,
 )
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import DataFrame, Row, Session, functions as F
@@ -140,7 +140,7 @@ def _stream_source_schema_field_names(schema: StructType) -> list[str]:
 
 
 def _normalize_stream_ingest_records(
-    records: Union[list[dict[str, Any]], dict[str, Any]],
+    records: list[dict[str, Any]] | dict[str, Any],
 ) -> list[dict[str, Any]]:
     if isinstance(records, dict):
         return [records]
@@ -183,6 +183,29 @@ def _validate_stream_ingest_record_keys(expected: list[str], row: dict[str, Any]
 # Timezone names that place the session on the same time grid as UTC, so reading
 # through them carries no tile-boundary alignment risk.
 _UTC_TIMEZONE_NAMES = frozenset({"UTC", "ETC/UTC", "ETC/GMT", "GMT", "UCT", "UNIVERSAL", "ZULU"})
+
+
+# TODO: remove this guard together with the legacy distinct-N tile, merge and
+# rollup branches, and the unit tests pinning them, a few versions after 2.0.0.
+def _validate_no_legacy_distinct_n(feature_view: FeatureView) -> None:
+    """Reject reads of a feature view whose distinct-N tiles use the legacy format.
+
+    Args:
+        feature_view: The tiled feature view about to be read.
+
+    Raises:
+        SnowflakeMLException: [ValueError] The feature view has a last_distinct_n or
+            first_distinct_n aggregation backed by legacy-format tiles.
+    """
+    if has_legacy_distinct_n_aggregations(feature_view.aggregation_specs or [], feature_view.authoring_pkg_version):
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.METHOD_NOT_ALLOWED,
+            original_exception=ValueError(
+                f"Feature view {feature_view.name} uses a legacy implementation of last_distinct_n or "
+                "first_distinct_n aggregation function and is not supported since version 2.0.0. "
+                "Please re-create this feature view"
+            ),
+        )
 
 
 def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
@@ -362,7 +385,7 @@ def _initialization_warehouse_clause(feature_view: FeatureView) -> str:
     return f"\n                INITIALIZATION_WAREHOUSE = {iw}" if iw is not None else ""
 
 
-def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> Optional[list[dict[str, Any]]]:
+def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> list[dict[str, Any]] | None:
     """Record the batch FV's raw input columns so it can be recovered as code.
 
     Background: a feature view can be registered two ways. The declarative
@@ -627,7 +650,7 @@ def _make_fv_join_clause(
     cte_name: str,
     join_keys: list[SqlIdentifier],
     has_ts: bool,
-    spine_timestamp_col: Optional[SqlIdentifier],
+    spine_timestamp_col: SqlIdentifier | None,
 ) -> str:
     conditions = [f"{lhs_alias}.{k.identifier()} = {cte_name}.{k.identifier()}" for k in join_keys]
     if has_ts and spine_timestamp_col:
@@ -638,8 +661,8 @@ def _make_fv_join_clause(
 
 def dispatch_decorator(
     *,
-    skip_wh_switch: Optional[Callable[..., bool]] = None,
-    skip_telemetry: Optional[Callable[..., bool]] = None,
+    skip_wh_switch: Callable[..., bool] | None = None,
+    skip_telemetry: Callable[..., bool] | None = None,
 ) -> Callable[[Callable[Concatenate[FeatureStore, _Args], _RT]], Callable[Concatenate[FeatureStore, _Args], _RT],]:
     def decorator(
         f: Callable[Concatenate[FeatureStore, _Args], _RT],
@@ -758,8 +781,8 @@ class FeatureStore:
         default_warehouse: str,
         *,
         creation_mode: CreationMode = CreationMode.FAIL_IF_NOT_EXIST,
-        default_iceberg_external_volume: Optional[str] = None,
-        online_service_access: Optional[online_service.OnlineServiceAccess] = None,
+        default_iceberg_external_volume: str | None = None,
+        online_service_access: online_service.OnlineServiceAccess | None = None,
     ) -> None:
         """
         Creates a FeatureStore instance.
@@ -891,7 +914,7 @@ class FeatureStore:
                     original_exception=RuntimeError(f"Failed to create feature store {name}: {e}."),
                 ) from e
         self._check_feature_store_object_versions()
-        self._online_http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
+        self._online_http_client: online_service_http_client.OnlineServiceHttpClient | None = None
         logger.info(f"Successfully connected to feature store: {self._config.full_schema_path}.")
 
     def _get_or_create_online_http_client(
@@ -1006,8 +1029,8 @@ class FeatureStore:
         self,
         name: str,
         *,
-        desc: Optional[str] = None,
-    ) -> Optional[Entity]:
+        desc: str | None = None,
+    ) -> Entity | None:
         """Update a registered entity with provided information.
 
         Args:
@@ -1453,12 +1476,12 @@ class FeatureStore:
         name: str,
         version: str,
         *,
-        refresh_freq: Optional[str] = _UNSET,
-        warehouse: Optional[str] = None,
-        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
-        desc: Optional[str] = None,
-        online_config: Optional[fv_mod.OnlineConfig] = None,
-        updated_feature_df: Optional[DataFrame] = None,
+        refresh_freq: str | None = _UNSET,
+        warehouse: str | None = None,
+        initialization_warehouse: str | None = _KEEP_CURRENT,
+        desc: str | None = None,
+        online_config: fv_mod.OnlineConfig | None = None,
+        updated_feature_df: DataFrame | None = None,
     ) -> FeatureView:
         ...
 
@@ -1466,29 +1489,29 @@ class FeatureStore:
     def update_feature_view(
         self,
         name: FeatureView,
-        version: Optional[str] = None,
+        version: str | None = None,
         *,
-        refresh_freq: Optional[str] = _UNSET,
-        warehouse: Optional[str] = None,
-        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
-        desc: Optional[str] = None,
-        online_config: Optional[fv_mod.OnlineConfig] = None,
-        updated_feature_df: Optional[DataFrame] = None,
+        refresh_freq: str | None = _UNSET,
+        warehouse: str | None = None,
+        initialization_warehouse: str | None = _KEEP_CURRENT,
+        desc: str | None = None,
+        online_config: fv_mod.OnlineConfig | None = None,
+        updated_feature_df: DataFrame | None = None,
     ) -> FeatureView:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
     def update_feature_view(
         self,
-        name: Union[FeatureView, str],
-        version: Optional[str] = None,
+        name: FeatureView | str,
+        version: str | None = None,
         *,
-        refresh_freq: Optional[str] = _UNSET,
-        warehouse: Optional[str] = None,
-        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
-        desc: Optional[str] = None,
-        online_config: Optional[fv_mod.OnlineConfig] = None,
-        updated_feature_df: Optional[DataFrame] = None,
+        refresh_freq: str | None = _UNSET,
+        warehouse: str | None = None,
+        initialization_warehouse: str | None = _KEEP_CURRENT,
+        desc: str | None = None,
+        online_config: fv_mod.OnlineConfig | None = None,
+        updated_feature_df: DataFrame | None = None,
     ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
@@ -1583,7 +1606,7 @@ class FeatureStore:
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
         # None when _UNSET (user didn't pass refresh_freq); the existing
         # _refresh_freq is preserved below via the conditional assignment.
-        actual_refresh_freq: Optional[str] = refresh_freq if refresh_freq is not _UNSET else None
+        actual_refresh_freq: str | None = refresh_freq if refresh_freq is not _UNSET else None
         new_desc = desc if desc is not None else feature_view.desc
 
         init_wh_changed = initialization_warehouse is not _KEEP_CURRENT
@@ -1760,11 +1783,11 @@ class FeatureStore:
         feature_view: str,
         version: str,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: Literal[False],
     ) -> DataFrame:
         ...
@@ -1775,11 +1798,11 @@ class FeatureStore:
         feature_view: str,
         version: str,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: Literal[True],
     ) -> pd.DataFrame:
         ...
@@ -1790,13 +1813,13 @@ class FeatureStore:
         feature_view: str,
         version: str,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: None = None,
-    ) -> Union[DataFrame, pd.DataFrame]:
+    ) -> DataFrame | pd.DataFrame:
         ...
 
     @overload
@@ -1804,11 +1827,11 @@ class FeatureStore:
         self,
         feature_view: FeatureView,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: Literal[False],
     ) -> DataFrame:
         ...
@@ -1818,11 +1841,11 @@ class FeatureStore:
         self,
         feature_view: FeatureView,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: Literal[True],
     ) -> pd.DataFrame:
         ...
@@ -1832,13 +1855,13 @@ class FeatureStore:
         self,
         feature_view: FeatureView,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
+        request_context: pd.DataFrame | None = None,
         as_pandas: None = None,
-    ) -> Union[DataFrame, pd.DataFrame]:
+    ) -> DataFrame | pd.DataFrame:
         ...
 
     @dispatch_decorator(  # type: ignore[misc]
@@ -1847,16 +1870,16 @@ class FeatureStore:
     )
     def read_feature_view(
         self,
-        feature_view: Union[FeatureView, str],
-        version: Optional[str] = None,
+        feature_view: FeatureView | str,
+        version: str | None = None,
         *,
-        keys: Optional[list[list[str]]] = None,
-        feature_names: Optional[list[str]] = None,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        keys: list[list[str]] | None = None,
+        feature_names: list[str] | None = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-        request_context: Optional[pd.DataFrame] = None,
-        as_pandas: Optional[bool] = None,
-    ) -> Union[DataFrame, pd.DataFrame]:
+        request_context: pd.DataFrame | None = None,
+        as_pandas: bool | None = None,
+    ) -> DataFrame | pd.DataFrame:
         """
         Read values from a FeatureView from either offline or online store.
 
@@ -2024,8 +2047,8 @@ class FeatureStore:
     def list_feature_views(
         self,
         *,
-        entity_name: Optional[str] = None,
-        feature_view_name: Optional[str] = None,
+        entity_name: str | None = None,
+        feature_view_name: str | None = None,
         verbose: bool = False,
     ) -> DataFrame:
         """
@@ -2154,7 +2177,7 @@ class FeatureStore:
         version: str,
         *,
         raise_if_not_found: Literal[False],
-    ) -> Optional[FeatureView]:
+    ) -> FeatureView | None:
         ...
 
     def _get_feature_view_impl(
@@ -2163,7 +2186,7 @@ class FeatureStore:
         version: str,
         *,
         raise_if_not_found: bool = True,
-    ) -> Optional[FeatureView]:
+    ) -> FeatureView | None:
         """Retrieve a registered FeatureView, optionally returning None instead of raising.
 
         Private helper shared by :meth:`get_feature_view` and :meth:`delete_feature_view`.
@@ -2213,7 +2236,7 @@ class FeatureStore:
 
     @dispatch_decorator()
     def create_online_service(
-        self, producer_role: str, consumer_role: str, *, size: Optional[str] = None
+        self, producer_role: str, consumer_role: str, *, size: str | None = None
     ) -> online_service.OnlineServiceResult:
         """Create the Online Service for this store's schema.
 
@@ -2238,6 +2261,39 @@ class FeatureStore:
             self._config.schema,
             producer_role,
             consumer_role,
+            size=size,
+            statement_params=self._telemetry_stmp,
+        )
+
+    @dispatch_decorator()
+    def alter_online_service(self, *, size: str) -> online_service.OnlineServiceResult:
+        """Change the size of this store's Online Service.
+
+        Returns as soon as the request is recorded; the change runs in the background and can take
+        hours on a large Online Service, which keeps serving online feature reads and stream
+        ingestion throughout. Poll :meth:`get_online_service_status` until ``status`` is
+        ``RUNNING`` and ``size`` is the requested size.
+
+        Which direction a change may go is decided server-side, not here: at present only
+        increases are accepted and a request for a smaller size is rejected, pending server
+        support for decreases. A request for the size the Online Service is already at is
+        rejected either way. The Online Service must be ``RUNNING`` to be resized, and one
+        created at ``"XS"`` cannot be resized at all -- it is a prototyping tier, and reaching a
+        larger size means re-creating the Online Service. Re-requesting the size a change is
+        already converging to does nothing, while requesting a different size while a change is
+        in flight is rejected.
+
+        Args:
+            size: Size to change the Online Service to, one of ``"S"``, ``"M"``, ``"L"``,
+                ``"XL"``, ``"2XL"``, ``"3XL"`` (case-insensitive). ``"XS"`` is not a valid target.
+
+        Returns:
+            Parsed result from the Online Service.
+        """
+        return online_service.alter_online_service(
+            self._session,
+            self._config.database,
+            self._config.schema,
             size=size,
             statement_params=self._telemetry_stmp,
         )
@@ -2282,7 +2338,7 @@ class FeatureStore:
         feature_view: str,
         version: str,
         *,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> None:
         ...
 
@@ -2290,19 +2346,19 @@ class FeatureStore:
     def refresh_feature_view(
         self,
         feature_view: FeatureView,
-        version: Optional[str] = None,
+        version: str | None = None,
         *,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> None:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
     def refresh_feature_view(
         self,
-        feature_view: Union[FeatureView, str],
-        version: Optional[str] = None,
+        feature_view: FeatureView | str,
+        version: str | None = None,
         *,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> None:
         """Manually refresh a feature view.
 
@@ -2401,10 +2457,10 @@ class FeatureStore:
     def get_refresh_history(
         self,
         feature_view: FeatureView,
-        version: Optional[str] = None,
+        version: str | None = None,
         *,
         verbose: bool = False,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> DataFrame:
         ...
 
@@ -2415,17 +2471,17 @@ class FeatureStore:
         version: str,
         *,
         verbose: bool = False,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> DataFrame:
         ...
 
     def get_refresh_history(
         self,
-        feature_view: Union[FeatureView, str],
-        version: Optional[str] = None,
+        feature_view: FeatureView | str,
+        version: str | None = None,
         *,
         verbose: bool = False,
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.OFFLINE,
     ) -> DataFrame:
         """Get refresh history statistics about a feature view.
 
@@ -2548,9 +2604,9 @@ class FeatureStore:
         # ``all_backfill`` pattern is kept for the verbose-mode hint that
         # points users at full ``TASK_HISTORY`` (incl. the finalizer) for
         # debugging.
-        user_visible_root_pattern: Optional[str] = None
-        user_visible_window_pattern: Optional[str] = None
-        all_backfill_pattern: Optional[str] = None
+        user_visible_root_pattern: str | None = None
+        user_visible_window_pattern: str | None = None
+        all_backfill_pattern: str | None = None
         if feature_view.is_streaming:
             try:
                 streaming_meta = self._metadata_manager.get_streaming_metadata(
@@ -2673,7 +2729,7 @@ class FeatureStore:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
-    def resume_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
+    def resume_feature_view(self, feature_view: FeatureView | str, version: str | None = None) -> FeatureView:
         """
         Resume a previously suspended FeatureView.
 
@@ -2733,7 +2789,7 @@ class FeatureStore:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
-    def suspend_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
+    def suspend_feature_view(self, feature_view: FeatureView | str, version: str | None = None) -> FeatureView:
         """
         Suspend an active FeatureView.
 
@@ -2793,7 +2849,7 @@ class FeatureStore:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
-    def delete_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> None:
+    def delete_feature_view(self, feature_view: FeatureView | str, version: str | None = None) -> None:
         """
         Delete a FeatureView.
 
@@ -2875,6 +2931,23 @@ class FeatureStore:
             return
 
         fully_qualified_name = feature_view.fully_qualified_name()
+
+        # Drop OFT first. If a dependent FeatureGroup blocks the drop (error 099940),
+        # the offline DT/view and companion resources are still intact.
+        if feature_view.online:
+            fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
+            try:
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(
+                        f"Failed to delete online feature table {fully_qualified_online_name}: {e}"
+                    ),
+                )
+
         if feature_view.status == FeatureViewStatus.STATIC:
             self._session.sql(f"DROP VIEW IF EXISTS {fully_qualified_name}").collect(
                 statement_params=self._telemetry_stmp
@@ -2896,21 +2969,6 @@ class FeatureStore:
             new_has_task=False,
             drop_snapshot_table=True,
         )
-
-        # Delete online feature table if it exists
-        if feature_view.online:
-            fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
-            try:
-                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
-            except Exception as e:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(
-                        f"Failed to delete online feature table {fully_qualified_online_name}: {e}"
-                    ),
-                )
 
         # Clean up streaming FV resources (udf_transformed table + ref count)
         if feature_view.is_streaming:
@@ -3012,12 +3070,12 @@ class FeatureStore:
     )
     def read_feature_group(
         self,
-        feature_group: Union[FeatureGroup, str],
-        version: Optional[str] = None,
+        feature_group: FeatureGroup | str,
+        version: str | None = None,
         *,
         keys: list[list[Any]],
-        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.ONLINE,
-        request_context: Optional[pd.DataFrame] = None,
+        store_type: fv_mod.StoreType | str = fv_mod.StoreType.ONLINE,
+        request_context: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """Read feature values from a registered :class:`FeatureGroup` for a batch of entity rows.
 
@@ -3335,11 +3393,11 @@ class FeatureStore:
     @dispatch_decorator()
     def stream_ingest(
         self,
-        stream_source: Union[str, StreamSource],
-        records: Union[list[dict[str, Any]], dict[str, Any]],
+        stream_source: str | StreamSource,
+        records: list[dict[str, Any]] | dict[str, Any],
         *,
         timeout_sec: float = 120.0,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> int:
         """Send rows to the Online Service for ingestion.
 
@@ -3501,7 +3559,7 @@ class FeatureStore:
         logger.info(f"Deleted StreamSource {name_id}.")
 
     @dispatch_decorator()
-    def update_stream_source(self, name: str, *, desc: Optional[str] = None) -> Optional[StreamSource]:
+    def update_stream_source(self, name: str, *, desc: str | None = None) -> StreamSource | None:
         """Update a registered StreamSource description.
 
         Args:
@@ -3548,10 +3606,10 @@ class FeatureStore:
     def retrieve_feature_values(
         self,
         spine_df: DataFrame,
-        features: Union[list[Union[FeatureView, FeatureViewSlice]], list[str]],
+        features: list[FeatureView | FeatureViewSlice] | list[str],
         *,
-        spine_timestamp_col: Optional[str] = None,
-        exclude_columns: Optional[list[str]] = None,
+        spine_timestamp_col: str | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -3628,12 +3686,12 @@ class FeatureStore:
     def generate_training_set(
         self,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         *,
-        save_as: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
-        exclude_columns: Optional[list[str]] = None,
+        save_as: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -3645,10 +3703,10 @@ class FeatureStore:
         self,
         spine_df: DataFrame,
         *,
-        feature_group: Union[FeatureGroup, tuple[str, str]],
-        save_as: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
+        feature_group: FeatureGroup | tuple[str, str],
+        save_as: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
     ) -> DataFrame:
         ...
 
@@ -3656,13 +3714,13 @@ class FeatureStore:
     def generate_training_set(
         self,
         spine_df: DataFrame,
-        features: Optional[list[Union[FeatureView, FeatureViewSlice]]] = None,
+        features: list[FeatureView | FeatureViewSlice] | None = None,
         *,
-        feature_group: Optional[Union[FeatureGroup, tuple[str, str]]] = None,
-        save_as: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
-        exclude_columns: Optional[list[str]] = None,
+        feature_group: FeatureGroup | tuple[str, str] | None = None,
+        save_as: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -3851,12 +3909,12 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         *,
-        version: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
-        exclude_columns: Optional[list[str]] = None,
+        version: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         desc: str = "",
@@ -3870,13 +3928,13 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         *,
         output_type: Literal["table"],
-        version: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
-        exclude_columns: Optional[list[str]] = None,
+        version: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         desc: str = "",
@@ -3889,18 +3947,18 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         *,
-        version: Optional[str] = None,
-        spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[list[str]] = None,
-        exclude_columns: Optional[list[str]] = None,
+        version: str | None = None,
+        spine_timestamp_col: str | None = None,
+        spine_label_cols: list[str] | None = None,
+        exclude_columns: list[str] | None = None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         desc: str = "",
         output_type: Literal["dataset", "table"] = "dataset",
         join_method: Literal["sequential", "cte"] = "sequential",
-    ) -> Union[dataset.Dataset, DataFrame]:
+    ) -> dataset.Dataset | DataFrame:
         """
         Generate dataset by given source table and feature views.
 
@@ -4049,7 +4107,7 @@ class FeatureStore:
             ) from e
 
     @dispatch_decorator()
-    def load_feature_views_from_dataset(self, ds: dataset.Dataset) -> list[Union[FeatureView, FeatureViewSlice]]:
+    def load_feature_views_from_dataset(self, ds: dataset.Dataset) -> list[FeatureView | FeatureViewSlice]:
         """
         Retrieve FeatureViews used during Dataset construction.
 
@@ -4176,7 +4234,7 @@ class FeatureStore:
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def _create_updated_feature_view(
-        self, base_fv: FeatureView, online_config: Optional[fv_mod.OnlineConfig] = None
+        self, base_fv: FeatureView, online_config: fv_mod.OnlineConfig | None = None
     ) -> FeatureView:
         """Return a copy of ``base_fv`` with a new online configuration applied.
 
@@ -4200,9 +4258,9 @@ class FeatureStore:
     def _build_offline_update_queries(
         self,
         feature_view: FeatureView,
-        refresh_freq: Optional[str],
-        warehouse: Optional[str],
-        initialization_warehouse: Optional[str],
+        refresh_freq: str | None,
+        warehouse: str | None,
+        initialization_warehouse: str | None,
         desc: str,
     ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """Build offline update operations and their rollback operations.
@@ -4262,14 +4320,14 @@ class FeatureStore:
         new_target_lag = "DOWNSTREAM" if new_is_cron else effective_freq
         old_target_lag = "DOWNSTREAM" if old_is_cron else old_freq
 
-        def alter_dt(op_type: str, *, target_lag: str, wh: Optional[SqlIdentifier], comment: str) -> tuple[str, str]:
+        def alter_dt(op_type: str, *, target_lag: str, wh: SqlIdentifier | None, comment: str) -> tuple[str, str]:
             return (
                 op_type,
                 f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'"
                 f" WAREHOUSE = {wh} COMMENT = {_sql_string_literal(comment)}",
             )
 
-        def create_task_ops(op_type: str, *, cron_expr: str, wh: Optional[SqlIdentifier]) -> list[tuple[str, str]]:
+        def create_task_ops(op_type: str, *, cron_expr: str, wh: SqlIdentifier | None) -> list[tuple[str, str]]:
             # CREATE OR REPLACE keeps the operation idempotent even if a stale
             # task with the same name happens to exist (e.g. partial prior failure).
             task_obj_info = _FeatureStoreObjInfo(
@@ -4336,7 +4394,7 @@ class FeatureStore:
         if initialization_warehouse is not _KEEP_CURRENT:
             old_init_wh = feature_view.initialization_warehouse
 
-            def set_or_unset_init_wh(op_type: str, value: Optional[SqlIdentifier]) -> tuple[str, str]:
+            def set_or_unset_init_wh(op_type: str, value: SqlIdentifier | None) -> tuple[str, str]:
                 if value is None:
                     return (op_type, f"ALTER DYNAMIC TABLE {fqn} UNSET INITIALIZATION_WAREHOUSE")
                 return (op_type, f"ALTER DYNAMIC TABLE {fqn} SET INITIALIZATION_WAREHOUSE = {value}")
@@ -4351,12 +4409,12 @@ class FeatureStore:
     class _OnlineUpdateStrategy:
         """Encapsulates online update operations and their rollbacks."""
 
-        operations: list[tuple[str, Union[str, FeatureView]]]
-        rollback_operations: list[tuple[str, Union[str, FeatureView]]]
-        final_config: Optional[fv_mod.OnlineConfig]
+        operations: list[tuple[str, str | FeatureView]]
+        rollback_operations: list[tuple[str, str | FeatureView]]
+        final_config: fv_mod.OnlineConfig | None
 
     def _plan_online_update(
-        self, feature_view: FeatureView, online_config: Optional[fv_mod.OnlineConfig]
+        self, feature_view: FeatureView, online_config: fv_mod.OnlineConfig | None
     ) -> _OnlineUpdateStrategy:
         """Plan online update operations based on current state and target config.
 
@@ -4421,8 +4479,8 @@ class FeatureStore:
 
         temp_fv = self._create_updated_feature_view(feature_view, final_config)
 
-        operations: list[tuple[str, Union[str, FeatureView]]] = [("CREATE_ONLINE", temp_fv)]
-        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [
+        operations: list[tuple[str, str | FeatureView]] = [("CREATE_ONLINE", temp_fv)]
+        rollback_ops: list[tuple[str, str | FeatureView]] = [
             ("DELETE_ONLINE", temp_fv.fully_qualified_online_table_name())
         ]
 
@@ -4432,8 +4490,8 @@ class FeatureStore:
         """Plan operations to disable online storage."""
         table_name = feature_view.fully_qualified_online_table_name()
 
-        operations: list[tuple[str, Union[str, FeatureView]]] = [("DELETE_ONLINE", table_name)]
-        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [
+        operations: list[tuple[str, str | FeatureView]] = [("DELETE_ONLINE", table_name)]
+        rollback_ops: list[tuple[str, str | FeatureView]] = [
             (
                 "CREATE_ONLINE",
                 self._create_updated_feature_view(feature_view, feature_view.online_config),
@@ -4459,8 +4517,8 @@ class FeatureStore:
         update_query = f"ALTER ONLINE FEATURE TABLE {table_name} SET TARGET_LAG = '{online_config.target_lag}'"
         rollback_query = f"ALTER ONLINE FEATURE TABLE {table_name} SET TARGET_LAG = '{existing_config.target_lag}'"
 
-        operations: list[tuple[str, Union[str, FeatureView]]] = [("UPDATE_ONLINE", update_query)]
-        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [("UPDATE_ONLINE", rollback_query)]
+        operations: list[tuple[str, str | FeatureView]] = [("UPDATE_ONLINE", update_query)]
+        rollback_ops: list[tuple[str, str | FeatureView]] = [("UPDATE_ONLINE", rollback_query)]
 
         final_config = fv_mod.OnlineConfig(
             enable=True,
@@ -4472,12 +4530,12 @@ class FeatureStore:
     def _plan_feature_view_update_operations(
         self,
         feature_view: FeatureView,
-        refresh_freq: Optional[str],
-        warehouse: Optional[str],
-        initialization_warehouse: Optional[str],
+        refresh_freq: str | None,
+        warehouse: str | None,
+        initialization_warehouse: str | None,
         desc: str,
-        online_config: Optional[fv_mod.OnlineConfig],
-    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
+        online_config: fv_mod.OnlineConfig | None,
+    ) -> tuple[list[tuple[str, str | FeatureView]], list[tuple[str, str | FeatureView]],]:
         """Plan all update operations and their rollbacks.
 
         Args:
@@ -4493,8 +4551,8 @@ class FeatureStore:
         Returns:
             A tuple ``(operations, rollback_operations)`` of ``(op_type, op_data)`` pairs.
         """
-        operations: list[tuple[str, Union[str, FeatureView]]] = []
-        rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
+        operations: list[tuple[str, str | FeatureView]] = []
+        rollback_operations: list[tuple[str, str | FeatureView]] = []
 
         # RealtimeFeatureViews have no offline resources to update.
         if not feature_view.is_realtime_feature_view:
@@ -4513,7 +4571,7 @@ class FeatureStore:
 
     def _plan_feature_view_status_operations(
         self, feature_view: FeatureView, operation: str
-    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
+    ) -> tuple[list[tuple[str, str | FeatureView]], list[tuple[str, str | FeatureView]],]:
         """Plan atomic operations for suspend/resume operations.
 
         Args:
@@ -4528,8 +4586,8 @@ class FeatureStore:
             "RESUME",
         ], f"Operation {operation} not supported"
 
-        operations: list[tuple[str, Union[str, FeatureView]]] = []
-        rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
+        operations: list[tuple[str, str | FeatureView]] = []
+        rollback_operations: list[tuple[str, str | FeatureView]] = []
 
         fully_qualified_name = feature_view.fully_qualified_name()
 
@@ -4565,7 +4623,7 @@ class FeatureStore:
     def _handle_update_failure(
         self,
         error: Exception,
-        rollback_operations: list[tuple[str, Union[str, FeatureView]]],
+        rollback_operations: list[tuple[str, str | FeatureView]],
         feature_view: FeatureView,
     ) -> None:
         """Handle update failure with rollback."""
@@ -4593,7 +4651,7 @@ class FeatureStore:
     def _handle_status_operation_failure(
         self,
         error: Exception,
-        rollback_operations: list[tuple[str, Union[str, FeatureView]]],
+        rollback_operations: list[tuple[str, str | FeatureView]],
         feature_view: FeatureView,
         operation: str,
     ) -> None:
@@ -4621,7 +4679,7 @@ class FeatureStore:
             ),
         ) from error
 
-    def _execute_atomic_operations(self, operations: list[tuple[str, Union[str, FeatureView]]]) -> None:
+    def _execute_atomic_operations(self, operations: list[tuple[str, str | FeatureView]]) -> None:
         """Execute a list of operations atomically.
 
         Args:
@@ -4662,10 +4720,10 @@ class FeatureStore:
         tagging_clause_str: str = "",
         block: bool = True,
         overwrite: bool = False,
-        created_resources: Optional[list[tuple[_FeatureStoreObjTypes, str]]] = None,
+        created_resources: list[tuple[_FeatureStoreObjTypes, str]] | None = None,
         # update-only kwargs
-        old_feature_view: Optional[FeatureView] = None,
-        new_schema: Optional[dict[str, DataType]] = None,
+        old_feature_view: FeatureView | None = None,
+        new_schema: dict[str, DataType] | None = None,
     ) -> None:
         """Single named entry point for materializing a feature view's offline + online resources.
 
@@ -5105,8 +5163,8 @@ class FeatureStore:
     def _read_from_offline_store(
         self,
         feature_view: FeatureView,
-        keys: Optional[list[list[str]]],
-        feature_names: Optional[list[str]],
+        keys: list[list[str]] | None,
+        feature_names: list[str] | None,
     ) -> DataFrame:
         """Read feature values from the offline store (main feature view table).
 
@@ -5134,7 +5192,7 @@ class FeatureStore:
         query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
         return self._session.sql(query)
 
-    def _get_session_timezone(self) -> Optional[str]:
+    def _get_session_timezone(self) -> str | None:
         """Read the timezone configured for the current session.
 
         Returns:
@@ -5183,8 +5241,8 @@ class FeatureStore:
     def _read_tiled_fv_at_current_time(
         self,
         feature_view: FeatureView,
-        keys: Optional[list[list[str]]],
-        feature_names: Optional[list[str]],
+        keys: list[list[str]] | None,
+        feature_names: list[str] | None,
     ) -> DataFrame:
         """Read tiled feature view by computing aggregated features at current time.
 
@@ -5199,6 +5257,7 @@ class FeatureStore:
         Returns:
             Snowpark DataFrame containing the computed feature values.
         """
+        _validate_no_legacy_distinct_n(feature_view)
         table_name = feature_view.fully_qualified_name()
 
         # Get join keys from entities
@@ -5316,7 +5375,7 @@ class FeatureStore:
         return StructType([*pk_fields, *feature_fields])
 
     def _postgres_online_read_struct_type(
-        self, feature_view: FeatureView, feature_names: Optional[list[str]]
+        self, feature_view: FeatureView, feature_names: list[str] | None
     ) -> StructType:
         join_names = [k.resolved() for e in feature_view.entities for k in e.join_keys]
         full_schema = self._oft_full_schema(feature_view)
@@ -5328,7 +5387,7 @@ class FeatureStore:
         return StructType(fields)
 
     def _empty_dataframe_for_postgres_online_read(
-        self, feature_view: FeatureView, feature_names: Optional[list[str]]
+        self, feature_view: FeatureView, feature_names: list[str] | None
     ) -> DataFrame:
         return self._session.create_dataframe(
             [],
@@ -5338,12 +5397,12 @@ class FeatureStore:
     def _read_postgres_online_via_query_api(
         self,
         feature_view: FeatureView,
-        keys: Optional[list[list[str]]],
-        feature_names: Optional[list[str]],
+        keys: list[list[str]] | None,
+        feature_names: list[str] | None,
         *,
         as_pandas: bool = False,
-        request_context: Optional[list[dict[str, Any]]] = None,
-    ) -> Union[DataFrame, pd.DataFrame]:
+        request_context: list[dict[str, Any]] | None = None,
+    ) -> DataFrame | pd.DataFrame:
         query_url = getattr(feature_view, "_postgres_online_query_url", None)
         if not query_url:
             raise snowml_exceptions.SnowflakeMLException(
@@ -5401,11 +5460,11 @@ class FeatureStore:
         self,
         feature_view: FeatureView,
         *,
-        keys: Optional[list[list[str]]],
-        feature_names: Optional[list[str]],
-        request_context: Optional[Any],
-        as_pandas: Optional[bool],
-    ) -> Union[DataFrame, pd.DataFrame]:
+        keys: list[list[str]] | None,
+        feature_names: list[str] | None,
+        request_context: Any | None,
+        as_pandas: bool | None,
+    ) -> DataFrame | pd.DataFrame:
         """Dispatch ``read_feature_view`` for a RealtimeFeatureView.
 
         Runs the RTFV-specific validation order (online backing, keys,
@@ -5484,7 +5543,7 @@ class FeatureStore:
             )
 
         request_source = rt_cfg.request_source
-        request_context_records: Optional[list[dict[str, Any]]] = None
+        request_context_records: list[dict[str, Any]] | None = None
 
         if request_source is None:
             if request_context is not None:
@@ -5546,12 +5605,12 @@ class FeatureStore:
     def _read_from_online_store(
         self,
         feature_view: FeatureView,
-        keys: Optional[list[list[str]]],
-        feature_names: Optional[list[str]],
+        keys: list[list[str]] | None,
+        feature_names: list[str] | None,
         *,
         as_pandas: bool = False,
-        request_context: Optional[list[dict[str, Any]]] = None,
-    ) -> Union[DataFrame, pd.DataFrame]:
+        request_context: list[dict[str, Any]] | None = None,
+    ) -> DataFrame | pd.DataFrame:
         """Read feature values from the online store with optional key filtering.
 
         Uses bind variables for single-key lookups and literal interpolation
@@ -5973,7 +6032,7 @@ class FeatureStore:
         fully_qualified_name: str,
         *,
         new_has_task: bool,
-        drop_snapshot_table: Optional[bool] = None,
+        drop_snapshot_table: bool | None = None,
     ) -> None:
         """Drop stale feature-view resources during overwrite/delete operations.
 
@@ -6036,7 +6095,7 @@ class FeatureStore:
         feature_view_name: SqlIdentifier,
         dt_fqn: str,
         *,
-        backfill_table: Optional[str] = None,
+        backfill_table: str | None = None,
     ) -> str:
         """Create the snapshot accumulation table for an append-only feature view.
 
@@ -6155,7 +6214,7 @@ class FeatureStore:
         old_schema: dict[str, DataType],
         new_schema: dict[str, DataType],
         *,
-        required_old_columns: Optional[Iterable[str]] = None,
+        required_old_columns: Iterable[str] | None = None,
     ) -> tuple[list[str], list[str]]:
         """Compute the forward + rollback DDL to evolve ``table_fqn`` extend-only.
 
@@ -6359,7 +6418,7 @@ END;"""
         fully_qualified_name: str,
         warehouse: SqlIdentifier,
         *,
-        feature_view_name: Optional[SqlIdentifier] = None,
+        feature_view_name: SqlIdentifier | None = None,
     ) -> None:
         """Create a Snowflake Task to refresh a Dynamic Table on a CRON schedule.
 
@@ -6770,7 +6829,7 @@ END;"""
 
         logger.info(f"Shadow swap for {fully_qualified_name} completed successfully.")
 
-    def _get_existing_feature_view_object_type(self, feature_view_name: SqlIdentifier) -> Optional[str]:
+    def _get_existing_feature_view_object_type(self, feature_view_name: SqlIdentifier) -> str | None:
         """Check if a VIEW or DYNAMIC TABLE with the given name already exists.
 
         Args:
@@ -6951,9 +7010,9 @@ END;"""
 
     def _get_feature_prefix(
         self,
-        feature_view: Union[FeatureView, FeatureViewSlice],
+        feature_view: FeatureView | FeatureViewSlice,
         auto_prefix: bool,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Thin wrapper over :func:`feature_view.get_feature_prefix`.
 
         Kept on the class for backward compatibility with internal callers.
@@ -6972,7 +7031,7 @@ END;"""
         feature_views: list[FeatureView],
         feature_columns: list[str],
         spine_ref: str,
-        spine_timestamp_col: Optional[SqlIdentifier],
+        spine_timestamp_col: SqlIdentifier | None,
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
         is_training: bool = False,
@@ -7035,6 +7094,7 @@ END;"""
 
             # Handle tiled feature views using MergingSqlGenerator
             if feature_view.is_tiled and spine_timestamp_col is not None:
+                _validate_no_legacy_distinct_n(feature_view)
                 assert feature_timestamp_col is not None
                 tile_table = feature_view.fully_qualified_name()
 
@@ -7238,7 +7298,7 @@ FROM SPINE{all_joins}
     def _build_batched_cte_merge_query(
         ctes: list[str],
         fv_infos: list[_FvJoinInfo],
-        spine_timestamp_col: Optional[SqlIdentifier],
+        spine_timestamp_col: SqlIdentifier | None,
     ) -> str:
         """Build a batched CTE merge query for large numbers of feature views.
 
@@ -7370,8 +7430,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _join_features(
         self,
         spine_df: DataFrame,
-        features: list[Union[FeatureView, FeatureViewSlice]],
-        spine_timestamp_col: Optional[SqlIdentifier],
+        features: list[FeatureView | FeatureViewSlice],
+        spine_timestamp_col: SqlIdentifier | None,
         include_feature_view_timestamp_col: bool,
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -7385,7 +7445,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         # validation of join_method and spine_timestamp_col requirements. Short-circuit once
         # both flags are populated — neither downstream check needs more than one example.
         has_tiled_fv = False
-        first_append_only_fv: Optional[FeatureView] = None
+        first_append_only_fv: FeatureView | None = None
         for feature in features:
             fv = fg_mod.unwrap_fv(feature)
             if fv.is_tiled:
@@ -7763,7 +7823,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _get_entity_name(self, raw_name: SqlIdentifier) -> SqlIdentifier:
         return SqlIdentifier(identifier.concat_names([_ENTITY_TAG_PREFIX, raw_name]))
 
-    def _get_fully_qualified_name(self, name: Union[SqlIdentifier, str]) -> str:
+    def _get_fully_qualified_name(self, name: SqlIdentifier | str) -> str:
         # Do a quick check to see if we can skip regex operations
         if "." not in name:
             return f"{self._config.full_schema_path}.{name}"
@@ -7849,7 +7909,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 ),
             ) from e
 
-    def _get_iceberg_storage_config(self, table_name: SqlIdentifier) -> Optional[StorageConfig]:
+    def _get_iceberg_storage_config(self, table_name: SqlIdentifier) -> StorageConfig | None:
         """Get storage config for an Iceberg table using SHOW ICEBERG TABLES.
 
         Args:
@@ -7889,7 +7949,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
     # TODO: SHOW DYNAMIC TABLES is very slow while other show objects are fast, investigate with DT in SNOW-902804.
     def _get_fv_backend_representations(
-        self, object_name: Optional[SqlIdentifier], prefix_match: bool = False
+        self, object_name: SqlIdentifier | None, prefix_match: bool = False
     ) -> list[tuple[Row, _FeatureStoreObjTypes]]:
         dynamic_table_results = [
             (d, _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW)
@@ -7905,7 +7965,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         self,
         feature_view: FeatureView,
         operation: str,
-        store_type: Optional[fv_mod.StoreType] = None,
+        store_type: fv_mod.StoreType | None = None,
     ) -> FeatureView:
         assert operation in [
             "RESUME",
@@ -7975,7 +8035,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _optimized_find_feature_views(
         self,
         entity_name: SqlIdentifier,
-        feature_view_name: Optional[SqlIdentifier],
+        feature_view_name: SqlIdentifier | None,
         *,
         verbose: bool = False,
     ) -> DataFrame:
@@ -8154,7 +8214,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
         source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
 
-        backup_source: Optional[str] = None
+        backup_source: str | None = None
         if fv_metadata.is_append_only:
             append_only_meta = self._metadata_manager.get_append_only_metadata(name, version)
             if append_only_meta is not None:
@@ -8304,7 +8364,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         online_config = fv_mod.OnlineConfig.from_json(online_config_json)
 
         # Get storage_config from SHOW ICEBERG TABLES if marked as Iceberg in metadata
-        storage_config: Optional[StorageConfig] = None
+        storage_config: StorageConfig | None = None
         if fv_metadata.is_iceberg:
             storage_config = self._get_iceberg_storage_config(fv_name)
             if storage_config is None:
@@ -8367,7 +8427,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             if refresh_freq == "DOWNSTREAM":
                 refresh_freq = self._resolve_task_schedule(fv_name, refresh_freq)
 
-            backup_source: Optional[str] = None
+            backup_source: str | None = None
             if fv_metadata.is_append_only:
                 append_only_meta = self._metadata_manager.get_append_only_metadata(name.identifier(), version)
                 if append_only_meta is not None:
@@ -8434,7 +8494,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 # read path and the source DataFrame is not re-executable
                 # from a fresh session.
                 if streaming_meta is not None:
-                    parsed_backfill_start: Optional[datetime.datetime] = None
+                    parsed_backfill_start: datetime.datetime | None = None
                     if streaming_meta.backfill_start_time is not None:
                         try:
                             parsed_backfill_start = datetime.datetime.fromisoformat(streaming_meta.backfill_start_time)
@@ -8499,7 +8559,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
     def _resolve_postgres_online_endpoint_url(
         self, endpoint_name: str, *, log_label: str, warn: bool = True
-    ) -> Optional[str]:
+    ) -> str | None:
         """Fetch a Postgres OFT Online Service endpoint URL or return ``None``.
 
         Failures (status not RUNNING, missing endpoint URL, transient
@@ -8549,7 +8609,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             )
         return None
 
-    def _resolve_postgres_online_query_url(self, *, log_label: str) -> Optional[str]:
+    def _resolve_postgres_online_query_url(self, *, log_label: str) -> str | None:
         """Resolve the Postgres OFT ``query`` endpoint URL (thin wrapper).
 
         Args:
@@ -8743,7 +8803,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             # Read offline column shapes from the materialized DT/View so storage-side
             # lengths land in the spec. Non-tiled streaming is already materialized-backed
             # via _initialize_from_feature_df, so skip the extra describe.
-            pg_offline_dt_schema: Optional[StructType] = None
+            pg_offline_dt_schema: StructType | None = None
             try:
                 if feature_view.is_tiled or not feature_view.is_streaming:
                     pg_offline_dt_schema = self._session.table(source_table_name).schema
@@ -8918,7 +8978,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         version: str,
         target_lag: str,
         *,
-        offline_materialized_schema: Optional[StructType] = None,
+        offline_materialized_schema: StructType | None = None,
     ) -> FeatureViewSpec:
         """Build a validated FeatureView spec for a batch feature view.
 
@@ -9022,7 +9082,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _find_object(
         self,
         object_type: str,
-        object_name: Optional[SqlIdentifier],
+        object_name: SqlIdentifier | None,
         prefix_match: bool = False,
     ) -> list[Row]:
         """Try to find an object by given type and name pattern.
@@ -9086,8 +9146,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
     def _load_serialized_feature_views(
         self, serialized_feature_views: list[str]
-    ) -> list[Union[FeatureView, FeatureViewSlice]]:
-        results: list[Union[FeatureView, FeatureViewSlice]] = []
+    ) -> list[FeatureView | FeatureViewSlice]:
+        results: list[FeatureView | FeatureViewSlice] = []
         for obj in serialized_feature_views:
             try:
                 obj_type = json.loads(obj)[_FEATURE_OBJ_TYPE]
@@ -9102,10 +9162,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 raise ValueError(f"Unsupported feature object type: {obj_type}")
         return results
 
-    def _load_compact_feature_views(
-        self, compact_feature_views: list[str]
-    ) -> list[Union[FeatureView, FeatureViewSlice]]:
-        results: list[Union[FeatureView, FeatureViewSlice]] = []
+    def _load_compact_feature_views(self, compact_feature_views: list[str]) -> list[FeatureView | FeatureViewSlice]:
+        results: list[FeatureView | FeatureViewSlice] = []
         for obj in compact_feature_views:
             results.append(FeatureView._load_from_compact_repr(self._session, obj))
         return results
@@ -9145,7 +9203,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _filter_results(
         self,
         results: list[dict[str, str]],
-        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
+        filter_fns: list[Callable[[dict[str, str]], bool]] | None = None,
     ) -> list[dict[str, str]]:
         if filter_fns is None:
             return results
@@ -9160,7 +9218,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         self,
         domain: str,
         obj_name: str,
-        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
+        filter_fns: list[Callable[[dict[str, str]], bool]] | None = None,
     ) -> list[dict[str, str]]:
         """
         Lookup tag values for a given object, optionally apply filters on the results.
@@ -9201,7 +9259,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _lookup_tagged_objects(
         self,
         tag_name: str,
-        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
+        filter_fns: list[Callable[[dict[str, str]], bool]] | None = None,
     ) -> list[dict[str, str]]:
         """
         Lookup objects based on specified tag name, optionally apply filters on the results.
@@ -9265,7 +9323,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return sorted_versions
 
     def _validate_feature_view_name_and_version_input(
-        self, feature_view: Union[FeatureView, str], version: Optional[str] = None
+        self, feature_view: FeatureView | str, version: str | None = None
     ) -> FeatureView:
         if isinstance(feature_view, str):
             if version is None:
@@ -9296,7 +9354,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _build_select_clause_and_validate(
         self,
         feature_view: FeatureView,
-        feature_names: Optional[list[str]],
+        feature_names: list[str] | None,
         include_join_keys: bool = True,
     ) -> str:
         """Build SELECT clause for feature view queries and validate feature names.
@@ -9342,7 +9400,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
     def _build_where_clause_for_keys(
         self,
         feature_view: FeatureView,
-        keys: Optional[list[list[Any]]],
+        keys: list[list[Any]] | None,
         use_binds: bool = False,
     ) -> tuple[str, list[Any]]:
         """Build WHERE clause for key filtering.
@@ -9393,7 +9451,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return f" WHERE {' OR '.join(where_conditions)}", params
 
 
-def _get_store_type(store_type: Union[fv_mod.StoreType, str]) -> fv_mod.StoreType:
+def _get_store_type(store_type: fv_mod.StoreType | str) -> fv_mod.StoreType:
     """Return a StoreType enum from a Union[StoreType, str].
 
     Args:

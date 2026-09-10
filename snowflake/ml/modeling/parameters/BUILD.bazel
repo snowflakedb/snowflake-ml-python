@@ -17,6 +17,10 @@ py_test(
     srcs = [
         "disable_distributed_hpo_test.py",
     ],
+    optional_dependencies = [
+        "scikit-learn",
+        "xgboost",
+    ],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -45,6 +49,7 @@ py_test(
     srcs = [
         "enable_anonymous_sproc_test.py",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -70,6 +75,7 @@ py_test(
     srcs = [
         "disable_model_tracer_test.py",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",

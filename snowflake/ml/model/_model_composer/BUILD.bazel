@@ -40,6 +40,7 @@ py_test(
 py_test(
     name = "model_composer_test",
     srcs = ["model_composer_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

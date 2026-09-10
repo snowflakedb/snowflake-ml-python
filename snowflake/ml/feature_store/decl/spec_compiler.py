@@ -12,9 +12,10 @@ snowflake.snowpark, or snowflake.connector.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping, Optional
 
 from snowflake.ml.feature_store.decl.compiler import parse_duration_to_seconds
+from snowflake.ml.feature_store.decl.types import AppliedState, ObjectKind
 
 _CLIENT_VERSION = "0.1.0"
 
@@ -154,7 +155,147 @@ def _normalize_sources_for_imperative_json(sources: list[dict[str, Any]], *, fv_
     return out
 
 
-def compile_to_spec(spec_dict: dict[str, Any], database: str, schema: str) -> dict[str, Any]:
+def _entity_join_keys_from_payload(payload: Any) -> list[str]:
+    """Extract ordered join-key column names from an Entity spec dict/payload.
+
+    Accepts the authoring/applied Entity shape where ``join_keys`` is a list
+    of ``{"name": ..., "type": ...}`` dicts (or bare column-name strings) and
+    returns the ordered column names.  Returns an empty list for any shape it
+    does not recognise.
+
+    Args:
+        payload: The Entity spec dict (authoring or applied ``spec_payload``).
+
+    Returns:
+        The ordered join-key column names, or ``[]`` when none are found.
+    """
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("join_keys")
+    if not isinstance(raw, list):
+        return []
+    cols: list[str] = []
+    for jk in raw:
+        if isinstance(jk, dict) and jk.get("name"):
+            cols.append(str(jk["name"]))
+        elif isinstance(jk, str) and jk:
+            cols.append(jk)
+    return cols
+
+
+def build_entity_join_key_map(
+    spec_dicts: list[dict[str, Any]],
+    applied_state: Optional[AppliedState] = None,
+) -> dict[str, list[str]]:
+    """Build an entity-name → ordered join-key-columns map.
+
+    The wire field ``ordered_entity_column_names`` must carry entity
+    **join-key columns**, mirroring core
+    ``FeatureStore._build_batch_feature_view_spec`` (which iterates
+    ``entity.join_keys``).  This map lets :func:`compile_to_spec` translate an
+    FV's authored entity **names** into those columns.
+
+    Sources, in precedence order (**applied wins for already-deployed
+    entities** — join keys are immutable, so the FV must hash against the keys
+    the executor will actually reproduce, not an unappliable YAML edit; a
+    join-key edit is rejected separately by ``ENTITY_JOIN_KEY_IMMUTABLE``):
+
+    1. ``Entity`` objects in ``applied_state`` (the deployed key set; also
+       covers incremental single-file plans that omit the Entity spec).
+    2. ``Entity`` spec dicts in ``spec_dicts`` (the current batch) — fills in
+       new entities not yet deployed.
+
+    Both the authored casing and an upper-cased alias are recorded so a
+    case-variant reference still resolves.
+
+    Args:
+        spec_dicts: The batch spec dicts (read-only; not mutated).
+        applied_state: Optional applied-state snapshot; the authoritative
+            source of entity → join-key mappings for deployed entities.
+
+    Returns:
+        A mapping from entity name (and its upper-cased alias) to the ordered
+        join-key column names.
+    """
+    entity_map: dict[str, list[str]] = {}
+
+    def _record(name: Any, cols: list[str]) -> None:
+        if not name or not cols:
+            return
+        key = str(name)
+        entity_map.setdefault(key, cols)
+        entity_map.setdefault(key.upper(), cols)
+
+    if applied_state is not None:
+        for obj in applied_state.objects.values():
+            if obj.kind == ObjectKind.ENTITY:
+                _record(obj.name, _entity_join_keys_from_payload(obj.spec_payload))
+
+    for data in spec_dicts:
+        if isinstance(data, dict) and data.get("kind") == ObjectKind.ENTITY:
+            _record(data.get("name"), _entity_join_keys_from_payload(data))
+
+    return entity_map
+
+
+def resolve_ordered_entity_columns(
+    entities: list[Any],
+    entity_join_keys: Optional[Mapping[str, list[str]]],
+) -> list[str]:
+    """Resolve authored entity references to ordered join-key columns.
+
+    Each reference is looked up in ``entity_join_keys`` (case-insensitively)
+    and expanded to its join-key columns, de-duplicated case-insensitively in
+    first-seen order.  A reference absent from the map is used verbatim.
+
+    To keep the overwhelmingly common ``name == join key`` shape byte-stable
+    (and avoid rewriting the authored casing), the authored list is returned
+    unchanged whenever the resolved columns match it case-insensitively.  When
+    ``entity_join_keys`` is empty/``None`` the authored names are returned
+    verbatim (historical behaviour).
+
+    Args:
+        entities: The authored ``entities`` list (column-name strings or
+            ``{"name": ...}`` dicts).
+        entity_join_keys: Optional entity-name → join-key-columns map from
+            :func:`build_entity_join_key_map`.
+
+    Returns:
+        The ordered join-key column names for the wire field.
+    """
+    authored: list[str] = []
+    for ref in entities:
+        ref_name = ref.get("name") if isinstance(ref, dict) else ref
+        if ref_name is None:
+            continue
+        authored.append(str(ref_name))
+
+    if not entity_join_keys:
+        return authored
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for ref_name in authored:
+        cols = entity_join_keys.get(ref_name) or entity_join_keys.get(ref_name.upper()) or [ref_name]
+        for col in cols:
+            if col.upper() not in seen:
+                seen.add(col.upper())
+                resolved.append(col)
+
+    if not resolved:
+        return authored
+    if [c.upper() for c in resolved] == [a.upper() for a in authored]:
+        return authored
+    return resolved
+
+
+def compile_to_spec(
+    spec_dict: dict[str, Any],
+    database: str,
+    schema: str,
+    *,
+    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+) -> dict[str, Any]:
     """Compile a YAML authoring-format spec dict into imperative FeatureViewSpec format.
 
     Accepts the spec dict produced by ``decl/loader.py`` + ``compiler.py``
@@ -175,6 +316,13 @@ def compile_to_spec(spec_dict: dict[str, Any], database: str, schema: str) -> di
         spec_dict: The loaded/compiled spec dict from the authoring YAML.
         database: Snowflake database name (from connection context).
         schema: Snowflake schema name (from connection context).
+        entity_join_keys: Optional entity-name → ordered join-key-columns map
+            (see :func:`build_entity_join_key_map`).  When provided, the FV's
+            authored entity **names** are resolved to their join-key columns
+            for the wire field ``ordered_entity_column_names``.  When omitted,
+            the authored ``entities`` list is copied verbatim — preserving the
+            historical behaviour and keeping golden hashes stable for callers
+            that do not supply the map.
 
     Returns:
         Dict matching ``FeatureViewSpec.to_dict()`` output, ready for
@@ -223,8 +371,23 @@ def compile_to_spec(spec_dict: dict[str, Any], database: str, schema: str) -> di
     # translated to the wire-form ``ordered_entity_column_names`` /
     # ``timestamp_field`` here so the compiled SPECIFICATION JSON keeps
     # the GS-owned contract intact.
+    # ``ordered_entity_column_names`` must carry the entity **join-key
+    # columns**, not the authored entity *names* — the applied side recovers
+    # these columns from ``entity.join_keys`` (core
+    # ``_build_batch_feature_view_spec``).  When the caller supplies an
+    # ``entity_join_keys`` map, resolve each FV's entity references to their
+    # ordered join-key columns so a BFV whose entity name differs from its
+    # join key does not loop on ``RECREATE_FV``.  When the map is omitted, the
+    # authored ``entities`` list is copied verbatim (the historical behaviour,
+    # which keeps the name==join-key case and existing golden hashes stable).
+    if entity_join_keys:
+        ordered_entity_column_names = resolve_ordered_entity_columns(
+            list(spec_dict.get("entities", [])), entity_join_keys
+        )
+    else:
+        ordered_entity_column_names = list(spec_dict.get("entities", []))
     spec: dict[str, Any] = {
-        "ordered_entity_column_names": list(spec_dict.get("entities", [])),
+        "ordered_entity_column_names": ordered_entity_column_names,
         "sources": _normalize_sources_for_imperative_json(raw_sources, fv_kind=kind),
         "features": compiled_features,
     }

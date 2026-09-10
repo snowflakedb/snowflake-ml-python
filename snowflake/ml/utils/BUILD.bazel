@@ -24,11 +24,6 @@ py_test(
 )
 
 py_library(
-    name = "connection_params",
-    srcs = ["connection_params.py"],
-)
-
-py_library(
     name = "sparse",
     srcs = ["sparse.py"],
 )
@@ -93,7 +88,6 @@ py_package(
     packages = ["snowflake.ml"],
     deps = [
         ":authentication",
-        ":connection_params",
         ":html_utils",
         ":sparse",
         ":sql_client",

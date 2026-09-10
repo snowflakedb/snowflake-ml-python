@@ -8,6 +8,7 @@ channels:
 dependencies:
   - mlflow>=2.16.0, <4
   - pytorch>=2.0.1,<3
+  - scikit-learn<1.9
   - sentence-transformers>=2.7.0,<6
   - sentencepiece>=0.1.95,<0.3
   - torchdata>=0.4,<1

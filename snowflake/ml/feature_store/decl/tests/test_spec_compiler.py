@@ -1074,5 +1074,94 @@ class TestRefreshFreqDrivesTargetLagSec:
         )
 
 
+# ---------------------------------------------------------------------------
+# entity_join_keys — entity-name → join-key-column resolution for the wire field
+# ---------------------------------------------------------------------------
+
+
+class TestEntityJoinKeysResolution:
+    """``compile_to_spec(..., entity_join_keys=...)`` resolves the wire field.
+
+    ``ordered_entity_column_names`` must carry the entity **join-key columns**
+    (mirroring core ``_build_batch_feature_view_spec``).  When the caller
+    supplies an entity-name -> join-key map, an FV that references an entity by
+    **name** compiles to the join-key columns; without the map, the authored
+    ``entities`` list is copied verbatim so existing callers and hashes are
+    unchanged.
+    """
+
+    @staticmethod
+    def _bfv(entities: list[str]) -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "name": "BFV_DIAG",
+            "version": "V1",
+            "entities": list(entities),
+            "sources": [
+                {
+                    "name": "SRC",
+                    "source_type": "Batch",
+                    "columns": [{"name": "USER_ID", "type": "StringType"}],
+                }
+            ],
+            "features": [],
+        }
+
+    def test_no_map_copies_authored_entities_verbatim(self) -> None:
+        """Compat: without a map the wire field equals the authored names (even name != join key)."""
+        result = compile_to_spec(self._bfv(["USER_ID_DIAG"]), "DB", "SCH")
+        assert result["spec"]["ordered_entity_column_names"] == ["USER_ID_DIAG"]
+
+    def test_map_resolves_entity_name_to_join_key(self) -> None:
+        """A referenced entity name resolves to its join-key column."""
+        result = compile_to_spec(
+            self._bfv(["USER_ID_DIAG"]),
+            "DB",
+            "SCH",
+            entity_join_keys={"USER_ID_DIAG": ["USER_ID"]},
+        )
+        assert result["spec"]["ordered_entity_column_names"] == ["USER_ID"]
+
+    def test_name_equals_join_key_case_insensitive_keeps_authored_casing(self) -> None:
+        """When name == join key case-insensitively, keep the authored casing (do not substitute)."""
+        result = compile_to_spec(
+            self._bfv(["user_id"]),
+            "DB",
+            "SCH",
+            entity_join_keys={"user_id": ["USER_ID"]},
+        )
+        assert result["spec"]["ordered_entity_column_names"] == ["user_id"]
+
+    def test_composite_join_keys_expand_in_order(self) -> None:
+        """One entity name mapping to multiple join keys expands to all of them, in order."""
+        result = compile_to_spec(
+            self._bfv(["CUSTOMER"]),
+            "DB",
+            "SCH",
+            entity_join_keys={"CUSTOMER": ["COL_A", "COL_B"]},
+        )
+        assert result["spec"]["ordered_entity_column_names"] == ["COL_A", "COL_B"]
+
+    def test_two_entities_sharing_a_join_key_dedup_first_seen(self) -> None:
+        """Two entity names sharing a join key dedup case-insensitively, first-seen order wins."""
+        result = compile_to_spec(
+            self._bfv(["ENT_A", "ENT_B"]),
+            "DB",
+            "SCH",
+            entity_join_keys={"ENT_A": ["USER_ID"], "ENT_B": ["user_id"]},
+        )
+        assert result["spec"]["ordered_entity_column_names"] == ["USER_ID"]
+
+    def test_unknown_ref_falls_back_to_verbatim(self) -> None:
+        """A reference absent from the map is used verbatim (historical behaviour)."""
+        result = compile_to_spec(
+            self._bfv(["MYSTERY"]),
+            "DB",
+            "SCH",
+            entity_join_keys={"USER_ID_DIAG": ["USER_ID"]},
+        )
+        assert result["spec"]["ordered_entity_column_names"] == ["MYSTERY"]
+
+
 if __name__ == "__main__":
     pytest_driver.main()

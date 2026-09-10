@@ -5,71 +5,76 @@ package(default_visibility = ["//visibility:public"])
 py_test(
     name = "column_name_inference_test",
     srcs = ["column_name_inference_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "batch_inference_with_nan_data_test",
     srcs = ["batch_inference_with_nan_data_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "batch_inference_with_n_jobs_test",
     srcs = ["batch_inference_with_n_jobs_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:bagging_regressor",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "grid_search_test",
     srcs = ["grid_search_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/svm:svr",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "extra_voting_regressor_test",
     srcs = ["extra_voting_regressor_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:voting_regressor",
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/linear_model:sgd_regressor",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -77,11 +82,13 @@ py_test(
     name = "grid_search_on_pipeline_test",
     srcs = ["grid_search_on_pipeline_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
@@ -89,21 +96,21 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:label_encoder",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "extra_iterative_imputer_test",
     srcs = ["extra_iterative_imputer_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/impute:iterative_imputer",
         "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -112,12 +119,14 @@ py_test(
     timeout = "long",
     srcs = ["pipeline_with_ohe_and_xgbr_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/framework",
         "//snowflake/ml/modeling/impute:knn_imputer",
@@ -125,7 +134,6 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
@@ -133,40 +141,43 @@ py_test(
 py_test(
     name = "randomized_search_test",
     srcs = ["randomized_search_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "method_chaining_test",
     srcs = ["method_chaining_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "non_numeric_target_test",
     srcs = ["non_numeric_target_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -174,6 +185,7 @@ py_test(
     name = "quoted_identifier_test",
     timeout = "long",
     srcs = ["quoted_identifier_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:modeling",
@@ -181,6 +193,7 @@ py_test(
     ],
     deps = [
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/framework",
@@ -192,20 +205,20 @@ py_test(
         "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
         "//snowflake/ml/modeling/preprocessing:standard_scaler",
         "//snowflake/ml/registry",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "decimal_type_test",
     srcs = ["decimal_type_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:linear_regression",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -213,29 +226,31 @@ py_test(
     name = "xgboost_external_memory_training_test",
     srcs = ["xgboost_external_memory_training_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "multi_label_column_name_test",
     srcs = ["multi_label_column_name_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -245,16 +260,17 @@ py_test(
     timeout = "long",
     srcs = ["sample_weight_col_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/framework",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

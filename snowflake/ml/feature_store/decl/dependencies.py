@@ -135,3 +135,29 @@ def topological_sort(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result.extend(remaining)
 
     return result
+
+
+def order_specs_for_drop(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order specs for safe teardown — the reverse of :func:`topological_sort`.
+
+    Creation order is Entity → Source → FeatureView → FeatureGroup; drops must
+    run in the opposite order so a dependency is never removed while something
+    still references it.  Concretely a ``FeatureGroup`` is dropped before any of
+    its member ``FeatureView``s, because Snowflake's online FeatureGroup table
+    (``<FG>$<V>$ONLINE``) holds a referential-integrity reference to each
+    member FV's online table — dropping the member first is refused by
+    Snowflake (``Cannot drop Online Feature Table ... because it is referenced
+    by``).
+
+    Disconnected nodes (e.g. an orphan FG whose ``feature_views`` edge is not
+    present in ``specs``) still fall back to ``_KIND_ORDER``, so a FeatureGroup
+    always precedes a FeatureView in the returned order regardless of whether
+    the membership edge could be reconstructed.
+
+    Args:
+        specs: List of normalized spec dicts (the orphan-drop candidates).
+
+    Returns:
+        Reverse-topologically-sorted list of spec dicts, safe to drop in order.
+    """
+    return list(reversed(topological_sort(specs)))

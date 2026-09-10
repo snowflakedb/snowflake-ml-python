@@ -351,7 +351,13 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", True):
             reconciler = self._create_reconciler(target_platforms=None, options=None)
             result = reconciler.reconcile()
-            self.assertEqual(result.target_platforms, [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+            self.assertEqual(
+                result.target_platforms,
+                [
+                    model_types.TargetPlatform.WAREHOUSE,
+                    model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+                ],
+            )
 
         with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", False):
             reconciler = self._create_reconciler(target_platforms=None, options={"function_type": "TABLE_FUNCTION"})

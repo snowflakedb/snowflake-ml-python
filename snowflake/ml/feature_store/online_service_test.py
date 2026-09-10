@@ -3,7 +3,7 @@
 import decimal
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
 
 import httpx
@@ -38,7 +38,7 @@ def _make_response(
     *,
     status: int = 200,
     http_version: str = "HTTP/2",
-    headers: Optional[dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Build an httpx.Response with a forced http_version (httpx defaults vary by transport)."""
     resp = httpx.Response(status_code=status, content=body, headers=headers or {})
@@ -50,7 +50,7 @@ def _make_response(
 def _transport_for(handler: Any) -> Any:
     """Wrap a request handler in an httpx.MockTransport factory the OnlineServiceHttpClient can use."""
 
-    def _factory(*, proxy: Optional[str] = None) -> httpx.MockTransport:
+    def _factory(*, proxy: str | None = None) -> httpx.MockTransport:
         return httpx.MockTransport(handler)
 
     return _factory
@@ -1147,7 +1147,130 @@ class OnlineServiceTest(absltest.TestCase):
 
         session.sql.side_effect = sql_side_effect
         online_service.create_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="m")
-        self.assertIn('"size": "m"', seen_queries[0])
+        # Normalized to the canonical tier spelling rather than forwarded as typed.
+        self.assertIn('"size": "M"', seen_queries[0])
+
+    def test_alter_online_service_requests_size(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "recorded"})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            qn = query.replace("\n", " ")
+            loc = _locator_fragment()
+            self.assertIn("SYSTEM$ALTER_FEATURE_STORE_ONLINE_SERVICE(", qn)
+            self.assertIn(f"'{loc}'", qn)
+            self.assertIn('"size": "M"', qn)
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        result = online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="M")
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertIn("get_online_service_status", result.message)
+
+    def test_alter_online_service_strips_size_whitespace(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "recorded"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="  2XL  ")
+        self.assertIn('"size": "2XL"', seen_queries[0])
+
+    def test_alter_online_service_rejects_blank_size(self) -> None:
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="   ")
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("non-empty", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_alter_online_service_error_status_includes_query_id(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "ERROR", "message": "size change already in flight"})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="M")
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        message = str(ctx.exception.original_exception)
+        self.assertIn("size change already in flight", message)
+        self.assertIn("test-qid", message)
+
+    def test_alter_online_service_propagates_sql_layer_errors(self) -> None:
+        """Rejections raised by the server arrive as SQL errors, which must not be swallowed."""
+        session = create_autospec(Session)
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            m.collect_nowait.return_value.result.side_effect = RuntimeError("invalid value for 'size'")
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        with self.assertRaises(RuntimeError) as ctx:
+            online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="M")
+        self.assertIn("invalid value for 'size'", str(ctx.exception))
+
+    def test_alter_online_service_rejects_unknown_size(self) -> None:
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="XXL")
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("size must be one of", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_alter_online_service_rejects_xs_as_target(self) -> None:
+        """XS can be created at but is not a resize target; the server refuses it outright."""
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="XS")
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("size must be one of", str(ctx.exception.original_exception))
+        session.sql.assert_not_called()
+
+    def test_create_online_service_accepts_xs(self) -> None:
+        """XS stays valid on create even though it is rejected as a resize target."""
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "ok"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.create_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), "p", "c", size="XS")
+        self.assertIn('"size": "XS"', seen_queries[0])
+
+    def test_alter_online_service_accepts_lowercase_size(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "SUCCESS", "message": "recorded"})
+        seen_queries: list[str] = []
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            seen_queries.append(query.replace("\n", " "))
+            _stub_collect_nowait(m, [Row(payload)])
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        online_service.alter_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"), size="2xl")
+        # Normalized to the canonical tier spelling rather than forwarded as typed.
+        self.assertIn('"size": "2XL"', seen_queries[0])
 
     def test_drop_online_service_invalid_json_response(self) -> None:
         session = create_autospec(Session)

@@ -16,6 +16,7 @@ dependencies:
   - python-build==0.10.0
   - ruamel.yaml==0.17.21
   - scikit-learn==1.5.1
+  - shap==0.46.0
   - toml==0.10.2
   - types-toml==0.10.8.6
   - xgboost==2.1.4

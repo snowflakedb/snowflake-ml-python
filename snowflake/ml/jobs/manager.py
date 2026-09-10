@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Callable, Optional, TypeVar, Union, cast, overload
+from typing import Any, Callable, TypeVar, cast, overload
 
 import pandas as pd
 
@@ -24,9 +24,9 @@ T = TypeVar("T")
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["limit", "scope"])
 def list_jobs(
     limit: int = 10,
-    database: Optional[str] = None,
-    schema: Optional[str] = None,
-    session: Optional[snowpark.Session] = None,
+    database: str | None = None,
+    schema: str | None = None,
+    session: snowpark.Session | None = None,
 ) -> pd.DataFrame:
     """
     Returns a Pandas DataFrame with the list of jobs in the current session.
@@ -66,7 +66,7 @@ def list_jobs(
 
 
 def _get_job_services(
-    session: snowpark.Session, limit: int = 10, database: Optional[str] = None, schema: Optional[str] = None
+    session: snowpark.Session, limit: int = 10, database: str | None = None, schema: str | None = None
 ) -> snowpark.DataFrame:
     query = "SHOW JOB SERVICES"
     query += f" LIKE '{JOB_ID_PREFIX}%'"
@@ -101,11 +101,11 @@ def _get_job_services(
 def _get_job_history_spcs(
     session: snowpark.Session,
     limit: int = 10,
-    database: Optional[str] = None,
-    schema: Optional[str] = None,
+    database: str | None = None,
+    schema: str | None = None,
     include_deleted: bool = False,
-    created_time_start: Optional[str] = None,
-    created_time_end: Optional[str] = None,
+    created_time_start: str | None = None,
+    created_time_end: str | None = None,
 ) -> snowpark.DataFrame:
     query = ["select * from table(snowflake.spcs.get_job_history("]
     query_params = []
@@ -150,7 +150,7 @@ def _get_job_history_spcs(
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
-def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob[Any]:
+def get_job(job_id: str, session: snowpark.Session | None = None) -> jb.MLJob[Any]:
     """Retrieve a job service from the backend."""
     session = _ensure_session(session)
     try:
@@ -175,7 +175,7 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
-def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Session] = None) -> None:
+def delete_job(job: str | jb.MLJob[Any], session: snowpark.Session | None = None) -> None:
     """Delete a job service from the backend. Status and logs will be lost."""
     job = job if isinstance(job, jb.MLJob) else get_job(job, session=session)
     session = job._session
@@ -203,11 +203,11 @@ def submit_file(
     compute_pool: str,
     *,
     stage_name: str,
-    args: Optional[list[str]] = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[None]:
     """
@@ -244,6 +244,8 @@ def submit_file(
                 resolving pip requirements. Each entry is the name of a Snowflake artifact repository.
             name (str): The name of the job. If not specified, a name will be generated based on the
                 entrypoint file name or function name. A unique suffix is appended to the final name.
+            comment (str): A comment to attach to the job. Defaults to the application name
+                configured on the session, if any.
 
     Returns:
         An object representing the submitted job.
@@ -266,13 +268,13 @@ def submit_directory(
     dir_path: str,
     compute_pool: str,
     *,
-    entrypoint: Union[str, list[str]],
+    entrypoint: str | list[str],
     stage_name: str,
-    args: Optional[list[str]] = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[None]:
     """
@@ -314,6 +316,8 @@ def submit_directory(
                 resolving pip requirements. Each entry is the name of a Snowflake artifact repository.
             name (str): The name of the job. If not specified, a name will be generated based on the
                 entrypoint file name or function name. A unique suffix is appended to the final name.
+            comment (str): A comment to attach to the job. Defaults to the application name
+                configured on the session, if any.
 
 
     Returns:
@@ -338,13 +342,13 @@ def submit_from_stage(
     source: str,
     compute_pool: str,
     *,
-    entrypoint: Union[str, list[str]],
+    entrypoint: str | list[str],
     stage_name: str,
-    args: Optional[list[str]] = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[None]:
     """
@@ -386,6 +390,8 @@ def submit_from_stage(
                 resolving pip requirements. Each entry is the name of a Snowflake artifact repository.
             name (str): The name of the job. If not specified, a name will be generated based on the
                 entrypoint file name or function name. A unique suffix is appended to the final name.
+            comment (str): A comment to attach to the job. Defaults to the application name
+                configured on the session, if any.
 
     Returns:
         An object representing the submitted job.
@@ -410,12 +416,12 @@ def _submit_job(
     compute_pool: str,
     *,
     stage_name: str,
-    entrypoint: Optional[Union[str, list[str]]] = None,
-    args: Optional[list[str]] = None,
+    entrypoint: str | list[str] | None = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[None]:
     ...
@@ -427,12 +433,12 @@ def _submit_job(
     compute_pool: str,
     *,
     stage_name: str,
-    entrypoint: Optional[Union[str, list[str]]] = None,
-    args: Optional[list[str]] = None,
+    entrypoint: str | list[str] | None = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    pip_requirements: Optional[list[str]] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    session: Optional[snowpark.Session] = None,
+    pip_requirements: list[str] | None = None,
+    external_access_integrations: list[str] | None = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[T]:
     ...
@@ -456,14 +462,14 @@ def _submit_job(
     # Their sizes are logged as custom tags on job submission instead, see MLJobDefinition.__call__.
 )
 def _submit_job(
-    source: Union[str, Callable[..., T]],
+    source: str | Callable[..., T],
     compute_pool: str,
     *,
     stage_name: str,
-    entrypoint: Optional[Union[str, list[str]]] = None,
-    args: Optional[list[str]] = None,
+    entrypoint: str | list[str] | None = None,
+    args: list[str] | None = None,
     target_instances: int = 1,
-    session: Optional[snowpark.Session] = None,
+    session: snowpark.Session | None = None,
     **kwargs: Any,
 ) -> jb.MLJob[T]:
     """
@@ -528,7 +534,7 @@ def _submit_job(
         raise
 
 
-def _ensure_session(session: Optional[snowpark.Session]) -> snowpark.Session:
+def _ensure_session(session: snowpark.Session | None) -> snowpark.Session:
     try:
         session = session or get_active_session()
     except snowpark.exceptions.SnowparkSessionException as e:

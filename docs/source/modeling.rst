@@ -7,6 +7,21 @@ snowflake.ml.modeling
 .. automodule:: snowflake.ml.modeling
     :noindex:
 
+Optional dependencies
+---------------------
+
+These estimators require the ``scikit-learn`` extra. The XGBoost and LightGBM wrappers
+also require those extras; ``[xgboost]`` and ``[lightgbm]`` do not include
+``scikit-learn``::
+
+    pip install "snowflake-ml-python[scikit-learn]"
+    pip install "snowflake-ml-python[xgboost,scikit-learn]"
+    pip install "snowflake-ml-python[lightgbm,scikit-learn]"
+
+Native XGBoost or LightGBM models (for example logging to the Model Registry) only
+need ``[xgboost]`` or ``[lightgbm]``.
+
+
 snowflake.ml.modeling.calibration
 ---------------------------------
 

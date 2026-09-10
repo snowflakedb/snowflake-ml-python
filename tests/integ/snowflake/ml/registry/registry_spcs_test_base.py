@@ -3,14 +3,14 @@
 import logging
 import os
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.registry import registry
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
 
@@ -95,7 +95,7 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         """Create stage with appropriate settings. Can be overridden by subclasses."""
         self._db_manager.create_stage(self._test_stage)
 
-    def _create_hf_token_secret(self) -> Optional[str]:
+    def _create_hf_token_secret(self) -> str | None:
         """Create a Snowflake SECRET from the HF_TOKEN environment variable.
 
         Returns:
@@ -123,8 +123,8 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     def list_job_services(
         self,
         *,
-        name_like: Optional[str] = None,
-        compute_pool: Optional[str] = None,
+        name_like: str | None = None,
+        compute_pool: str | None = None,
     ) -> list[dict[str, Any]]:
         """List job services in the current account via ``SHOW SERVICES``.
 
@@ -166,8 +166,8 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         self,
         job_name: str,
         *,
-        database: Optional[str] = None,
-        schema: Optional[str] = None,
+        database: str | None = None,
+        schema: str | None = None,
     ) -> str:
         """Return the YAML spec of a job service via ``DESCRIBE SERVICE``.
 

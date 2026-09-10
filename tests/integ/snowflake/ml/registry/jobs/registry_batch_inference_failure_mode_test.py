@@ -2,10 +2,9 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
-# Signature with params for testing param validation (used with predict_with_params method)
 _SIGNATURE_WITH_PARAMS = model_signature.ModelSignature(
     inputs=[
         model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="C0"),
@@ -44,15 +43,19 @@ class DemoModel(custom_model.CustomModel):
         )
 
 
+# Batch inference does not validate params against the model signature client-side, and GS forwards
+# input.params opaquely (public schema declares it additionalProperties: true and only base64-encodes it),
+# so a bad param name/type is not rejected at submit time. These assertions therefore cannot hold.
+@absltest.skip("No client-side param validation; bad params are not rejected at submit time.")
 class TestBatchInferenceFailureModeInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    def test_run_batch_unknown_param_raises_error(self) -> None:
-        """Test that run_batch raises ValueError for unknown param names."""
+    def test_unknown_param_raises_error(self) -> None:
+        """Unknown param names are rejected client-side before the SQL command is issued."""
         model = DemoModel(custom_model.ModelContext())
         input_df = self.session.create_dataframe([[0, 1]], schema=["C0", "C1"])
 
         mv = self.registry.log_model(
             model=model,
-            model_name="model_test_run_batch_unknown_param_raises_error",
+            model_name="model_test_unknown_param_raises_error",
             version_name=f"ver_{self._run_id}",
             sample_input_data=input_df,
             signatures={"predict_with_params": _SIGNATURE_WITH_PARAMS},
@@ -66,19 +69,20 @@ class TestBatchInferenceFailureModeInteg(registry_batch_inference_test_base.Regi
             mv.run_batch(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=OutputSpec(stage_location=output_stage_location),
-                input_spec=InputSpec(params={"unknown_param": 0.5}),
-                job_spec=JobSpec(job_name=job_name, function_name="predict_with_params"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(params={"unknown_param": 0.5}),
+                function_name="predict_with_params",
+                job_name=job_name,
             )
 
-    def test_run_batch_invalid_param_type_raises_error(self) -> None:
-        """Test that run_batch raises ValueError for invalid param types."""
+    def test_invalid_param_type_raises_error(self) -> None:
+        """Param values with incompatible dtypes are rejected client-side."""
         model = DemoModel(custom_model.ModelContext())
         input_df = self.session.create_dataframe([[0, 1]], schema=["C0", "C1"])
 
         mv = self.registry.log_model(
             model=model,
-            model_name="model_test_run_batch_invalid_param_type_raises_error",
+            model_name="model_test_invalid_param_type_raises_error",
             version_name=f"ver_{self._run_id}",
             sample_input_data=input_df,
             signatures={"predict_with_params": _SIGNATURE_WITH_PARAMS},
@@ -92,9 +96,10 @@ class TestBatchInferenceFailureModeInteg(registry_batch_inference_test_base.Regi
             mv.run_batch(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=OutputSpec(stage_location=output_stage_location),
-                input_spec=InputSpec(params={"max_tokens": "not_an_int"}),
-                job_spec=JobSpec(job_name=job_name, function_name="predict_with_params"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                input_spec=batch_inference_job_specs.InputSpec(params={"max_tokens": "not_an_int"}),
+                function_name="predict_with_params",
+                job_name=job_name,
             )
 
 

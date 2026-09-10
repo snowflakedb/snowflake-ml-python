@@ -5,11 +5,11 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.preprocessing import KBinsDiscretizer as SklearnKBinsDiscretizer
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.preprocessing import (
     KBinsDiscretizer,  # type: ignore[attr-defined]
 )
 from snowflake.ml.utils import sparse as sparse_utils
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils
 

@@ -1,6 +1,80 @@
 # Release History
 
-## 1.54.0
+## 2.0.0
+
+Release candidate for the `snowflake-ml-python` 2.0 major release. This is a breaking
+release that removes deprecated APIs and slims down the default install footprint.
+
+### New Features
+
+* Feature Store: added `alter_online_service(size=...)`, which changes the size of an existing Online Service. The
+  call returns as soon as the request is recorded; the change runs in the background and can take hours on a large
+  Online Service, which keeps serving online reads and stream ingestion throughout. Poll
+  `get_online_service_status()` until `status` is `RUNNING` at the requested size.
+
+### Bug Fixes
+
+* Feature Store: `delete_feature_view` now drops the online feature table before the
+  offline dynamic table or view, so a dependent FeatureGroup (error 099940) does not
+  leave an orphaned offline object.
+
+### Behavior Changes
+
+* Registry: Models logged from a Snowflake Container Runtime notebook without an explicit
+  `target_platforms` now default to both Warehouse and Snowpark Container Services instead of
+  Snowpark Container Services only. Warehouse is no longer dropped from the default target
+  platforms.
+* Dependencies: `scikit-learn`, `xgboost`, and `shap` are no longer required dependencies of
+  `snowflake-ml-python`. They are now optional extras. Install them with
+  `pip install snowflake-ml-python[scikit-learn]`, `[xgboost]`, `[shap]`, or `[all]` when using
+  the corresponding functionality. Extras are independent: `[xgboost]` and `[lightgbm]` install
+  only those libraries, not `scikit-learn`. Native XGBoost or LightGBM models (for example
+  logging to the Model Registry) only need `[xgboost]` or `[lightgbm]`.
+  `snowflake.ml.modeling` estimators always require `scikit-learn`, so the XGBoost and LightGBM
+  wrappers need `pip install "snowflake-ml-python[xgboost,scikit-learn]"` or
+  `"snowflake-ml-python[lightgbm,scikit-learn]"`.
+* Feature Store: Added an optional `feature_store` extra. Install `snowflake-ml-python[feature_store]`
+  to pull in `httpx`, which is required for online feature serving reads. `httpx` is not installed by
+  the default `snowflake-ml-python` install. Conda users still need to install `httpx` separately
+  (for example `conda install httpx`) to use the online Feature Store.
+* Modeling: Importing a `snowflake.ml.modeling` subpackage (for example
+  `snowflake.ml.modeling.linear_model`, `snowflake.ml.modeling.xgboost`,
+  `snowflake.ml.modeling.lightgbm`, or `snowflake.ml.modeling.preprocessing`) without the optional
+  dependencies it needs now raises an actionable `ImportError` that names only the missing
+  package(s), instead of a confusing missing-attribute error.
+  `scikit-learn` and `xgboost` are attributed to the 2.0 dependency change; `lightgbm` was
+  already an optional extra before 2.0.
+
+### Deprecations
+
+* Modeling: The `snowflake.ml.modeling` estimators and preprocessing transformers are deprecated and
+  will be removed in a future release. Importing a `snowflake.ml.modeling` subpackage now emits a
+  `DeprecationWarning`. Train models with the native scikit-learn, XGBoost, or LightGBM estimators
+  and log them to the Snowflake Model Registry (`snowflake.ml.registry`) instead.
+
+### Breaking Changes
+
+* Generic: Require python >= 3.10. Python 3.9 is no longer supported.
+* Removed the deprecated `snowflake.ml.utils.connection_params.SnowflakeLoginOptions` public API
+  (deprecated since 1.8.5).
+* Registry: `ModelVersion.run_batch` now runs on `EXECUTE INFERENCE JOB SERVICE`. The single
+  `job_spec` argument is replaced by the `resources_spec`, `inference_spec`, and `image_build_spec`
+  blocks, and input may be supplied as either a DataFrame (`X`) or an existing stage path
+  (`input_stage_location`). `output_spec.stage_location` is treated as a base: results are written
+  under a per-job subdirectory, `<stage_location>/<job_name>/`. `output_spec.base_stage_location`,
+  `job_spec.job_name_prefix`, and `job_spec.block` no longer exist.
+* Registry: Removed the `snowflake.ml.model.batch` module. Use `snowflake.ml.model.batch_inference`,
+  which exports `BatchInferenceTask` alongside the input, output, resources, inference, and image
+  build spec classes.
+* Feature Store: Feature views created before 1.42.0 that use the `last_distinct_n` or
+  `first_distinct_n` aggregation function can no longer be read offline. `generate_dataset`,
+  `generate_training_set`, `retrieve_feature_values`, and `read_feature_view` now raise a
+  `ValueError` for such feature views. Re-create the feature view to restore offline reads.
+* Dependencies: `snowflake-snowpark-python` must now be `>=1.37.0`. Earlier releases import
+  `pkg_resources`, which `setuptools` removed in 82.0.0, so they fail to import in environments
+  with a current `setuptools`.
+
+## 1.54.0 (2026-08-31)
 
 ### New Features
 
@@ -16,6 +90,9 @@
 
 * Experiment Tracking: Source provenance now also records the id of the enclosing ML job when a run is created from
   inside one.
+* ML Jobs: `submit_file`, `submit_directory`, `submit_from_stage`, and `@remote` accept a `comment` kwarg, attached as
+  the comment on the job service. When omitted, the comment defaults to the `application` name configured on the
+  session, so jobs submitted by a tool or partner integration remain attributable after the fact.
 
 ### Bug Fixes
 

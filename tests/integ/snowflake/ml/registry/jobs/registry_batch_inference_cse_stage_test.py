@@ -6,18 +6,12 @@ import tempfile
 from absl.testing import absltest
 from typing_extensions import override
 
-from snowflake.ml.model.batch import (
-    FileEncoding,
-    InputFormat,
-    InputSpec,
-    JobSpec,
-    OutputSpec,
-)
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
 @absltest.skip("SNOW-3691662")
-class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+class TestBatchInferenceCSEStageInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     """Test batch inference with CSE (SNOWFLAKE_FULL) encrypted stage."""
 
     def setUp(self) -> None:
@@ -74,8 +68,8 @@ class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base
 
         column_handling = {
             "IMAGES": {
-                "input_format": InputFormat.FULL_STAGE_PATH,
-                "convert_to": FileEncoding.RAW_BYTES,
+                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
             }
         }
 
@@ -83,9 +77,10 @@ class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base
             model=model,
             X=input_df,
             compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            input_spec=InputSpec(column_handling=column_handling),
-            job_spec=JobSpec(job_name=job_name, replicas=1),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+            job_name=job_name,
+            replicas=1,
             pip_requirements=["pillow"],
             blocking=False,
         )

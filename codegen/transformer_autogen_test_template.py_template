@@ -8,7 +8,7 @@ import platform
 from typing import Optional, Any, Tuple, List
 from absl.testing.absltest import TestCase, main
 {transform.test_estimator_imports}
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session, DataFrame
 
 

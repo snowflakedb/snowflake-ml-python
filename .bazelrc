@@ -26,7 +26,6 @@ build:_all --platforms //bazel/platforms:all_conda_env --host_platform //bazel/p
 
 # Python environment flag, should use in combination with other configs
 
-build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
 build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
 build:py3.11 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.11
 build:py3.12 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.12
@@ -73,6 +72,12 @@ build --test_env=PRIVATE_PYPI_PASSWORD
 
 # Below are auto-generated settings, do not modify them directly
 
+build:_ml --platforms //bazel/platforms:ml_conda_env --host_platform //bazel/platforms:ml_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=ml
+cquery:ml --config=_ml
+build:ml --config=_ml
+test:ml --config=_ml
+run:ml --config=_ml
+
 build:_keras --platforms //bazel/platforms:keras_conda_env --host_platform //bazel/platforms:keras_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=keras
 cquery:keras --config=_keras
 build:keras --config=_keras
@@ -84,12 +89,6 @@ cquery:llm --config=_llm
 build:llm --config=_llm
 test:llm --config=_llm
 run:llm --config=_llm
-
-build:_ml --platforms //bazel/platforms:ml_conda_env --host_platform //bazel/platforms:ml_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=ml
-cquery:ml --config=_ml
-build:ml --config=_ml
-test:ml --config=_ml
-run:ml --config=_ml
 
 build:_torch --platforms //bazel/platforms:torch_conda_env --host_platform //bazel/platforms:torch_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=torch
 cquery:torch --config=_torch
