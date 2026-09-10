@@ -5,8 +5,8 @@ from importlib_resources import files
 from sklearn.metrics import accuracy_score as sk_accuracy_score
 from xgboost import XGBClassifier as NativeXGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 categorical_columns = [

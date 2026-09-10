@@ -6,12 +6,14 @@ py_test(
     name = "grid_search_integ_test",
     timeout = "long",
     srcs = ["grid_search_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 5,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/decomposition:pca",
         "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
@@ -19,7 +21,6 @@ py_test(
         "//snowflake/ml/modeling/svm:svc",
         "//snowflake/ml/modeling/svm:svr",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -27,36 +28,38 @@ py_test(
     name = "randomized_search_integ_test",
     timeout = "long",
     srcs = ["randomized_search_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 3,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/decomposition:pca",
         "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
         "//snowflake/ml/modeling/svm:svc",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "search_single_node_test",
     srcs = ["search_single_node_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/_internal:estimator_utils",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -64,15 +67,16 @@ py_test(
     name = "check_output_hpo_integ_test",
     timeout = "long",
     srcs = ["check_output_hpo_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 5,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -80,6 +84,7 @@ py_test(
     name = "check_sklearn_inference_test",
     timeout = "long",
     srcs = ["check_sklearn_inference_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = [
         "feature:modeling",
@@ -87,9 +92,9 @@ py_test(
     ],
     deps = [
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
-        "//snowflake/ml/utils:connection_params",
     ],
 )

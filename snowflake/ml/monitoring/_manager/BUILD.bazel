@@ -26,6 +26,7 @@ py_test(
     srcs = [
         "model_monitor_manager_test.py",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_serving",
         "short_regress",

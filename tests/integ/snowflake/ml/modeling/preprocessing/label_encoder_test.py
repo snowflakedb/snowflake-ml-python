@@ -9,10 +9,10 @@ import numpy as np
 from absl.testing.absltest import main
 from sklearn.preprocessing import LabelEncoder as SklearnLabelEncoder
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     LabelEncoder,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (

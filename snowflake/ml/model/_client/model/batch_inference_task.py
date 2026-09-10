@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import warnings
-from typing import Any, Optional
-
-import yaml
+from typing import Any
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.ml.model._client.model import (
-    batch_inference_serialization,
-    batch_inference_specs,
+    batch_inference_job_specs,
     model_version_impl,
 )
-from snowflake.snowpark import dataframe
+from snowflake.ml.model._client.ops import service_ops
 
 try:
     from snowflake.core.task.dagv1 import DAGTask
@@ -33,10 +28,18 @@ class BatchInferenceTask(DAGTask):
     chain it with other tasks using ``>>``. Requires the ``snowflake.core`` package
     to be installed.
 
-    .. deprecated::
-        The backend this task uses will be removed in a future release. For new work, use
-        :class:`snowflake.ml.model.batch_inference.BatchInferenceTask`, which runs on the
-        updated batch inference backend.
+    The job runs synchronously, so the DAG step completes when the job does. Each run
+    gets a server-generated job name, and results are written under
+    ``<output_spec.stage_location>/<job_name>/``. The job publishes that location as
+    the task return value, so a successor can read it with
+    ``SYSTEM$GET_PREDECESSOR_RETURN_VALUE()`` rather than hardcoding the path.
+
+    The DAG must supply a warehouse, via ``DAG(warehouse=...)`` or ``warehouse=`` on the
+    task; serverless DAGs are unsupported.
+
+    Prefer fully qualified stage paths: an unqualified path is resolved against the
+    session namespace when the task is built, but against the task owner's namespace
+    when it runs.
     """
 
     @telemetry.send_api_usage_telemetry(
@@ -47,8 +50,10 @@ class BatchInferenceTask(DAGTask):
             "compute_pool",
             "input_spec",
             "output_spec",
-            "job_spec",
-            "inference_engine_options",
+            "resources_spec",
+            "inference_spec",
+            "image_build_spec",
+            "replicas",
         ],
     )
     def __init__(
@@ -56,21 +61,44 @@ class BatchInferenceTask(DAGTask):
         name: str,
         *,
         model_version: model_version_impl.ModelVersion,
-        X: dataframe.DataFrame,
         compute_pool: str,
-        output_spec: batch_inference_specs.OutputSpec,
-        input_spec: Optional[batch_inference_specs.InputSpec] = None,
-        job_spec: Optional[batch_inference_specs.JobSpec] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
+        output_spec: batch_inference_job_specs.OutputSpec,
+        query: str | None = None,
+        input_stage_location: str | None = None,
+        input_spec: batch_inference_job_specs.InputSpec | None = None,
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None = None,
+        inference_spec: batch_inference_job_specs.InferenceSpec | None = None,
+        image_build_spec: batch_inference_job_specs.ImageBuildSpec | None = None,
+        function_name: str | None = None,
+        replicas: int | None = None,
         **dagtask_kwargs: Any,
     ) -> None:
-        warnings.warn(
-            "snowflake.ml.model.batch.BatchInferenceTask is deprecated: the batch inference backend it "
-            "currently uses will be removed in a future release. Use "
-            "snowflake.ml.model.batch_inference.BatchInferenceTask instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        """Build a batch inference task.
+
+        Args:
+            name: Task name within the DAG.
+            model_version: The model version to run.
+            compute_pool: Compute pool used by the job and the image build.
+            output_spec: Output block. ``stage_location`` is treated as a base; results are
+                written under ``<stage_location>/<job_name>/``.
+            query: SQL query producing the input rows. Provide exactly one of ``query`` or
+                ``input_stage_location``.
+            input_stage_location: Existing stage path holding the input data. Provide exactly
+                one of ``query`` or ``input_stage_location``.
+            input_spec: Optional input block.
+            resources_spec: Optional resources block.
+            inference_spec: Optional inference block.
+            image_build_spec: Optional image build block.
+            function_name: Model function name. Resolved against the model's function list
+                when omitted.
+            replicas: Optional ``REPLICAS`` value.
+            dagtask_kwargs: Passed through to ``DAGTask`` (``dag``, ``condition``,
+                ``warehouse``, ``session_parameters``, and so on).
+
+        Raises:
+            ImportError: If the ``snowflake.core`` package is not installed.
+            TypeError: If ``definition`` is passed; the task builds its own.
+        """
         if not _HAS_SNOWFLAKE_CORE:
             raise ImportError(
                 "BatchInferenceTask requires the `snowflake.core` package. "
@@ -79,155 +107,50 @@ class BatchInferenceTask(DAGTask):
         if "definition" in dagtask_kwargs:
             raise TypeError("BatchInferenceTask builds its own task definition; do not pass `definition=`.")
 
-        self._fully_qualified_model_name: str = model_version.fully_qualified_model_name
-        self._version_name: str = model_version.version_name
+        self._model_version = model_version
         self._compute_pool = compute_pool
         self._output_spec = output_spec
-        self._input_spec = input_spec if input_spec is not None else batch_inference_specs.InputSpec()
-        self._job_spec = job_spec if job_spec is not None else batch_inference_specs.JobSpec()
-        self._inference_engine_options = inference_engine_options
+        self._query = query
+        self._input_stage_location = input_stage_location
+        self._input_spec = input_spec
+        self._resources_spec = resources_spec
+        self._inference_spec = inference_spec
+        self._image_build_spec = image_build_spec
+        self._function_name = function_name
+        self._replicas = replicas
 
-        target_function_name = self._job_spec.function_name if self._job_spec.function_name else None
-        target_function_info = model_version._get_function_info(function_name=target_function_name)
-        self._function_name: str = target_function_info["target_method"]
-
-        if self._job_spec.warehouse is not None:
-            self._warehouse: str = self._job_spec.warehouse
-        else:
-            session_warehouse = model_version._service_ops._session.get_current_warehouse()
-            if session_warehouse is None:
-                raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
-            self._warehouse = session_warehouse
-
-        self._queries: list[str] = list(X.queries["queries"])
-        self._post_actions: list[str] = list(X.queries["post_actions"])
-
-        sql = self._to_sql()
-        super().__init__(name, definition=sql, **dagtask_kwargs)
+        super().__init__(name, definition=self._to_sql(), **dagtask_kwargs)
 
     def _to_sql(self) -> str:
-        self._validate()
-        spec_dict = self._build_spec_dict()
-        yaml_str = yaml.safe_dump(spec_dict, default_flow_style=False, sort_keys=False)
-        return f"CALL SYSTEM$DEPLOY_MODEL($${yaml_str}$$)"
+        """Build the ``EXECUTE INFERENCE JOB SERVICE`` command that becomes the task definition.
 
-    def _build_spec_dict(self) -> dict[str, Any]:
-        models = [{"name": self._fully_qualified_model_name, "version": self._version_name}]
+        Returns:
+            The command text.
 
-        db_id, schema_id, _ = sql_identifier.parse_fully_qualified_name(self._fully_qualified_model_name)
+        Raises:
+            ValueError: If not exactly one of ``query`` / ``input_stage_location`` is provided.
+        """
+        if (self._query is None) == (self._input_stage_location is None):
+            raise ValueError("Exactly one of query or input_stage_location must be provided.")
 
-        job_name: Optional[str] = None
-        name_prefix: Optional[str] = None
-        if self._job_spec.job_name is not None:
-            parsed_job_db, parsed_job_schema, parsed_job_name = sql_identifier.parse_fully_qualified_name(
-                self._job_spec.job_name
-            )
-            job_db = parsed_job_db or db_id
-            job_schema = parsed_job_schema or schema_id
-            assert job_db is not None and job_schema is not None
-            job_name = identifier.get_schema_level_object_identifier(
-                job_db.identifier(), job_schema.identifier(), parsed_job_name.identifier()
-            )
-        elif self._job_spec.job_name_prefix is not None:
-            assert db_id is not None and schema_id is not None
-            job_name_prefix_qualified = identifier.get_schema_level_object_identifier(
-                db_id.identifier(), schema_id.identifier(), self._job_spec.job_name_prefix + "_"
-            )
-            name_prefix = job_name_prefix_qualified
+        target_function_info = self._model_version._validate_batch_inference_request(
+            input_spec=self._input_spec,
+            resources_spec=self._resources_spec,
+            function_name=self._function_name,
+        )
 
-        function_name = self._function_name
-
-        if self._output_spec.base_stage_location is not None:
-            base_stage_location = self._output_spec.base_stage_location
-            if not base_stage_location.endswith("/"):
-                base_stage_location += "/"
-
-            input_dict: dict[str, Any] = {
-                "queries": self._queries,
-                "post_actions": self._post_actions,
-                "input_file_pattern": "*",
-            }
-            output_dict: dict[str, Any] = {
-                "base_stage_location": base_stage_location,
-                "completion_filename": "_SUCCESS",
-            }
-        else:
-            assert self._output_spec.stage_location is not None
-            output_stage = self._output_spec.stage_location
-            if not output_stage.endswith("/"):
-                output_stage += "/"
-
-            input_stage_location = f"{output_stage}_temporary/"
-            input_dict = {
-                "input_stage_location": input_stage_location,
-                "queries": self._queries,
-                "post_actions": self._post_actions,
-                "input_file_pattern": "*",
-            }
-            output_dict = {
-                "output_stage_location": output_stage,
-                "completion_filename": "_SUCCESS",
-            }
-
-        params_encoded = batch_inference_serialization.encode_params(self._input_spec.params)
-        if params_encoded is not None:
-            input_dict["params"] = params_encoded
-
-        column_handling_encoded = batch_inference_serialization.encode_column_handling(self._input_spec.column_handling)
-        if column_handling_encoded is not None:
-            input_dict["column_handling"] = column_handling_encoded
-
-        if self._input_spec.partition_column is not None:
-            input_dict["partition_columns"] = [self._input_spec.partition_column]
-
-        job_dict: dict[str, Any] = {
-            "compute_pool": self._compute_pool,
-            "warehouse": self._warehouse,
-            "function_name": function_name,
-            "input": input_dict,
-            "output": output_dict,
-            "sync": True,
-        }
-
-        if job_name is not None:
-            job_dict["name"] = job_name
-        if name_prefix is not None:
-            job_dict["name_prefix"] = name_prefix
-
-        if self._job_spec.cpu_requests is not None:
-            job_dict["cpu"] = self._job_spec.cpu_requests
-        if self._job_spec.memory_requests is not None:
-            job_dict["memory"] = self._job_spec.memory_requests
-        if self._job_spec.gpu_requests is not None:
-            job_dict["gpu"] = self._job_spec.gpu_requests
-        if self._job_spec.num_workers is not None:
-            job_dict["num_workers"] = self._job_spec.num_workers
-        if self._job_spec.max_batch_rows is not None:
-            job_dict["max_batch_rows"] = self._job_spec.max_batch_rows
-        if self._job_spec.replicas is not None:
-            job_dict["replicas"] = self._job_spec.replicas
-
-        spec: dict[str, Any] = {
-            "models": models,
-            "job": job_dict,
-        }
-
-        if self._inference_engine_options is not None:
-            engine = self._inference_engine_options["engine"]
-            engine_spec: dict[str, Any] = {"inference_engine_name": engine.value}
-            engine_args = self._inference_engine_options.get("engine_args_override")
-            if engine_args:
-                engine_spec["inference_engine_args"] = engine_args
-            job_dict["inference_engine_spec"] = engine_spec
-        else:
-            image_build: dict[str, Any] = {"compute_pool": self._compute_pool}
-            if self._job_spec.image_repo is not None:
-                image_build["image_repo"] = self._job_spec.image_repo
-            if self._job_spec.force_rebuild:
-                image_build["force_rebuild"] = True
-            spec["image_build"] = image_build
-
-        return spec
-
-    def _validate(self) -> None:
-        pass
+        return service_ops.build_batch_inference_task_definition(
+            session=self._model_version._service_ops._session,
+            model_fqn=self._model_version.fully_qualified_model_name,
+            version_name=self._model_version.version_name,
+            compute_pool=self._compute_pool,
+            function_name=target_function_info["target_method"],
+            query=self._query,
+            input_stage_location=self._input_stage_location,
+            input_spec=self._input_spec,
+            output_spec=self._output_spec,
+            resources_spec=self._resources_spec,
+            inference_spec=self._inference_spec,
+            image_build_spec=self._image_build_spec,
+            replicas=self._replicas,
+        )

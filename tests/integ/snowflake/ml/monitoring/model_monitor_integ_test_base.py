@@ -3,11 +3,11 @@ import uuid
 
 from absl.testing import parameterized
 
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 

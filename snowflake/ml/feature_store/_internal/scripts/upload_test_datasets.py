@@ -10,7 +10,7 @@ https://www.google.com/url?q=https://github.com/snowflake-eng/snowml/blob/main/s
 from absl.logging import logging
 
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import FloatType, IntegerType, StructField, StructType
 

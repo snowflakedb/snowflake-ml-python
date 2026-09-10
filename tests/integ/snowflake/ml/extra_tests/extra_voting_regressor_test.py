@@ -8,9 +8,9 @@ from sklearn.linear_model import (
     SGDRegressor as SkSGDRegressor,
 )
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.ensemble import VotingRegressor
 from snowflake.ml.modeling.linear_model import LinearRegression, SGDRegressor
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

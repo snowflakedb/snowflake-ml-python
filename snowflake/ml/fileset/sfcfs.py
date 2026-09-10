@@ -1,7 +1,7 @@
 import collections
 import logging
 from functools import partial
-from typing import Any, Callable, Optional, Union, cast
+from typing import Any, Callable, cast
 
 import fsspec
 
@@ -12,9 +12,8 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import connection_params, identifier
 from snowflake.ml.fileset import stage_fs
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import context, exceptions as snowpark_exceptions
 
 PROTOCOL_NAME = "sfc"
@@ -65,8 +64,8 @@ class SFFileSystem(fsspec.AbstractFileSystem):
 
     def __init__(
         self,
-        sf_connection: Optional[connection.SnowflakeConnection] = None,
-        snowpark_session: Optional[snowpark.Session] = None,
+        sf_connection: connection.SnowflakeConnection | None = None,
+        snowpark_session: snowpark.Session | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize file system with a Snowflake Python connection.
@@ -195,7 +194,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         func_params_to_log=["detail"],
         conn_attr_name="_conn",
     )
-    def ls(self, path: str, detail: bool = False, **kwargs: Any) -> Union[list[str], list[dict[str, Any]]]:
+    def ls(self, path: str, detail: bool = False, **kwargs: Any) -> list[str] | list[dict[str, Any]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
         Args:
@@ -225,7 +224,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    def optimize_read(self, files: Optional[list[str]] = None) -> None:
+    def optimize_read(self, files: list[str] | None = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the file opening.
 
         All the files introduced here will have their urls cached. Further open() on any of cached urls will lead to a
@@ -289,7 +288,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         stage_fs: stage_fs.SFStageFileSystem,
         stage_path_list: list[dict[str, Any]],
         detail: bool,
-    ) -> Union[list[str], list[dict[str, Any]]]:
+    ) -> list[str] | list[dict[str, Any]]:
         """Add the stage location as the prefix of file names returned by ls() of stagefs"""
         for path in stage_path_list:
             path["name"] = self._stage_path_to_absolute_path(stage_fs, path["name"])

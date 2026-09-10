@@ -53,6 +53,23 @@ py_test(
 )
 
 py_test(
+    name = "arctic_training_integ_test",
+    timeout = "long",
+    srcs = ["arctic_training_integ_test.py"],
+    shard_count = 1,
+    tags = [
+        "feature:jobs",
+    ],
+    deps = [
+        ":job_test_base",
+        ":test_file_helper",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
     name = "jobs_integ_test",
     timeout = "long",
     srcs = ["jobs_integ_test.py"],
@@ -187,6 +204,7 @@ py_test(
     name = "sf_interaction_integ_test",
     timeout = "long",
     srcs = ["sf_interaction_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:jobs",
         "short_regress",

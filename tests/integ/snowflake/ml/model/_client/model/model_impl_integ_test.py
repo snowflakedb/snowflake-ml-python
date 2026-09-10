@@ -4,9 +4,8 @@ import uuid
 from absl.testing import absltest, parameterized
 from packaging import version
 
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import connection_params, identifier
 from snowflake.ml.registry import registry
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,

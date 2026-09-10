@@ -93,18 +93,6 @@ class PlanOp(BaseModel):
     payload: dict[str, Any] = {}
 
 
-class Plan(BaseModel):
-    """An ordered, validated execution plan.
-
-    Attributes:
-        ops: Topologically-sorted list of operations to execute.
-        warnings: Non-blocking warnings generated during plan creation.
-    """
-
-    ops: list[PlanOp] = []
-    warnings: list[str] = []
-
-
 class ValidationResult(BaseModel):
     """A single validation finding (error or warning).
 
@@ -119,6 +107,24 @@ class ValidationResult(BaseModel):
     code: str
     message: str
     object_name: str = ""
+
+
+class Plan(BaseModel):
+    """An ordered, validated execution plan.
+
+    Attributes:
+        ops: Topologically-sorted list of operations to execute.
+        warnings: Non-blocking warnings generated during plan creation.
+        errors: Blocking, plan-time ERROR findings emitted by the planner
+            itself (distinct from ``validate_specs`` output) — e.g.
+            ``FG_MEMBER_STILL_REFERENCED``. A non-empty list means the plan
+            must not be written or applied. Defaults to ``[]`` so plan JSON
+            written before this field existed still deserialises.
+    """
+
+    ops: list[PlanOp] = []
+    warnings: list[str] = []
+    errors: list[ValidationResult] = []
 
 
 class PlanOptions(BaseModel):

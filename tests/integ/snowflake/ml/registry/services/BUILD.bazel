@@ -39,6 +39,7 @@ py_test(
     name = "registry_model_deployment_privilege_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_privilege_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_serving",
         "short_regress",
@@ -54,6 +55,7 @@ py_test(
     name = "registry_xgboost_model_deployment_pip_test",
     timeout = "eternal",
     srcs = ["registry_xgboost_model_deployment_pip_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -136,6 +138,7 @@ py_test(
     name = "registry_sklearn_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_sklearn_model_deployment_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -147,6 +150,7 @@ py_test(
     name = "registry_feature_retrieval_deployment_test",
     timeout = "eternal",
     srcs = ["registry_feature_retrieval_deployment_test.py"],
+    optional_dependencies = ["scikit-learn"],
     # Manual: requires SNOWFLAKE_PAT for OFT vnext / Postgres Online Service Query
     # API and the GS-side server contract for service.feature_retrieval.lookups.
     # See the module docstring for the full preconditions and run command.
@@ -198,6 +202,7 @@ py_test(
     name = "registry_wide_input_format_test",
     timeout = "eternal",
     srcs = ["registry_wide_input_format_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = [
         "feature:model_serving",
@@ -215,6 +220,7 @@ py_test(
     name = "registry_model_deployment_ingress_endpoint_data_format_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_ingress_endpoint_data_format_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -229,6 +235,7 @@ py_test(
     name = "registry_custom_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
@@ -240,6 +247,7 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 3,
     tags = ["feature:model_serving"],
     deps = [
@@ -265,6 +273,7 @@ py_test(
     name = "registry_inference_table_test",
     timeout = "eternal",
     srcs = ["registry_inference_table_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -348,6 +357,7 @@ py_test(
     name = "registry_custom_model_params_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_params_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
@@ -359,6 +369,7 @@ py_test(
     name = "registry_backwards_compat_test",
     timeout = "eternal",
     srcs = ["registry_backwards_compat_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [

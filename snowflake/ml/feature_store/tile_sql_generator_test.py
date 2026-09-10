@@ -1,7 +1,5 @@
 """Unit tests for tile_sql_generator module."""
 
-from typing import Optional
-
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
@@ -12,6 +10,7 @@ from snowflake.ml.feature_store.tile_sql_generator import (
     RollupSqlGenerator,
     TilingSqlGenerator,
     _generate_cumulative_expressions,
+    has_legacy_distinct_n_aggregations,
 )
 
 
@@ -388,11 +387,12 @@ class TilingSqlGeneratorTest(parameterized.TestCase):
         # ASC ordering for FIRST
         self.assertIn("ORDER BY EVENT_TS ASC", sql)
 
+    # TODO: drop this test when the legacy distinct-N implementation is removed.
     @parameterized.named_parameters(  # type: ignore[misc]
         ("explicit_1_41_0", "1.41.0"),
         ("unset_none", None),
     )
-    def test_legacy_version_last_distinct_n_uses_shared_columns(self, authoring_pkg_version: Optional[str]) -> None:
+    def test_legacy_version_last_distinct_n_uses_shared_columns(self, authoring_pkg_version: str | None) -> None:
         """Legacy-version LAST_DISTINCT_N uses shared _PARTIAL_LAST_ columns.
 
         Covers both the explicit "1.41.0" string and None, which is the canonical
@@ -833,13 +833,12 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         self.assertIn("_PARTIAL_LAST_DISTINCT_5_CATEGORY", tiles_joined[1])
         self.assertIn("_PARTIAL_LAST_DISTINCT_5_TS_CATEGORY", tiles_joined[1])
 
+    # TODO: drop this test when the legacy distinct-N implementation is removed.
     @parameterized.named_parameters(  # type: ignore[misc]
         ("explicit_1_41_0", "1.41.0"),
         ("unset_none", None),
     )
-    def test_legacy_version_last_distinct_n_merge_reads_shared_columns(
-        self, authoring_pkg_version: Optional[str]
-    ) -> None:
+    def test_legacy_version_last_distinct_n_merge_reads_shared_columns(self, authoring_pkg_version: str | None) -> None:
         """Legacy-version merge reads from shared _PARTIAL_LAST_ tile columns.
 
         Covers both the explicit "1.41.0" string and None, which is the canonical
@@ -921,6 +920,7 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         # display reverses the within-tile array index (idx_key DESC).
         self.assertIn("ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key ASC, idx_key DESC)", body)
 
+    # TODO: drop this test when the legacy distinct-N implementation is removed.
     def test_legacy_version_distinct_merge_keeps_raw_row_cap(self) -> None:
         """Legacy merge is unchanged: keeps the dup_rn=1 AND rn<=n raw-row cap."""
         body = self._distinct_merge_body("1.41.0")
@@ -1257,13 +1257,12 @@ class RollupSqlGeneratorTest(parameterized.TestCase):
         # Should NOT use legacy shared column names
         self.assertNotIn("_PARTIAL_LAST_CATEGORY", sql)
 
+    # TODO: drop this test when the legacy distinct-N implementation is removed.
     @parameterized.named_parameters(  # type: ignore[misc]
         ("explicit_1_41_0", "1.41.0"),
         ("unset_none", None),
     )
-    def test_last_distinct_n_legacy_version_rollup_uses_shared_columns(
-        self, authoring_pkg_version: Optional[str]
-    ) -> None:
+    def test_last_distinct_n_legacy_version_rollup_uses_shared_columns(self, authoring_pkg_version: str | None) -> None:
         """Legacy-version rollup reads from shared _PARTIAL_LAST_ columns.
 
         Covers both the explicit "1.41.0" string and None, which is the canonical
@@ -2470,6 +2469,45 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         )
         # Bare ARRAY_AGG(AD_ID) form (which would drop NULL slots) is gone.
         self.assertNotIn("ARRAY_AGG(AD_ID) ", body)
+
+
+class HasLegacyDistinctNAggregationsTest(parameterized.TestCase):
+    """Unit tests for the has_legacy_distinct_n_aggregations predicate."""
+
+    def _spec(self, function: AggregationType) -> AggregationSpec:
+        return AggregationSpec(
+            function=function,
+            source_column="CATEGORY",
+            window="24h",
+            output_column="OUT",
+            params={"n": 5},
+        )
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("unset_none", None, True),
+        ("pre_threshold", "1.41.0", True),
+        ("at_threshold", "1.42.0", False),
+        ("post_threshold", "2.0.0", False),
+    )
+    def test_distinct_n_by_authoring_version(self, authoring_pkg_version: str | None, expected: bool) -> None:
+        for function in (AggregationType.LAST_DISTINCT_N, AggregationType.FIRST_DISTINCT_N):
+            with self.subTest(function=function):
+                self.assertEqual(
+                    has_legacy_distinct_n_aggregations([self._spec(function)], authoring_pkg_version),
+                    expected,
+                )
+
+    def test_non_distinct_aggregations_are_never_legacy(self) -> None:
+        specs = [self._spec(AggregationType.LAST_N), self._spec(AggregationType.SUM)]
+        self.assertFalse(has_legacy_distinct_n_aggregations(specs, None))
+        self.assertFalse(has_legacy_distinct_n_aggregations(specs, "1.41.0"))
+
+    def test_mixed_specs_on_legacy_version(self) -> None:
+        specs = [self._spec(AggregationType.SUM), self._spec(AggregationType.LAST_DISTINCT_N)]
+        self.assertTrue(has_legacy_distinct_n_aggregations(specs, None))
+
+    def test_empty_specs(self) -> None:
+        self.assertFalse(has_legacy_distinct_n_aggregations([], None))
 
 
 if __name__ == "__main__":

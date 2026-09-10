@@ -4,8 +4,8 @@ import numpy as np
 from absl.testing.absltest import TestCase, main
 from sklearn.metrics import r2_score as SKr2_score
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling import metrics
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Row, Session
 
 

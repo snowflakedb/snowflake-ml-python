@@ -5,14 +5,13 @@ import logging
 import socket
 import sys
 import time
-from typing import Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def get_self_ip() -> Optional[str]:
+def get_self_ip() -> str | None:
     """Get the IP address of the current service instance.
     References:
     - https://docs.snowflake.com/en/developer-guide/snowpark-container-services/working-with-services#general-guidelines-related-to-service-to-service-communications # noqa: E501
@@ -29,7 +28,7 @@ def get_self_ip() -> Optional[str]:
         return None
 
 
-def get_head_instance(service_name: str) -> Optional[tuple[str, str, str]]:
+def get_head_instance(service_name: str) -> tuple[str, str, str] | None:
     """Get the head instance of a batch job.
 
     Args:
@@ -38,11 +37,8 @@ def get_head_instance(service_name: str) -> Optional[tuple[str, str, str]]:
     Returns:
         tuple[str, str]: A tuple containing (instance_id, ip_address) of the head instance.
     """
-    try:
-        from snowflake import snowpark
-        from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
-    except ImportError:
-        from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+    from snowflake import snowpark
+    from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 
     config = SnowflakeLoginOptions()
     config["client_session_keep_alive"] = "True"

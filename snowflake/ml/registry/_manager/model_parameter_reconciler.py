@@ -1,7 +1,7 @@
 import logging
 import warnings
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Sequence
 
 from packaging import requirements
 
@@ -26,12 +26,12 @@ _PYPI_SHARED_REPOSITORY_FQN = "snowflake.snowpark.pypi_shared_repository"
 class ReconciledParameters:
     """Holds the reconciled and validated parameters after processing."""
 
-    conda_dependencies: Optional[list[str]] = None
-    pip_requirements: Optional[list[str]] = None
-    target_platforms: Optional[list[model_types.TargetPlatform]] = None
-    artifact_repository_map: Optional[dict[str, str]] = None
-    options: Optional[model_types.ModelSaveOption] = None
-    save_location: Optional[str] = None
+    conda_dependencies: list[str] | None = None
+    pip_requirements: list[str] | None = None
+    target_platforms: list[model_types.TargetPlatform] | None = None
+    artifact_repository_map: dict[str, str] | None = None
+    options: model_types.ModelSaveOption | None = None
+    save_location: str | None = None
     prefer_pip_for_automatic_dependencies: bool = False
 
 
@@ -44,13 +44,13 @@ class ModelParameterReconciler:
         session: Session,
         database_name: sql_identifier.SqlIdentifier,
         schema_name: sql_identifier.SqlIdentifier,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        python_version: Optional[str] = None,
-        statement_params: Optional[dict[str, str]] = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        target_platforms: list[model_types.SupportedTargetPlatformType] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        python_version: str | None = None,
+        statement_params: dict[str, str] | None = None,
     ) -> None:
         self._model = model
         self._session = session
@@ -103,8 +103,8 @@ class ModelParameterReconciler:
         )
 
     def _transform_artifact_repository_map(
-        self, artifact_repository_map: Optional[dict[str, str]]
-    ) -> Optional[dict[str, str]]:
+        self, artifact_repository_map: dict[str, str] | None
+    ) -> dict[str, str] | None:
         """Transform artifact_repository_map to use fully qualified names."""
         if not artifact_repository_map:
             return None
@@ -125,8 +125,8 @@ class ModelParameterReconciler:
         return transformed_map
 
     def _reconcile_warehouse_pip_artifact_repository(
-        self, reconciled_target_platforms: Optional[list[model_types.TargetPlatform]]
-    ) -> tuple[Optional[dict[str, str]], bool]:
+        self, reconciled_target_platforms: list[model_types.TargetPlatform] | None
+    ) -> tuple[dict[str, str] | None, bool]:
         """Inject shared PyPI artifact repository for Warehouse + pip when possible.
 
         Otherwise fall back to conda defaults for implicit pip-only packaging when the shared repo is unavailable.
@@ -188,7 +188,7 @@ class ModelParameterReconciler:
     def _is_packaged_as_pip_model(
         self,
         *,
-        target_platforms: Optional[list[model_types.TargetPlatform]],
+        target_platforms: list[model_types.TargetPlatform] | None,
         force_conda_defaults: bool,
     ) -> bool:
         """True when pip-only packaging is enabled and dependencies are packaged on the pip path."""
@@ -217,14 +217,14 @@ class ModelParameterReconciler:
             )
             return False
 
-    def _extract_save_location(self) -> Optional[str]:
+    def _extract_save_location(self) -> str | None:
         """Extract save_location from options."""
         if self._options and "save_location" in self._options:
             return self._options.get("save_location")
 
         return None
 
-    def _reconcile_target_platforms(self) -> Optional[list[model_types.TargetPlatform]]:
+    def _reconcile_target_platforms(self) -> list[model_types.TargetPlatform] | None:
         """Reconcile target platforms with proper defaulting logic."""
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
         if self._target_platforms:
@@ -239,13 +239,18 @@ class ModelParameterReconciler:
             )
             return [target_platform.TargetPlatform.WAREHOUSE]
 
-        # Default the target platform to SPCS if not specified when running in ML runtime
+        # Default the target platforms to both Warehouse and Snowpark Container Services when not
+        # specified while running in the Container Runtime. Warehouse is intentionally retained in
+        # the default so the logged model remains runnable in a Snowflake Warehouse.
         if env.IN_ML_RUNTIME:
             logger.info(
                 "Logging the model on Container Runtime without specifying `target_platforms`. "
-                'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
+                'Default to `target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]`.'
             )
-            return [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+            return [
+                target_platform.TargetPlatform.WAREHOUSE,
+                target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+            ]
 
         return None
 
@@ -265,8 +270,8 @@ class ModelParameterReconciler:
 
     def _validate_pip_requirements_warehouse_compatibility(
         self,
-        artifact_repository_map: Optional[dict[str, str]],
-        reconciled_target_platforms: Optional[list[model_types.TargetPlatform]],
+        artifact_repository_map: dict[str, str] | None,
+        reconciled_target_platforms: list[model_types.TargetPlatform] | None,
         force_conda_defaults: bool,
     ) -> None:
         """Validate pip_requirements compatibility with warehouse deployment."""
@@ -304,7 +309,7 @@ class ModelParameterReconciler:
 
     @staticmethod
     def _targets_warehouse(
-        target_platforms: Optional[Sequence[model_types.SupportedTargetPlatformType]],
+        target_platforms: Sequence[model_types.SupportedTargetPlatformType] | None,
     ) -> bool:
         """Returns True if warehouse is a target platform (None defaults to True)."""
         return (
@@ -314,7 +319,7 @@ class ModelParameterReconciler:
         )
 
     def _handle_embed_local_ml_library(
-        self, options: model_types.ModelSaveOption, target_platforms: Optional[list[model_types.TargetPlatform]]
+        self, options: model_types.ModelSaveOption, target_platforms: list[model_types.TargetPlatform] | None
     ) -> model_types.ModelSaveOption:
         """Handle embed_local_ml_library logic."""
         if not snowpark_utils.is_in_stored_procedure() and target_platforms != [  # type: ignore[no-untyped-call]
@@ -339,7 +344,7 @@ class ModelParameterReconciler:
     def _reconcile_relax_version(
         self,
         options: model_types.ModelSaveOption,
-        target_platforms: Optional[list[model_types.TargetPlatform]],
+        target_platforms: list[model_types.TargetPlatform] | None,
         force_conda_defaults: bool,
     ) -> model_types.ModelSaveOption:
         """Reconcile relax_version setting based on pip requirements and target platforms."""

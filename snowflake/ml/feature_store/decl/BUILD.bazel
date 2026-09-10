@@ -59,7 +59,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_spec_models.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -74,7 +77,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_spec_models_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -89,7 +95,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_spec_models_fv_subclasses.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -104,7 +113,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_spec_compiler.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -119,7 +131,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_loader.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -134,7 +149,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_loader_feature_groups.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -149,7 +167,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_loader_project_mode.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -164,7 +185,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_load_python_form.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -179,7 +203,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_templating.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -194,7 +221,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_templating_sidecars.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -209,7 +239,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_manifest.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -224,7 +257,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_project_paths.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -239,7 +275,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_compiler.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -254,7 +293,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_udf_loader.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -269,7 +311,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_enums.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -284,7 +329,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_enums_consolidation.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -299,7 +347,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_decorator_removed.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_loader",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -314,7 +365,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_wheel_isolation.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -360,7 +414,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_invariants.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -375,7 +432,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_invariants_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -390,7 +450,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_invariants_source_diff.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -405,7 +468,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_refresh_mode_normalization.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -420,7 +486,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_dependencies.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -435,7 +504,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_dependencies_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -450,7 +522,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -465,7 +540,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -480,10 +558,31 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_feature_group_version_identity.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         ":decl_lib_state",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "entity_join_key_resolution_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_entity_join_key_resolution.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_entity_join_key_resolution.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )
@@ -500,7 +599,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_planner_revalidate_golden_describe.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -518,7 +620,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_planner_revalidate_identical_spec.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -533,7 +638,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_object_hashing.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -548,7 +656,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_loader_spec_fallback.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -591,7 +702,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_queries.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -606,7 +720,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_state_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -621,7 +738,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_state_stream_source.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -636,7 +756,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_state_inject_refresh_freq.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -651,7 +774,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_exporter_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -666,7 +792,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_offline_bfv_state.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -681,7 +810,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_fields.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -696,7 +828,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_entity_description_diff.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -711,7 +846,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_field_rename.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -726,7 +864,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_no_regex_in_decl.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -743,7 +884,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_offline_bfv.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         ":decl_lib_state",
@@ -759,7 +903,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_stream_source.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_planner",
         ":decl_lib_state",
@@ -774,7 +921,10 @@ py_test(
         "tests/test_exporter_path_traversal.py",
     ],
     main = "tests/test_exporter_path_traversal.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -789,7 +939,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_backfill_model.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -804,7 +957,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_batch_feature_view_validation.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -819,7 +975,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_streaming_fv_online_implicit.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -834,7 +993,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_streaming_fv_rejects_authored_cadence.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -854,7 +1016,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_streaming_fv_replan_drift.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -903,7 +1068,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -918,7 +1086,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_entity_resolution.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -933,7 +1104,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -948,7 +1122,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_fetch_fg.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -963,7 +1140,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_list_fv.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -978,7 +1158,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_target_lag.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -993,7 +1176,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_imperative_executor_update_batch_fv.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1008,7 +1194,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_api_export.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1023,7 +1212,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_api_project.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1038,7 +1230,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_api_stream_source.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1053,7 +1248,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_service.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1068,7 +1266,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_state.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1086,7 +1287,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_exporter.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1104,7 +1308,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_golden_spec_round_trip.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1122,7 +1329,10 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_export_plan_round_trip.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1137,7 +1347,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_export_plan_round_trip_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1152,7 +1365,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_exporter_versioned_stem.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1167,7 +1383,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_enrich_list_results.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1182,7 +1401,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_enrich_list_results_feature_group.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1197,7 +1419,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_cluster_by.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1212,7 +1437,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_initialize.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1227,7 +1455,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_refresh_mode.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1242,7 +1473,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_secondary_keys.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1257,7 +1491,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_storage_config.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1272,7 +1509,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_advanced_bvt_warehouse.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1287,7 +1527,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_batch_fv_bugbash_e2e.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1302,7 +1545,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_batch_fv_project_integration.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1317,7 +1563,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_batch_fv_query_source_integration.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1332,7 +1581,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_clean_apply_replan_regression.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1347,7 +1599,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_decoupled_refresh_contract.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1362,7 +1617,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_init_first_hypotheses.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1377,7 +1635,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_integration.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1392,7 +1653,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_load_project_templating.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1407,7 +1671,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_no_entity_tag_sql_in_decl.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1422,7 +1689,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_batch_feature_view.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1437,7 +1707,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_virtual_sources.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1452,7 +1725,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_serializer.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
@@ -1467,7 +1743,10 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_types.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",

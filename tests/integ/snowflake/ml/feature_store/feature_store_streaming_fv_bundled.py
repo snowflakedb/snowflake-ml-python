@@ -42,6 +42,7 @@ from feature_store_streaming_fv_integ_base import (
 )
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store.feature_group import FeatureGroup
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewStatus,
@@ -429,6 +430,49 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         sources = fs.list_stream_sources().collect(statement_params=fs._telemetry_stmp)
         names = {row["NAME"] for row in sources}
         self.assertNotIn(self._stream_source_ref_key(stream), names)
+
+    def test_delete_streaming_fv_with_dependent_fg_fails_before_offline_drop(self) -> None:
+        """delete_feature_view must raise 099940 before dropping the offline DT when a
+        FeatureGroup still depends on the streaming FV's OFT.
+        """
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_FV_{s}"
+        fg_name = f"FG_DEP_{s.upper()}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table(fs, s)
+
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+        )
+        registered_fv = fs.register_feature_view(fv, "v1")
+        phys_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+
+        try:
+            fs.register_feature_group(FeatureGroup(name=fg_name, features=[registered_fv]), "v1")
+            with self.assertRaisesRegex(RuntimeError, "099940"):
+                fs.delete_feature_view(registered_fv)
+
+            dt_rows = self._session.sql(
+                f"SHOW DYNAMIC TABLES LIKE '{phys_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+            ).collect()
+            self.assertTrue(
+                dt_rows,
+                "offline DT must still exist after 099940; OFT drop must fail before any deletion",
+            )
+        finally:
+            fs.delete_feature_group(fg_name, "v1")
 
     # =========================================================================
     # Streaming + Tiled Features + Dataset Generation

@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import logging
 import os
 import tempfile
 import time
 import uuid
 from datetime import timedelta
-from typing import Optional
+from typing import Any
 
 import pandas as pd
 from absl.testing import absltest
@@ -20,10 +18,15 @@ try:
 except ModuleNotFoundError:
     _HAS_SNOWFLAKE_CORE = False
 
-from snowflake.core import _common
-
 from snowflake.ml.model import inference_engine, openai_signatures
-from snowflake.ml.model.batch import BatchInferenceTask, InputSpec, JobSpec, OutputSpec
+from snowflake.ml.model.batch_inference import (
+    BatchInferenceTask,
+    EngineOptions,
+    InferenceSpec,
+    InputSpec,
+    OutputSpec,
+    ResourcesSpec,
+)
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
@@ -32,10 +35,14 @@ logger = logging.getLogger(__name__)
 
 
 class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    """Test BatchInferenceTask DAG tasks with vLLM inference engine."""
+    """Test BatchInferenceTask with the vLLM inference engine."""
 
     _DAG_POLL_INTERVAL_SEC = 15
     _DAG_POLL_MAX_ATTEMPTS = 120  # 30 min total
+
+    # A batch deploy creates several jobs in the schema: the inference job plus server-side
+    # ``MODEL_BUILD_<hash>`` / ``MODEL_LOGGING_<hash>`` sub-services.
+    _SUBSERVICE_PREFIXES = ("MODEL_BUILD_", "MODEL_LOGGING_")
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -45,7 +52,7 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
         os.environ["HF_HOME"] = cls.cache_dir.name
         cls.hf_token = os.getenv("HF_TOKEN", None)
-        cls._original_hf_endpoint: Optional[str] = None
+        cls._original_hf_endpoint: str | None = None
         if "HF_ENDPOINT" in os.environ:
             cls._original_hf_endpoint = os.environ["HF_ENDPOINT"]
             del os.environ["HF_ENDPOINT"]
@@ -69,32 +76,38 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             self.skipTest("snowflake.core is not installed")
         super().setUp()
         self._dag_name = f"test_dag_{uuid.uuid4().hex[:8]}"
-
-    def _set_task_image_overrides(self, task_fqn: str) -> None:
-        for param, value in self._get_batch_image_override_session_params().items():
-            self.session.sql(f"ALTER TASK IF EXISTS {task_fqn} SET {param} = '{value}'").collect()
+        self._jobs_before_run: set[str] | None = None
 
     def _apply_dag_task_image_overrides(self) -> None:
         root_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}"
         self.session.sql(f"ALTER TASK {root_task_fqn} SUSPEND").collect()
-        self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
+        for param, value in self._get_batch_image_override_session_params().items():
+            self.session.sql(f"ALTER TASK IF EXISTS {root_task_fqn}$BATCH_INFERENCE SET {param} = '{value}'").collect()
         self.session.sql(f"ALTER TASK {root_task_fqn} RESUME").collect()
 
-    def _poll_dag_run_completion(self, dag: DAG) -> DAGRun:
+    def _dag_operation(self) -> "DAGOperation":
+        api_root = Root(self.session)
+        return DAGOperation(api_root.databases[self._test_db].schemas[self._test_schema])
+
+    def _poll_dag_run_completion(self, dag: "DAG", *, exclude_run_ids: set[int] | None = None) -> "DAGRun":
         """Poll until a DAG run reaches a terminal state, then return it.
 
-        Uses :meth:`DAGOperation.get_complete_dag_runs` (covers the past 60 minutes) and
-        :meth:`get_current_dag_runs` for liveness logging.
+        Args:
+            dag: The task graph to poll.
+            exclude_run_ids: Run ids that existed before the run was triggered, so a repeated
+                execution waits for the new run only.
+
+        Returns:
+            The terminal DAG run.
         """
-        api_root = Root(self.session)
-        schema = api_root.databases[self._test_db].schemas[self._test_schema]
-        dag_op = DAGOperation(schema)
+        dag_op = self._dag_operation()
         terminal_states = {"SUCCEEDED", "FAILED", "CANCELLED"}
 
         for _ in range(self._DAG_POLL_MAX_ATTEMPTS):
-            completed = sorted(
-                dag_op.get_complete_dag_runs(dag, error_only=False), key=lambda r: r.run_id, reverse=True
-            )
+            completed = list(dag_op.get_complete_dag_runs(dag, error_only=False))
+            if exclude_run_ids is not None:
+                completed = [r for r in completed if r.run_id not in exclude_run_ids]
+            completed.sort(key=lambda r: r.run_id, reverse=True)
             for run in completed:
                 if run.state in terminal_states:
                     return run
@@ -108,27 +121,138 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             f"DAG {dag.name} did not complete within {self._DAG_POLL_MAX_ATTEMPTS * self._DAG_POLL_INTERVAL_SEC}s"
         )
 
-    def _deploy_and_run_dag(self, dag: DAG) -> None:
-        api_root = Root(self.session)
-        schema = api_root.databases[self._test_db].schemas[self._test_schema]
-        dag_op = DAGOperation(schema)
+    def _deploy_and_run_dag(self, dag: "DAG") -> None:
+        """Deploy the graph, apply the container image overrides, and trigger a run.
 
-        dag_op.deploy(dag, mode=_common.CreateMode.or_replace)
+        Args:
+            dag: The task graph to deploy and run.
+        """
+        dag_op = self._dag_operation()
+        dag_op.deploy(dag, mode="orReplace")
         self._apply_dag_task_image_overrides()
+        self._jobs_before_run = self._snapshot_jobs()
         dag_op.run(dag)
 
-    def _assert_dag_succeeded(self, dag: DAG, base_stage_location: str) -> None:
-        """Poll for DAG run success and verify a _SUCCESS output file exists under the stage."""
-        run = self._poll_dag_run_completion(dag)
-        self.assertEqual(
-            run.state,
-            "SUCCEEDED",
-            f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}",
-        )
+    def _list_jobs(self) -> list[str] | None:
+        """Names of the jobs in the test schema, newest first.
 
-        list_results = self.session.sql(f"LIST {base_stage_location}").collect()
-        success_files = [row["name"] for row in list_results if row["name"].endswith("_SUCCESS")]
-        self.assertGreater(len(success_files), 0, f"No _SUCCESS file found under {base_stage_location}")
+        None and an empty list mean different things: a failed lookup must not be read as
+        "no jobs exist", or unrelated jobs get attributed to this run.
+
+        Returns:
+            The job names, or None when they cannot be listed.
+        """
+        try:
+            rows = self.session.sql(f"SHOW JOB SERVICES IN SCHEMA {self._test_db}.{self._test_schema}").collect()
+            return [str(row["name"]) for row in sorted(rows, key=lambda row: row["created_on"], reverse=True)]
+        except Exception:
+            logger.warning("Could not list the jobs in %s.%s", self._test_db, self._test_schema, exc_info=True)
+            return None
+
+    def _snapshot_jobs(self) -> set[str] | None:
+        """Upper-cased names of the jobs that exist right now.
+
+        Returns:
+            The job names upper-cased, or None when they cannot be listed.
+        """
+        job_names = self._list_jobs()
+        return None if job_names is None else {job_name.upper() for job_name in job_names}
+
+    def _new_jobs(self) -> list[str] | None:
+        """Names of the jobs created by the most recent DAG run, newest first.
+
+        Anchored to the pre-run snapshot rather than to timestamps, so a repeated execution
+        that fails before its inference job launches never reports a job from an earlier run.
+
+        Returns:
+            The job names, or None when they cannot be attributed to the run.
+        """
+        job_names = self._list_jobs()
+        if job_names is None or self._jobs_before_run is None:
+            return None
+        new_job_names = [job_name for job_name in job_names if job_name.upper() not in self._jobs_before_run]
+        inference_jobs = [
+            job_name for job_name in new_job_names if not job_name.upper().startswith(self._SUBSERVICE_PREFIXES)
+        ]
+        return inference_jobs[:1] if inference_jobs else new_job_names
+
+    def _dump_run_logs(self, *, limit: int = 100) -> str:
+        """Best-effort logs for the jobs created by the most recent DAG run.
+
+        The task launches the inference job inside Snowflake, so no MLJob handle is available;
+        the run's jobs have to be discovered from the schema.
+
+        Args:
+            limit: Number of trailing log lines per job.
+
+        Returns:
+            The formatted logs.
+        """
+        job_names = self._new_jobs()
+        if job_names is None:
+            return "(unable to list the jobs in the test schema)"
+        if not job_names:
+            return "(this DAG run created no jobs)"
+
+        parts = []
+        for job_name in job_names:
+            job_fqn = f"{self._test_db}.{self._test_schema}.{job_name}"
+            parts.append(f"Job: {job_fqn}")
+            try:
+                # Import the submodule, not the package: ``snowflake.ml.jobs`` resolves as a
+                # namespace package under Bazel, so package-level names are not importable here.
+                from snowflake.ml.jobs import job as ml_job
+
+                batch_job = ml_job.MLJob[Any](job_fqn, session=self.session)
+                parts.append(f"Last {limit} lines of job logs:\n{batch_job.get_logs(limit=limit)}")
+            except Exception as e:
+                parts.append(f"(failed to fetch job logs: {e})")
+        return "\n\n".join(parts)
+
+    def _assert_run_succeeded(self, run: "DAGRun") -> None:
+        """Assert the DAG run SUCCEEDED, dumping batch-inference service logs on failure.
+
+        Args:
+            run: The terminal DAG run.
+        """
+        if run.state != "SUCCEEDED":
+            logs = self._dump_run_logs()
+            self.fail(
+                f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}\n\n{logs}"
+            )
+
+    def _assert_success_file_written(self, output_stage_location: str) -> list[str]:
+        """Assert a _SUCCESS marker exists under the output base, and return the per-job subdirs.
+
+        Args:
+            output_stage_location: The output base location.
+
+        Returns:
+            The distinct per-job subdirectory names found under the base.
+        """
+        rows = self.session.sql(f"LIST {output_stage_location}").collect()
+        names = [str(row["name"]) for row in rows]
+        success_files = [name for name in names if name.endswith("_SUCCESS")]
+        self.assertGreater(len(success_files), 0, f"No _SUCCESS file found under {output_stage_location}. Saw: {names}")
+
+        # Results land in <stage_location>/<job_name>/, so the segment before _SUCCESS is the job name.
+        return sorted({name.rsplit("/", 2)[-2] for name in success_files})
+
+    def _vllm_inference_spec(self) -> InferenceSpec:
+        """Inference block selecting the vLLM engine with the test's engine arguments.
+
+        Returns:
+            The inference block.
+        """
+        return InferenceSpec(
+            engine_options=EngineOptions(
+                engine=inference_engine.InferenceEngine.VLLM,
+                engine_args_override=[
+                    "--gpu-memory-utilization=0.8",
+                    "--max-model-len=1024",
+                ],
+            )
+        )
 
     def test_vllm_inference_engine(self) -> None:
         """Verify batch inference with vLLM engine works through a BatchInferenceTask."""
@@ -181,9 +305,8 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             ]
         )
         self.session.create_dataframe(x_df).write.save_as_table(input_table, mode="overwrite")
-        input_df = self.session.table(input_table)
 
-        base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/vllm_base_stage/"
+        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/vllm_base_stage/"
 
         dag = DAG(
             self._dag_name,
@@ -197,25 +320,17 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             batch_inference_task = BatchInferenceTask(
                 "batch_inference",
                 model_version=mv,
-                X=input_df,
+                query=f"SELECT * FROM {input_table}",
                 compute_pool=self._TEST_GPU_COMPUTE_POOL,
-                output_spec=OutputSpec(base_stage_location=base_stage_location),
-                job_spec=JobSpec(
-                    gpu_requests="1",
-                    job_name_prefix="test_vllm_dag",
-                ),
-                inference_engine_options={
-                    "engine": inference_engine.InferenceEngine.VLLM,
-                    "engine_args_override": [
-                        "--gpu-memory-utilization=0.8",
-                        "--max-model-len=1024",
-                    ],
-                },
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                resources_spec=ResourcesSpec(gpu_requests="1"),
+                inference_spec=self._vllm_inference_spec(),
             )
             data_prep_task >> batch_inference_task
 
         self._deploy_and_run_dag(dag)
-        self._assert_dag_succeeded(dag, base_stage_location)
+        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
+        self._assert_success_file_written(output_stage_location)
 
     @absltest.skip("DAG test_dag_46edb616 did not complete within 1800s")
     def test_vllm_batch_dag_response_format_extracts_output_to_table(self) -> None:
@@ -273,9 +388,8 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         )
         input_table = f"{self._test_db}.{self._test_schema}.vllm_rf_input_{uuid.uuid4().hex[:8]}"
         self.session.create_dataframe(x_df).write.save_as_table(input_table, mode="overwrite")
-        input_df = self.session.table(input_table)
 
-        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        _, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         ff_name = f"BATCH_RF_PARQUET_FF_{uuid.uuid4().hex[:8]}"
         self.session.sql(
@@ -286,6 +400,8 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         ff_fqn = f"{self._test_db}.{self._test_schema}.{ff_name}"
         # Stage parquet reads expose each row as $1 (VARIANT), not named columns. Bracket paths
         # on raw:"choices" mirror SERVICE ! __call__ output; CAST(content AS OBJECT) parses JSON.
+        # The results live under <output_stage_location>/<job_name>/, and the recursive PATTERN
+        # picks them up without the test knowing the server-generated job name.
         extract_sql = f"""
 CREATE OR REPLACE TABLE {result_table} AS
 WITH src AS (
@@ -316,37 +432,19 @@ FROM extracted_structured_output
             batch_inference_task = BatchInferenceTask(
                 "batch_inference",
                 model_version=mv,
-                X=input_df,
+                query=f"SELECT * FROM {input_table}",
                 compute_pool=self._TEST_GPU_COMPUTE_POOL,
                 input_spec=InputSpec(params={"response_format": response_format}),
                 output_spec=OutputSpec(stage_location=output_stage_location),
-                job_spec=JobSpec(
-                    job_name=job_name,
-                    gpu_requests="1",
-                ),
-                inference_engine_options={
-                    "engine": inference_engine.InferenceEngine.VLLM,
-                    "engine_args_override": [
-                        "--gpu-memory-utilization=0.8",
-                        "--max-model-len=1024",
-                    ],
-                },
+                resources_spec=ResourcesSpec(gpu_requests="1"),
+                inference_spec=self._vllm_inference_spec(),
             )
             extract_task = DAGTask("extract_output", definition=extract_sql)
             data_prep_task >> batch_inference_task >> extract_task
 
         self._deploy_and_run_dag(dag)
-
-        run = self._poll_dag_run_completion(dag)
-        self.assertEqual(
-            run.state,
-            "SUCCEEDED",
-            f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}",
-        )
-
-        success_check = self.session.sql(f"LIST {output_stage_location}").collect()
-        has_success = any(str(r["name"]).endswith("_SUCCESS") for r in success_check)
-        self.assertTrue(has_success, f"Expected batch completion marker under {output_stage_location}")
+        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
+        self._assert_success_file_written(output_stage_location)
 
         out_pdf = self.session.table(result_table).to_pandas()
         self.assertEqual(len(out_pdf), 1, f"Expected one output row, got {len(out_pdf)}: {out_pdf}")

@@ -1,11 +1,10 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import cloudpickle
 import numpy as np
 import pandas as pd
-import shap
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
@@ -95,8 +94,8 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     def _get_supported_object_for_explainability(
         cls,
         estimator: "BaseEstimator",
-        background_data: Optional[model_types.SupportedDataType],
-        enable_explainability: Optional[bool],
+        background_data: model_types.SupportedDataType | None,
+        enable_explainability: bool | None,
     ) -> Any:
         tree_methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
         non_tree_methods = ["to_sklearn"]
@@ -127,8 +126,8 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         model: "BaseEstimator",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -307,6 +306,13 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
             predictor = model.steps[-1][1]  # type: ignore[attr-defined]
 
         def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:
+            try:
+                import shap
+            except ImportError as e:
+                raise ImportError(
+                    "The `shap` package is required to compute model explanations. "
+                    "Please install `shap` in your environment."
+                ) from e
             data = _apply_transforms_up_to_last_step(model, data)
             tree_methods = ["to_xgboost", "to_lightgbm"]
             non_tree_methods = ["to_sklearn", None]  # None just uses the predictor directly
@@ -347,7 +353,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         cls,
         raw_model: "BaseEstimator",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.SNOWModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
@@ -360,7 +366,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                 raw_model: "BaseEstimator",
                 signature: model_signature.ModelSignature,
                 target_method: str,
-                background_data: Optional[pd.DataFrame] = None,
+                background_data: pd.DataFrame | None = None,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import tempfile
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import pandas as pd
 import pytest
@@ -112,9 +112,9 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         model: Any,
         method_name: str,
         inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
-        input_data: Optional[pd.DataFrame] = None,
+        input_data: pd.DataFrame | None = None,
         validator_fn: Callable[[pd.DataFrame], None] = None,
-        input_data_batch: Optional[pd.DataFrame] = None,
+        input_data_batch: pd.DataFrame | None = None,
         validator_fn_batch: Callable[[pd.DataFrame], None] = None,
     ) -> ModelVersion:
         # Deploy model and test with single row
@@ -246,6 +246,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.2,
                     "response_format": None,
+                    "model": None,
                 }
             ],
         )
@@ -290,6 +291,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.1,
                     "response_format": None,
+                    "model": None,
                 }
                 for prompt in test_prompts
             ],

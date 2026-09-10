@@ -53,6 +53,7 @@ py_test(
     data = [
         ":function_fixtures",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -88,6 +89,7 @@ py_test(
     data = [
         ":function_fixtures",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

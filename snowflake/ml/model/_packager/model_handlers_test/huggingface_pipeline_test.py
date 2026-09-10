@@ -455,6 +455,29 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertEqual(blob_options["task"], "fill-mask")
             self.assertEqual(blob_options["model"], expected_model_name)
 
+    def test_text_generation_explicit_openai_chat_signature_honored(self) -> None:
+        wrapper_model = hf_base.TransformersPipeline(
+            task="text-generation",
+            model="google-bert/bert-base-uncased",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+            self.assertEqual(
+                pk.meta.signatures["__call__"],
+                openai_signatures.OPENAI_CHAT_SIGNATURE["__call__"],
+            )
+
     @mock.patch("huggingface_hub.hf_hub_download")
     @mock.patch("huggingface_hub.HfApi")
     def test_save_model_lazy_upload_skips_copytree(

@@ -224,13 +224,6 @@ if [ ${IS_NT} = true ]; then
 fi
 
 case ${PYTHON_VERSION} in
-  3.9)
-    if [ ${IS_NT} = true ]; then
-        PYTHON_EXECUTABLE="py -3.9"
-    else
-        PYTHON_EXECUTABLE="python3.9"
-    fi
-    ;;
   3.10)
     if [ ${IS_NT} = true ]; then
         PYTHON_EXECUTABLE="py -3.10"

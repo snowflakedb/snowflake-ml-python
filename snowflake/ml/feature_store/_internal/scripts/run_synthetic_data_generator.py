@@ -1,9 +1,9 @@
 import time
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.feature_store._internal.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 if __name__ == "__main__":

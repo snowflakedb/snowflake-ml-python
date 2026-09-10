@@ -9,7 +9,7 @@ small when individual responsibilities are migrated to Global Services.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from snowflake.ml.feature_store.decl.errors import FeatureStoreNotInitializedError
 from snowflake.ml.feature_store.decl.imperative_executor import (
@@ -539,6 +539,8 @@ def compile_to_spec(
     spec_dict: dict[str, Any],
     database: str,
     schema: str,
+    *,
+    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
 ) -> dict[str, Any]:
     """Compile a YAML authoring-format spec into imperative FeatureViewSpec format.
 
@@ -546,6 +548,11 @@ def compile_to_spec(
         spec_dict: The loaded/compiled spec dict from the authoring YAML.
         database: Snowflake database name (from connection context).
         schema: Snowflake schema name (from connection context).
+        entity_join_keys: Optional entity-name → ordered join-key-columns map.
+            When provided, the FV's authored entity names are resolved to their
+            join-key columns for the wire field ``ordered_entity_column_names``.
+            When omitted, the authored ``entities`` list is copied verbatim
+            (historical behaviour; keeps existing callers and hashes stable).
 
     Returns:
         Dict matching FeatureViewSpec.to_dict() output, ready for
@@ -555,7 +562,7 @@ def compile_to_spec(
         compile_to_spec as _compile,
     )
 
-    return _compile(spec_dict, database, schema)
+    return _compile(spec_dict, database, schema, entity_join_keys=entity_join_keys)
 
 
 # ---------------------------------------------------------------------------

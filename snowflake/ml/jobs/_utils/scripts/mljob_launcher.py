@@ -14,7 +14,7 @@ import time
 import traceback
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 # Ensure payload directory is in sys.path for module imports before importing other modules
 # This is needed to support relative imports in user scripts and to allow overriding
@@ -190,8 +190,8 @@ def save_mljob_result_v1(value: Any, is_error: bool, path: str) -> None:
     # Eventually, this entire function will be removed in favor of v2
     @dataclass(frozen=True)
     class ExecutionResult:
-        result: Optional[Any] = None
-        exception: Optional[BaseException] = None
+        result: Any | None = None
+        exception: BaseException | None = None
 
         def to_dict(self) -> dict[str, Any]:
             """Return the serializable dictionary."""
@@ -403,7 +403,7 @@ def _load_dto_fallback(function_args: str, path_transform: Callable[[str], str])
     return data["value"] or result_value
 
 
-def _unpack_obj_fallback(obj: Any, session: Optional[snowflake.snowpark.Session]) -> Any:
+def _unpack_obj_fallback(obj: Any, session: snowflake.snowpark.Session | None) -> Any:
     SESSION_KEY_PREFIX = "session@"
 
     if not isinstance(obj, dict):
@@ -446,7 +446,7 @@ def _unpack_obj_fallback(obj: Any, session: Optional[snowflake.snowpark.Session]
 
 def _load_function_args(
     session: snowflake.snowpark.Session,
-    function_args: Optional[str] = None,
+    function_args: str | None = None,
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """Load and deserialize function arguments.
 
@@ -499,9 +499,9 @@ def _load_function_args(
 
 def run_script(
     script_path: str,
-    payload_args: Optional[tuple[Any, ...]] = None,
-    payload_kwargs: Optional[dict[str, Any]] = None,
-    main_func: Optional[str] = None,
+    payload_args: tuple[Any, ...] | None = None,
+    payload_kwargs: dict[str, Any] | None = None,
+    main_func: str | None = None,
 ) -> Any:
     """
     Execute a Python script and return its result.
@@ -555,9 +555,9 @@ def run_script(
 def main(
     entrypoint: str,
     session: snowflake.snowpark.Session,
-    payload_args: Optional[tuple[Any, ...]] = None,
-    payload_kwargs: Optional[dict[str, Any]] = None,
-    script_main_func: Optional[str] = None,
+    payload_args: tuple[Any, ...] | None = None,
+    payload_kwargs: dict[str, Any] | None = None,
+    script_main_func: str | None = None,
 ) -> Any:
     """Executes a Python script and serializes the result to JOB_RESULT_PATH.
 
@@ -671,10 +671,7 @@ if __name__ == "__main__":
     # are returned in script_args with their original ordering preserved.
     args, script_args = parser.parse_known_args()
 
-    try:
-        from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
-    except ImportError:
-        from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+    from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 
     # Create a Snowpark session before starting
     # Session can be retrieved from using snowflake.snowpark.context.get_active_session()

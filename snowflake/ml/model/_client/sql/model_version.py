@@ -13,8 +13,51 @@ from snowflake.ml._internal.utils import (
 from snowflake.ml.model._client.ops import param_utils
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.model._model_composer.model_method import constants
-from snowflake.snowpark import dataframe, functions as F, row, types as spt
+from snowflake.snowpark import (
+    dataframe,
+    exceptions as snowpark_exceptions,
+    functions as F,
+    row,
+    types as spt,
+)
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+# PUT can finish before the uploaded MANIFEST.yml is readable on COMMIT / FROM STAGE
+# (SQL 398507, "File size could be too large").
+_STAGE_MANIFEST_READ_ERROR_CODE = 398507
+_STAGE_MANIFEST_READ_MARKER = "Unable to read file MANIFEST.yml"
+
+
+def _is_transient_stage_manifest_read(exc: BaseException) -> bool:
+    if not isinstance(exc, snowpark_exceptions.SnowparkSQLException):
+        return False
+    sql_error_code = getattr(exc, "sql_error_code", None)
+    if sql_error_code in (_STAGE_MANIFEST_READ_ERROR_CODE, str(_STAGE_MANIFEST_READ_ERROR_CODE)):
+        return True
+    return _STAGE_MANIFEST_READ_MARKER in str(exc)
+
+
+def _run_model_ddl(
+    session: Any,
+    sql: str,
+    *,
+    statement_params: Optional[dict[str, Any]] = None,
+) -> None:
+    import retrying
+
+    def _execute() -> None:
+        query_result_checker.SqlResultValidator(
+            session,
+            sql,
+            statement_params=statement_params,
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    retrying.retry(
+        retry_on_exception=_is_transient_stage_manifest_read,
+        stop_max_attempt_number=5,
+        wait_exponential_multiplier=200,
+        wait_exponential_max=5000,
+    )(_execute)()
 
 
 def _normalize_url_for_sql(url: str) -> str:
@@ -38,14 +81,14 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         stage_path: str,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
-        query_result_checker.SqlResultValidator(
+        _run_model_ddl(
             self._session,
             (
                 f"CREATE MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
                 f" WITH VERSION {version_name.identifier()} FROM {stage_path}"
             ),
             statement_params=statement_params,
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        )
 
     def create_from_model_version(
         self,
@@ -131,11 +174,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         if rename_version_to is not None:
             sql += f" RENAME VERSION TO {rename_version_to.identifier()}"
 
-        query_result_checker.SqlResultValidator(
-            self._session,
-            sql,
-            statement_params=statement_params,
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        _run_model_ddl(self._session, sql, statement_params=statement_params)
 
     # TODO(SNOW-987381): Merge with above when we have `create or alter module m [with] version v1 ...`
     def add_version_from_stage(
@@ -148,14 +187,14 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         stage_path: str,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
-        query_result_checker.SqlResultValidator(
+        _run_model_ddl(
             self._session,
             (
                 f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
                 f" ADD VERSION {version_name.identifier()} FROM {stage_path}"
             ),
             statement_params=statement_params,
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        )
 
     def add_version_from_model_version(
         self,

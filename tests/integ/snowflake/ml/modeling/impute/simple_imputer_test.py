@@ -12,8 +12,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import main
 from sklearn.impute import SimpleImputer as SklearnSimpleImputer
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.impute import SimpleImputer  # type: ignore[attr-defined]
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (

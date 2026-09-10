@@ -2,7 +2,7 @@ import signal
 from typing import Any, cast
 
 from snowflake import snowpark
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params
 
 
 def create_test_session() -> snowpark.Session:

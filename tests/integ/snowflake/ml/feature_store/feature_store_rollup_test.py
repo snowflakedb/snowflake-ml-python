@@ -2,7 +2,6 @@
 
 import json
 from datetime import datetime
-from typing import Optional
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -101,7 +100,7 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: str | None = None) -> FeatureStore:
         current_schema = (
             create_random_schema(self._session, "FS_ROLLUP_TEST", database=self.test_db) if name is None else name
         )
@@ -1456,9 +1455,9 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         FEATURE_VIEW_METADATA row is deleted to mirror a real pre-1.42.0 FV
         (reloads as None; no "1.41.0" persisted). The rollup inherits that legacy
         behavior. Otherwise the current per-N pre-deduplicated format is used.
-        Both roll up to the same deduplicated *set* of values, but order them
-        differently: legacy emits most-recent-first while the new version emits
-        oldest-first.
+
+        Registering a rollup on a legacy parent still succeeds, but reading it
+        offline is rejected because legacy-format tiles are no longer readable.
         """
         fs = self._create_feature_store()
 
@@ -1503,6 +1502,16 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             schema=["subscriber_id", "company_id", "ts"],
         )
 
+        if legacy:
+            with self.assertRaisesRegex(ValueError, "uses a legacy implementation of last_distinct_n"):
+                fs.generate_training_set(
+                    spine_df=spine_df,
+                    features=[registered_subscriber],
+                    spine_timestamp_col="ts",
+                    join_method="cte",
+                )
+            return
+
         result_df = fs.generate_training_set(
             spine_df=spine_df,
             features=[registered_subscriber],
@@ -1517,11 +1526,9 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         # Subscriber s1 aggregates visitors v1 + v2 within the 24h window, by time:
         #   p1(10:00,v1), p3(10:15,v2), p2(10:30,v1), p1(10:45,v2), p1(11:00,v1)
-        # last_distinct_n(n=5) distinct set: {p1, p2, p3}.
-        #   legacy ordering (most-recent-first): p1, p2, p3
-        #   new ordering (oldest-first by event time): p3, p2, p1
-        expected = ["p1", "p2", "p3"] if legacy else ["p3", "p2", "p1"]
-        self.assertEqual(products, expected)
+        # last_distinct_n(n=5) distinct set: {p1, p2, p3}, emitted oldest-first by
+        # event time: p3, p2, p1.
+        self.assertEqual(products, ["p3", "p2", "p1"])
         self.assertEqual(len(set(products)), len(products), "Rollup distinct should not contain duplicates")
 
 

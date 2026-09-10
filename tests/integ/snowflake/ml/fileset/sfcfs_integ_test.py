@@ -4,8 +4,8 @@ import fsspec
 from absl.testing import absltest
 
 from snowflake.ml._internal.exceptions import fileset_errors
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.fileset import sfcfs
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
 

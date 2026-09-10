@@ -9,7 +9,6 @@ This module provides SQL generation for:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Optional
 
 import packaging.version as pkg_version
 
@@ -35,7 +34,7 @@ _SECONDARY_KEY_MAX_COUNT = 5000
 _NEW_DISTINCT_TILE_VERSION = pkg_version.parse("1.42.0")
 
 
-def _is_new_distinct_version(authoring_pkg_version: Optional[str]) -> bool:
+def _is_new_distinct_version(authoring_pkg_version: str | None) -> bool:
     """Whether distinct-N aggregations use the new pre-deduplicated tile format.
 
     The new per-N tile format was introduced in _NEW_DISTINCT_TILE_VERSION; feature
@@ -52,6 +51,27 @@ def _is_new_distinct_version(authoring_pkg_version: Optional[str]) -> bool:
     """
     parsed_version = pkg_version.parse(authoring_pkg_version) if authoring_pkg_version else None
     return parsed_version is not None and parsed_version >= _NEW_DISTINCT_TILE_VERSION
+
+
+# TODO: remove this predicate together with the legacy distinct-N tile, merge and
+# rollup branches, and the unit tests pinning them, a few versions after 2.0.0.
+def has_legacy_distinct_n_aggregations(features: Sequence[AggregationSpec], authoring_pkg_version: str | None) -> bool:
+    """Whether any distinct-N aggregation would be served from legacy-format tiles.
+
+    Args:
+        features: The aggregation specs of the feature view.
+        authoring_pkg_version: The snowml version that authored the feature view,
+            or None for a legacy (pre-_NEW_DISTINCT_TILE_VERSION) feature view.
+
+    Returns:
+        True if the tiles predate _NEW_DISTINCT_TILE_VERSION and at least one
+        aggregation is LAST_DISTINCT_N or FIRST_DISTINCT_N, else False.
+    """
+    if _is_new_distinct_version(authoring_pkg_version):
+        return False
+    return any(
+        spec.function in (AggregationType.LAST_DISTINCT_N, AggregationType.FIRST_DISTINCT_N) for spec in features
+    )
 
 
 # Internal column names used in tile tables and merging SQL.
@@ -80,7 +100,7 @@ class TilingSqlGenerator:
         timestamp_col: str,
         feature_granularity: str,
         features: list[AggregationSpec],
-        authoring_pkg_version: Optional[str] = None,
+        authoring_pkg_version: str | None = None,
     ) -> None:
         """Initialize the TilingSqlGenerator.
 
@@ -105,7 +125,7 @@ class TilingSqlGenerator:
 
         # Derive the FV-level secondary key from the synthesized keys-specs
         # (each carries ``source_column = secondary_key``).
-        self._secondary_key: Optional[str] = next(
+        self._secondary_key: str | None = next(
             (s.source_column for s in features if s.function.is_secondary_key_array()),
             None,
         )
@@ -670,7 +690,7 @@ class MergingSqlGenerator:
         features: list[AggregationSpec],
         spine_timestamp_col: str,
         fv_index: int,
-        authoring_pkg_version: Optional[str] = None,
+        authoring_pkg_version: str | None = None,
     ) -> None:
         """Initialize the MergingSqlGenerator.
 
@@ -695,7 +715,7 @@ class MergingSqlGenerator:
         self._authoring_pkg_version = authoring_pkg_version
 
         # Derive the FV-level secondary key from synthesized keys-specs.
-        self._secondary_key: Optional[str] = next(
+        self._secondary_key: str | None = next(
             (s.source_column for s in features if s.function.is_secondary_key_array()),
             None,
         )
@@ -1673,9 +1693,9 @@ class RollupSqlGenerator:
         new_join_keys: list[str],
         mapping_query: str,
         aggregation_specs: list[AggregationSpec],
-        mapping_valid_from_col: Optional[str] = None,
-        mapping_valid_to_col: Optional[str] = None,
-        authoring_pkg_version: Optional[str] = None,
+        mapping_valid_from_col: str | None = None,
+        mapping_valid_to_col: str | None = None,
+        authoring_pkg_version: str | None = None,
     ) -> None:
         """Initialize the rollup SQL generator.
 

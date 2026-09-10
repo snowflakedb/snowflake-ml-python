@@ -3,6 +3,23 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "optional_dependency",
+    srcs = ["optional_dependency.py"],
+)
+
+py_test(
+    name = "optional_dependency_test",
+    srcs = ["optional_dependency_test.py"],
+    tags = [
+        "feature:modeling",
+        "short_regress",
+    ],
+    deps = [
+        ":optional_dependency",
+    ],
+)
+
+py_library(
     name = "transformer_protocols",
     srcs = ["transformer_protocols.py"],
 )
@@ -23,6 +40,7 @@ py_library(
 py_test(
     name = "model_transformer_builder_test",
     srcs = ["model_transformer_builder_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -31,9 +49,9 @@ py_test(
         ":estimator_utils",
         ":model_transformer_builder",
         ":transformer_protocols",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_handlers",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_handlers",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -51,6 +69,7 @@ py_library(
 py_test(
     name = "estimator_utils_test",
     srcs = ["estimator_utils_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -79,8 +98,8 @@ py_test(
     ],
     deps = [
         ":model_specifications",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -106,6 +125,10 @@ py_library(
 py_test(
     name = "model_trainer_builder_test",
     srcs = ["model_trainer_builder_test.py"],
+    optional_dependencies = [
+        "scikit-learn",
+        "xgboost",
+    ],
     tags = [
         "feature:modeling",
         "short_regress",
@@ -113,10 +136,10 @@ py_test(
     deps = [
         ":model_trainer",
         ":model_trainer_builder",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:xgboost_external_memory_trainer",
-        "//snowflake/ml/utils:connection_params",
     ],
 )

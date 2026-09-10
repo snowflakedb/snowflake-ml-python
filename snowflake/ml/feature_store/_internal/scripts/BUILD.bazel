@@ -10,7 +10,7 @@ py_binary(
         "run_synthetic_data_generator.py",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store/_internal:synthetic_data_generator",
-        "//snowflake/ml/utils:connection_params",
     ],
 )

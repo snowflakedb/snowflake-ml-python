@@ -5,7 +5,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Literal, Optional, TypedDict, Union, cast, overload
+from typing import Any, Literal, TypedDict, cast, overload
 
 import yaml
 from typing_extensions import NotRequired
@@ -13,6 +13,7 @@ from typing_extensions import NotRequired
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier, url
 from snowflake.ml.model import model_signature, type_hints
+from snowflake.ml.model._client.model_spec import model_spec, model_spec_parser
 from snowflake.ml.model._client.ops import deployment_step, metadata_ops, param_utils
 from snowflake.ml.model._client.sql import (
     model as model_sql,
@@ -27,7 +28,7 @@ from snowflake.ml.model._model_composer.model_manifest import (
     model_manifest_schema,
 )
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import dataframe, functions as F, row, session
@@ -45,8 +46,8 @@ class ModelAction(enum.Enum):
 class ServiceInfo(TypedDict):
     name: str
     status: str
-    inference_endpoint: Optional[str]
-    internal_endpoint: Optional[str]
+    inference_endpoint: str | None
+    internal_endpoint: str | None
     autocapture_enabled: NotRequired[bool]
 
 
@@ -110,9 +111,9 @@ class ModelOperator:
     def prepare_model_temp_stage_path(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        statement_params: Optional[dict[str, Any]] = None,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        statement_params: dict[str, Any] | None = None,
     ) -> str:
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
@@ -128,8 +129,8 @@ class ModelOperator:
     def get_model_version_stage_path(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
     ) -> str:
@@ -141,11 +142,11 @@ class ModelOperator:
     def get_model_action_from_model_name_and_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> ModelAction:
         if self.validate_existence(
             database_name=database_name,
@@ -173,11 +174,11 @@ class ModelOperator:
     def create_live_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_version_client.create_live_version(
             database_name=database_name,
@@ -190,11 +191,11 @@ class ModelOperator:
     def add_live_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_version_client.add_live_version(
             database_name=database_name,
@@ -207,11 +208,11 @@ class ModelOperator:
     def add_or_create_live_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         model_action = self.get_model_action_from_model_name_and_version(
             database_name=database_name,
@@ -242,13 +243,13 @@ class ModelOperator:
     def commit_live_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         checkout_model_name: sql_identifier.SqlIdentifier,
         checkout_version_name: sql_identifier.SqlIdentifier,
-        rename_model_to: Optional[sql_identifier.SqlIdentifier] = None,
-        rename_version_to: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        rename_model_to: sql_identifier.SqlIdentifier | None = None,
+        rename_version_to: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_version_client.commit_version(
             database_name=database_name,
@@ -264,11 +265,11 @@ class ModelOperator:
         self,
         composed_model: model_composer.ModelComposer,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         stage_path = str(composed_model.stage_path)
         model_action = self.get_model_action_from_model_name_and_version(
@@ -302,16 +303,16 @@ class ModelOperator:
     def create_from_model_version(
         self,
         *,
-        source_database_name: Optional[sql_identifier.SqlIdentifier],
-        source_schema_name: Optional[sql_identifier.SqlIdentifier],
+        source_database_name: sql_identifier.SqlIdentifier | None,
+        source_schema_name: sql_identifier.SqlIdentifier | None,
         source_model_name: sql_identifier.SqlIdentifier,
         source_version_name: sql_identifier.SqlIdentifier,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         model_exists: bool,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         if model_exists:
             return self._model_version_client.add_version_from_model_version(
@@ -341,10 +342,10 @@ class ModelOperator:
     def show_models_or_versions(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        model_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        model_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[row.Row]:
         if model_name:
             return self._model_client.show_versions(
@@ -365,10 +366,10 @@ class ModelOperator:
     def list_models_or_versions(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        model_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        model_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[sql_identifier.SqlIdentifier]:
         res = self.show_models_or_versions(
             database_name=database_name,
@@ -385,11 +386,11 @@ class ModelOperator:
     def validate_existence(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        version_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> bool:
         if version_name:
             res = self._model_client.show_versions(
@@ -413,11 +414,11 @@ class ModelOperator:
     def get_comment(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        version_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> str:
         if version_name:
             res = self._model_client.show_versions(
@@ -442,11 +443,11 @@ class ModelOperator:
         self,
         *,
         comment: str,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        version_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         if version_name:
             self._model_version_client.set_comment(
@@ -470,11 +471,11 @@ class ModelOperator:
         self,
         *,
         alias_name: sql_identifier.SqlIdentifier,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_version_client.set_alias(
             alias_name=alias_name,
@@ -489,10 +490,10 @@ class ModelOperator:
         self,
         *,
         version_or_alias_name: sql_identifier.SqlIdentifier,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_version_client.unset_alias(
             database_name=database_name,
@@ -505,11 +506,11 @@ class ModelOperator:
     def set_default_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         if not self.validate_existence(
             database_name=database_name,
@@ -530,10 +531,10 @@ class ModelOperator:
     def get_default_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> sql_identifier.SqlIdentifier:
         res = self._model_client.show_models(
             database_name=database_name,
@@ -548,10 +549,10 @@ class ModelOperator:
     def get_model_owner(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> sql_identifier.SqlIdentifier:
         res = self._model_client.show_models(
             database_name=database_name,
@@ -566,12 +567,12 @@ class ModelOperator:
     def get_version_by_alias(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         alias_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> Optional[sql_identifier.SqlIdentifier]:
+        statement_params: dict[str, Any] | None = None,
+    ) -> sql_identifier.SqlIdentifier | None:
         res = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -595,14 +596,14 @@ class ModelOperator:
     def get_tag_value(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> Optional[str]:
+        statement_params: dict[str, Any] | None = None,
+    ) -> str | None:
         r = self._tag_client.get_tag_value(
             database_name=database_name,
             schema_name=schema_name,
@@ -620,10 +621,10 @@ class ModelOperator:
     def show_tags(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         tags_info = self._tag_client.get_tag_list(
             database_name=database_name,
@@ -644,14 +645,14 @@ class ModelOperator:
     def set_tag(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
         tag_value: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._tag_client.set_tag_on_model(
             database_name=database_name,
@@ -667,13 +668,13 @@ class ModelOperator:
     def unset_tag(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._tag_client.unset_tag_on_model(
             database_name=database_name,
@@ -693,7 +694,7 @@ class ModelOperator:
         except AttributeError:
             return False
 
-    def _extract_and_validate_ingress_url(self, res_row: "row.Row") -> Optional[str]:
+    def _extract_and_validate_ingress_url(self, res_row: "row.Row") -> str | None:
         """Extract and validate ingress URL from endpoint row."""
         url_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME]
         if url_value is None:
@@ -701,7 +702,7 @@ class ModelOperator:
         url_str = str(url_value)
         return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX) else None
 
-    def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> Optional[str]:
+    def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> str | None:
         """Extract and validate privatelink ingress URL from endpoint row."""
         # Check if the privatelink_ingress_url column exists
         col_name = self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME
@@ -715,7 +716,7 @@ class ModelOperator:
         url_str = str(url_value)
         return url_str if ModelOperator.PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING in url_str else None
 
-    def _extract_and_validate_port(self, res_row: "row.Row") -> Optional[int]:
+    def _extract_and_validate_port(self, res_row: "row.Row") -> int | None:
         """Extract and validate port from endpoint row."""
         port_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME]
         if port_value is None:
@@ -725,11 +726,11 @@ class ModelOperator:
     def show_services(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[ServiceInfo]:
         res = self._model_client.show_versions(
             database_name=database_name,
@@ -757,8 +758,8 @@ class ModelOperator:
         is_privatelink_connection = self._is_privatelink_connection()
 
         for fully_qualified_service_name in fully_qualified_service_names:
-            port: Optional[int] = None
-            inference_endpoint: Optional[str] = None
+            port: int | None = None
+            inference_endpoint: str | None = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
             statuses = self._service_client.get_service_container_statuses(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
@@ -806,14 +807,14 @@ class ModelOperator:
     def delete_service(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        service_database_name: Optional[sql_identifier.SqlIdentifier],
-        service_schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_database_name: sql_identifier.SqlIdentifier | None,
+        service_schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         services = self.show_services(
             database_name=database_name,
@@ -851,11 +852,11 @@ class ModelOperator:
     def get_model_version_manifest(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> model_manifest_schema.ModelManifestDict:
         # WARNING: This method uses GET to fetch files from the model's internal stage,
         # which requires READ privilege on the model. Do NOT call this from code paths
@@ -896,12 +897,13 @@ class ModelOperator:
 
     def _fetch_model_spec_and_target_platforms(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> tuple[model_meta_schema.ModelMetadataDict, Optional[list[str]]]:
+        statement_params: dict[str, Any] | None = None,
+        retry: bool | None = False,
+    ) -> tuple[model_spec.ModelSpec, list[str] | None]:
         """Fetch both model spec and target platforms from a single SQL query.
 
         Args:
@@ -910,24 +912,28 @@ class ModelOperator:
             model_name: The model name.
             version_name: The version name.
             statement_params: Optional dictionary of statement parameters.
+            retry: If True, retry SHOW VERSIONS when the version row is not yet visible.
 
         Returns:
             A tuple of (model_spec, target_platforms) where target_platforms is a list of
             platform strings (e.g., ["WAREHOUSE"]) or None if not available.
         """
-        version_row = self._model_client.show_versions(
-            database_name=database_name,
-            schema_name=schema_name,
-            model_name=model_name,
-            version_name=version_name,
-            check_model_details=True,
-            statement_params={**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
-        )[0]
+        show_versions_kwargs: dict[str, Any] = {
+            "database_name": database_name,
+            "schema_name": schema_name,
+            "model_name": model_name,
+            "version_name": version_name,
+            "check_model_details": True,
+            "statement_params": {**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+        }
+        if retry:
+            show_versions_kwargs["retry"] = True
+        version_row = self._model_client.show_versions(**show_versions_kwargs)[0]
 
         # Extract model spec
         raw_model_spec_res = version_row[self._model_client.MODEL_VERSION_MODEL_SPEC_COL_NAME]
         model_spec_dict = yaml.safe_load(raw_model_spec_res)
-        model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
+        parsed_model_spec = model_spec_parser.parse_model_spec(model_spec_dict)
 
         # Extract target platforms from runnable_in column
         target_platforms = None
@@ -937,33 +943,35 @@ class ModelOperator:
             if runnable_in_data:
                 target_platforms = json.loads(runnable_in_data)
 
-        return model_spec, target_platforms
+        return parsed_model_spec, target_platforms
 
     def _fetch_model_spec(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> model_meta_schema.ModelMetadataDict:
-        model_spec, _ = self._fetch_model_spec_and_target_platforms(
+        statement_params: dict[str, Any] | None = None,
+        retry: bool | None = False,
+    ) -> model_spec.ModelSpec:
+        parsed_model_spec, _ = self._fetch_model_spec_and_target_platforms(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
+            **({"retry": True} if retry else {}),
         )
-        return model_spec
+        return parsed_model_spec
 
     def get_model_task(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> type_hints.Task:
         model_version = self._model_client.show_versions(
             database_name=database_name,
@@ -981,18 +989,20 @@ class ModelOperator:
     def get_functions(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
+        retry: bool | None = False,
     ) -> list[model_manifest_schema.ModelFunctionInfo]:
-        model_spec = self._fetch_model_spec(
+        parsed_model_spec = self._fetch_model_spec(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
+            **({"retry": True} if retry else {}),
         )
         show_functions_res = self._model_version_client.show_functions(
             database_name=database_name,
@@ -1047,7 +1057,7 @@ class ModelOperator:
                     (sql_identifier.SqlIdentifier(method["name"]), method["type"], is_object_output)
                 )
 
-        signatures = model_spec["signatures"]
+        signatures = parsed_model_spec.signatures
         function_names = [name for name, _, _ in function_names_and_types]
         function_name_mapping = ModelOperator._match_model_spec_with_sql_functions(
             function_names, list(signatures.keys())
@@ -1061,15 +1071,7 @@ class ModelOperator:
             is_partitioned = False
             if function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
                 # better to set default True here because worse case it will be slow but not error out
-                is_partitioned = (
-                    (
-                        model_spec["function_properties"]
-                        .get(target_method, {})
-                        .get(model_meta_schema.FunctionProperties.PARTITIONED.value, True)
-                    )
-                    if "function_properties" in model_spec
-                    else True
-                )
+                is_partitioned = parsed_model_spec.is_partitioned(target_method)
 
             model_func_info.append(
                 model_manifest_schema.ModelFunctionInfo(
@@ -1091,19 +1093,19 @@ class ModelOperator:
         method_name: sql_identifier.SqlIdentifier,
         method_function_type: str,
         signature: model_signature.ModelSignature,
-        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        X: type_hints.SupportedDataType | dataframe.DataFrame,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
-        partition_column: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, str]] = None,
-        is_partitioned: Optional[bool] = None,
+        partition_column: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, str] | None = None,
+        is_partitioned: bool | None = None,
         explain_case_sensitive: bool = False,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         is_object_output: bool = True,
-    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+    ) -> type_hints.SupportedDataType | dataframe.DataFrame:
         ...
 
     @overload
@@ -1112,38 +1114,38 @@ class ModelOperator:
         *,
         method_name: sql_identifier.SqlIdentifier,
         signature: model_signature.ModelSignature,
-        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        X: type_hints.SupportedDataType | dataframe.DataFrame,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
-        statement_params: Optional[dict[str, str]] = None,
+        statement_params: dict[str, str] | None = None,
         explain_case_sensitive: bool = False,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         is_object_output: bool = True,
-    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+    ) -> type_hints.SupportedDataType | dataframe.DataFrame:
         ...
 
     def invoke_method(
         self,
         *,
         method_name: sql_identifier.SqlIdentifier,
-        method_function_type: Optional[str] = None,
+        method_function_type: str | None = None,
         signature: model_signature.ModelSignature,
-        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        model_name: Optional[sql_identifier.SqlIdentifier] = None,
-        version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        service_name: Optional[sql_identifier.SqlIdentifier] = None,
+        X: type_hints.SupportedDataType | dataframe.DataFrame,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        model_name: sql_identifier.SqlIdentifier | None = None,
+        version_name: sql_identifier.SqlIdentifier | None = None,
+        service_name: sql_identifier.SqlIdentifier | None = None,
         strict_input_validation: bool = False,
-        partition_column: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, str]] = None,
-        is_partitioned: Optional[bool] = None,
+        partition_column: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, str] | None = None,
+        is_partitioned: bool | None = None,
         explain_case_sensitive: bool = False,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         is_object_output: bool = True,
-    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+    ) -> type_hints.SupportedDataType | dataframe.DataFrame:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
         # Validate and prepare input
@@ -1290,11 +1292,11 @@ class ModelOperator:
     def delete_model_or_version(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        version_name: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         if version_name:
             self._model_version_client.drop_version(
@@ -1315,13 +1317,13 @@ class ModelOperator:
     def rename(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        new_model_db: Optional[sql_identifier.SqlIdentifier],
-        new_model_schema: Optional[sql_identifier.SqlIdentifier],
+        new_model_db: sql_identifier.SqlIdentifier | None,
+        new_model_schema: sql_identifier.SqlIdentifier | None,
         new_model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._model_client.rename(
             database_name=database_name,
@@ -1350,13 +1352,13 @@ class ModelOperator:
     def download_files(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         target_path: pathlib.Path,
         mode: Literal["full", "model", "minimal"] = "model",
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         for remote_rel_path, is_dir in self.MODEL_FILE_DOWNLOAD_PATTERN[mode].items():
             list_file_res = self._model_version_client.list_file(
@@ -1391,7 +1393,7 @@ class ModelOperator:
         database_name: str,
         schema_name: str,
         yaml_content: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         yaml_content_escaped = snowpark_utils.escape_single_quotes(yaml_content)  # type: ignore[no-untyped-call]
 

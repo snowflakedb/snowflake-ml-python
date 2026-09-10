@@ -52,6 +52,7 @@ py_library(
 py_test(
     name = "model_meta_test",
     srcs = ["model_meta_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -66,6 +67,7 @@ py_test(
 py_test(
     name = "model_sample_input_data_test",
     srcs = ["model_sample_input_data_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -84,6 +86,7 @@ py_test(
 py_test(
     name = "model_meta_schema_test",
     srcs = ["model_meta_schema_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

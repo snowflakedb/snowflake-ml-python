@@ -144,9 +144,7 @@ class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
         service_name = self._service_name
         role = self._aisql_byom_make_limited_role("EMBED_NO_PRIV", service_fqn=self._service_name)
         try:
-            with self.assertRaisesRegex(
-                Exception, "Insufficient privileges|does not exist or not authorized|invalid argument"
-            ):
+            with self.assertRaisesRegex(Exception, registry_aisql_byom_test_base.AISQL_BYOM_DENY_ERROR_RE):
                 self._run_as_role(
                     role,
                     lambda: self.session.sql(f"SELECT AI_EMBED('{service_name}', 'hello')").collect(),

@@ -1,4 +1,3 @@
-from typing import Optional, Union
 from unittest import mock
 
 import numpy as np
@@ -8,8 +7,8 @@ from absl.testing.absltest import main
 from sklearn import metrics as sklearn_metrics
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.modeling import metrics as snowml_metrics
-from snowflake.ml.utils import connection_params
 from tests.integ.snowflake.ml.modeling.framework import utils
 from tests.integ.snowflake.ml.modeling.metrics import generator
 
@@ -50,7 +49,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
         sample_weight_col_name=[None, _SAMPLE_WEIGHT_COL],
     )
-    def test_sample_weight(self, data_index: int, sample_weight_col_name: Optional[str]) -> None:
+    def test_sample_weight(self, data_index: int, sample_weight_col_name: str | None) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_loss = snowml_metrics.mean_absolute_percentage_error(
@@ -71,7 +70,7 @@ class MeanAbsolutePercentageErrorTest(parameterized.TestCase):
         data_index=list(range(len(_REGULAR_MULTILABEL_DATA_LIST))),
         multioutput=["raw_values", "uniform_average", [0.2, 1.0, 1.66]],
     )
-    def test_multioutput(self, data_index: int, multioutput: Union[str, npt.ArrayLike]) -> None:
+    def test_multioutput(self, data_index: int, multioutput: str | npt.ArrayLike) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTILABEL_DATA_LIST[data_index], _MULTILABEL_SCHEMA)
 
         actual_loss = snowml_metrics.mean_absolute_percentage_error(

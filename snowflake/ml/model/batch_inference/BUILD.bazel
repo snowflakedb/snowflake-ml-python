@@ -7,6 +7,6 @@ py_library(
     srcs = ["__init__.py"],
     deps = [
         "//snowflake/ml/model/_client/model:batch_inference_job_specs",
-        "//snowflake/ml/model/_client/model:batch_inference_task_v2",
+        "//snowflake/ml/model/_client/model:batch_inference_task",
     ],
 )

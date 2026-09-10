@@ -18,9 +18,9 @@ py_library(
     testonly = True,
     srcs = ["registry_model_test_base.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/registry",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -31,6 +31,7 @@ py_test(
     name = "additional_import_test",
     srcs = ["additional_import_test.py"],
     data = [":ext_module"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -43,6 +44,7 @@ py_test(
 py_test(
     name = "multiple_model_test",
     srcs = ["multiple_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -55,6 +57,7 @@ py_test(
 py_test(
     name = "random_version_name_test",
     srcs = ["random_version_name_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -67,6 +70,7 @@ py_test(
 py_test(
     name = "fully_qualified_name_test",
     srcs = ["fully_qualified_name_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -81,6 +85,7 @@ py_test(
     name = "registry_model_privilege_test",
     timeout = "long",
     srcs = ["registry_model_privilege_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -95,6 +100,7 @@ py_test(
 py_test(
     name = "registry_initialization_test",
     srcs = ["registry_initialization_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -110,6 +116,7 @@ py_test(
     name = "registry_sklearn_model_test",
     timeout = "long",
     srcs = ["registry_sklearn_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 8,
     tags = [
         "feature:model_registry",
@@ -143,6 +150,7 @@ py_test(
     name = "registry_xgboost_model_test",
     timeout = "long",
     srcs = ["registry_xgboost_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:model_registry",
@@ -176,6 +184,7 @@ py_test(
     name = "registry_custom_model_test",
     timeout = "long",
     srcs = ["registry_custom_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 8,
     tags = [
         "feature:model_registry",
@@ -192,6 +201,7 @@ py_test(
     name = "registry_custom_model_with_params_test",
     timeout = "long",
     srcs = ["registry_custom_model_with_params_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = [
         "feature:model_registry",
@@ -333,6 +343,7 @@ py_test(
     name = "registry_in_sproc_test",
     timeout = "long",
     srcs = ["registry_in_sproc_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
     ],
@@ -381,6 +392,7 @@ py_test(
     name = "registry_artifact_repository_test",
     srcs = ["registry_artifact_repository_test.py"],
     imports = ["."],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 2,
     tags = ["feature:model_registry"],
     deps = [
@@ -393,6 +405,7 @@ py_test(
     timeout = "long",
     srcs = ["registry_target_platforms_test.py"],
     imports = ["."],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = ["feature:model_registry"],
     deps = [
@@ -405,6 +418,7 @@ py_test(
     name = "registry_pip_only_warehouse_artifact_injection_test",
     srcs = ["registry_pip_only_warehouse_artifact_injection_test.py"],
     imports = ["."],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
     ],
@@ -419,6 +433,7 @@ py_test(
     name = "registry_external_test_pypi_artifact_repository_test",
     srcs = ["registry_external_test_pypi_artifact_repository_test.py"],
     imports = ["."],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
     ],
@@ -448,6 +463,7 @@ py_test(
     name = "registry_partitioned_model_test",
     timeout = "long",
     srcs = ["registry_partitioned_model_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:model_registry",
@@ -463,6 +479,7 @@ py_test(
     name = "code_path_test",
     timeout = "long",
     srcs = ["code_path_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = 4,
     tags = [
         "feature:model_registry",

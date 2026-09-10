@@ -10,19 +10,21 @@ TIMEOUT = "long"  # 900s
 py_test(
     name = "r2_score_test",
     srcs = ["r2_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
 py_test(
     name = "accuracy_score_test",
     srcs = ["accuracy_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -30,8 +32,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -40,6 +42,7 @@ py_test(
     name = "confusion_matrix_test",
     timeout = TIMEOUT,
     srcs = ["confusion_matrix_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -47,9 +50,9 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/metrics:metrics_utils",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -58,14 +61,15 @@ py_test(
     name = "correlation_test",
     timeout = TIMEOUT,
     srcs = ["correlation_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:correlation",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -73,13 +77,14 @@ py_test(
     name = "covariance_test",
     timeout = TIMEOUT,
     srcs = ["covariance_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:covariance",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -87,6 +92,7 @@ py_test(
     name = "d2_absolute_error_score_test",
     timeout = TIMEOUT,
     srcs = ["d2_absolute_error_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -94,8 +100,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -104,6 +110,7 @@ py_test(
     name = "d2_pinball_score_test",
     timeout = TIMEOUT,
     srcs = ["d2_pinball_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -111,8 +118,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -121,14 +128,15 @@ py_test(
     name = "explained_variance_score_test",
     timeout = TIMEOUT,
     srcs = ["explained_variance_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -137,6 +145,7 @@ py_test(
     name = "f1_score_test",
     timeout = TIMEOUT,
     srcs = ["f1_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -144,8 +153,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -154,6 +163,7 @@ py_test(
     name = "fbeta_score_test",
     timeout = TIMEOUT,
     srcs = ["fbeta_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -161,8 +171,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -171,6 +181,7 @@ py_test(
     name = "log_loss_test",
     timeout = TIMEOUT,
     srcs = ["log_loss_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -178,8 +189,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -188,6 +199,7 @@ py_test(
     name = "mean_absolute_error_test",
     timeout = TIMEOUT,
     srcs = ["mean_absolute_error_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -195,8 +207,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -205,6 +217,7 @@ py_test(
     name = "mean_absolute_percentage_error_test",
     timeout = TIMEOUT,
     srcs = ["mean_absolute_percentage_error_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -212,8 +225,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -222,6 +235,7 @@ py_test(
     name = "mean_squared_error_test",
     timeout = TIMEOUT,
     srcs = ["mean_squared_error_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -229,8 +243,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:regression",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -239,14 +253,15 @@ py_test(
     name = "metrics_utils_test",
     timeout = TIMEOUT,
     srcs = ["metrics_utils_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:metrics_utils",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -255,6 +270,7 @@ py_test(
     name = "precision_recall_curve_test",
     timeout = TIMEOUT,
     srcs = ["precision_recall_curve_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -262,8 +278,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:ranking",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -272,6 +288,7 @@ py_test(
     name = "precision_recall_fscore_support_test",
     timeout = TIMEOUT,
     srcs = ["precision_recall_fscore_support_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -279,8 +296,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -289,6 +306,7 @@ py_test(
     name = "precision_score_test",
     timeout = TIMEOUT,
     srcs = ["precision_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -296,8 +314,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -306,6 +324,7 @@ py_test(
     name = "recall_score_test",
     timeout = TIMEOUT,
     srcs = ["recall_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
@@ -313,8 +332,8 @@ py_test(
     ],
     deps = [
         ":generator",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:classification",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -323,14 +342,15 @@ py_test(
     name = "roc_auc_score_test",
     timeout = TIMEOUT,
     srcs = ["roc_auc_score_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:ranking",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )
@@ -339,14 +359,15 @@ py_test(
     name = "roc_curve_test",
     timeout = TIMEOUT,
     srcs = ["roc_curve_test.py"],
+    optional_dependencies = ["scikit-learn"],
     shard_count = SHARD_COUNT,
     tags = [
         "feature:modeling",
         "short_regress",
     ],
     deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/modeling/metrics:ranking",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/modeling/framework:utils",
     ],
 )

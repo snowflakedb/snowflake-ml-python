@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,12 +10,12 @@ from sklearn.mixture import GaussianMixture
 from xgboost import XGBRegressor
 
 from snowflake.ml._internal.exceptions.exceptions import SnowflakeMLException
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.framework.base import BaseTransformer, _process_cols
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     MinMaxScaler,
     StandardScaler,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.exceptions import SnowparkColumnException
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
@@ -42,7 +42,7 @@ class TestBaseFunctions(TestCase):
         class TestTransformer(BaseTransformer):
             def __init__(self) -> None:
                 super().__init__()
-                self._sklearn_object: Optional[Any] = None
+                self._sklearn_object: Any | None = None
 
             def _fit(self, dataset: DataFrame) -> "TestTransformer":
                 return self
@@ -69,7 +69,7 @@ class TestBaseFunctions(TestCase):
         class TestTransformer(BaseTransformer):
             def __init__(self) -> None:
                 super().__init__()
-                self._sklearn_object: Optional[Any] = None
+                self._sklearn_object: Any | None = None
 
             def _fit(self, dataset: DataFrame) -> "TestTransformer":
                 return self

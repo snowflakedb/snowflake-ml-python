@@ -2,7 +2,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model.batch import JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -12,7 +12,6 @@ class DemoModelEmptyStruct(custom_model.CustomModel):
 
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
-        # Return an empty struct (DataFrame with no columns)
         return pd.DataFrame({"output": input["C1"], "empty_struct": [{}] * len(input)})
 
 
@@ -21,20 +20,15 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
         model = DemoModelEmptyStruct(custom_model.ModelContext())
         num_cols = 2
 
-        # Create input data
         input_data = [[0] * num_cols, [1] * num_cols]
         input_cols = [f"C{i}" for i in range(num_cols)]
 
-        # Create pandas DataFrame
         input_pandas_df = pd.DataFrame(input_data, columns=input_cols)
 
-        # Generate expected predictions using the model (empty struct)
         model_output = model.predict(input_pandas_df[input_cols])
 
-        # Prepare input data and expected predictions using common function
         input_df, _ = self._prepare_batch_inference_data(input_pandas_df, model_output)
 
-        # Create fixed signature instead of inferring from sample data
         sig = model_signature.ModelSignature(
             inputs=[
                 model_signature.FeatureSpec(name="C0", dtype=model_signature.DataType.INT64),
@@ -54,14 +48,15 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        # Test that batch inference can handle empty struct output without issues
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=None,
             signatures={"predict": sig},
             X=input_df,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(job_name=job_name, replicas=1, function_name="predict"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            function_name="predict",
+            job_name=job_name,
+            replicas=1,
         )
 
 

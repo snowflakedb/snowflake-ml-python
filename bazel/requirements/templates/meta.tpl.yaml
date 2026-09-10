@@ -14,7 +14,7 @@ requirements:
     - bazel==7.6.1
     - pip
   run:
-    - python>=3.9,<3.14
+    - python>=3.10,<3.14
 
 test:
   imports:

@@ -5,7 +5,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 import cloudpickle
 import importlib_resources
@@ -19,11 +19,11 @@ from scipy.sparse import csr_matrix
 from sklearn.preprocessing import OneHotEncoder as SklearnOneHotEncoder
 
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.preprocessing import (
     OneHotEncoder,  # type: ignore[attr-defined]
 )
 from snowflake.ml.utils import sparse as utils_sparse
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session, functions, types
 from tests.integ.snowflake.ml.modeling.framework import utils as framework_utils
 from tests.integ.snowflake.ml.modeling.framework.utils import (
@@ -100,7 +100,7 @@ class OneHotEncoderTest(parameterized.TestCase):
                 sparse_df.sort(id_col)[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
             )
 
-        def map_output(x: Optional[dict[str, Any]]) -> Optional[list[int]]:
+        def map_output(x: dict[str, Any] | None) -> list[int] | None:
             """Map {encoding: 1, "array_length": length} to [encoding, length]."""
             if x is None:
                 return None

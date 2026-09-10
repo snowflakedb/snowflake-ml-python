@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import PurePath
-from typing import Any, Literal, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from typing_extensions import Self
 
@@ -60,16 +60,16 @@ class PayloadPath(Protocol):
     def absolute(self) -> Self:
         ...
 
-    def joinpath(self, *other: Union[str, os.PathLike[str]]) -> Self:
+    def joinpath(self, *other: str | os.PathLike[str]) -> Self:
         ...
 
     def as_posix(self) -> str:
         ...
 
-    def is_relative_to(self, *other: Union[str, os.PathLike[str]]) -> bool:
+    def is_relative_to(self, *other: str | os.PathLike[str]) -> bool:
         ...
 
-    def relative_to(self, *other: Union[str, os.PathLike[str]]) -> PurePath:
+    def relative_to(self, *other: str | os.PathLike[str]) -> PurePath:
         ...
 
     def __fspath__(self) -> str:
@@ -87,21 +87,21 @@ class PayloadSpec:
     """Represents a payload item to be uploaded."""
 
     source_path: PayloadPath
-    remote_relative_path: Optional[PurePath] = None
+    remote_relative_path: PurePath | None = None
     compress: bool = False
 
 
 @dataclass(frozen=True)
 class PayloadEntrypoint:
     file_path: PayloadPath
-    main_func: Optional[str]
+    main_func: str | None
 
 
 @dataclass(frozen=True)
 class UploadedPayload:
     # TODO: Include manifest of payload files for validation
     stage_path: PurePath
-    entrypoint: list[Union[str, PurePath]]
+    entrypoint: list[str | PurePath]
     env_vars: dict[str, str] = field(default_factory=dict)
 
 
@@ -110,7 +110,7 @@ class ComputeResources:
     cpu: float  # Number of vCPU cores
     memory: float  # Memory in GiB
     gpu: int = 0  # Number of GPUs
-    gpu_type: Optional[str] = None
+    gpu_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,21 +131,22 @@ class ServiceInfo:
 
 @dataclass
 class JobOptions:
-    external_access_integrations: Optional[list[str]] = None
-    query_warehouse: Optional[str] = None
-    target_instances: Optional[int] = None
-    min_instances: Optional[int] = None
-    use_async: Optional[bool] = True
-    generate_suffix: Optional[bool] = True
+    external_access_integrations: list[str] | None = None
+    query_warehouse: str | None = None
+    target_instances: int | None = None
+    min_instances: int | None = None
+    use_async: bool | None = True
+    generate_suffix: bool | None = True
+    comment: str | None = None
 
 
 @dataclass
 class SpecOptions:
     stage_path: str
-    args: Optional[list[str]] = None
-    env_vars: Optional[dict[str, str]] = None
-    enable_metrics: Optional[bool] = None
-    spec_overrides: Optional[dict[str, Any]] = None
-    runtime: Optional[str] = None
-    enable_stage_mount_v2: Optional[bool] = True
-    artifact_repositories: Optional[list[str]] = None
+    args: list[str] | None = None
+    env_vars: dict[str, str] | None = None
+    enable_metrics: bool | None = None
+    spec_overrides: dict[str, Any] | None = None
+    runtime: str | None = None
+    enable_stage_mount_v2: bool | None = True
+    artifact_repositories: list[str] | None = None

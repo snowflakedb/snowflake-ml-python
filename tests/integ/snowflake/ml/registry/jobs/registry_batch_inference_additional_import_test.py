@@ -13,13 +13,12 @@ from absl.testing import absltest, parameterized
 from sklearn import compose, datasets, impute, pipeline, preprocessing
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model.batch import JobSpec, OutputSpec
+from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.registry.model.my_module.utils import column_labeller
 
 
 class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    # TODO: Re-enable code_paths variant once flakiness is resolved.
     @parameterized.parameters([{"import_method": "ext_modules"}])
     def test_additional_import(self, import_method: Literal["ext_modules", "code_paths"]) -> None:
         name = f"model_{self._run_id}"
@@ -51,14 +50,11 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         xgb_data = xgb.DMatrix(preproc_pipe.transform(X), y)
         booster = xgb.train(dict(max_depth=5, seed=42), xgb_data, num_boost_round=10)
 
-        # Generate expected predictions for batch inference validation
         model_output = booster.predict(xgb.DMatrix(preproc_pipe.transform(X)))
         model_output_df = pd.DataFrame({"output": model_output})
 
-        # Prepare batch inference data with INDEX column
         input_df, expected_predictions = self._prepare_batch_inference_data(X, model_output_df)
 
-        # Prepare service name and output stage for batch inference
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         class MyModel(custom_model.CustomModel):
@@ -114,8 +110,9 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         self._deploy_batch_inference(
             mv,
             X=input_df,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(job_name=job_name, function_name="predict"),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            function_name="predict",
+            job_name=job_name,
             expected_predictions=expected_predictions,
         )
 

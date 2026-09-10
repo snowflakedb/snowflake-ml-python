@@ -1,17 +1,17 @@
-from typing import Any, Optional, Union, get_args
+from typing import Any, Union, get_args
 
 from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
 from snowflake.ml._internal.lineage import lineage_utils
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.data import data_source
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import functions as F
 
 
 class LineageUtilsTest(parameterized.TestCase):
     class TestSourcedObject:
-        def __init__(self, sources: Optional[list[data_source.DataSource]]) -> None:
+        def __init__(self, sources: list[data_source.DataSource] | None) -> None:
             setattr(self, lineage_utils._DATA_SOURCES_ATTR, sources)
 
     def setUp(self) -> None:
@@ -69,7 +69,7 @@ class LineageUtilsTest(parameterized.TestCase):
         # ),
     )
     def test_get_data_sources(
-        self, args: list[TestSourcedObject], expected: Optional[list[data_source.DatasetInfo]]
+        self, args: list[TestSourcedObject], expected: list[data_source.DatasetInfo] | None
     ) -> None:
         self.assertEqual(expected, lineage_utils.get_data_sources(*args))
 
@@ -195,7 +195,7 @@ class LineageUtilsTest(parameterized.TestCase):
         else:
             self.validate_dataframe(out_df, None)
 
-    def validate_dataframe(self, df: Any, data_sources: Optional[list[data_source.DataSource]]) -> None:
+    def validate_dataframe(self, df: Any, data_sources: list[data_source.DataSource] | None) -> None:
         self.assertIsInstance(df, get_args(Union[snowpark.DataFrame, snowpark.RelationalGroupedDataFrame]))
         self.assertEqual(data_sources, lineage_utils.get_data_sources(df))
 

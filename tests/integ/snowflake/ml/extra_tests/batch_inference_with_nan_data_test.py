@@ -3,8 +3,8 @@ import pandas as pd
 from absl.testing.absltest import TestCase, main
 from xgboost import XGBClassifier as SKXGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

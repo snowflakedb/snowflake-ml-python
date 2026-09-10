@@ -11,11 +11,11 @@ from sklearn.preprocessing import (
 )
 from xgboost import XGBClassifier as XGB_XGBClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.impute import KNNImputer
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
 from snowflake.ml.modeling.xgboost import XGBClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 

@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from pathlib import PurePath, PurePosixPath
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Generic, TypeVar
 from uuid import uuid4
 
 from typing_extensions import ParamSpec
@@ -85,28 +85,29 @@ logger = logging.getLogger(__name__)
 class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
     def __init__(
         self,
-        source: Union[str, Callable[_Args, _ReturnValue]],
+        source: str | Callable[_Args, _ReturnValue],
         compute_pool: str,
         stage_name: str,
-        session: Optional[snowpark.Session] = None,
-        name: Optional[str] = None,
+        session: snowpark.Session | None = None,
+        name: str | None = None,
         target_instances: int = 1,
-        min_instances: Optional[int] = None,
+        min_instances: int | None = None,
         parallel: bool = False,
-        preflight: Optional[str] = None,
-        external_access_integrations: Optional[list[str]] = None,
-        env_vars: Optional[dict[str, str]] = None,
-        spec_overrides: Optional[dict[str, Any]] = None,
+        preflight: str | None = None,
+        external_access_integrations: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
+        spec_overrides: dict[str, Any] | None = None,
         enable_metrics: bool = True,
-        query_warehouse: Optional[str] = None,
-        runtime_environment: Optional[str] = None,
+        query_warehouse: str | None = None,
+        runtime_environment: str | None = None,
         overwrite: bool = False,
         arg_protocol: arg_protocol.ArgProtocol = arg_protocol.ArgProtocol.NONE,
-        default_args: Optional[list[Any]] = None,
-        database: Optional[str] = None,
-        schema: Optional[str] = None,
-        payload: Optional[payload_utils.JobPayload] = None,
-        artifact_repositories: Optional[list[str]] = None,
+        default_args: list[Any] | None = None,
+        database: str | None = None,
+        schema: str | None = None,
+        payload: payload_utils.JobPayload | None = None,
+        artifact_repositories: list[str] | None = None,
+        comment: str | None = None,
     ) -> None:
         self.source = source
         self.compute_pool = identifier.resolve_identifier(compute_pool)
@@ -130,6 +131,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         self.overwrite = overwrite
         self.payload = payload
         self.artifact_repositories = artifact_repositories
+        self.comment = comment
 
         self._is_registered = False
 
@@ -213,11 +215,22 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             artifact_repositories=self.artifact_repositories if self.artifact_repositories else None,
         )
 
+        # Fall back to the session's application name so jobs submitted by a tool or partner
+        # integration stay attributable after the fact. Attribution is best effort: a session that
+        # cannot report an application must not be a reason to fail job creation.
+        comment = self.comment
+        if comment is None:
+            try:
+                comment = self.session.conf.get("application") or None
+            except Exception:
+                comment = None
+
         self.job_options = type_utils.JobOptions(
             external_access_integrations=self.external_access_integrations,
             query_warehouse=self.query_warehouse or self.session.get_current_warehouse(),
             target_instances=self.target_instances,
             min_instances=self.min_instances,
+            comment=comment,
         )
 
         self._is_registered = True
@@ -240,7 +253,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 except Exception as e:
                     logger.warning(f"Failed to clean up stage files for job definition {safe_stage_path}: {e}")
 
-    def _prepare_arguments(self, *args: _Args.args, **kwargs: _Args.kwargs) -> Optional[list[Any]]:
+    def _prepare_arguments(self, *args: _Args.args, **kwargs: _Args.kwargs) -> list[Any] | None:
         if self.arg_protocol == arg_protocol.ArgProtocol.NONE:
             if len(kwargs) > 0:
                 raise ValueError(f"Keyword arguments are not supported with {self.arg_protocol}")
@@ -283,7 +296,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         return jb.MLJob[_ReturnValue](job_id, session=self.session)
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def to_sql(self, *, job_args: Optional[list[Any]] = None, use_async: bool = False) -> str:
+    def to_sql(self, *, job_args: list[Any] | None = None, use_async: bool = False) -> str:
         self._ensure_registered()
         # Combine the entrypoint_args and job_args for use in the query
         combined_args = (self.entrypoint_args or []) + (job_args or [])
@@ -308,10 +321,10 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
     @classmethod
     def _create(
         cls,
-        source: Union[str, Callable[_Args, _ReturnValue]],
+        source: str | Callable[_Args, _ReturnValue],
         compute_pool: str,
         stage_name: str,
-        session: Optional[snowpark.Session] = None,
+        session: snowpark.Session | None = None,
         **kwargs: Any,
     ) -> "MLJobDefinition[_Args, _ReturnValue]":
         """
@@ -340,6 +353,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         )
         overwrite = kwargs.pop("overwrite", False)
         name = kwargs.pop("name", None)
+        comment = kwargs.pop("comment", None)
 
         arg_protocol_val = kwargs.pop("arg_protocol", arg_protocol.ArgProtocol.NONE)
         default_args = kwargs.pop("default_args", None)
@@ -411,6 +425,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             schema=schema,
             payload=payload,
             artifact_repositories=artifact_repositories,
+            comment=comment,
         )
 
     @classmethod
@@ -428,10 +443,10 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
     )
     def register(
         cls,
-        source: Union[str, Callable[_Args, _ReturnValue]],
+        source: str | Callable[_Args, _ReturnValue],
         compute_pool: str,
         stage_name: str,
-        session: Optional[snowpark.Session] = None,
+        session: snowpark.Session | None = None,
         **kwargs: Any,
     ) -> "MLJobDefinition[_Args, _ReturnValue]":
         """
@@ -478,6 +493,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 schema (str): The schema to use for the job definition.
                 default_args (list): Default arguments to pass to the job on each invocation.
                 arg_protocol (ArgProtocol): The argument protocol to use for passing arguments.
+                comment (str): A comment to attach to jobs launched from this definition. Defaults to
+                    the application name configured on the session, if any.
 
         Returns:
             An MLJobDefinition instance representing the registered job definition.
@@ -489,9 +506,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         return job_definition
 
 
-def _combine_runtime_arguments(
-    default_runtime_args: Optional[list[Any]] = None, *args: Any, **kwargs: Any
-) -> list[Any]:
+def _combine_runtime_arguments(default_runtime_args: list[Any] | None = None, *args: Any, **kwargs: Any) -> list[Any]:
     """Merge default CLI arguments with runtime overrides into a flat argument list.
 
     Parses `default_runtime_args` for flags (e.g., `--key value`) and merges them with

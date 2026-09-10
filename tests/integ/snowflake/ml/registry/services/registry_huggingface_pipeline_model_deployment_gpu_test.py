@@ -2,7 +2,7 @@ import base64
 import json
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -22,9 +22,9 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     registry_model_deployment_test_base.RegistryModelDeploymentTestBase
 ):
     cache_dir: tempfile.TemporaryDirectory
-    _original_cache_dir: Optional[str] = None
-    _original_hf_endpoint: Optional[str] = None
-    hf_token: Optional[str] = None
+    _original_cache_dir: str | None = None
+    _original_hf_endpoint: str | None = None
+    hf_token: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -112,8 +112,8 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
         requires_token: bool = False,
         task: str = "text-generation",
-        base_inference_engine_options: Optional[dict[str, Any]] = None,
-        input_data: Optional[pd.DataFrame] = None,
+        base_inference_engine_options: dict[str, Any] | None = None,
+        input_data: pd.DataFrame | None = None,
     ) -> None:
         """Helper method to test with model logging.
 
@@ -171,6 +171,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                         "frequency_penalty": 0.1,
                         "presence_penalty": 0.2,
                         "response_format": None,
+                        "model": None,
                     }
                 ],
             )
@@ -239,6 +240,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.1,
                     "response_format": None,
+                    "model": None,
                 }
                 for prompt in test_prompts
             ],
@@ -277,7 +279,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
     def _test_text_generation(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
         use_default_repo: bool,
         inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
     ) -> None:
@@ -328,7 +330,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     )
     def test_text_generation(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
         self._test_text_generation(pip_requirements, use_default_repo=False)
 
@@ -488,6 +490,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.2,
                     "response_format": None,
+                    "model": None,
                 }
             ],
         )

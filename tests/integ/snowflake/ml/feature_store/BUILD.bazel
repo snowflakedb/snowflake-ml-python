@@ -23,7 +23,7 @@ py_library(
         "fs_integ_test_base.py",
     ],
     deps = [
-        "//snowflake/ml/utils:connection_params",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -57,8 +57,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -73,9 +73,9 @@ py_test(
     ],
     deps = [
         ":common_utils",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -95,9 +95,9 @@ py_test(
         ":common_utils",
         ":fs_dataset_provisioner",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/feature_store/_internal:synthetic_data_generator",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -115,8 +115,8 @@ py_test(
     ],
     deps = [
         ":common_utils",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -136,8 +136,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -156,8 +156,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
@@ -177,8 +177,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -196,8 +196,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -215,9 +215,9 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/feature_store/examples:feature_store_examples",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -236,8 +236,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -256,8 +256,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -276,8 +276,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -296,8 +296,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -316,8 +316,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -336,8 +336,8 @@ py_test(
     deps = [
         ":common_utils",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -370,8 +370,8 @@ py_test(
         ":common_utils",
         ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -389,8 +389,8 @@ py_test(
     deps = [
         ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
@@ -400,8 +400,8 @@ py_library(
     srcs = ["feature_store_streaming_fv_integ_base.py"],
     deps = [
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -422,8 +422,8 @@ py_test(
         ":common_utils",
         ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",

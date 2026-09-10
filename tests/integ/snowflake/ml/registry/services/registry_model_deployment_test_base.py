@@ -3,7 +3,7 @@ import http
 import inspect
 import logging
 import time
-from typing import Any, Callable, Optional, Sequence, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -72,7 +72,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     _BASE_GPU_IMAGE_SESSION_PARAM = "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL"
 
     def _get_image_override_session_params(self) -> dict[str, str]:
-        overrides: dict[str, Optional[str]] = {
+        overrides: dict[str, str | None] = {
             self._MODEL_LOGGER_SESSION_PARAM: self.MODEL_LOGGER_PATH,
             self._BASE_GPU_IMAGE_SESSION_PARAM: self.BASE_GPU_IMAGE_PATH,
             self._BASE_CPU_IMAGE_SESSION_PARAM: self.BASE_CPU_IMAGE_PATH,
@@ -117,32 +117,32 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         self,
         model: model_types.SupportedModelType,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
-        service_name: Optional[str] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        gpu_requests: Optional[str] = None,
-        service_compute_pool: Optional[str] = None,
-        num_workers: Optional[int] = None,
+        service_name: str | None = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        additional_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        gpu_requests: str | None = None,
+        service_compute_pool: str | None = None,
+        num_workers: int | None = None,
         min_instances: int = 0,
         max_instances: int = 1,
-        max_batch_rows: Optional[int] = None,
+        max_batch_rows: int | None = None,
         force_rebuild: bool = True,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
         use_default_repo: bool = False,
-        autocapture: Optional[bool] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
+        autocapture: bool | None = None,
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         skip_rest_api_test: bool = False,
-        rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
-        python_version: Optional[str] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
+        rest_inference_formats: Sequence[RestInferencePayloadFormat] | None = None,
+        python_version: str | None = None,
+        conda_dependencies: list[str] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view_mod.FeatureView]] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
     ) -> ModelVersion:
         # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
         # Pass an empty list to skip conda dependencies (for pip-only tests).
@@ -202,23 +202,23 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         self,
         mv: ModelVersion,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
-        service_name: Optional[str] = None,
-        gpu_requests: Optional[str] = None,
-        service_compute_pool: Optional[str] = None,
-        num_workers: Optional[int] = None,
+        service_name: str | None = None,
+        gpu_requests: str | None = None,
+        service_compute_pool: str | None = None,
+        num_workers: int | None = None,
         min_instances: int = 0,
         max_instances: int = 1,
-        max_batch_rows: Optional[int] = None,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
+        max_batch_rows: int | None = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
         use_default_repo: bool = False,
-        autocapture: Optional[bool] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, Any]] = None,
+        autocapture: bool | None = None,
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         skip_rest_api_test: bool = False,
-        rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
+        rest_inference_formats: Sequence[RestInferencePayloadFormat] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view_mod.FeatureView]] | None = None,
     ) -> ModelVersion:
         if service_name is None:
             service_name = f"service_{_get_deployment_test_caller_name()}_{self._run_id}"
@@ -304,8 +304,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     def _get_inference_engine_options_for_inference_engine(
         self,
         inference_engine_type: inference_engine.InferenceEngine,
-        base_inference_engine_options: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        base_inference_engine_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Helper method to generate inference_engine_options based on inference engine type.
 
         Args:
@@ -400,7 +400,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             self.session.use_role(prev_role)
             self.session.sql("USE SECONDARY ROLES ALL").collect()
 
-    def _get_jwt_token_generator(self) -> Optional[jwt_generator.JWTGenerator]:
+    def _get_jwt_token_generator(self) -> jwt_generator.JWTGenerator | None:
         """Get JWT token generator if private key is available."""
         if self.private_key is None:
             return None
@@ -442,7 +442,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         self,
         payload_format: RestInferencePayloadFormat,
         test_input: pd.DataFrame,
-        params: Optional[dict[str, Any]],
+        params: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Build JSON body for ingress inference for the given wire format.
 
@@ -504,7 +504,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         request_payload: dict[str, Any],
         *,
         endpoint: str,
-        jwt_token_generator: Optional[jwt_generator.JWTGenerator] = None,
+        jwt_token_generator: jwt_generator.JWTGenerator | None = None,
         target_method: str,
     ) -> pd.DataFrame:
         # Use automatic auth selection (jwt_token_generator kept for backward compatibility but ignored)

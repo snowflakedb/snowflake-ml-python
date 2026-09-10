@@ -57,7 +57,7 @@ In Snowflake Warehouse notebook environments, snowflake-ml-python can be install
 Follow the [installation instructions](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#installing-snowpark-ml)
 in the Snowflake documentation.
 
-Python versions 3.9 to 3.12 are supported. You can use [miniconda](https://docs.conda.io/en/latest/miniconda.html) or
+Python versions 3.10 to 3.13 are supported. You can use [miniconda](https://docs.conda.io/en/latest/miniconda.html) or
 [anaconda](https://www.anaconda.com/) to create a Conda environment (recommended),
 or [virtualenv](https://docs.python.org/3/tutorial/venv.html) to create a virtual environment.
 

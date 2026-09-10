@@ -5,8 +5,8 @@ from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_diabetes
 from sklearn.ensemble import BaggingRegressor as SkBaggingRegressor
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.ensemble import BaggingRegressor
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session
 
 

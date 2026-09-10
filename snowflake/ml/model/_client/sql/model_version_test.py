@@ -1,7 +1,7 @@
 import copy
 import os
 import pathlib
-from typing import cast
+from typing import Optional, cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -15,6 +15,7 @@ from snowflake.snowpark import (
     DataFrame,
     Row,
     Session,
+    exceptions as snowpark_exceptions,
     file_operation,
     functions as F,
     types as spt,
@@ -1145,6 +1146,73 @@ class ModelVersionSQLTest(absltest.TestCase):
             version_name=sql_identifier.SqlIdentifier("LIVE_A1B2C3D4_VERSION"),
             statement_params=m_statement_params,
         )
+
+    def test_is_transient_stage_manifest_read(self) -> None:
+        self.assertFalse(model_version_sql._is_transient_stage_manifest_read(ValueError("nope")))
+        self.assertTrue(
+            model_version_sql._is_transient_stage_manifest_read(
+                snowpark_exceptions.SnowparkSQLException(
+                    "Unable to read file MANIFEST.yml from stage bundle. File size could be too large.",
+                    sql_error_code=398507,
+                )
+            )
+        )
+        self.assertFalse(
+            model_version_sql._is_transient_stage_manifest_read(
+                snowpark_exceptions.SnowparkSQLException("Object does not exist.", sql_error_code=2043)
+            )
+        )
+
+    def test_commit_version_retries_transient_manifest_read(self) -> None:
+        m_statement_params = {"test": "1"}
+        transient = snowpark_exceptions.SnowparkSQLException(
+            "Unable to read file MANIFEST.yml from stage x. File size could be too large.",
+            sql_error_code=398507,
+        )
+        fail_df = mock_data_frame.MockDataFrame(
+            collect_result=transient,
+            collect_statement_params=m_statement_params,
+        )
+        success_df = mock_data_frame.MockDataFrame(
+            collect_result=[Row("Model MODEL successfully altered.")],
+            collect_statement_params=m_statement_params,
+        )
+        query = """ALTER MODEL TEMP."test".MODEL COMMIT VERSION LIVE_A1B2C3D4_VERSION"""
+        self.m_session.add_mock_sql(query, fail_df)
+        self.m_session.add_mock_sql(query, success_df)
+        c_session = cast(Session, self.m_session)
+        client = model_version_sql.ModelVersionSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        )
+
+        def fake_retry(**kwargs):  # type: ignore[no-untyped-def]
+            def decorator(fn):  # type: ignore[no-untyped-def]
+                def wrapped(*args, **inner_kwargs):  # type: ignore[no-untyped-def]
+                    last_exc: Optional[BaseException] = None
+                    for _ in range(int(kwargs.get("stop_max_attempt_number", 5))):
+                        try:
+                            return fn(*args, **inner_kwargs)
+                        except Exception as exc:
+                            last_exc = exc
+                            if not kwargs["retry_on_exception"](exc):
+                                raise
+                    assert last_exc is not None
+                    raise last_exc
+
+                return wrapped
+
+            return decorator
+
+        with mock.patch("retrying.retry", fake_retry):
+            client.commit_version(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("LIVE_A1B2C3D4_VERSION"),
+                statement_params=m_statement_params,
+            )
 
     def test_commit_version_with_model_and_version_rename(self) -> None:
         m_statement_params = {"test": "1"}

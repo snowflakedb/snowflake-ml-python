@@ -32,6 +32,7 @@ py_test(
     srcs = ["catboost_test.py"],
     optional_dependencies = [
         "catboost",
+        "shap",
     ],
     tags = [
         "feature:model_registry",
@@ -48,6 +49,7 @@ py_test(
 py_test(
     name = "custom_test",
     srcs = ["custom_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -98,6 +100,10 @@ py_test(
 py_test(
     name = "sklearn_test",
     srcs = ["sklearn_test.py"],
+    optional_dependencies = [
+        "scikit-learn",
+        "shap",
+    ],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -113,6 +119,11 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
+    optional_dependencies = [
+        "scikit-learn",
+        "shap",
+        "xgboost",
+    ],
     shard_count = 1,
     tags = [
         "feature:model_registry",
@@ -183,6 +194,11 @@ py_test(
 py_test(
     name = "xgboost_test",
     srcs = ["xgboost_test.py"],
+    optional_dependencies = [
+        "scikit-learn",
+        "shap",
+        "xgboost",
+    ],
     tags = [
         "feature:model_registry",
     ],
@@ -198,6 +214,7 @@ py_test(
     srcs = ["lightgbm_test.py"],
     optional_dependencies = [
         "lightgbm",
+        "shap",
     ],
     shard_count = 1,
     tags = [
@@ -231,6 +248,7 @@ py_test(
 py_test(
     name = "huggingface_task_handler_test",
     srcs = ["huggingface_task_handler_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -243,6 +261,7 @@ py_test(
 py_test(
     name = "huggingface_utils_test",
     srcs = ["huggingface_utils_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

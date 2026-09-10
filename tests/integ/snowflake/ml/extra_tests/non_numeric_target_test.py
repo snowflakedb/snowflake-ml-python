@@ -4,8 +4,8 @@ from absl.testing.absltest import TestCase, main
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier as SkRandomForestClassifier
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.ensemble import RandomForestClassifier
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

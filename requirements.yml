@@ -115,10 +115,30 @@
   # which our requirements pipeline does not model; declare it explicitly so
   # OnlineServiceHttpClient(http2=True) does not ImportError at runtime.
   # Pin >=4.3.0 to avoid CVE in <4.3.0 (CRLF injection on HTTP/2->1.1 downgrade).
+  # This entry keeps h2 in dev/test environments. build_test_env is required because the
+  # release entry below is extras-only, which places h2 under run_constrained in meta.yaml;
+  # conda does not install run_constrained packages, so the integ test env built from the
+  # conda package would otherwise get httpx (via snowflake.core) without h2.
+  dev_version: 4.3.0
+  tags:
+    - build_test_env
+# Release-only entry: exposes h2 as the optional ``feature_store`` extra without adding it
+# to the base install.
+- name: h2
   dev_version: 4.3.0
   version_requirements: '>=4.3.0,<5'
+  requirements_extra_tags:
+    - feature_store
 - name: httpx
   dev_version: 0.28.1
+# Release-only entry: exposes httpx as the optional ``feature_store`` pip extra (and conda
+# run_constrained) without adding it to the base install. The plain entry above keeps httpx
+# available in the standard dev/test environments.
+- name: httpx
+  dev_version: 0.28.1
+  version_requirements: '>=0.28.1,<1'
+  requirements_extra_tags:
+    - feature_store
 - name: importlib_resources
   dev_version: 6.1.1
   version_requirements: '>=6.1.1, <7'
@@ -148,6 +168,10 @@
 - name: shap
   dev_version: 0.46.0
   version_requirements: '>=0.46.0,<1'
+  requirements_extra_tags:
+    - shap
+  tags:
+    - build_essential
 - name: mlflow
   dev_version: 3.13.0
   version_requirements: '>=2.16.0, <4'
@@ -233,6 +257,8 @@
 - name: scikit-learn
   dev_version: 1.5.1
   version_requirements: <1.9
+  requirements_extra_tags:
+    - scikit-learn
   tags:
     - build_essential
 - name: scipy
@@ -265,8 +291,11 @@
   tags:
     - build_test_env
 - name: snowflake-snowpark-python
+  # 1.37.0 is the first release that reads package metadata through importlib.metadata instead of
+  # pkg_resources, which setuptools removed in 82.0.0. Older releases fail to import against a
+  # current setuptools.
   dev_version: 1.38.0
-  version_requirements: '>=1.17.0,<2,!=1.26.0'
+  version_requirements: '>=1.37.0,<2'
 - name: sphinx
   dev_version: 5.0.2
 - name: starlette
@@ -332,6 +361,8 @@
 - name: xgboost
   dev_version: 2.1.4
   version_requirements: <4
+  requirements_extra_tags:
+    - xgboost
   tags:
     - build_essential
 - name: werkzeug

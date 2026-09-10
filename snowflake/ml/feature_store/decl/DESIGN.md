@@ -47,7 +47,7 @@ Enforced by `tests/test_wheel_isolation.py::TestNarrowedSpecIsolation`.
 | `planner.py` | Diffs `SpecBatch` vs `AppliedState` → `Plan` (ordered `PlanOp` list) |
 | `state.py` | Builds `AppliedState` from raw `SHOW`/`DESCRIBE` rows and imperative FS rows |
 | `exporter.py` | Reconstructs authoring YAML from `AppliedState` (`snow feature init`) |
-| `dependencies.py` | Topological sort; cycle detection |
+| `dependencies.py` | `topological_sort` (create order); `order_specs_for_drop` (reverse-topo teardown order) |
 | `udf_loader.py` | UDF source-string → callable (satisfies `StreamConfig.__post_init__` inspection guard) |
 | `imperative_executor.py` | **Only Snowflake I/O in decl/** — lazy bridge to `FeatureStore`; executes `PlanOp`s |
 | `tests/` | Unit and integration tests (co-located) |
@@ -76,6 +76,38 @@ phantom `RECREATE` ops on a clean round-trip.
 Source ops use a four-way decision: `NO_CHANGE` (virtual override for sources whose FVs
 are unchanged), `CREATE_SOURCE`, `UPDATE_SOURCE` (desc-only, non-destructive), or
 `RECREATE_SOURCE` (structural, `--allow-recreate` gated).
+
+In `full_directory_mode`, orphan `DROP_*` ops are ordered by `order_specs_for_drop`
+(reverse-topo: FeatureGroup → FeatureView → Source → Entity). After the diff and orphan
+passes, `generate_plan` runs two post-processing steps:
+
+- **Authored-spec FG/member gate.** A member `DROP_FV` / `RECREATE_FV` is refused when a
+  still-authored batch FeatureGroup lists that `(name, version)` — Snowflake's online FG
+  table references each member's online table. The op is dropped and a
+  `FG_MEMBER_STILL_REFERENCED` `ValidationResult` is appended to `Plan.errors`. A
+  hash-matched FeatureGroup is **never** promoted to `DROP_FG` / destructive `CREATE_FG`;
+  the operator must change the FG spec (moving its hash) to unblock the member.
+- **Teardown banding.** Remaining ops are stably reordered into bands — (0) everything
+  else, (1) FG teardown (`DROP_FG`, destructive `CREATE_FG`), (2) member deletes
+  (`RECREATE_FV`, `DROP_FV`), (3) source/entity drops — so an already-planned FG teardown
+  precedes the member deletes it unblocks.
+
+`Plan.errors` is a blocking, plan-time error list distinct from `validate_specs` output; a
+non-empty list means the plan must not be written or applied.
+
+Entity join keys are immutable after create. `spec_compiler.build_entity_join_key_map`
+resolves the FV wire field `ordered_entity_column_names` from **applied** join keys for
+already-deployed entities (batch keys only fill in new, not-yet-deployed entities), so an
+unappliable YAML join-key edit does not flip a dependent FV to `RECREATE_FV`. The edit is
+rejected up front by `invariants._check_entity_join_keys_immutable`
+(`ENTITY_JOIN_KEY_IMMUTABLE`), which compares the **ordered** join-key names (so a reorder
+is caught) and runs in `validate_specs` **before** the idempotency skip.
+
+`validate_specs` builds the same `build_entity_join_key_map` and threads it into
+`_check_idempotency` → `compute_local_spec_hash`, mirroring the planner. Without it a
+FeatureView whose entity **name** differs from its join-key **column** hashes on the
+authored name and never matches the column-based applied hash, so `NO_CHANGE` never
+short-circuits for exactly those projects.
 
 ### `state.py`
 

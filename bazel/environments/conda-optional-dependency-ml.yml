@@ -11,4 +11,7 @@ dependencies:
   - lightgbm>=4.1.0, <5
   - mlflow>=2.16.0, <4
   - prophet>=1.1.0, <2
+  - scikit-learn<1.9
+  - shap>=0.46.0,<1
   - streamlit>=1.30.0,<2
+  - xgboost<4

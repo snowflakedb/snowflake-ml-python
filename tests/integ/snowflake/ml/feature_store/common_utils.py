@@ -1,14 +1,14 @@
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable, cast
 from unittest.mock import Mock
 from uuid import uuid4
 
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import FeatureView
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def create_random_schema(
 
 
 def compare_dataframe(
-    actual_df: pd.DataFrame, target_data: dict[str, Any], sort_cols: list[str], exclude_cols: Optional[list[str]] = None
+    actual_df: pd.DataFrame, target_data: dict[str, Any], sort_cols: list[str], exclude_cols: list[str] | None = None
 ) -> None:
     if exclude_cols is not None:
         for c in exclude_cols:
@@ -59,7 +59,7 @@ def compare_dataframe(
 INCREMENTALIZABLE_REFRESH_MODES = frozenset({"INCREMENTAL", "ADAPTIVE"})
 
 
-def is_incrementalizable_refresh_mode(actual: Optional[str]) -> bool:
+def is_incrementalizable_refresh_mode(actual: str | None) -> bool:
     """Return whether ``actual`` is INCREMENTAL or ADAPTIVE.
 
     Args:
@@ -91,7 +91,7 @@ def compare_feature_views(actual_fvs: list[FeatureView], target_fvs: list[Featur
         assert actual_fv == target_fv, f"{actual_fv.name} doesn't match {target_fv.name}"
 
 
-def create_mock_session(trouble_query: str, exception: Exception, config: Optional[dict[str, str]] = None) -> Any:
+def create_mock_session(trouble_query: str, exception: Exception, config: dict[str, str] | None = None) -> Any:
     def side_effect(session: Session) -> Callable[..., Any]:
         original_sql = session.sql
 
@@ -102,14 +102,14 @@ def create_mock_session(trouble_query: str, exception: Exception, config: Option
 
         return dispatch
 
-    config = config or SnowflakeLoginOptions()
+    config = config or cast("dict[str, str]", SnowflakeLoginOptions())
     session = Session.builder.configs(config).create()
     session.sql = Mock(side_effect=side_effect(session))
     return session
 
 
 def create_mock_table(
-    session: Session, database: Optional[str] = None, schema: Optional[str] = None, table_prefix: str = "TEST_TABLE"
+    session: Session, database: str | None = None, schema: str | None = None, table_prefix: str = "TEST_TABLE"
 ) -> str:
     test_table = f"{table_prefix}_{uuid4().hex.upper()}"
     if schema:

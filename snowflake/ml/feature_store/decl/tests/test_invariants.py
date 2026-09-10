@@ -14,6 +14,7 @@ from snowflake.ml.feature_store.decl.invariants import (
     _check_database_schema_mismatch,
     _check_dependencies,
     _check_destructive,
+    _check_entity_join_keys_immutable,
     _check_idempotency,
     _check_state_sync,
     _check_versions,
@@ -530,6 +531,110 @@ class TestCheckDestructive:
         spec = _make_fv_spec()
         results = _check_destructive(spec, None)
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# _check_entity_join_keys_immutable tests
+# ---------------------------------------------------------------------------
+
+
+def _make_entity_spec_multi(name: str, join_keys: list[str]) -> dict[str, Any]:
+    return {
+        "kind": "Entity",
+        "name": name,
+        "database": "DB",
+        "schema": "SCH",
+        "join_keys": [{"name": jk, "type": "StringType"} for jk in join_keys],
+    }
+
+
+class TestCheckEntityJoinKeysImmutable:
+    """Join keys are identity after create — edits must be a plan-time ERROR.
+
+    The check compares the **ordered** join-key column names (case
+    insensitive) so a rename, add, drop, **or reorder** is rejected.  The
+    executor's ``FeatureStore.update_entity`` is description-only, so a
+    join-key edit that slipped through would leave applied state unchanged
+    and loop a dependent FeatureView on a destructive ``RECREATE_FV``.
+    """
+
+    def test_join_key_added_emits_immutable_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["USER_ID", "ORG_ID"])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" and r.severity == "ERROR" for r in results)
+
+    def test_join_key_removed_emits_immutable_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["USER_ID"])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID", "ORG_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" for r in results)
+
+    def test_join_key_renamed_emits_immutable_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["ORG_ID"])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" for r in results)
+
+    def test_join_key_reordered_emits_immutable_error(self) -> None:
+        """Reorder must be an ERROR — order is the OFT primary-key order."""
+        spec = _make_entity_spec_multi("USER", ["ORG_ID", "USER_ID"])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID", "ORG_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" for r in results)
+
+    def test_case_insensitive_equal_no_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["user_id"])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert results == []
+
+    def test_description_only_change_no_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["USER_ID"])
+        spec["description"] = "new description"
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert results == []
+
+    def test_no_applied_state_no_error(self) -> None:
+        spec = _make_entity_spec_multi("USER", ["USER_ID"])
+        results = _check_entity_join_keys_immutable(spec, None)
+        assert results == []
+
+    def test_non_entity_kind_no_error(self) -> None:
+        spec = _make_fv_spec()
+        applied = _make_applied_object(_make_fv_spec())
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert results == []
+
+    def test_validate_specs_reports_reorder_despite_idempotent_hash(self) -> None:
+        """The check must run BEFORE the idempotency skip.
+
+        A composite-key reorder hashes identically under the sorted Entity
+        structural fingerprint, so ``_check_idempotency`` reports the entity
+        up to date and ``validate_specs`` ``continue``s past the per-spec
+        checks.  ``ENTITY_JOIN_KEY_IMMUTABLE`` must still surface.
+        """
+        from snowflake.ml.feature_store.decl.invariants import model_to_dict
+        from snowflake.ml.feature_store.decl.spec_models import Entity
+
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["USER_ID", "ORG_ID"]))
+        # Sorted structural fingerprint is identical for a reorder.
+        reordered = _make_entity_spec_multi("USER", ["ORG_ID", "USER_ID"])
+        assert structural_fingerprint_hash(_normalize(applied.spec_payload)) == structural_fingerprint_hash(
+            _normalize(reordered)
+        )
+        batch = SpecBatch(specs=[Entity.model_validate(reordered)])
+        # Key the applied entity by the same lookup key validate_specs derives
+        # (with the connection target), so the planner finds the deployed entity.
+        lookup_key = spec_key(model_to_dict(Entity.model_validate(reordered)), database="DB", schema="SCH")
+        results = validate_specs(
+            batch,
+            AppliedState(objects={lookup_key: applied}),
+            target_database="DB",
+            target_schema="SCH",
+        )
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" for r in results)
 
 
 # ---------------------------------------------------------------------------

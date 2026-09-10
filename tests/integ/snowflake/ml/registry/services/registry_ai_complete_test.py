@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -33,8 +33,8 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
     }
 
     # AI_COMPLETE-specific class-level state
-    _endpoint: Optional[str] = None
-    _model_version: Optional[ModelVersion] = None
+    _endpoint: str | None = None
+    _model_version: ModelVersion | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -80,6 +80,7 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
                     "frequency_penalty": 0.0,
                     "presence_penalty": 0.0,
                     "response_format": None,
+                    "model": None,
                 }
             ]
         )
@@ -170,10 +171,10 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
         prompt: str,
         *,
         model_name: str = "test-model",
-        temperature: Optional[float] = 0.7,
-        max_tokens: Optional[int] = None,
-        response_format: Optional[dict[str, Any]] = None,
-        messages: Optional[list[dict[str, Any]]] = None,
+        temperature: float | None = 0.7,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
         provisioned_throughput_id: Any = None,
     ) -> list:
         """Build a single AI_COMPLETE-format row: [rowIdx, model, messages, ptId, options]."""
@@ -503,7 +504,7 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
         try:
             with self.assertRaisesRegex(
                 Exception,
-                "Insufficient privileges|does not exist or not authorized|invalid argument|unavailable|unknown model",
+                registry_aisql_byom_test_base.AISQL_BYOM_DENY_ERROR_RE,
             ):
                 self._run_as_role(
                     role,

@@ -3,10 +3,9 @@ from typing import Any
 
 import pandas as pd
 
-from snowflake.ml._internal.utils import snowflake_env
+from snowflake.ml._internal.utils import connection_params, snowflake_env
 from snowflake.ml.experiment import experiment_tracking
 from snowflake.ml.model import model_signature
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
 

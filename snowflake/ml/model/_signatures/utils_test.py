@@ -4,6 +4,7 @@ from typing import Any
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._signatures import core, utils
 from snowflake.ml.test_utils import exception_utils
 
@@ -279,6 +280,36 @@ class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
             self.assertEqual(sig.inputs[i], expected_sig.inputs[i])
         self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
         self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
+    def test_text_generation_with_chat_template_infers_with_params_signature(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(
+            task="text-generation",
+            params={},
+            has_chat_template=True,
+        )
+        self.assertEqual(sig, openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC)
+        assert sig is not None
+        self.assertEqual(sig.params[-1].name, "model")
+        self.assertIsNone(sig.params[-1].default_value)
+
+    def test_text_generation_without_chat_template_is_completion(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(
+            task="text-generation",
+            params={},
+            has_chat_template=False,
+        )
+        self.assertIsNotNone(sig)
+        assert sig is not None
+        self.assertEqual(sig.inputs[0].name, "inputs")
+        self.assertNotEqual(sig, openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC)
+
+    def test_image_text_to_text_still_with_params(self) -> None:
+        for task in ("image-text-to-text", "video-text-to-text", "audio-text-to-text"):
+            with self.subTest(task=task):
+                sig = utils.huggingface_pipeline_signature_auto_infer(task=task, params={})
+                self.assertEqual(sig, openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC)
+                assert sig is not None
+                self.assertEqual(sig.params[-1].name, "model")
 
 
 class HuggingFaceParamSpecTest(absltest.TestCase):

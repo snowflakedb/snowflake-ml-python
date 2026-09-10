@@ -34,6 +34,7 @@ py_test(
 py_test(
     name = "resolve_prefer_pip_for_automatic_dependencies_test",
     srcs = ["resolve_prefer_pip_for_automatic_dependencies_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:core",
         "short_regress",

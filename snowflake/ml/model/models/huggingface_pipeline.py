@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional, Union
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -16,17 +16,17 @@ logger = logging.getLogger(__name__)
 class HuggingFacePipelineModel(huggingface.TransformersPipeline):
     def __init__(
         self,
-        task: Optional[str] = None,
-        model: Optional[str] = None,
+        task: str | None = None,
+        model: str | None = None,
         *,
-        revision: Optional[str] = None,
-        token: Optional[str] = None,
-        trust_remote_code: Optional[bool] = None,
-        model_kwargs: Optional[dict[str, Any]] = None,
+        revision: str | None = None,
+        token: str | None = None,
+        trust_remote_code: bool | None = None,
+        model_kwargs: dict[str, Any] | None = None,
         download_snapshot: bool = True,
         # repo snapshot download args
-        allow_patterns: Optional[Union[list[str], str]] = None,
-        ignore_patterns: Optional[Union[list[str], str]] = None,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -95,29 +95,29 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
         session: session.Session,
         # registry.log_model parameters
         model_name: str,
-        version_name: Optional[str] = None,
-        pip_requirements: Optional[list[str]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        comment: Optional[str] = None,
+        version_name: str | None = None,
+        pip_requirements: list[str] | None = None,
+        conda_dependencies: list[str] | None = None,
+        comment: str | None = None,
         # model_version_impl.create_service parameters
         service_name: str,
         service_compute_pool: str,
-        image_repo: Optional[str] = None,
-        image_build_compute_pool: Optional[str] = None,
+        image_repo: str | None = None,
+        image_build_compute_pool: str | None = None,
         ingress_enabled: bool = False,
         min_instances: int = 0,
         max_instances: int = 1,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        gpu_requests: Optional[Union[str, int]] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
+        gpu_requests: str | int | None = None,
+        num_workers: int | None = None,
+        max_batch_rows: int | None = None,
         force_rebuild: bool = False,
-        build_external_access_integrations: Optional[list[str]] = None,
+        build_external_access_integrations: list[str] | None = None,
         block: bool = True,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-    ) -> Union[str, async_job.AsyncJob]:
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+    ) -> str | async_job.AsyncJob:
         """Logs a Hugging Face model and creates a service in Snowflake.
 
         Args:
@@ -200,13 +200,6 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
                 )
 
             inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
-
-            # Enrich inference engine args if inference engine is specified
-            if inference_engine_args is not None:
-                inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
-                    inference_engine_args,
-                    gpu_requests,
-                )
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions

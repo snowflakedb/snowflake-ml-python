@@ -11,7 +11,6 @@ class ModelMonitorIntegrationCustomMetricTest(ModelMonitorIntegrationTestBase):
     def test_add_drop_custom_metric_columns(self):
         """Test adding and dropping custom metric columns."""
 
-        self._session.sql("ALTER SESSION SET ENABLE_MODEL_MONITOR_CUSTOM_METRICS = TRUE").collect()
         source_table_name = "source_table_custom_metrics"
         monitor_name = "monitor_custom_metrics"
 

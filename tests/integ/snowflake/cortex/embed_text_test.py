@@ -2,8 +2,7 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.cortex import EmbedText768, EmbedText1024
-from snowflake.ml._internal.utils import snowflake_env
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params, snowflake_env
 from snowflake.snowpark import Session, functions
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 

@@ -13,7 +13,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -36,6 +36,8 @@ _MAX_QUERY_REQUEST_ROWS = 10
 # Kept in sync with the server-side size tiers (FeatureStoreRuntimeSize); adding a new tier here
 # requires an snowflake-ml-python release.
 _VALID_ONLINE_SERVICE_SIZES = ("XS", "S", "M", "L", "XL", "2XL", "3XL")
+# XS is a prototyping-only tier: it can be created at, but the server refuses it as a resize target.
+_VALID_ONLINE_SERVICE_RESIZE_SIZES = tuple(size for size in _VALID_ONLINE_SERVICE_SIZES if size != "XS")
 
 _ONLINE_SERVICE_NOT_READY_USER_MESSAGE = (
     "Online Service is not RUNNING or the query endpoint is not available. "
@@ -74,8 +76,8 @@ class OnlineServiceEndpoint:
 
     name: str
     url: str
-    privatelink_url: Optional[str] = None
-    internal_url: Optional[str] = None
+    privatelink_url: str | None = None
+    internal_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,11 +94,11 @@ class OnlineServiceStatus:
     """
 
     status: str
-    message: Optional[str] = None
+    message: str | None = None
     endpoints: tuple[OnlineServiceEndpoint, ...] = field(default_factory=tuple)
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    size: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    size: str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,8 +182,8 @@ def _call_system_function(
     sql: str,
     *,
     operation: str,
-    statement_params: Optional[dict[str, Any]] = None,
-) -> tuple[dict[str, Any], Optional[str]]:
+    statement_params: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str | None]:
     """Execute a SYSTEM$ SQL function and return its parsed JSON dict plus the query_id."""
     job = session.sql(sql).collect_nowait(statement_params=statement_params)
     query_id = getattr(job, "query_id", None)
@@ -206,7 +208,7 @@ def fetch_online_service_status(
     database: SqlIdentifier,
     schema: SqlIdentifier,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceStatus:
     loc = _escaped_feature_store_locator(database, schema)
     data, _ = _call_system_function(
@@ -224,7 +226,7 @@ def get_online_service_status(
     database: SqlIdentifier,
     schema: SqlIdentifier,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceStatus:
     st = fetch_online_service_status(session, database, schema, statement_params=statement_params)
     if st.status == "ERROR":
@@ -242,8 +244,8 @@ def create_online_service(
     producer_role: str,
     consumer_role: str,
     *,
-    size: Optional[str] = None,
-    statement_params: Optional[dict[str, Any]] = None,
+    size: str | None = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceResult:
     if not producer_role.strip() or not consumer_role.strip():
         raise snowml_exceptions.SnowflakeMLException(
@@ -281,7 +283,7 @@ def create_online_service(
     }
     # Omit the key entirely when unset so the server applies its own default size.
     if size is not None:
-        properties["size"] = size.strip()
+        properties["size"] = size.strip().upper()
     payload = json.dumps(properties)
     properties_escaped = snowpark_utils.escape_single_quotes(payload)  # type: ignore[no-untyped-call]
     loc = _escaped_feature_store_locator(database, schema)
@@ -306,12 +308,58 @@ def create_online_service(
     )
 
 
+def alter_online_service(
+    session: Session,
+    database: SqlIdentifier,
+    schema: SqlIdentifier,
+    *,
+    size: str,
+    statement_params: dict[str, Any] | None = None,
+) -> OnlineServiceResult:
+    if not size.strip():
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError("size must be non-empty."),
+        )
+    if size.strip().upper() not in _VALID_ONLINE_SERVICE_RESIZE_SIZES:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"size must be one of {_VALID_ONLINE_SERVICE_RESIZE_SIZES} (case-insensitive), got {size!r}."
+            ),
+        )
+    # Normalize to the canonical tier spelling that validation matched on, so a size documented as
+    # case-insensitive does not reach the server in whatever case the caller happened to type.
+    payload = json.dumps({"size": size.strip().upper()})
+    properties_escaped = snowpark_utils.escape_single_quotes(payload)  # type: ignore[no-untyped-call]
+    loc = _escaped_feature_store_locator(database, schema)
+    data, query_id = _call_system_function(
+        session,
+        f"SELECT SYSTEM$ALTER_FEATURE_STORE_ONLINE_SERVICE('{loc}', '{properties_escaped}')",
+        operation="alter",
+        statement_params=statement_params,
+    )
+    result = _parse_mutation_payload(data)
+    if result.status != "SUCCESS":
+        message = result.message or "Online Service size change failed."
+        if query_id:
+            message = f"{message} [query_id: {query_id}]"
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=RuntimeError(message),
+        )
+    return OnlineServiceResult(
+        status=result.status,
+        message="Online Service size change requested. Poll get_online_service_status() until RUNNING.",
+    )
+
+
 def drop_online_service(
     session: Session,
     database: SqlIdentifier,
     schema: SqlIdentifier,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceResult:
     loc = _escaped_feature_store_locator(database, schema)
     data, query_id = _call_system_function(
@@ -347,8 +395,8 @@ def endpoint_url(
     status: OnlineServiceStatus,
     name: str,
     *,
-    access: Optional[OnlineServiceAccess] = None,
-) -> Optional[str]:
+    access: OnlineServiceAccess | None = None,
+) -> str | None:
     """Pick the URL to call for the named endpoint.
 
     Auto-routes: SPCS-internal when running inside SPCS, then PrivateLink
@@ -484,7 +532,7 @@ def _json_serialize_value(value: Any) -> Any:
     return str(value)
 
 
-def _try_extract_request_id_from_json_payload(parsed: Any) -> Optional[str]:
+def _try_extract_request_id_from_json_payload(parsed: Any) -> str | None:
     """Best-effort ``request_id`` / ``requestId`` from Query or Ingest API JSON (top-level or under ``error``)."""
     if not isinstance(parsed, dict):
         return None
@@ -506,7 +554,7 @@ def _raise_online_service_http_error(status: int, body: bytes) -> None:
     text = body.decode("utf-8", errors="replace")
     message = text
     err_code = ""
-    server_request_id: Optional[str] = None
+    server_request_id: str | None = None
     try:
         parsed = json.loads(text)
         server_request_id = _try_extract_request_id_from_json_payload(parsed)
@@ -554,7 +602,7 @@ def _assert_online_service_running(
     schema: SqlIdentifier,
     endpoint_name: str,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceStatus:
     """Assert the Online Service is RUNNING and has the named endpoint."""
     st = fetch_online_service_status(session, database, schema, statement_params=statement_params)
@@ -598,7 +646,7 @@ def assert_online_service_running_with_query_endpoint(
     database: SqlIdentifier,
     schema: SqlIdentifier,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceStatus:
     return _assert_online_service_running(session, database, schema, "query", statement_params=statement_params)
 
@@ -608,7 +656,7 @@ def assert_online_service_running_with_ingest_endpoint(
     database: SqlIdentifier,
     schema: SqlIdentifier,
     *,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> OnlineServiceStatus:
     return _assert_online_service_running(session, database, schema, "ingest", statement_params=statement_params)
 
@@ -709,7 +757,7 @@ def stream_ingest_records(
     records: list[dict[str, Any]],
     *,
     timeout_sec: float = 120.0,
-    http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
+    http_client: online_service_http_client.OnlineServiceHttpClient | None = None,
 ) -> int:
     """Send records to the Online Service for a given stream source.
 
@@ -740,7 +788,7 @@ def stream_ingest_records(
     resolved = online_service_http_client.ingest_api_url(ingest_base_url)
     serializable = [{k: _json_serialize_value(v) for k, v in row.items()} for row in records]
     body: dict[str, Any] = {"records": {stream_source_name: serializable}}
-    owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
+    owned_client: online_service_http_client.OnlineServiceHttpClient | None = None
     client = http_client
     if client is None:
         owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
@@ -783,7 +831,7 @@ def stream_ingest_records(
     return _parse_ingest_response_count(data, stream_source_name=stream_source_name)
 
 
-def _extract_query_api_data_type_raw(item: dict[str, Any]) -> Optional[str]:
+def _extract_query_api_data_type_raw(item: dict[str, Any]) -> str | None:
     """Read type string from Query API ``metadata.features[]`` (Snowflake REST / SQL API ``type`` field)."""
     for key in ("data_type", "dataType", "type", "snowflake_type", "snowflakeType"):
         v = item.get(key)
@@ -796,7 +844,7 @@ def _extract_query_api_data_type_raw(item: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _snowpark_type_from_sql_style_string(raw: str) -> Optional[Any]:
+def _snowpark_type_from_sql_style_string(raw: str) -> Any | None:
     """Map SQL-style type strings (e.g. ``FLOAT``, ``TIMESTAMP_NTZ(9)``) to Snowpark types."""
     from snowflake.snowpark.types import (
         BinaryType,
@@ -836,7 +884,7 @@ def _snowpark_type_from_sql_style_string(raw: str) -> Optional[Any]:
     return None
 
 
-def _snowflake_query_api_type_to_snowpark(raw: str, item: dict[str, Any]) -> Optional[Any]:
+def _snowflake_query_api_type_to_snowpark(raw: str, item: dict[str, Any]) -> Any | None:
     """Map Snowflake REST / SQL API ``rowType``-style metadata to Snowpark types.
 
     Feature Store Query service emits the same shape as SQL API ``rowType`` (see
@@ -910,7 +958,7 @@ def _snowflake_query_api_type_to_snowpark(raw: str, item: dict[str, Any]) -> Opt
     return _snowpark_type_from_sql_style_string(stripped)
 
 
-def _snowpark_type_from_query_metadata_item(item: dict[str, Any]) -> Optional[Any]:
+def _snowpark_type_from_query_metadata_item(item: dict[str, Any]) -> Any | None:
     raw = _extract_query_api_data_type_raw(item)
     if not raw:
         return None
@@ -933,7 +981,7 @@ def _snowpark_types_from_query_metadata_features(meta_features: list[dict[str, A
 
 def _resolve_output_feature_names(
     names_from_server: list[str],
-    feature_names: Optional[list[str]],
+    feature_names: list[str] | None,
 ) -> list[str]:
     """Feature columns to return (server spelling). ``feature_names`` must match case-insensitively."""
     if not feature_names:
@@ -1305,13 +1353,13 @@ def read_postgres_online_features(
     feature_view_version: str,
     join_key_names: list[str],
     keys: list[list[Any]],
-    feature_names: Optional[list[str]],
+    feature_names: list[str] | None,
     *,
     join_key_field_types: dict[str, Any],
     object_type: Literal["feature_view", "feature_group"] = "feature_view",
-    request_context: Optional[list[dict[str, Any]]] = None,
+    request_context: list[dict[str, Any]] | None = None,
     timeout_sec: float = 120.0,
-    http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
+    http_client: online_service_http_client.OnlineServiceHttpClient | None = None,
 ) -> tuple[list[dict[str, Any]], Any]:
     """Query Postgres-backed online features via the Online Service ``POST /api/v1/query`` endpoint.
 
@@ -1410,15 +1458,15 @@ def read_postgres_online_features(
 
     resolved_query_url = online_service_http_client.query_api_url(query_url)
     url = resolved_query_url
-    owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
+    owned_client: online_service_http_client.OnlineServiceHttpClient | None = None
     client = http_client
     if client is None:
         owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
         client = owned_client
 
     out: list[dict[str, Any]] = []
-    baseline_names: Optional[list[str]] = None
-    output_feature_names: Optional[list[str]] = None
+    baseline_names: list[str] | None = None
+    output_feature_names: list[str] | None = None
     schema: Any = None
 
     try:

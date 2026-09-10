@@ -9,9 +9,10 @@ def get_build_rules_for_native_impl():
         srcs = ["binarizer_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:binarizer",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -22,10 +23,11 @@ def get_build_rules_for_native_impl():
         timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/preprocessing:k_bins_discretizer",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//snowflake/ml/utils:sparse",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -36,9 +38,10 @@ def get_build_rules_for_native_impl():
         timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/preprocessing:label_encoder",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -47,9 +50,10 @@ def get_build_rules_for_native_impl():
         srcs = ["max_abs_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:max_abs_scaler",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -58,9 +62,10 @@ def get_build_rules_for_native_impl():
         srcs = ["min_max_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -71,9 +76,10 @@ def get_build_rules_for_native_impl():
         timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/preprocessing:normalizer",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -85,11 +91,12 @@ def get_build_rules_for_native_impl():
         deps = [
             "//snowflake/ml/_internal/utils:identifier",
             "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//snowflake/ml/utils:sparse",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
         data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -100,9 +107,10 @@ def get_build_rules_for_native_impl():
         timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -113,9 +121,10 @@ def get_build_rules_for_native_impl():
         timeout = TIMEOUT,
         deps = [
             "//snowflake/ml/modeling/preprocessing:robust_scaler",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -124,9 +133,10 @@ def get_build_rules_for_native_impl():
         srcs = ["standard_scaler_test.py"],
         deps = [
             "//snowflake/ml/modeling/preprocessing:standard_scaler",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )
 
@@ -147,8 +157,9 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/modeling/preprocessing:ordinal_encoder",
             "//snowflake/ml/modeling/preprocessing:robust_scaler",
             "//snowflake/ml/modeling/preprocessing:standard_scaler",
-            "//snowflake/ml/utils:connection_params",
+            "//snowflake/ml/_internal/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        optional_dependencies = ["scikit-learn"],
         tags = ["feature:modeling", "short_regress"],
     )

@@ -2,7 +2,7 @@ import enum
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Callable, Optional, Union, overload
+from typing import Any, Callable, Union, overload
 
 import pandas as pd
 
@@ -16,21 +16,19 @@ from snowflake.ml.model import inference_engine, openai_signatures, task, type_h
 from snowflake.ml.model._client.model import (
     _loaded_model_telemetry,
     batch_inference_job_specs,
-    batch_inference_specs,
     inference_engine_utils,
 )
+from snowflake.ml.model._client.model_spec import model_spec
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import utils as model_method_utils
 from snowflake.ml.model._packager.model_handlers import huggingface, snowmlmodel
-from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.model._signatures import core
 from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
-_BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
 VLLM_SUPPORTED_TASKS = [
     "text-generation",
     "image-text-to-text",
@@ -58,8 +56,8 @@ class ModelVersion(lineage_node.LineageNode):
     _model_name: sql_identifier.SqlIdentifier
     _version_name: sql_identifier.SqlIdentifier
     _functions: list[model_manifest_schema.ModelFunctionInfo]
-    _model_spec: Optional[model_meta_schema.ModelMetadataDict]
-    _target_platforms: Optional[list[str]]
+    _model_spec: model_spec.ModelSpec | None
+    _target_platforms: list[str] | None
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -162,13 +160,14 @@ class ModelVersion(lineage_node.LineageNode):
         service_ops: service_ops.ServiceOperator,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
+        retry: bool | None = False,
     ) -> "ModelVersion":
         self: "ModelVersion" = object.__new__(cls)
         self._model_ops = model_ops
         self._service_ops = service_ops
         self._model_name = model_name
         self._version_name = version_name
-        self._functions = self._get_functions()
+        self._functions = self._get_functions(**({"retry": True} if retry else {}))
         self._model_spec = None
         self._target_platforms = None
         super(cls, cls).__init__(
@@ -412,7 +411,7 @@ class ModelVersion(lineage_node.LineageNode):
             statement_params=statement_params,
         )
 
-    def _get_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
+    def _get_functions(self, *, retry: bool | None = False) -> list[model_manifest_schema.ModelFunctionInfo]:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -423,6 +422,7 @@ class ModelVersion(lineage_node.LineageNode):
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
+            **({"retry": True} if retry else {}),
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -458,7 +458,7 @@ class ModelVersion(lineage_node.LineageNode):
         """
         return self._functions
 
-    def _get_model_spec(self, statement_params: Optional[dict[str, Any]] = None) -> model_meta_schema.ModelMetadataDict:
+    def _get_model_spec(self, statement_params: dict[str, Any] | None = None) -> model_spec.ModelSpec:
         """Fetch and cache the model spec for this model version.
 
         Args:
@@ -466,7 +466,7 @@ class ModelVersion(lineage_node.LineageNode):
                 in the SQL command to fetch the model spec.
 
         Returns:
-            The model spec as a dictionary for this model version.
+            The model spec for this model version.
         """
         if self._model_spec is None:
             self._model_spec = self._model_ops._fetch_model_spec(
@@ -481,13 +481,13 @@ class ModelVersion(lineage_node.LineageNode):
     @overload
     def run(
         self,
-        X: Union[pd.DataFrame, dataframe.DataFrame],
+        X: pd.DataFrame | dataframe.DataFrame,
         *,
-        function_name: Optional[str] = None,
-        partition_column: Optional[str] = None,
+        function_name: str | None = None,
+        partition_column: str | None = None,
         strict_input_validation: bool = False,
-        params: Optional[dict[str, Any]] = None,
-    ) -> Union[pd.DataFrame, dataframe.DataFrame]:
+        params: dict[str, Any] | None = None,
+    ) -> pd.DataFrame | dataframe.DataFrame:
         """Invoke a method in a model version object.
 
         Args:
@@ -505,13 +505,13 @@ class ModelVersion(lineage_node.LineageNode):
     @overload
     def run(
         self,
-        X: Union[pd.DataFrame, dataframe.DataFrame],
+        X: pd.DataFrame | dataframe.DataFrame,
         *,
         service_name: str,
-        function_name: Optional[str] = None,
+        function_name: str | None = None,
         strict_input_validation: bool = False,
-        params: Optional[dict[str, Any]] = None,
-    ) -> Union[pd.DataFrame, dataframe.DataFrame]:
+        params: dict[str, Any] | None = None,
+    ) -> pd.DataFrame | dataframe.DataFrame:
         """Invoke a method in a model version object via a service.
 
         Args:
@@ -534,11 +534,11 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         X: Union[pd.DataFrame, "dataframe.DataFrame"],
         *,
-        service_name: Optional[str] = None,
-        function_name: Optional[str] = None,
-        partition_column: Optional[str] = None,
+        service_name: str | None = None,
+        function_name: str | None = None,
+        partition_column: str | None = None,
         strict_input_validation: bool = False,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> Union[pd.DataFrame, "dataframe.DataFrame"]:
         """Invoke a method in a model version object via the warehouse or a service.
 
@@ -637,14 +637,13 @@ class ModelVersion(lineage_node.LineageNode):
     def _determine_explain_case_sensitivity(
         self,
         target_function_info: model_manifest_schema.ModelFunctionInfo,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> bool:
-        model_spec = self._get_model_spec(statement_params)
-        method_options = model_spec.get("method_options", {})
+        parsed_model_spec = self._get_model_spec(statement_params)
         return model_method_utils.determine_explain_case_sensitive_from_method_options(
-            method_options,
+            parsed_model_spec.method_options,
             target_function_info["name"],
-            default=bool(model_spec.get("case_sensitive", False)),
+            default=parsed_model_spec.case_sensitive,
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -654,284 +653,29 @@ class ModelVersion(lineage_node.LineageNode):
             "compute_pool",
             "input_spec",
             "output_spec",
-            "job_spec",
-            "inference_engine_options",
+            "resources_spec",
+            "inference_spec",
+            "image_build_spec",
+            "replicas",
         ],
     )
     def run_batch(
         self,
-        X: dataframe.DataFrame,
+        X: dataframe.DataFrame | None = None,
         *,
-        compute_pool: str,
-        input_spec: Optional[batch_inference_specs.InputSpec] = None,
-        output_spec: batch_inference_specs.OutputSpec,
-        job_spec: Optional[batch_inference_specs.JobSpec] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-    ) -> job.MLJob[Any]:
-        """Execute batch inference on datasets as an SPCS job.
-
-        .. deprecated::
-            The backend this method uses will be removed in a future release, and it will be
-            replaced by an updated batch inference jobs API. For new work, use
-            :meth:`_run_batch_v2`, which runs on the updated backend and becomes the public
-            ``run_batch`` in the next major release (2.0).
-
-        Args:
-            compute_pool (str): Name of the compute pool to use for building the image containers and batch
-                inference execution.
-            X (dataframe.DataFrame): Snowpark DataFrame containing the input data for inference.
-                The DataFrame should contain all required features for model prediction and passthrough columns.
-            output_spec (batch_inference_specs.OutputSpec): Configuration for where and how to save
-                the inference results. Specifies the stage location and file handling behavior.
-            input_spec (Optional[batch_inference_specs.InputSpec]): Optional configuration for input
-                processing including model inference parameters and column handling options.
-                If None, default values will be used for params and column_handling.
-            job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
-                execution parameters such as compute resources, worker counts, and job naming.
-                If None, default values will be used.
-            inference_engine_options: Options for batch inference with a custom inference engine.
-                Supports `engine` and `engine_args_override`.
-                `engine` is the type of the inference engine to use. Accepts an
-                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
-                case-insensitive string such as ``"vllm"`` or ``"python_generic"``.
-                `engine_args_override` is a list of string arguments to pass to the inference engine.
-
-        Returns:
-            job.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
-                lifecycle.
-
-        Raises:
-            ValueError: If warehouse is not set in job_spec and no current warehouse is available.
-            ValueError: If the specified function is a partitioned model function.
-            RuntimeError: If the input data cannot be processed or written to the staging location.
-
-        Example:
-            >>> # Prepare input data - Example 1: From a table
-            >>> input_df = session.table("my_input_table")
-            >>>
-            >>> # Prepare input data - Example 2: From a SQL query
-            >>> input_df = session.sql(
-            ...     "SELECT id, feature_1, feature_2 FROM feature_table WHERE feature_1 > 100"
-            ... )
-            >>>
-            >>> # Prepare input data - Example 3: From Parquet files in a stage
-            >>> input_df = session.read.option("pattern", ".*\\.parquet").parquet(
-            ...     "@my_stage/input_data/"
-            ... ).select("id", "feature_1", "feature_2")
-            >>>
-            >>> # Prepare input data - Example 4: From image files in a stage
-            >>> from snowflake.ml.utils.stage_file import list_stage_files
-            >>> input_df = list_stage_files(session, "@my_stage/path", pattern=".*\\.jpg")
-            >>>
-            >>> # Configure output location
-            >>> output_spec = OutputSpec(
-            ...     stage_location='@My_DB.PUBLIC.MY_STAGE/someth/path/',
-            ...     mode=SaveMode.OVERWRITE
-            ... )
-            >>>
-            >>> # Configure job parameters
-            >>> job_spec = JobSpec(
-            ...     job_name="my_batch_inference",
-            ...     num_workers=4,
-            ...     cpu_requests="2",
-            ...     memory_requests="8Gi"
-            ... )
-            >>>
-            >>> # Run batch inference
-            >>> job = model_version.run_batch(
-            ...     compute_pool="my_compute_pool",
-            ...     X=input_df,
-            ...     output_spec=output_spec,
-            ...     job_spec=job_spec
-            ... )
-            >>>
-            >>> # Run batch inference with InputSpec for additional options
-            >>> from snowflake.ml.model._client.model.batch_inference_specs import InputSpec, FileEncoding
-            >>> input_spec = InputSpec(
-            ...     params={"temperature": 0.7, "top_k": 50},
-            ...     column_handling={"image_col": {"encoding": FileEncoding.BASE64}}
-            ... )
-            >>> job = model_version.run_batch(
-            ...     compute_pool="my_compute_pool",
-            ...     X=input_df,
-            ...     output_spec=output_spec,
-            ...     input_spec=input_spec,
-            ...     job_spec=job_spec
-            ... )
-            >>>
-            >>> # Run batch inference on image files using list_stage_files
-            >>> from snowflake.ml.utils.stage_file import list_stage_files
-            >>> from snowflake.ml.model import InputSpec, InputFormat, FileEncoding
-            >>> input_df = list_stage_files(session, "@my_stage/images", pattern=".*\\.jpg", column_name="IMAGES")
-            >>> input_spec = InputSpec(
-            ...     column_handling={
-            ...         "IMAGES": {"input_format": InputFormat.FULL_STAGE_PATH, "convert_to": FileEncoding.RAW_BYTES}
-            ...     }
-            ... )
-            >>> job = model_version.run_batch(
-            ...     compute_pool="my_compute_pool",
-            ...     X=input_df,
-            ...     output_spec=output_spec,
-            ...     input_spec=input_spec,
-            ... )
-
-        Note:
-            This method is currently in private preview and requires Snowflake version 1.18.0 or later.
-            The input data is temporarily stored in the output stage location under /_temporary before
-            inference execution.
-        """
-        warnings.warn(
-            "run_batch is deprecated: the batch inference backend it currently uses will be removed in a "
-            "future release, and the method will be replaced by an updated batch inference jobs API. Existing "
-            "calls will stop working once the backend is removed.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        statement_params = telemetry.get_statement_params(
-            project=_TELEMETRY_PROJECT,
-            subproject=_TELEMETRY_SUBPROJECT,
-        )
-
-        # Extract params and column_handling from input_spec if provided
-        if input_spec is None:
-            input_spec = batch_inference_specs.InputSpec()
-
-        params = input_spec.params
-        column_handling = input_spec.column_handling
-        partition_columns = [input_spec.partition_column] if input_spec.partition_column is not None else None
-
-        if partition_columns is not None:
-            model_spec = self._get_model_spec(statement_params)
-            if model_spec.get("model_type") == huggingface.TransformersPipelineHandler.HANDLER_TYPE:
-                raise ValueError(
-                    "partition_column is not supported for HuggingFace pipeline models in batch inference jobs. "
-                    "Please remove the partition_column from InputSpec."
-                )
-
-        if job_spec is None:
-            job_spec = batch_inference_specs.JobSpec()
-
-        # Validate GPU support if GPU resources are requested
-        self._throw_error_if_gpu_is_not_supported(job_spec.gpu_requests, statement_params)
-
-        inference_engine_args = self._prepare_inference_engine_args(
-            inference_engine_options,
-            job_spec.gpu_requests,
-            statement_params,
-        )
-
-        warehouse = job_spec.warehouse or self._service_ops._session.get_current_warehouse()
-        if warehouse is None:
-            raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
-
-        target_function_info = self._get_function_info(function_name=job_spec.function_name)
-
-        if (
-            partition_columns is not None
-            and target_function_info["target_method_function_type"]
-            == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
-        ):
-            raise ValueError(
-                "partition_column is not supported for FUNCTION type methods in batch inference jobs. "
-                "Only TABLE_FUNCTION type methods support partitioning."
-            )
-
-        if partition_columns is not None and target_function_info["is_partitioned"]:
-            output_cols_upper = {spec.name.upper() for spec in target_function_info["signature"].outputs}
-            partition_cols_upper = {p.upper() for p in partition_columns}
-            collisions = sorted(partition_cols_upper & output_cols_upper)
-            if collisions:
-                raise ValueError(
-                    f"Partitioned model output includes the partition column(s) {collisions}. "
-                    f"Batch inference automatically appends the partition column to the output of "
-                    f"partitioned models; please remove {collisions} from the model output "
-                    f"and re-register the model."
-                )
-
-        input_stage_location: Optional[str] = None
-        output_stage_location: Optional[str] = None
-        base_stage_location: Optional[str] = None
-
-        if output_spec.base_stage_location is not None:
-            base_stage_location = output_spec.base_stage_location
-            if not base_stage_location.endswith("/"):
-                base_stage_location += "/"
-            # use a temporary folder under the base stage to store the intermediate input data
-            input_stage_location = f"{base_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
-        else:
-            # use a temporary folder in the output stage to store the intermediate input data
-            assert output_spec.stage_location is not None
-            output_stage_location = output_spec.stage_location
-            if not output_stage_location.endswith("/"):
-                output_stage_location += "/"
-            input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
-
-            self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
-
-        try:
-            # overwrite=True prevents "Files already existing" errors on large warehouses where
-            # COPY INTO parallelizes the unload and internal waves see files from earlier waves.
-            X.write.copy_into_location(  # type:ignore[call-overload]
-                location=input_stage_location, file_format_type="parquet", header=True, overwrite=True
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to process input data: {e}")
-
-        return self._service_ops.invoke_batch_job_method(
-            # model version info
-            model_name=self._model_name,
-            version_name=self._version_name,
-            # job spec
-            function_name=target_function_info["target_method"],
-            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
-            force_rebuild=job_spec.force_rebuild,
-            image_repo_name=job_spec.image_repo,
-            num_workers=job_spec.num_workers,
-            max_batch_rows=job_spec.max_batch_rows,
-            warehouse=sql_identifier.SqlIdentifier(warehouse),
-            cpu_requests=job_spec.cpu_requests,
-            memory_requests=job_spec.memory_requests,
-            gpu_requests=job_spec.gpu_requests,
-            job_name=job_spec.job_name,
-            job_name_prefix=job_spec.job_name_prefix,
-            replicas=job_spec.replicas,
-            block=job_spec.block,
-            # input and output
-            input_stage_location=input_stage_location,
-            input_file_pattern="*",
-            column_handling=column_handling,
-            params=params,
-            partition_columns=partition_columns,
-            signature_params=target_function_info["signature"].params,
-            output_stage_location=output_stage_location,
-            base_stage_location=base_stage_location,
-            completion_filename="_SUCCESS",
-            # misc
-            statement_params=statement_params,
-            inference_engine_args=inference_engine_args,
-        )
-
-    def _run_batch_v2(
-        self,
-        X: Optional[dataframe.DataFrame] = None,
-        *,
-        input_stage_location: Optional[str] = None,
+        input_stage_location: str | None = None,
         compute_pool: str,
         output_spec: batch_inference_job_specs.OutputSpec,
-        input_spec: Optional[batch_inference_job_specs.InputSpec] = None,
-        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec] = None,
-        inference_spec: Optional[batch_inference_job_specs.InferenceSpec] = None,
-        image_build_spec: Optional[batch_inference_job_specs.ImageBuildSpec] = None,
-        function_name: Optional[str] = None,
-        job_name: Optional[str] = None,
-        replicas: Optional[int] = None,
+        input_spec: batch_inference_job_specs.InputSpec | None = None,
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None = None,
+        inference_spec: batch_inference_job_specs.InferenceSpec | None = None,
+        image_build_spec: batch_inference_job_specs.ImageBuildSpec | None = None,
+        function_name: str | None = None,
+        job_name: str | None = None,
+        replicas: int | None = None,
         async_: bool = True,
     ) -> job.MLJob[Any]:
         """Run batch inference on a model as a Snowflake job.
-
-        This is the batch inference jobs API that will become the public :meth:`run_batch`
-        in a future release; the deprecated :meth:`run_batch` runs on the older backend and
-        should not be used for new work.
 
         Args:
             X: Optional Snowpark DataFrame with the input rows. Provide exactly one of ``X`` or
@@ -960,6 +704,56 @@ class ModelVersion(lineage_node.LineageNode):
             ValueError: If not exactly one of ``X`` / ``input_stage_location`` is provided, or if
                 ``input_spec.partition_column`` is supplied for a HuggingFace pipeline model or a
                 FUNCTION-type method, or if the partition column collides with a partitioned model output.
+
+        Example:
+            >>> from snowflake.ml.model.batch_inference import (
+            ...     InferenceSpec,
+            ...     InputSpec,
+            ...     OutputSpec,
+            ...     ResourcesSpec,
+            ...     SaveMode,
+            ... )
+            >>>
+            >>> # Input rows can come from a table, a query, or Parquet files in a stage.
+            >>> input_df = session.table("my_input_table")
+            >>>
+            >>> job = model_version.run_batch(
+            ...     input_df,
+            ...     compute_pool="my_compute_pool",
+            ...     output_spec=OutputSpec(
+            ...         stage_location="@my_db.public.my_stage/predictions/",
+            ...         mode=SaveMode.OVERWRITE,
+            ...     ),
+            ... )
+            >>>
+            >>> # Results land under a per-job subdirectory named for the unqualified job name,
+            >>> # which is the trailing identifier of the fully qualified job.id.
+            >>> job_name = job.id.split(".")[-1].strip('"')
+            >>> output_location = f"@my_db.public.my_stage/predictions/{job_name}/"
+            >>>
+            >>> # Size the job, pass model parameters, and pin the image repo.
+            >>> job = model_version.run_batch(
+            ...     input_df,
+            ...     compute_pool="my_gpu_pool",
+            ...     output_spec=OutputSpec(stage_location="@my_db.public.my_stage/predictions/"),
+            ...     input_spec=InputSpec(params={"temperature": 0.7, "top_k": 50}),
+            ...     resources_spec=ResourcesSpec(cpu_requests="2", memory_requests="8Gi", gpu_requests="1"),
+            ...     inference_spec=InferenceSpec(num_workers=4),
+            ...     function_name="predict",
+            ...     replicas=2,
+            ... )
+            >>>
+            >>> # Read input that is already staged, instead of materializing a DataFrame.
+            >>> job = model_version.run_batch(
+            ...     input_stage_location="@my_db.public.input_stage/batch_01/",
+            ...     compute_pool="my_compute_pool",
+            ...     output_spec=OutputSpec(stage_location="@my_db.public.my_stage/predictions/"),
+            ... )
+
+        Note:
+            When ``X`` is provided, the rows are written as Parquet to a reserved subdirectory of
+            ``output_spec.stage_location`` before the job starts. An ``input_stage_location`` is read
+            in place and must not sit inside the output location.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -997,10 +791,10 @@ class ModelVersion(lineage_node.LineageNode):
     def _validate_batch_inference_request(
         self,
         *,
-        input_spec: Optional[batch_inference_job_specs.InputSpec],
-        resources_spec: Optional[batch_inference_job_specs.ResourcesSpec],
-        function_name: Optional[str],
-        statement_params: Optional[dict[str, Any]] = None,
+        input_spec: batch_inference_job_specs.InputSpec | None,
+        resources_spec: batch_inference_job_specs.ResourcesSpec | None,
+        function_name: str | None,
+        statement_params: dict[str, Any] | None = None,
     ) -> model_manifest_schema.ModelFunctionInfo:
         """Resolve the target function and reject unsupported batch inference requests.
 
@@ -1025,8 +819,8 @@ class ModelVersion(lineage_node.LineageNode):
         )
 
         if partition_columns is not None:
-            model_spec = self._get_model_spec(statement_params)
-            if model_spec.get("model_type") == huggingface.TransformersPipelineHandler.HANDLER_TYPE:
+            parsed_model_spec = self._get_model_spec(statement_params)
+            if parsed_model_spec.model_type == huggingface.TransformersPipelineHandler.HANDLER_TYPE:
                 raise ValueError(
                     "partition_column is not supported for HuggingFace pipeline models in batch inference jobs. "
                     "Please remove the partition_column from input_spec."
@@ -1061,7 +855,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         return target_function_info
 
-    def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
+    def _get_function_info(self, function_name: str | None) -> model_manifest_schema.ModelFunctionInfo:
         functions: list[model_manifest_schema.ModelFunctionInfo] = self._functions
 
         if function_name:
@@ -1129,7 +923,7 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         force: bool = False,
-        options: Optional[type_hints.ModelLoadOption] = None,
+        options: type_hints.ModelLoadOption | None = None,
     ) -> type_hints.SupportedModelType:
         """Load the underlying original Python object back from a model.
             This operation requires to have the exact the same environment as the one when logging the model, otherwise,
@@ -1218,7 +1012,7 @@ class ModelVersion(lineage_node.LineageNode):
             version_name=self._version_name.identifier(),
         )
 
-    def _enforce_owner_only(self, operation: str, *, statement_params: Optional[dict[str, Any]] = None) -> None:
+    def _enforce_owner_only(self, operation: str, *, statement_params: dict[str, Any] | None = None) -> None:
         owner = self._model_ops.get_model_owner(
             database_name=None,
             schema_name=None,
@@ -1266,7 +1060,7 @@ class ModelVersion(lineage_node.LineageNode):
 
     def _can_run_on_gpu(
         self,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> bool:
         """Check if the model has GPU runtime support.
 
@@ -1277,17 +1071,12 @@ class ModelVersion(lineage_node.LineageNode):
         Returns:
             True if the model has GPU runtime configured, False otherwise.
         """
-        # Fetch model spec
-        model_spec = self._get_model_spec(statement_params)
-
-        # Check if runtimes section exists and has gpu runtime
-        runtimes = model_spec.get("runtimes", {})
-        return "gpu" in runtimes
+        return self._get_model_spec(statement_params).supports_gpu
 
     def _throw_error_if_gpu_is_not_supported(
         self,
-        gpu_requests: Optional[Union[str, int]] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        gpu_requests: str | int | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Check if the model has GPU runtime support.
 
@@ -1311,20 +1100,17 @@ class ModelVersion(lineage_node.LineageNode):
 
     def _prepare_inference_engine_args(
         self,
-        inference_engine_options: Optional[dict[str, Any]],
-        gpu_requests: Optional[Union[str, int]],
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> Optional[service_ops.InferenceEngineArgs]:
+        inference_engine_options: dict[str, Any] | None,
+        statement_params: dict[str, Any] | None = None,
+    ) -> service_ops.InferenceEngineArgs | None:
         """Prepare and validate inference engine arguments.
 
         This method handles the common logic for processing inference engine options:
         1. Parse inference engine options into InferenceEngineArgs
         2. Validate that the model is a HuggingFace text-generation model (if inference engine is specified)
-        3. Enrich inference engine args
 
         Args:
             inference_engine_options: Optional dictionary containing inference engine configuration.
-            gpu_requests: GPU resource request string (e.g., "4").
             statement_params: Optional dictionary of statement parameters for SQL commands.
 
         Returns:
@@ -1339,17 +1125,12 @@ class ModelVersion(lineage_node.LineageNode):
             # Validate that model is HuggingFace vLLM supported model and is logged with
             # OpenAI compatible signature.
             self._check_huggingface_vllm_supported_model(statement_params)
-            # Enrich with GPU configuration
-            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
-                inference_engine_args,
-                gpu_requests,
-            )
 
         return inference_engine_args
 
     def _check_huggingface_vllm_supported_model(
         self,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Check if the model is a HuggingFace pipeline with vLLM supported task
         and is logged with OpenAI compatible signature.
@@ -1363,29 +1144,24 @@ class ModelVersion(lineage_node.LineageNode):
                 if the model is not logged with OpenAI compatible signature.
         """
         # Fetch model spec
-        model_spec = self._get_model_spec(statement_params)
+        parsed_model_spec = self._get_model_spec(statement_params)
 
         # Check if model_type is huggingface_pipeline
-        model_type = model_spec.get("model_type")
+        model_type = parsed_model_spec.model_type
         if model_type != "huggingface_pipeline":
             raise ValueError(
                 f"Inference engine is only supported for HuggingFace vLLM supported models. "
                 f"Found model_type: {model_type}"
             )
 
-        # Check if model supports vLLM supported task
-        # There should only be one model in the list because we don't support multiple models in a single model spec
-        models = model_spec.get("models", {})
         is_vllm_supported_task = False
         found_tasks: list[str] = []
 
         # As long as the model supports vLLM supported task, we can use it
-        for _, model_info in models.items():
-            options = model_info.get("options", {})
-            task = options.get("task")
-            if task:
-                found_tasks.append(str(task))
-                if task in VLLM_SUPPORTED_TASKS:
+        for model_task in parsed_model_spec.model_tasks.values():
+            if model_task:
+                found_tasks.append(model_task)
+                if model_task in VLLM_SUPPORTED_TASKS:
                     is_vllm_supported_task = True
                     break
 
@@ -1400,7 +1176,7 @@ class ModelVersion(lineage_node.LineageNode):
             )
 
         # Check if the model is logged with OpenAI compatible signature.
-        signatures_dict = model_spec.get("signatures", {})
+        signatures_dict = parsed_model_spec.signatures
 
         # Deserialize signatures from model spec to ModelSignature objects for proper semantic comparison.
         deserialized_signatures = {
@@ -1424,25 +1200,25 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         service_name: str,
-        image_build_compute_pool: Optional[str] = None,
+        image_build_compute_pool: str | None = None,
         service_compute_pool: str,
-        image_repo: Optional[str] = None,
+        image_repo: str | None = None,
         ingress_enabled: bool = False,
         min_instances: int = 0,
         max_instances: int = 1,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        gpu_requests: Optional[str] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
+        gpu_requests: str | None = None,
+        num_workers: int | None = None,
+        max_batch_rows: int | None = None,
         force_rebuild: bool = False,
-        build_external_access_integration: Optional[str] = None,
+        build_external_access_integration: str | None = None,
         block: bool = True,
-        autocapture: Optional[bool] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
-    ) -> Union[str, async_job.AsyncJob]:
+        autocapture: bool | None = None,
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+    ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
         Args:
@@ -1497,25 +1273,25 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         service_name: str,
-        image_build_compute_pool: Optional[str] = None,
+        image_build_compute_pool: str | None = None,
         service_compute_pool: str,
-        image_repo: Optional[str] = None,
+        image_repo: str | None = None,
         ingress_enabled: bool = False,
         min_instances: int = 0,
         max_instances: int = 1,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        gpu_requests: Optional[str] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
+        gpu_requests: str | None = None,
+        num_workers: int | None = None,
+        max_batch_rows: int | None = None,
         force_rebuild: bool = False,
-        build_external_access_integrations: Optional[list[str]] = None,
+        build_external_access_integrations: list[str] | None = None,
         block: bool = True,
-        autocapture: Optional[bool] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
-    ) -> Union[str, async_job.AsyncJob]:
+        autocapture: bool | None = None,
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+    ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
         Args:
@@ -1584,26 +1360,26 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         service_name: str,
-        image_build_compute_pool: Optional[str] = None,
+        image_build_compute_pool: str | None = None,
         service_compute_pool: str,
-        image_repo: Optional[str] = None,
+        image_repo: str | None = None,
         ingress_enabled: bool = False,
         min_instances: int = 0,
         max_instances: int = 1,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        gpu_requests: Optional[Union[str, int]] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
+        cpu_requests: str | None = None,
+        memory_requests: str | None = None,
+        gpu_requests: str | int | None = None,
+        num_workers: int | None = None,
+        max_batch_rows: int | None = None,
         force_rebuild: bool = False,
-        build_external_access_integration: Optional[str] = None,
-        build_external_access_integrations: Optional[list[str]] = None,
+        build_external_access_integration: str | None = None,
+        build_external_access_integrations: list[str] | None = None,
         block: bool = True,
-        autocapture: Optional[bool] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
-    ) -> Union[str, async_job.AsyncJob]:
+        autocapture: bool | None = None,
+        inference_engine_options: dict[str, Any] | None = None,
+        experimental_options: dict[str, Any] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+    ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
         Args:
@@ -1716,7 +1492,6 @@ class ModelVersion(lineage_node.LineageNode):
 
         inference_engine_args = self._prepare_inference_engine_args(
             inference_engine_options,
-            gpu_requests,
             statement_params,
         )
 

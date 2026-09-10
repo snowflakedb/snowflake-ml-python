@@ -11,12 +11,12 @@ from sklearn.preprocessing import (
     OneHotEncoder as SkOneHotEncoder,
 )
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.modeling.compose import ColumnTransformer
 from snowflake.ml.modeling.linear_model.logistic_regression import LogisticRegression
 from snowflake.ml.modeling.model_selection import GridSearchCV
 from snowflake.ml.modeling.pipeline import Pipeline
 from snowflake.ml.modeling.preprocessing import MinMaxScaler, OneHotEncoder
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 categorical_columns = [

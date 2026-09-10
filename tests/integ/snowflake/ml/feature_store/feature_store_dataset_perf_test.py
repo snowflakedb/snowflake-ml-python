@@ -11,12 +11,12 @@ This test validates that the CTE method can handle large-scale datasets with:
 """
 
 import time
-from typing import Optional
 from uuid import uuid4
 
 from absl.testing import absltest
 from common_utils import create_random_schema
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
@@ -24,7 +24,6 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureStore,
     FeatureView,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
 
@@ -145,7 +144,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
         cls._session.close()
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: str | None = None) -> FeatureStore:
         """Create a feature store for testing."""
         current_schema = (
             create_random_schema(self._session, "FS_PERF_TEST", database=self._test_db) if name is None else name

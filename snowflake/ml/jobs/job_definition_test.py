@@ -25,6 +25,7 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.session.get_current_warehouse.return_value = "TEST_WH"
         self.session.get_current_database.return_value = "TEST_DB"
         self.session.get_current_schema.return_value = "TEST_SCHEMA"
+        self.session.conf.get.return_value = None
         self.uploaded_payload = _make_uploaded_payload()
 
     def _expected_definition(
@@ -487,6 +488,27 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.assertEqual(2, custom_tags["job_args_count"])
         self.assertEqual(3, custom_tags["env_vars_count"])
         self.assertNotIn("do_not_log_me", repr(custom_tags))
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("explicit_comment_wins", "nightly retrain", "SnowparkML", "nightly retrain"),
+        ("falls_back_to_application", None, "SnowparkML", "SnowparkML"),
+        ("no_application_means_no_comment", None, None, None),
+    )
+    def test_comment_resolution(self, comment: str | None, application: str | None, expected: str | None) -> None:
+        """A caller-supplied comment always wins; otherwise the session's application name is used."""
+        self.session.conf.get.return_value = application
+
+        result = self._register_with_env_vars(comment=comment)
+
+        self.assertEqual(expected, result.job_options.comment)
+
+    def test_comment_resolution_survives_unusable_session_conf(self) -> None:
+        """Attribution is best effort: an unreadable application must not fail job registration."""
+        self.session.conf = None
+
+        result = self._register_with_env_vars()
+
+        self.assertIsNone(result.job_options.comment)
 
 
 if __name__ == "__main__":

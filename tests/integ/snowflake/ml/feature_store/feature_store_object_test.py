@@ -2,6 +2,7 @@ import json
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     Entity,
     FeatureView,
@@ -13,7 +14,6 @@ from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
     _TIMESTAMP_COL_PLACEHOLDER,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 

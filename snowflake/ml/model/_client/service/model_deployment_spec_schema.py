@@ -1,5 +1,4 @@
 import enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,14 +12,14 @@ class Model(BaseModel):
 
 class InferenceEngineSpec(BaseModel):
     inference_engine_name: str
-    inference_engine_args: Optional[list[str]] = None
+    inference_engine_args: list[str] | None = None
 
 
 class ImageBuild(BaseModel):
-    compute_pool: Optional[str] = None
-    image_repo: Optional[str] = None
-    force_rebuild: Optional[bool] = None
-    external_access_integrations: Optional[list[str]] = None
+    compute_pool: str | None = None
+    image_repo: str | None = None
+    force_rebuild: bool | None = None
+    external_access_integrations: list[str] | None = None
 
 
 class FeatureRetrievalType(str, enum.Enum):
@@ -55,81 +54,42 @@ class Service(BaseModel):
     ingress_enabled: bool
     min_instances: int
     max_instances: int
-    cpu: Optional[str] = None
-    memory: Optional[str] = None
-    gpu: Optional[str] = None
-    num_workers: Optional[int] = None
-    max_batch_rows: Optional[int] = None
-    autocapture: Optional[bool] = None
-    inference_engine_spec: Optional[InferenceEngineSpec] = None
-    feature_retrieval: Optional[FeatureRetrievalConfig] = None
-
-
-class Input(BaseModel):
-    input_stage_location: Optional[str] = None
-    input_file_pattern: str
-    column_handling: Optional[str] = None
-    params: Optional[str] = None
-    partition_columns: Optional[list[str]] = None
-
-
-class Output(BaseModel):
-    output_stage_location: Optional[str] = None
-    base_stage_location: Optional[str] = None
-    completion_filename: str
-
-
-class Job(BaseModel):
-    name: Optional[str] = None
-    name_prefix: Optional[str] = None
-    compute_pool: str
-    cpu: Optional[str] = None
-    memory: Optional[str] = None
-    gpu: Optional[str] = None
-    num_workers: Optional[int] = None
-    max_batch_rows: Optional[int] = None
-    warehouse: Optional[str] = None
-    function_name: str
-    input: Input
-    output: Output
-    replicas: Optional[int] = None
-    sync: Optional[bool] = None
-    inference_engine_spec: Optional[InferenceEngineSpec] = None
+    cpu: str | None = None
+    memory: str | None = None
+    gpu: str | None = None
+    num_workers: int | None = None
+    max_batch_rows: int | None = None
+    autocapture: bool | None = None
+    inference_engine_spec: InferenceEngineSpec | None = None
+    feature_retrieval: FeatureRetrievalConfig | None = None
 
 
 class LogModelArgs(BaseModel):
-    pip_requirements: Optional[list[str]] = None
-    conda_dependencies: Optional[list[str]] = None
-    target_platforms: Optional[list[str]] = None
-    comment: Optional[str] = None
-    warehouse: Optional[str] = None
+    pip_requirements: list[str] | None = None
+    conda_dependencies: list[str] | None = None
+    target_platforms: list[str] | None = None
+    comment: str | None = None
+    warehouse: str | None = None
 
 
 class HuggingFaceModel(BaseModel):
     hf_model_name: str
-    task: Optional[str] = None
-    tokenizer: Optional[str] = None
-    token: Optional[str] = None
-    token_secret_object: Optional[str] = None
-    trust_remote_code: Optional[bool] = False
-    revision: Optional[str] = None
-    hf_model_kwargs: Optional[str] = "{}"
+    task: str | None = None
+    tokenizer: str | None = None
+    token: str | None = None
+    token_secret_object: str | None = None
+    trust_remote_code: bool | None = False
+    revision: str | None = None
+    hf_model_kwargs: str | None = "{}"
 
 
 class ModelLogging(BaseModel):
-    log_model_args: Optional[LogModelArgs] = None
-    hf_model: Optional[HuggingFaceModel] = None
+    log_model_args: LogModelArgs | None = None
+    hf_model: HuggingFaceModel | None = None
 
 
 class ModelServiceDeploymentSpec(BaseModel):
     models: list[Model]
-    image_build: Optional[ImageBuild] = None
+    image_build: ImageBuild | None = None
     service: Service
-    model_loggings: Optional[list[ModelLogging]] = None
-
-
-class ModelJobDeploymentSpec(BaseModel):
-    models: list[Model]
-    image_build: Optional[ImageBuild] = None
-    job: Job
-    model_loggings: Optional[list[ModelLogging]] = None
+    model_loggings: list[ModelLogging] | None = None

@@ -37,6 +37,7 @@ py_test(
     srcs = [
         "registry_test.py",
     ],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -53,6 +54,7 @@ py_test(
 py_test(
     name = "package_visibility_test",
     srcs = ["package_visibility_test.py"],
+    optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:model_registry",
         "short_regress",

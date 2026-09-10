@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from snowflake.ml.feature_store.decl.dependencies import topological_sort
+from snowflake.ml.feature_store.decl.dependencies import (
+    order_specs_for_drop,
+    topological_sort,
+)
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
@@ -21,6 +24,7 @@ from snowflake.ml.feature_store.decl.invariants import (
     spec_key,
     structural_fingerprint_hash,
 )
+from snowflake.ml.feature_store.decl.spec_compiler import build_entity_join_key_map
 from snowflake.ml.feature_store.decl.types import (
     AppliedState,
     ObjectKind,
@@ -28,6 +32,7 @@ from snowflake.ml.feature_store.decl.types import (
     PlanOp,
     PlanOptions,
     SpecBatch,
+    ValidationResult,
 )
 
 # Map spec kind to the appropriate OpKind for CREATE operations.
@@ -558,8 +563,16 @@ def generate_plan(
        - Hash differs, destructive, ``allow_recreate`` → ``RECREATE`` op.
        - Hash differs, destructive, no flag → warning, no op.
     3. If ``full_directory_mode``, scan applied_state for objects not in the
-       batch and emit ``DROP_FV`` / ``DROP_ENTITY`` ops for each orphan.
-    4. Return ``Plan`` with ordered ops and any warnings.
+       batch and emit ``DROP_FG`` / ``DROP_FV`` / ``DROP_SOURCE`` /
+       ``DROP_ENTITY`` ops for each orphan, reverse-topologically ordered
+       (FeatureGroup → FeatureView → Source → Entity).
+    4. Authored-spec FG/member gate: refuse a member ``DROP_FV`` /
+       ``RECREATE_FV`` (``FG_MEMBER_STILL_REFERENCED``) when a still-authored
+       batch FeatureGroup lists that ``(name, version)`` — never invent
+       ``DROP_FG`` / ``CREATE_FG`` for a hash-matched FeatureGroup.
+    5. Reorder ops into teardown bands so FeatureGroup teardown precedes the
+       member FeatureView deletes it unblocks.
+    6. Return ``Plan`` with ordered ops, warnings, and any blocking errors.
 
     For FeatureView kinds, when ``applied.from_specification`` is True the
     diff uses the **full spec** (compiled via
@@ -593,6 +606,17 @@ def generate_plan(
         sorted_dicts = topological_sort(spec_dicts)
     else:
         sorted_dicts = []
+
+    # Build the entity-name → join-key-columns map once for the whole batch.
+    # The compiled wire field ``ordered_entity_column_names`` must carry the
+    # entity **join-key columns** (the applied side recovers those columns,
+    # not the authored entity names), so a BatchFV whose entity name differs
+    # from its join-key column does not loop on ``RECREATE_FV``.  The map is
+    # threaded into every local compile/hash below; FV payloads are left
+    # untouched so the imperative executor still looks up entities by name.
+    # Both ``manager.plan`` and ``manager.write_plan`` route through here, so
+    # this single build point covers every plan path.
+    entity_join_keys = build_entity_join_key_map(sorted_dicts, applied_state)
 
     # Pre-compute the set of source names whose referencing local FVs are
     # already deployed.  Used to collapse ``CREATE_SOURCE`` to
@@ -738,7 +762,9 @@ def generate_plan(
         used_full_spec = False
         if applied.from_specification and kind in _RECREATE_OP:
             try:
-                current_hash = compute_local_spec_hash(data, db_for_compile, sch_for_compile)
+                current_hash = compute_local_spec_hash(
+                    data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
+                )
                 used_full_spec = True
             except Exception as exc:  # noqa: BLE001 — defensive fallback
                 warnings.append(
@@ -766,7 +792,9 @@ def generate_plan(
             )
 
             try:
-                local_compiled = compile_to_spec(data, db_for_compile, sch_for_compile)
+                local_compiled = compile_to_spec(
+                    data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
+                )
                 applied_normalized = _normalize_applied_bfv_for_hash(applied.spec_payload, local_compiled)
                 applied_compare_hash = _full_spec_hash(applied_normalized)
             except Exception:  # noqa: BLE001 — defensive fallback
@@ -877,7 +905,9 @@ def generate_plan(
             and used_full_spec
             and applied.from_specification
             and isinstance(applied.spec_payload, dict)
-            and batch_feature_view_structural_equivalent(data, applied.spec_payload, db_for_compile, sch_for_compile)
+            and batch_feature_view_structural_equivalent(
+                data, applied.spec_payload, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
+            )
         ):
             ops.append(
                 PlanOp(
@@ -948,7 +978,19 @@ def generate_plan(
         for data in sorted_dicts:
             batch_keys.add(spec_key(data, database=database, schema=schema))
 
-        # Scan applied_state for objects not in the batch → DROP ops
+        # Scan applied_state for objects not in the batch → DROP ops.
+        #
+        # Each orphan is collected together with a lightweight *ordering
+        # spec* (kind + name, plus the FG's ``feature_views`` edge) so the
+        # whole set can be reverse-topologically ordered before any op is
+        # emitted.  The ordering guarantees a ``FeatureGroup`` is dropped
+        # before its member ``FeatureView``s: Snowflake's online FG table
+        # (``<FG>$<V>$ONLINE``) references each member FV's online table, so
+        # dropping the member first is refused with ``Cannot drop Online
+        # Feature Table ... because it is referenced by``.  ``applied_state``
+        # dict order is whatever SHOW/DESCRIBE recovery produced (not
+        # FG-membership-aware), so we cannot rely on it here.
+        orphans: list[tuple[OpKind, str, dict[str, Any], dict[str, Any]]] = []
         for key, applied_obj in applied_state.objects.items():
             if key in batch_keys:
                 continue  # already handled above
@@ -976,6 +1018,7 @@ def generate_plan(
             else:
                 continue
 
+            payload_kind: str
             if op_kind is OpKind.DROP_SOURCE:
                 source_type = (
                     applied_obj.spec_payload.get("source_type") if isinstance(applied_obj.spec_payload, dict) else None
@@ -983,8 +1026,28 @@ def generate_plan(
                 payload_kind = "StreamingSource" if source_type == "Stream" else "BatchSource"
                 drop_payload: dict[str, Any] = {"name": name, "version": None, "kind": payload_kind}
             else:
+                payload_kind = kind
                 drop_payload = {"name": name, "version": version, "kind": kind}
 
+            # Build the ordering spec from the recovered payload so the FG →
+            # member-FV edge (``feature_views``) survives, then override the
+            # ``kind`` with the concrete drop kind.  For a Datasource the
+            # concrete kind is the recovered StreamingSource / BatchSource so
+            # ``dependencies._KIND_ORDER`` ranks it as a source (1) rather than
+            # an unknown kind (99) — otherwise the reverse sort would drop the
+            # source before its consuming FV.
+            base_spec = dict(applied_obj.spec_payload) if isinstance(applied_obj.spec_payload, dict) else {}
+            order_spec = {**base_spec, "kind": payload_kind, "name": name}
+            orphans.append((op_kind, name, drop_payload, order_spec))
+
+        # Reverse-topologically order the orphan set (FeatureGroup before its
+        # member FeatureViews).  ``topological_sort`` (6b1) keys nodes by list
+        # index, so ``order_specs_for_drop`` returns every ordering spec it was
+        # given, unchanged and de-duplicated by object identity — recover each
+        # orphan's drop metadata by the ``id`` of its ordering spec.
+        orphan_by_spec_id = {id(orphan[3]): orphan for orphan in orphans}
+        for order_spec in order_specs_for_drop([orphan[3] for orphan in orphans]):
+            op_kind, name, drop_payload, _order_spec = orphan_by_spec_id[id(order_spec)]
             ops.append(
                 PlanOp(
                     kind=op_kind,
@@ -996,4 +1059,74 @@ def generate_plan(
                 )
             )
 
-    return Plan(ops=ops, warnings=warnings)
+    # --- Authored-spec FeatureGroup/member referential-integrity gate ---
+    # A member FeatureView ``DROP_FV`` / ``RECREATE_FV`` must not run while a
+    # still-authored FeatureGroup lists that ``(name, version)``: Snowflake's
+    # online FG table (``<FG>$<V>$ONLINE``) references each member's online
+    # table, so the member delete is refused.  The authored-spec rule forbids
+    # inventing ``DROP_FG`` / destructive ``CREATE_FG`` for a hash-matched FG
+    # to unblock it — a matched hash means the operator did not change the
+    # spec.  So we refuse the member op with ``FG_MEMBER_STILL_REFERENCED`` and
+    # leave the FG's own op untouched.  Membership comes from the already-loaded
+    # batch FG specs (the change signal is the hash / batch key, never a file
+    # walk); an FG whose new payload dropped the member is not in this set, so
+    # its member delete is allowed and merely reordered below.
+    errors: list[ValidationResult] = []
+    batch_fg_members: set[tuple[str, str]] = set()
+    for data in sorted_dicts:
+        if data.get("kind") != "FeatureGroup":
+            continue
+        for fv_ref in data.get("feature_views", []) or []:
+            if not isinstance(fv_ref, dict):
+                continue
+            fv_name = (fv_ref.get("name") or "").upper()
+            fv_version = (fv_ref.get("version") or "").upper()
+            if fv_name:
+                batch_fg_members.add((fv_name, fv_version))
+
+    if batch_fg_members:
+        kept_ops: list[PlanOp] = []
+        for op in ops:
+            if op.kind in (OpKind.DROP_FV, OpKind.RECREATE_FV):
+                member_name = str(op.payload.get("name") or op.name).upper()
+                member_version = str(op.payload.get("version") or "V1").upper()
+                if (member_name, member_version) in batch_fg_members:
+                    errors.append(
+                        ValidationResult(
+                            severity="ERROR",
+                            code="FG_MEMBER_STILL_REFERENCED",
+                            message=(
+                                f"{op.name}: cannot {op.kind.value} a FeatureView that is "
+                                "still listed by a FeatureGroup in the current specs. Remove "
+                                "it from the FeatureGroup's feature_views (or drop the "
+                                "FeatureGroup) first, then re-plan."
+                            ),
+                            object_name=op.name,
+                        )
+                    )
+                    continue
+            kept_ops.append(op)
+        ops = kept_ops
+
+    # --- Teardown banding ---
+    # Reorder ops into dependency-safe teardown bands, preserving the relative
+    # order within each band (Python's ``sorted`` is stable):
+    #   band 0 — everything else (creates, updates, no-change);
+    #   band 1 — FeatureGroup teardown (``DROP_FG``, destructive ``CREATE_FG``);
+    #   band 2 — member FeatureView deletes (``RECREATE_FV``, ``DROP_FV``);
+    #   band 3 — source / entity drops (``DROP_SOURCE``, ``DROP_ENTITY``).
+    # A FeatureGroup teardown therefore always precedes the member deletes it
+    # unblocks.  Only FG ops the diff / orphan pass already produced land in
+    # band 1; a hash-matched FeatureGroup stays ``NO_CHANGE`` in band 0.
+    def _teardown_band(op: PlanOp) -> int:
+        if op.kind == OpKind.DROP_FG or (op.kind == OpKind.CREATE_FG and op.destructive):
+            return 1
+        if op.kind in (OpKind.RECREATE_FV, OpKind.DROP_FV):
+            return 2
+        if op.kind in (OpKind.DROP_SOURCE, OpKind.DROP_ENTITY):
+            return 3
+        return 0
+
+    ops = sorted(ops, key=_teardown_band)
+
+    return Plan(ops=ops, warnings=warnings, errors=errors)

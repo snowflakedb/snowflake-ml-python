@@ -14,7 +14,7 @@ These APIs are available everywhere you can use Snowflake ML, including Snowsigh
    fileset
    jobs
    model
-   model_batch
+   model_batch_inference
    modeling
    monitoring
    registry

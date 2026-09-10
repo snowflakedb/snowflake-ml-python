@@ -5,9 +5,9 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
+from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.experiment import ExperimentTracking
 from snowflake.ml.model import ModelVersion
-from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
 

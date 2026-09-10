@@ -1,7 +1,6 @@
 import os
 import pathlib
 import tempfile
-import warnings
 from typing import Any, cast
 from unittest import mock
 
@@ -21,17 +20,21 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.model._client.model import (
     batch_inference_job_specs,
-    batch_inference_specs,
     inference_engine_utils,
     model_version_impl,
+)
+from snowflake.ml.model._client.model_spec import (
+    legacy_model_spec,
+    model_extension_spec,
 )
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
-from snowflake.ml.model._packager.model_handlers import huggingface, snowmlmodel
+from snowflake.ml.model._packager.model_handlers import huggingface
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
-from snowflake.snowpark import Session, dataframe, row
+from snowflake.snowpark import Session, dataframe
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -70,6 +73,71 @@ _DUMMY_SIG = {
         ],
     ),
 }
+
+
+def _model_spec_v2(
+    *,
+    framework: str = "CUSTOM_RUNTIME",
+    task_name: str = "forecasting",
+    signature: dict[str, Any] | None = None,
+    method_options: dict[str, dict[str, Any]] | None = None,
+    case_sensitive: bool = False,
+) -> model_extension_spec.ModelExtensionSpecV2:
+    function_signature = signature or _DUMMY_SIG["predict"].to_dict()
+    functions: dict[str, dict[str, Any]] = {
+        "__call__": {
+            "signature": function_signature,
+            "properties": {"case_sensitive": case_sensitive} if case_sensitive else {},
+        }
+    }
+    if method_options:
+        for function_name, function_properties in method_options.items():
+            properties = dict(function_properties)
+            if case_sensitive and "case_sensitive" not in properties:
+                properties["case_sensitive"] = case_sensitive
+            if function_name in functions:
+                functions[function_name]["properties"] = {
+                    **(functions[function_name].get("properties") or {}),
+                    **properties,
+                }
+            else:
+                functions[function_name] = {
+                    "signature": function_signature,
+                    "properties": properties,
+                }
+    return model_extension_spec.ModelExtensionSpecV2(
+        {
+            "version": "2.0",
+            "model": {
+                "type": "USER_MODEL",
+                "framework": framework,
+                "details": {
+                    "models": {
+                        "primary": {
+                            "model_type": framework,
+                            "options": {"task": task_name},
+                        }
+                    }
+                },
+                "target_platforms": ["SNOWPARK_CONTAINER_SERVICES"],
+            },
+            "serving": {
+                "functions": functions,
+            },
+        }
+    )
+
+
+def _legacy_model_spec(**overrides: Any) -> legacy_model_spec.LegacyModelSpec:
+    metadata = {
+        "version": "1",
+        "model_type": "custom",
+        "models": {},
+        "signatures": {},
+        "env": {},
+    }
+    metadata.update(overrides)
+    return legacy_model_spec.LegacyModelSpec(cast(model_meta_schema.ModelMetadataDict, metadata))
 
 
 class ModelVersionImplTest(parameterized.TestCase):
@@ -312,7 +380,11 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df, function_name='"predict"')
             mock_invoke_method.assert_called_once_with(
@@ -372,7 +444,11 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.m_mv._functions = m_methods
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df, function_name='"predict"')
             mock_invoke_method.assert_called_once_with(
@@ -412,7 +488,11 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df)
             mock_invoke_method.assert_called_once_with(
@@ -452,7 +532,11 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df, strict_input_validation=True)
             mock_invoke_method.assert_called_once_with(
@@ -501,7 +585,11 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df, function_name='"predict_table"')
             mock_invoke_method.assert_called_once_with(
@@ -574,15 +662,15 @@ class ModelVersionImplTest(parameterized.TestCase):
                 self.m_mv._model_ops,
                 "_fetch_model_spec_and_target_platforms",
                 return_value=(
-                    {
-                        "model_type": "huggingface_pipeline",
-                        "models": {
+                    _legacy_model_spec(
+                        model_type="huggingface_pipeline",
+                        models={
                             "model1": {
                                 "model_type": "huggingface_pipeline",
                                 "options": {"task": "text-generation"},
                             }
                         },
-                    },
+                    ),
                     None,
                 ),
             ),
@@ -675,7 +763,11 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(), None),
+            ),
         ):
             self.m_mv.run(m_df, function_name='"predict_with_params"', params=test_params)
             mock_invoke_method.assert_called_once_with(
@@ -751,7 +843,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec_and_target_platforms",
-            return_value=({}, ["SNOWPARK_CONTAINER_SERVICES"]),
+            return_value=(_legacy_model_spec(), ["SNOWPARK_CONTAINER_SERVICES"]),
         ) as mock_fetch:
             expected_msg = (
                 f"The model {self.m_mv.fully_qualified_model_name} version {self.m_mv.version_name} "
@@ -1383,20 +1475,20 @@ class ModelVersionImplTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_mv._model_ops,
                 "_fetch_model_spec",
-                return_value={
-                    "model_type": "huggingface_pipeline",
-                    "models": {
+                return_value=_legacy_model_spec(
+                    model_type="huggingface_pipeline",
+                    models={
                         "model1": {
                             "model_type": "huggingface_pipeline",
                             "options": {"task": "text-generation"},
                         }
                     },
-                    "runtimes": {
+                    runtimes={
                         "gpu": {
                             "cuda_version": "11.8",
                         }
                     },
-                },
+                ),
             ),
         ):
             # Test with inference engine and GPU
@@ -1414,7 +1506,7 @@ class ModelVersionImplTest(parameterized.TestCase):
             # This check should happen when inference_engine_options is provided
             mock_check_huggingface_vllm_supported_model.assert_called_once()
 
-            # Verify that the enriched kwargs were passed to create_service
+            # Verify that inference engine args were passed through unchanged
             mock_create_service.assert_called_once()
             call_args = mock_create_service.call_args
 
@@ -1423,16 +1515,9 @@ class ModelVersionImplTest(parameterized.TestCase):
                 call_args.kwargs["inference_engine_args"].inference_engine, inference_engine.InferenceEngine.VLLM
             )
 
-            # Check that inference_engine_args is enriched correctly
-            expected_args = [
-                "--max_tokens=1000",
-                "--temperature=0.8",
-                "--tensor-parallel-size=4",
-            ]
-
             self.assertEqual(
                 call_args.kwargs["inference_engine_args"].inference_engine_args_override,
-                expected_args,
+                ["--max_tokens=1000", "--temperature=0.8"],
             )
 
     def test_create_service_without_inference_engine_options(self) -> None:
@@ -1460,7 +1545,6 @@ class ModelVersionImplTest(parameterized.TestCase):
 
         When PYTHON_GENERIC is specified, it should:
         - NOT call _check_huggingface_vllm_supported_model (VLLM-only validation)
-        - NOT enrich inference engine args (VLLM-only enrichment like tensor-parallel-size)
         - Pass the inference engine args directly to create_service
         """
         with (
@@ -1494,7 +1578,6 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine.InferenceEngine.PYTHON_GENERIC,
             )
 
-            # Check that inference_engine_args_override is None (not enriched for PYTHON_GENERIC)
             self.assertIsNone(call_args.kwargs["inference_engine_args"].inference_engine_args_override)
 
     def test_create_service_with_python_generic_inference_engine_with_args_override(self) -> None:
@@ -1531,7 +1614,6 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine.InferenceEngine.PYTHON_GENERIC,
             )
 
-            # Check that engine_args_override is passed through unchanged (not enriched)
             self.assertEqual(
                 call_args.kwargs["inference_engine_args"].inference_engine_args_override,
                 ["--custom-arg=value", "--another-arg"],
@@ -1855,119 +1937,20 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertEqual(inference_engine_args.inference_engine_args_override, [])
 
-    def test_enrich_inference_engine_args(self) -> None:
-        """Test _enrich_inference_engine_args method with various inputs."""
-        # Test with args=None and no GPU
-        enriched = inference_engine_utils._enrich_inference_engine_args(
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=None,
-            ),
-            gpu_requests=None,
-        )
-        assert enriched is not None
-        self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
-        self.assertEqual(enriched.inference_engine_args_override, [])
-
-        # Test with empty args and GPU count
-        enriched = inference_engine_utils._enrich_inference_engine_args(
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=None,
-            ),
-            gpu_requests=2,
-        )
-        assert enriched is not None
-        self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
-        self.assertEqual(enriched.inference_engine_args_override, ["--tensor-parallel-size=2"])
-
-        # Test with args and string GPU count
-        original_args = ["--max_tokens=100", "--temperature=0.7"]
-        enriched = inference_engine_utils._enrich_inference_engine_args(
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=original_args,
-            ),
-            gpu_requests="4",
-        )
-        assert enriched is not None
-        self.assertEqual(
-            enriched,
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=[
-                    "--max_tokens=100",
-                    "--temperature=0.7",
-                    "--tensor-parallel-size=4",
-                ],
-            ),
-        )
-
-        # Test overwriting existing model key with new model key by appending to the list
-        enriched = inference_engine_utils._enrich_inference_engine_args(
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=[
-                    "--max_tokens=100",
-                    "--temperature=0.7",
-                ],
-            ),
-        )
-        self.assertEqual(
-            enriched,
-            service_ops.InferenceEngineArgs(
-                inference_engine=inference_engine.InferenceEngine.VLLM,
-                inference_engine_args_override=[
-                    "--max_tokens=100",
-                    "--temperature=0.7",
-                ],
-            ),
-        )
-
-        # Test with invalid GPU string
-        with self.assertRaises(ValueError):
-            inference_engine_utils._enrich_inference_engine_args(
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=None,
-                ),
-                gpu_requests="invalid",
-            )
-
-        # Test with zero GPU (should not set tensor-parallel-size)
-        with self.assertRaises(ValueError):
-            inference_engine_utils._enrich_inference_engine_args(
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=None,
-                ),
-                gpu_requests=0,
-            )
-
-        # Test with negative GPU (should not set tensor-parallel-size)
-        with self.assertRaises(ValueError):
-            inference_engine_utils._enrich_inference_engine_args(
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=None,
-                ),
-                gpu_requests=-1,
-            )
-
     def test_can_run_on_gpu(self) -> None:
         """Test _can_run_on_gpu method."""
         # Test successful case - model spec with gpu runtime
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "runtimes": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                runtimes={
                     "gpu": {
                         "version": "1.0",
                     }
                 },
-            },
+            ),
         ) as mock_fetch:
             result = self.m_mv._can_run_on_gpu()
             self.assertTrue(result)
@@ -1986,9 +1969,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "sklearn",
-            },
+            return_value=_legacy_model_spec(model_type="sklearn"),
         ):
             result = self.m_mv._can_run_on_gpu()
             self.assertFalse(result)
@@ -2000,14 +1981,14 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "tensorflow",
-                "runtimes": {
+            return_value=_legacy_model_spec(
+                model_type="tensorflow",
+                runtimes={
                     "cpu": {
                         "version": "1.0",
                     }
                 },
-            },
+            ),
         ):
             result = self.m_mv._can_run_on_gpu()
             self.assertFalse(result)
@@ -2019,10 +2000,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "pytorch",
-                "runtimes": {},
-            },
+            return_value=_legacy_model_spec(model_type="pytorch", runtimes={}),
         ):
             result = self.m_mv._can_run_on_gpu()
             self.assertFalse(result)
@@ -2035,14 +2013,14 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "runtimes": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                runtimes={
                     "gpu": {
                         "version": "1.0",
                     }
                 },
-            },
+            ),
         ) as mock_fetch:
             result = self.m_mv._can_run_on_gpu(statement_params=test_statement_params)
             self.assertTrue(result)
@@ -2053,6 +2031,75 @@ class ModelVersionImplTest(parameterized.TestCase):
                 version_name=self.m_mv._version_name,
                 statement_params=test_statement_params,
             )
+
+    def test_model_spec_v2_spcs_target_reports_gpu_support_without_runtimes_section(self) -> None:
+        self.m_mv._model_spec = _model_spec_v2()
+
+        self.assertTrue(self.m_mv._can_run_on_gpu())
+
+    def test_model_spec_v2_non_huggingface_model_is_rejected_for_vllm(self) -> None:
+        self.m_mv._model_spec = _model_spec_v2()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Inference engine is only supported for HuggingFace vLLM supported models. "
+            "Found model_type: custom_runtime",
+        ):
+            self.m_mv._check_huggingface_vllm_supported_model()
+
+    def test_model_spec_v2_huggingface_model_passes_vllm_validation(self) -> None:
+        serialized_signatures = {
+            function_name: signature.to_dict()
+            for function_name, signature in openai_signatures.OPENAI_CHAT_SIGNATURE.items()
+        }
+        self.m_mv._model_spec = _model_spec_v2(
+            framework="HUGGINGFACE_PIPELINE",
+            task_name="text-generation",
+            signature=serialized_signatures["__call__"],
+        )
+
+        self.m_mv._check_huggingface_vllm_supported_model()
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        (
+            "legacy",
+            legacy_model_spec.LegacyModelSpec(
+                cast(
+                    model_meta_schema.ModelMetadataDict,
+                    {
+                        "version": "1",
+                        "model_type": "custom",
+                        "models": {},
+                        "signatures": {},
+                        "env": {},
+                        "method_options": {"predict": {"case_sensitive": False}},
+                        "case_sensitive": True,
+                    },
+                )
+            ),
+        ),
+        (
+            "model_spec_v2",
+            _model_spec_v2(
+                method_options={"predict": {"case_sensitive": False}},
+                case_sensitive=True,
+            ),
+        ),
+    )
+    def test_explain_case_sensitivity_uses_model_spec_interface(
+        self, parsed_model_spec: legacy_model_spec.LegacyModelSpec | model_extension_spec.ModelExtensionSpecV2
+    ) -> None:
+        self.m_mv._model_spec = parsed_model_spec
+        function_info = model_manifest_schema.ModelFunctionInfo(
+            name="explain_predict",
+            target_method="explain_predict",
+            target_method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+            signature=_DUMMY_SIG["explain_table"],
+            is_partitioned=False,
+            is_object_output=True,
+        )
+
+        self.assertFalse(self.m_mv._determine_explain_case_sensitivity(function_info))
 
     def test_check_huggingface_vllm_supported_model(self) -> None:
         """Test _check_huggingface_vllm_supported_model method."""
@@ -2065,16 +2112,16 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "signatures": serialized_signatures,
-                "models": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                signatures=serialized_signatures,
+                models={
                     "model1": {
                         "model_type": "huggingface_pipeline",
                         "options": {"task": "text-generation"},
                     }
                 },
-            },
+            ),
         ) as mock_fetch:
             # Should not raise any exception
             self.m_mv._check_huggingface_vllm_supported_model()
@@ -2093,16 +2140,16 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "signatures": serialized_signatures,
-                "models": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                signatures=serialized_signatures,
+                models={
                     "model1": {
                         "model_type": "huggingface_pipeline",
                         "options": {"task": "image-text-to-text"},
                     }
                 },
-            },
+            ),
         ) as mock_fetch:
             # Should not raise any exception
             self.m_mv._check_huggingface_vllm_supported_model()
@@ -2121,10 +2168,10 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "sklearn",
-                "models": {"model1": {"model_type": "sklearn"}},
-            },
+            return_value=_legacy_model_spec(
+                model_type="sklearn",
+                models={"model1": {"model_type": "sklearn"}},
+            ),
         ):
             with self.assertRaises(ValueError) as cm:
                 self.m_mv._check_huggingface_vllm_supported_model()
@@ -2138,15 +2185,15 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "models": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                models={
                     "model1": {
                         "model_type": "huggingface_pipeline",
                         "options": {"task": "image-classification"},
                     }
                 },
-            },
+            ),
         ):
             with self.assertRaises(ValueError) as cm:
                 self.m_mv._check_huggingface_vllm_supported_model()
@@ -2160,15 +2207,15 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "models": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                models={
                     "model1": {
                         "model_type": "huggingface_pipeline",
                         "options": {},
                     }
                 },
-            },
+            ),
         ):
             with self.assertRaises(ValueError) as cm:
                 self.m_mv._check_huggingface_vllm_supported_model()
@@ -2188,16 +2235,16 @@ class ModelVersionImplTest(parameterized.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
-            return_value={
-                "model_type": "huggingface_pipeline",
-                "signatures": wrong_signature,
-                "models": {
+            return_value=_legacy_model_spec(
+                model_type="huggingface_pipeline",
+                signatures=wrong_signature,
+                models={
                     "model1": {
                         "model_type": "huggingface_pipeline",
                         "options": {"task": "text-generation"},
                     }
                 },
-            },
+            ),
         ):
             with self.assertRaises(ValueError) as cm:
                 self.m_mv._check_huggingface_vllm_supported_model()
@@ -2241,1080 +2288,19 @@ class ModelVersionImplTest(parameterized.TestCase):
             with mock.patch.object(
                 self.m_mv._model_ops,
                 "_fetch_model_spec",
-                return_value={
-                    "model_type": "huggingface_pipeline",
-                    "signatures": serialized_paramspec_signature,
-                    "models": {
+                return_value=_legacy_model_spec(
+                    model_type="huggingface_pipeline",
+                    signatures=serialized_paramspec_signature,
+                    models={
                         "model1": {
                             "model_type": "huggingface_pipeline",
                             "options": {"task": "text-generation"},
                         }
                     },
-                },
+                ),
             ):
                 # Should not raise - signature with ParamSpec is valid when in VALID_OPENAI_SIGNATURES
                 self.m_mv._check_huggingface_vllm_supported_model()
-
-    def test_run_batch_emits_deprecation_warning(self) -> None:
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(function_name="predict", warehouse="WH")
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job),
-            warnings.catch_warnings(record=True) as caught,
-        ):
-            warnings.simplefilter("always")
-            self.m_mv.run_batch(input_df, compute_pool="POOL", output_spec=output_spec, job_spec=job_spec)
-
-        self.assertTrue(
-            any(
-                issubclass(w.category, DeprecationWarning) and "run_batch is deprecated" in str(w.message)
-                for w in caught
-            )
-        )
-
-    def test_run_batch_all_parameters(self) -> None:
-        """Test _run_batch with all possible parameters to ensure they're passed correctly."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(
-            stage_location="@output_stage",
-        )
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="CUSTOM_JOB_NAME",
-            warehouse="CUSTOM_WAREHOUSE",
-            force_rebuild=True,
-            image_repo="custom_repo",
-            num_workers=4,
-            max_batch_rows=2000,
-            cpu_requests="4",
-            memory_requests="8Gi",
-            replicas=10,
-            block=True,
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(
-                input_df, compute_pool="CUSTOM_POOL", output_spec=output_spec, job_spec=job_spec
-            )
-
-            # Verify all parameters are passed correctly
-            mock_invoke_batch_job.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                function_name="predict",
-                compute_pool_name=sql_identifier.SqlIdentifier("CUSTOM_POOL"),
-                force_rebuild=True,
-                image_repo_name="custom_repo",
-                num_workers=4,
-                max_batch_rows=2000,
-                warehouse=sql_identifier.SqlIdentifier("CUSTOM_WAREHOUSE"),
-                cpu_requests="4",
-                memory_requests="8Gi",
-                gpu_requests=None,
-                job_name="CUSTOM_JOB_NAME",
-                job_name_prefix=None,
-                replicas=10,
-                block=True,
-                input_stage_location="@output_stage/_temporary/",
-                input_file_pattern="*",
-                column_handling=None,
-                params=None,
-                partition_columns=None,
-                signature_params=_DUMMY_SIG["predict"].params,
-                output_stage_location="@output_stage/",
-                base_stage_location=None,
-                completion_filename="_SUCCESS",
-                statement_params=mock.ANY,
-                inference_engine_args=None,
-            )
-
-            self.assertEqual(result, mock_job)
-
-    def test_run_batch_with_column_handling(self) -> None:
-        """Test run_batch properly passes column_handling to invoke_batch_job_method."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        # Test column_handling dictionary
-        test_column_handling: dict[str, batch_inference_job_specs.ColumnHandlingOptions] = {
-            "image_col": {
-                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
-            }
-        }
-
-        # Create InputSpec with column_handling
-        input_spec = batch_inference_specs.InputSpec(
-            column_handling=test_column_handling,
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(
-                input_df,
-                compute_pool="TEST_POOL",
-                output_spec=output_spec,
-                input_spec=input_spec,
-                job_spec=job_spec,
-            )
-
-            # Verify column_handling is passed
-            mock_invoke_batch_job.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                function_name="predict",
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
-                force_rebuild=False,
-                image_repo_name=None,
-                num_workers=None,
-                max_batch_rows=None,
-                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                cpu_requests=None,
-                memory_requests=None,
-                gpu_requests=None,
-                job_name="TEST_JOB",
-                job_name_prefix=None,
-                replicas=None,
-                block=False,
-                input_stage_location="@output_stage/_temporary/",
-                input_file_pattern="*",
-                column_handling=test_column_handling,
-                params=None,
-                partition_columns=None,
-                signature_params=_DUMMY_SIG["predict"].params,
-                output_stage_location="@output_stage/",
-                base_stage_location=None,
-                completion_filename="_SUCCESS",
-                statement_params=mock.ANY,
-                inference_engine_args=None,
-            )
-
-            self.assertEqual(result, mock_job)
-
-    def test_run_batch_with_params(self) -> None:
-        """Test run_batch properly passes params to invoke_batch_job_method."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        # Test params dictionary
-        test_params = {"temperature": 0.7, "top_k": 50, "max_tokens": 100}
-
-        # Create InputSpec with params
-        input_spec = batch_inference_specs.InputSpec(
-            params=test_params,
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(
-                input_df,
-                compute_pool="TEST_POOL",
-                output_spec=output_spec,
-                input_spec=input_spec,
-                job_spec=job_spec,
-            )
-
-            # Verify params is passed
-            mock_invoke_batch_job.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                function_name="predict",
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
-                force_rebuild=False,
-                image_repo_name=None,
-                num_workers=None,
-                max_batch_rows=None,
-                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                cpu_requests=None,
-                memory_requests=None,
-                gpu_requests=None,
-                job_name="TEST_JOB",
-                job_name_prefix=None,
-                replicas=None,
-                block=False,
-                input_stage_location="@output_stage/_temporary/",
-                input_file_pattern="*",
-                column_handling=None,
-                params=test_params,
-                partition_columns=None,
-                signature_params=_DUMMY_SIG["predict"].params,
-                output_stage_location="@output_stage/",
-                base_stage_location=None,
-                completion_filename="_SUCCESS",
-                statement_params=mock.ANY,
-                inference_engine_args=None,
-            )
-
-            self.assertEqual(result, mock_job)
-
-    def test_run_batch_with_input_spec_all_options(self) -> None:
-        """Test run_batch with InputSpec containing both params and column_handling."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        # Test with both params and column_handling
-        test_params = {"temperature": 0.7, "top_k": 50}
-        test_column_handling: dict[str, batch_inference_job_specs.ColumnHandlingOptions] = {
-            "image_col": {
-                "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_job_specs.FileEncoding.BASE64,
-            }
-        }
-
-        # Create InputSpec with both params and column_handling
-        input_spec = batch_inference_specs.InputSpec(
-            params=test_params,
-            column_handling=test_column_handling,
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(
-                input_df,
-                compute_pool="TEST_POOL",
-                output_spec=output_spec,
-                input_spec=input_spec,
-                job_spec=job_spec,
-            )
-
-            # Verify both params and column_handling are passed
-            mock_invoke_batch_job.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                function_name="predict",
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
-                force_rebuild=False,
-                image_repo_name=None,
-                num_workers=None,
-                max_batch_rows=None,
-                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                cpu_requests=None,
-                memory_requests=None,
-                gpu_requests=None,
-                job_name="TEST_JOB",
-                job_name_prefix=None,
-                replicas=None,
-                block=False,
-                input_stage_location="@output_stage/_temporary/",
-                input_file_pattern="*",
-                column_handling=test_column_handling,
-                params=test_params,
-                partition_columns=None,
-                signature_params=_DUMMY_SIG["predict"].params,
-                output_stage_location="@output_stage/",
-                base_stage_location=None,
-                completion_filename="_SUCCESS",
-                statement_params=mock.ANY,
-                inference_engine_args=None,
-            )
-
-            self.assertEqual(result, mock_job)
-
-    def test_run_batch_without_job_name_or_prefix(self) -> None:
-        """Test _run_batch with no job_name or job_name_prefix passes both as None for server-side generation."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            warehouse="TEST_WAREHOUSE",
-            force_rebuild=False,
-            image_repo="test_repo",
-            num_workers=1,
-            max_batch_rows=500,
-            cpu_requests="1",
-            memory_requests="2Gi",
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
-
-            # Verify result
-            self.assertEqual(result, mock_job)
-
-            # Verify both job_name and job_name_prefix are None
-            call_args = mock_invoke_batch_job.call_args
-            self.assertIsNone(call_args.kwargs["job_name"])
-            self.assertIsNone(call_args.kwargs["job_name_prefix"])
-
-    def test_run_batch_with_job_name(self) -> None:
-        """Test _run_batch with explicit job_name passes it through directly."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="MY_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
-
-            self.assertEqual(result, mock_job)
-
-            call_args = mock_invoke_batch_job.call_args
-            self.assertEqual(call_args.kwargs["job_name"], "MY_JOB")
-            self.assertIsNone(call_args.kwargs["job_name_prefix"])
-
-    def test_run_batch_with_job_name_prefix(self) -> None:
-        """Test _run_batch with job_name_prefix passes None job_name and the prefix."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            job_name_prefix="CUSTOM_PREFIX",
-            warehouse="TEST_WAREHOUSE",
-            image_repo="test_repo",
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
-
-            self.assertEqual(result, mock_job)
-
-            call_args = mock_invoke_batch_job.call_args
-            self.assertIsNone(call_args.kwargs["job_name"])
-            self.assertEqual(call_args.kwargs["job_name_prefix"], "CUSTOM_PREFIX")
-
-    def test_run_batch_with_warehouse_from_session(self) -> None:
-        """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse=None,  # Will use session warehouse
-            force_rebuild=False,
-            image_repo="test_repo",
-            num_workers=1,
-            max_batch_rows=500,
-            cpu_requests="1",
-            memory_requests="2Gi",
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-            mock.patch.object(
-                self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
-            ) as mock_get_warehouse,
-        ):
-            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
-
-            # Verify result
-            self.assertEqual(result, mock_job)
-
-            # Verify session warehouse was called
-            mock_get_warehouse.assert_called_once()
-
-            # Verify the session warehouse is used
-            call_args = mock_invoke_batch_job.call_args
-            self.assertEqual(call_args.kwargs["warehouse"], sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"))
-
-    def test_run_batch_no_warehouse_error(self) -> None:
-        """Test _run_batch raises ValueError when no warehouse is available."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse=None,  # No warehouse in job_spec
-            force_rebuild=False,
-            image_repo="test_repo",
-            num_workers=1,
-            max_batch_rows=500,
-            cpu_requests="1",
-            memory_requests="2Gi",
-        )
-
-        with (
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops._session, "get_current_warehouse", return_value=None
-            ) as mock_get_warehouse,
-        ):
-            with self.assertRaisesRegex(
-                ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
-            ):
-                self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
-
-            # Verify session warehouse was called
-            mock_get_warehouse.assert_called_once()
-
-    def test_run_batch_with_none_job_spec(self) -> None:
-        """Test _run_batch with job_spec=None uses default JobSpec values."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-            mock.patch.object(
-                self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
-            ) as mock_get_warehouse,
-        ):
-            # Setup the UUID mock to return a predictable value
-            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=None)
-
-            # Verify result
-            self.assertEqual(result, mock_job)
-
-            # Verify session warehouse was called since job_spec.warehouse defaults to None
-            mock_get_warehouse.assert_called_once()
-
-            # Verify the method was called with default JobSpec values
-            mock_invoke_batch_job.assert_called_once_with(
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                function_name="predict",  # from _get_function_info with default function_name=None
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
-                force_rebuild=False,  # JobSpec default
-                image_repo_name=None,  # JobSpec default
-                num_workers=None,  # JobSpec default
-                max_batch_rows=None,  # JobSpec default
-                warehouse=sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"),  # from session since warehouse=None
-                cpu_requests=None,  # JobSpec default
-                memory_requests=None,  # JobSpec default
-                gpu_requests=None,
-                job_name=None,
-                job_name_prefix=None,
-                replicas=None,  # JobSpec default
-                block=False,  # JobSpec default
-                input_stage_location="@output_stage/_temporary/",
-                input_file_pattern="*",  # InputSpec default
-                column_handling=None,
-                params=None,
-                partition_columns=None,
-                signature_params=_DUMMY_SIG["predict"].params,
-                output_stage_location="@output_stage/",
-                base_stage_location=None,
-                completion_filename="_SUCCESS",  # OutputSpec default
-                statement_params=mock.ANY,
-                inference_engine_args=None,
-            )
-
-    def test_run_batch_with_inference_engine_options(self) -> None:
-        """Test run_batch with inference engine options."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(
-            stage_location="@output_stage",
-        )
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="CUSTOM_JOB_NAME",
-            warehouse="CUSTOM_WAREHOUSE",
-            gpu_requests="4",
-        )
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-            mock.patch.object(
-                self.m_mv, "_check_huggingface_vllm_supported_model"
-            ) as mock_check_huggingface_vllm_supported_model,
-            mock.patch.object(self.m_mv, "_throw_error_if_gpu_is_not_supported"),
-        ):
-            self.m_mv.run_batch(
-                input_df,
-                compute_pool="CUSTOM_POOL",
-                output_spec=output_spec,
-                job_spec=job_spec,
-                inference_engine_options={
-                    "engine": inference_engine.InferenceEngine.VLLM,
-                    "engine_args_override": ["--max_tokens=1000", "--temperature=0.8"],
-                },
-            )
-
-            mock_check_huggingface_vllm_supported_model.assert_called_once()
-
-            call_args = mock_invoke_batch_job.call_args
-            self.assertEqual(
-                call_args.kwargs["inference_engine_args"].inference_engine, inference_engine.InferenceEngine.VLLM
-            )
-            # Check that inference_engine_args is enriched correctly
-            expected_args = [
-                "--max_tokens=1000",
-                "--temperature=0.8",
-                "--tensor-parallel-size=4",
-            ]
-            self.assertEqual(
-                call_args.kwargs["inference_engine_args"].inference_engine_args_override,
-                expected_args,
-            )
-
-    def _add_show_versions_mock(self) -> None:
-        current_dir = os.path.dirname(__file__)
-        data_file_path = os.path.join(current_dir, "sample_model_spec.yaml")
-        with open(data_file_path) as f:
-            model_spec = f.read()
-        model_attributes = """{
-            "framework":"sklearn",
-            "task":"TABULAR_BINARY_CLASSIFICATION",
-            "client":"snowflake-ml-python 1.7.5"}"""
-        sql_result = [
-            row.Row(
-                name='"v1"',
-                comment=None,
-                metadata={},
-                model_spec=model_spec,
-                model_attributes=model_attributes,
-            ),
-        ]
-        self.m_session.add_mock_sql(
-            "SHOW VERSIONS LIKE 'v1' IN MODEL TEMP.\"test\".MODEL", result=mock_data_frame.MockDataFrame(sql_result)
-        )
-
-    def test_run_batch_with_unknown_params(self) -> None:
-        """Test run_batch raises error when unknown params are provided."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict_with_params",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-        # Provide an unknown parameter that doesn't exist in signature
-        input_spec = batch_inference_specs.InputSpec(params={"unknown_param": 0.5})
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict_with_params",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict_with_params"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(ValueError, "Unknown parameter.*unknown_param"):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_with_duplicate_params_different_cases(self) -> None:
-        """Test run_batch raises error when duplicate params with different cases are provided."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict_with_params",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-        # Provide duplicate params with different cases
-        input_spec = batch_inference_specs.InputSpec(params={"temperature": 0.5, "TEMPERATURE": 0.8})
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict_with_params",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict_with_params"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(ValueError, "Duplicate parameter.*case-insensitive"):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_with_invalid_param_type(self) -> None:
-        """Test run_batch raises error when param value has invalid type."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict_with_params",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-        # Provide a string value for an INT64 param
-        input_spec = batch_inference_specs.InputSpec(params={"max_tokens": "not_an_int"})
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict_with_params",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict_with_params"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(ValueError, "not compatible with dtype"):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_with_params_when_no_params_in_signature(self) -> None:
-        """Test run_batch raises error when params are provided but signature has no params."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-        # Provide params when the signature doesn't accept any
-        input_spec = batch_inference_specs.InputSpec(params={"temperature": 0.5})
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                # _DUMMY_SIG["predict"] has no params
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(ValueError, "does not accept any parameters"):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_with_partition_column(self) -> None:
-        """Test run_batch passes partition_columns=[col] when partition_column is set."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
-
-        mock_job = mock.MagicMock(spec=job.MLJob)
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_model_spec",
-                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
-            ),
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "TABLE_FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-            mock.patch.object(
-                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
-            ) as mock_invoke_batch_job,
-        ):
-            result = self.m_mv.run_batch(
-                input_df,
-                compute_pool="TEST_POOL",
-                output_spec=output_spec,
-                input_spec=input_spec,
-                job_spec=job_spec,
-            )
-
-            mock_invoke_batch_job.assert_called_once()
-            call_kwargs = mock_invoke_batch_job.call_args.kwargs
-            self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
-            self.assertEqual(result, mock_job)
-
-    def test_run_batch_hf_model_with_partition_column_error(self) -> None:
-        """Test run_batch raises ValueError when partition_column is set for a HuggingFace pipeline model."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_model_spec",
-                return_value={"model_type": huggingface.TransformersPipelineHandler.HANDLER_TYPE},
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "partition_column is not supported for HuggingFace pipeline models",
-            ):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_scalar_function_with_partition_column_error(self) -> None:
-        """Test run_batch raises ValueError when partition_column is set for a scalar function method."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_model_spec",
-                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
-            ),
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "partition_column is not supported for FUNCTION type methods",
-            ):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
-
-    def test_run_batch_partitioned_model_with_partition_col_in_output_error(self) -> None:
-        """Test run_batch raises ValueError when a partitioned model's output includes the partition column."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict_table",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
-
-        sig_with_partition_col_output = model_signature.ModelSignature(
-            inputs=[
-                model_signature.FeatureSpec(name="PARTITION_COL", dtype=model_signature.DataType.INT64),
-                model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.FLOAT),
-            ],
-            outputs=[
-                model_signature.FeatureSpec(name="PARTITION_COL", dtype=model_signature.DataType.INT64),
-                model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT),
-            ],
-        )
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_model_spec",
-                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
-            ),
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "target_method": "predict_table",
-                    "target_method_function_type": "TABLE_FUNCTION",
-                    "signature": sig_with_partition_col_output,
-                    "is_partitioned": True,
-                    "is_object_output": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "Partitioned model output includes the partition column",
-            ):
-                self.m_mv.run_batch(
-                    input_df,
-                    compute_pool="TEST_POOL",
-                    output_spec=output_spec,
-                    input_spec=input_spec,
-                    job_spec=job_spec,
-                )
 
     def test_create_service_forwards_feature_sources_per_function(self) -> None:
         # The mapping must reach ServiceOperator.create_service unmodified;
@@ -3337,7 +2323,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         _, kwargs = mock_create_service.call_args
         self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
 
-    def test_run_batch_v2_forwards_specs_and_resolved_function(self) -> None:
+    def test_run_batch_forwards_specs_and_resolved_function(self) -> None:
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
 
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
@@ -3362,7 +2348,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
             ) as mock_execute,
         ):
-            result = self.m_mv._run_batch_v2(
+            result = self.m_mv.run_batch(
                 input_df,
                 compute_pool="POOL",
                 output_spec=output_spec,
@@ -3395,7 +2381,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         )
         self.assertEqual(result, mock_job)
 
-    def test_run_batch_v2_minimal(self) -> None:
+    def test_run_batch_minimal(self) -> None:
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
 
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
@@ -3416,7 +2402,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
             ) as mock_execute,
         ):
-            self.m_mv._run_batch_v2(input_df, compute_pool="POOL", output_spec=output_spec)
+            self.m_mv.run_batch(input_df, compute_pool="POOL", output_spec=output_spec)
 
         kwargs = mock_execute.call_args.kwargs
         self.assertIs(kwargs["X"], input_df)
@@ -3431,7 +2417,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.assertIsNone(kwargs["replicas"])
         self.assertEqual(kwargs["function_name"], "predict")
 
-    def test_run_batch_v2_input_stage_location(self) -> None:
+    def test_run_batch_input_stage_location(self) -> None:
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         mock_job = mock.MagicMock(spec=job.MLJob)
 
@@ -3450,7 +2436,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
             ) as mock_execute,
         ):
-            self.m_mv._run_batch_v2(
+            self.m_mv.run_batch(
                 input_stage_location="@MY_DB.PUBLIC.MY_STAGE/input/", compute_pool="POOL", output_spec=output_spec
             )
 
@@ -3458,13 +2444,13 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.assertIsNone(kwargs["X"])
         self.assertEqual(kwargs["input_stage_location"], "@MY_DB.PUBLIC.MY_STAGE/input/")
 
-    def test_run_batch_v2_requires_exactly_one_input_source(self) -> None:
+    def test_run_batch_requires_exactly_one_input_source(self) -> None:
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
         with self.assertRaisesRegex(ValueError, "Exactly one of X or input_stage_location"):
-            self.m_mv._run_batch_v2(compute_pool="POOL", output_spec=output_spec)
+            self.m_mv.run_batch(compute_pool="POOL", output_spec=output_spec)
         with self.assertRaisesRegex(ValueError, "Exactly one of X or input_stage_location"):
-            self.m_mv._run_batch_v2(
+            self.m_mv.run_batch(
                 input_df, input_stage_location="@stage/in/", compute_pool="POOL", output_spec=output_spec
             )
 
@@ -3478,29 +2464,29 @@ class ModelVersionImplTest(parameterized.TestCase):
             "is_partitioned": is_partitioned,
         }
 
-    def test_run_batch_v2_rejects_partition_column_for_huggingface_pipeline(self) -> None:
+    def test_run_batch_rejects_partition_column_for_huggingface_pipeline(self) -> None:
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         input_spec = batch_inference_job_specs.InputSpec(partition_column="REGION")
 
         with mock.patch.object(
             self.m_mv,
             "_get_model_spec",
-            return_value={"model_type": huggingface.TransformersPipelineHandler.HANDLER_TYPE},
+            return_value=_legacy_model_spec(model_type=huggingface.TransformersPipelineHandler.HANDLER_TYPE),
         ):
             with self.assertRaisesRegex(ValueError, "not supported for HuggingFace pipeline models"):
-                self.m_mv._run_batch_v2(
+                self.m_mv.run_batch(
                     mock.MagicMock(spec=dataframe.DataFrame),
                     compute_pool="POOL",
                     output_spec=output_spec,
                     input_spec=input_spec,
                 )
 
-    def test_run_batch_v2_rejects_partition_column_for_function_type(self) -> None:
+    def test_run_batch_rejects_partition_column_for_function_type(self) -> None:
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         input_spec = batch_inference_job_specs.InputSpec(partition_column="REGION")
 
         with (
-            mock.patch.object(self.m_mv, "_get_model_spec", return_value={"model_type": "custom"}),
+            mock.patch.object(self.m_mv, "_get_model_spec", return_value=_legacy_model_spec(model_type="custom")),
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
@@ -3508,24 +2494,24 @@ class ModelVersionImplTest(parameterized.TestCase):
             ),
         ):
             with self.assertRaisesRegex(ValueError, "not supported for FUNCTION type methods"):
-                self.m_mv._run_batch_v2(
+                self.m_mv.run_batch(
                     mock.MagicMock(spec=dataframe.DataFrame),
                     compute_pool="POOL",
                     output_spec=output_spec,
                     input_spec=input_spec,
                 )
 
-    def test_run_batch_v2_rejects_partition_column_colliding_with_model_output(self) -> None:
+    def test_run_batch_rejects_partition_column_colliding_with_model_output(self) -> None:
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
         # _DUMMY_SIG["predict"] has a single output named "output".
         input_spec = batch_inference_job_specs.InputSpec(partition_column="output")
 
         with (
-            mock.patch.object(self.m_mv, "_get_model_spec", return_value={"model_type": "custom"}),
+            mock.patch.object(self.m_mv, "_get_model_spec", return_value=_legacy_model_spec(model_type="custom")),
             mock.patch.object(self.m_mv, "_get_function_info", return_value=self._partitioned_function_info()),
         ):
             with self.assertRaisesRegex(ValueError, r"Partitioned model output includes the partition column\(s\)"):
-                self.m_mv._run_batch_v2(
+                self.m_mv.run_batch(
                     mock.MagicMock(spec=dataframe.DataFrame),
                     compute_pool="POOL",
                     output_spec=output_spec,
