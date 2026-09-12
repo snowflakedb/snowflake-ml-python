@@ -38,8 +38,7 @@ run:pre_build --config=_build --config=py3.11
 build:typecheck --aspects //third_party/rules_mypy:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.11
 
 # Config to build the doc
-# Note: docs build uses py3.10 due to Sphinx module resolution issues with py3.11
-build:docs --config=_all --config=py3.10
+build:docs --config=_all --config=py3.11
 
 # Public the extended setting
 

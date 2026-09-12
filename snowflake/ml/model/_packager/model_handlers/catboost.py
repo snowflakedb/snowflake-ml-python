@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import numpy as np
 import pandas as pd
@@ -60,8 +60,8 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         model: "catboost.CatBoost",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.CatBoostModelSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -192,7 +192,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         cls,
         raw_model: "catboost.CatBoost",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.CatBoostModelLoadOptions],
     ) -> custom_model.CustomModel:
         import catboost

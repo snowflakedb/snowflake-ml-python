@@ -2,7 +2,7 @@ import functools
 import logging
 import os
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -29,6 +29,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_shap_retry_exceptions() -> tuple[type[BaseException], ...]:
+    """Return the exceptions that mean SHAP choked on the input dtype and should be retried numerically.
+
+    When warehouse NUMBER columns reach the explainer as an ``object``/Decimal array, SHAP's numba-compiled
+    masker cannot type it and raises a numba ``TypingError`` (not a plain ``TypeError``). Both indicate the
+    same remedy: rerun the explanation with explicitly numeric inputs.
+
+    Returns:
+        The exception types to catch and retry on. Includes numba's ``TypingError`` when numba is importable.
+    """
+    retry_exceptions: tuple[type[BaseException], ...] = (TypeError,)
+    try:
+        from numba.core.errors import TypingError
+
+        retry_exceptions = retry_exceptions + (TypingError,)
+    except ImportError:
+        pass
+    return retry_exceptions
+
+
 def _unpack_container_runtime_pipeline(model: "sklearn.pipeline.Pipeline") -> "sklearn.pipeline.Pipeline":
     new_steps = []
     for step_name, step in model.steps:
@@ -45,7 +65,7 @@ def _unpack_container_runtime_pipeline(model: "sklearn.pipeline.Pipeline") -> "s
 def _apply_transforms_up_to_last_step(
     model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
     data: model_types.SupportedDataType,
-    input_feature_names: Optional[list[str]] = None,
+    input_feature_names: list[str] | None = None,
 ) -> pd.DataFrame:
     """Apply all transformations in the sklearn pipeline model up to the last step."""
     transformed_data = data
@@ -130,8 +150,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.SKLModelSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -300,7 +320,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         cls,
         raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.SKLModelLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
@@ -313,7 +333,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
                 signature: model_signature.ModelSignature,
                 target_method: str,
-                background_data: Optional[pd.DataFrame],
+                background_data: pd.DataFrame | None,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model._internal_inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
@@ -374,6 +394,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         else:
             predict_with_params = predictor
 
+        retry_exceptions = _get_shap_retry_exceptions()
+
         def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:
             transformed_data = _apply_transforms_up_to_last_step(model, data)
             try:
@@ -381,7 +403,9 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 return handlers_utils.convert_explanations_to_2D_df(model, explainer(transformed_data).values).astype(
                     np.float64, errors="ignore"
                 )
-            except TypeError:
+            except retry_exceptions:
+                # SHAP failed on the input dtype (e.g. object/Decimal columns from the warehouse); retry with
+                # the signature's numeric dtypes so SHAP's masker receives a plain float array.
                 if isinstance(data, pd.DataFrame):
                     dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in input_specs}
                     transformed_data = _apply_transforms_up_to_last_step(model, data.astype(dtype_map))

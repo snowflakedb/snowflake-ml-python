@@ -4,17 +4,7 @@ import os
 import time
 from functools import cached_property
 from pathlib import PurePosixPath
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Literal,
-    Optional,
-    TypeVar,
-    Union,
-    cast,
-    overload,
-)
+from typing import Any, Callable, Generic, Literal, TypeVar, cast, overload
 
 import yaml
 
@@ -53,16 +43,16 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def __init__(
         self,
         id: str,
-        service_spec: Optional[dict[str, Any]] = None,
-        session: Optional[snowpark.Session] = None,
+        service_spec: dict[str, Any] | None = None,
+        session: snowpark.Session | None = None,
     ) -> None:
         self._id = id
-        self._service_spec_cached: Optional[dict[str, Any]] = service_spec
+        self._service_spec_cached: dict[str, Any] | None = service_spec
         self._session = session or sp_context.get_active_session()
 
         self._status: type_utils.JOB_STATUS = "PENDING"
-        self._result: Optional[interop_result.ExecutionResult] = None
-        self._distributed_result: Optional[interop_result.DistributedResult] = None
+        self._result: interop_result.ExecutionResult | None = None
+        self._distributed_result: interop_result.DistributedResult | None = None
 
     @cached_property
     def _service_info(self) -> type_utils.ServiceInfo:
@@ -133,7 +123,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         return cast(dict[str, Any], container_spec)
 
     @property
-    def _stage_path(self) -> Optional[str]:
+    def _stage_path(self) -> str | None:
         """Get the job's artifact storage stage location."""
         volumes = self._service_spec["spec"]["volumes"]
         stage_volume = next((v for v in volumes if v["name"] == constants.STAGE_VOLUME_NAME), None)
@@ -156,7 +146,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     # After introducing ML Job definitions, we have additional stage mount for result path
     # the result path is like @payload_stage/{job_definition_name}/{job_name}/mljob_result
     @property
-    def _result_stage_path(self) -> Optional[str]:
+    def _result_stage_path(self) -> str | None:
         volumes = self._service_spec["spec"]["volumes"]
         stage_volume = next((v for v in volumes if v["name"] == constants.RESULT_VOLUME_NAME), None)
         if stage_volume is None:
@@ -216,7 +206,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def get_logs(
         self,
         limit: int = -1,
-        instance_id: Optional[int] = None,
+        instance_id: int | None = None,
         *,
         as_list: Literal[True],
         verbose: bool = constants.DEFAULT_VERBOSE_LOG,
@@ -227,7 +217,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def get_logs(
         self,
         limit: int = -1,
-        instance_id: Optional[int] = None,
+        instance_id: int | None = None,
         *,
         as_list: Literal[False] = False,
         verbose: bool = constants.DEFAULT_VERBOSE_LOG,
@@ -237,11 +227,11 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def get_logs(
         self,
         limit: int = -1,
-        instance_id: Optional[int] = None,
+        instance_id: int | None = None,
         *,
         as_list: bool = False,
         verbose: bool = constants.DEFAULT_VERBOSE_LOG,
-    ) -> Union[str, list[str]]:
+    ) -> str | list[str]:
         """
         Return the job's execution logs.
 
@@ -269,7 +259,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         return logs
 
     def show_logs(
-        self, limit: int = -1, instance_id: Optional[int] = None, verbose: bool = constants.DEFAULT_VERBOSE_LOG
+        self, limit: int = -1, instance_id: int | None = None, verbose: bool = constants.DEFAULT_VERBOSE_LOG
     ) -> None:
         """
         Display the job's execution logs.
@@ -330,7 +320,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         return self.status
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def get_ray_dashboard_url(self) -> Optional[str]:
+    def get_ray_dashboard_url(self) -> str | None:
         """
         Get the Ray dashboard URL for the job.
 
@@ -414,7 +404,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
             )
         if self._distributed_result is None:
             self.wait(timeout)
-            target_instances = _get_submitted_instance_count(self._session, self.id)
+            target_instances = _get_submitted_instance_count(self._session, self.id, self._container_spec)
             if self.min_instances < target_instances:
                 logger.warning(
                     f"Job was submitted with min_instances={self.min_instances} < "
@@ -453,7 +443,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "instance_id"])
-def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[int] = None) -> type_utils.JOB_STATUS:
+def _get_status(session: snowpark.Session, job_id: str, instance_id: int | None = None) -> type_utils.JOB_STATUS:
     """Retrieve job or job instance execution status."""
     try:
         if instance_id is not None:
@@ -485,7 +475,7 @@ def _get_logs(
     session: snowpark.Session,
     job_id: str,
     limit: int = -1,
-    instance_id: Optional[int] = None,
+    instance_id: int | None = None,
     container_name: str = constants.DEFAULT_CONTAINER_NAME,
     verbose: bool = True,
 ) -> str:
@@ -593,7 +583,7 @@ def _get_logs(
     return full_log[start_idx:end_idx].strip()
 
 
-def _read_instance_record(session: snowpark.Session, result_path: str, instance_id: int) -> Optional[dict[str, Any]]:
+def _read_instance_record(session: snowpark.Session, result_path: str, instance_id: int) -> dict[str, Any] | None:
     """Read one per-instance record from the stage; ``None`` if absent/unreadable.
 
     Absent means the instance never wrote its finally-block record (killed/OOM) → lost.
@@ -618,7 +608,7 @@ def _read_instance_record(session: snowpark.Session, result_path: str, instance_
 
 def _read_all_records_with_retry(
     session: snowpark.Session, result_path: str, instance_ids: set[int]
-) -> dict[int, Optional[dict[str, Any]]]:
+) -> dict[int, dict[str, Any] | None]:
     """Read every instance's record, retrying missing ones until visible or timeout.
 
     Absorbs SPCS stage visibility lag: a written record may not be readable immediately. Returns
@@ -635,7 +625,7 @@ def _read_all_records_with_retry(
         instance_id -> record dict, or ``None`` for any instance still missing after the timeout (lost).
     """
     deadline = time.monotonic() + _INSTANCE_RECORD_TIMEOUT_SECONDS
-    records: dict[int, Optional[dict[str, Any]]] = {}
+    records: dict[int, dict[str, Any] | None] = {}
     missing = set(instance_ids)
     while missing:
         for instance_id in list(missing):
@@ -659,9 +649,9 @@ def _read_all_records_with_retry(
 
 def _earliest_failed_instance(
     instance_ids: list[int],
-    records: dict[int, Optional[dict[str, Any]]],
-    exit_codes: dict[int, Optional[int]],
-) -> Optional[int]:
+    records: dict[int, dict[str, Any] | None],
+    exit_codes: dict[int, int | None],
+) -> int | None:
     """Return the failed instance that ended earliest, or None if none failed.
 
     Best-effort hint, not a guarantee: ordering uses each instance's record ended_at (subject to
@@ -704,7 +694,7 @@ def _load_instance0_value_or_none(
 
 
 def _rebuild_failure_exception(
-    session: snowpark.Session, result_path: str, failed_instance: Optional[int]
+    session: snowpark.Session, result_path: str, failed_instance: int | None
 ) -> BaseException:
     """Rebuild the earliest-failing instance's exception, for use as ``distributed_result()``'s raised cause.
 
@@ -764,7 +754,7 @@ def _reduce_distributed_result(
     instance_ids = list(range(target_instances))
     records = _read_all_records_with_retry(session, result_path, set(instance_ids))
 
-    exit_codes: dict[int, Optional[int]] = {}
+    exit_codes: dict[int, int | None] = {}
     for instance_id in instance_ids:
         rec = records[instance_id]
         exit_codes[instance_id] = rec.get("exit_code") if rec is not None else None
@@ -782,7 +772,7 @@ def _reduce_distributed_result(
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
-def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[int]:
+def _get_head_instance_id(session: snowpark.Session, job_id: str) -> int | None:
     """
     Retrieve the head instance ID of a job.
 
@@ -854,9 +844,9 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
 def _get_service_log_from_event_table(
     session: snowpark.Session,
     name: str,
-    database: Optional[str] = None,
-    schema: Optional[str] = None,
-    instance_id: Optional[int] = None,
+    database: str | None = None,
+    schema: str | None = None,
+    instance_id: int | None = None,
     limit: int = -1,
 ) -> list[Row]:
     event_table_name = session.sql("SHOW PARAMETERS LIKE 'event_table' IN ACCOUNT").collect()[0]["value"]
@@ -946,15 +936,18 @@ def _get_target_instances(session: snowpark.Session, job_id: str) -> int:
         raise
 
 
-def _get_submitted_instance_count(session: snowpark.Session, job_id: str) -> int:
+def _get_submitted_instance_count(
+    session: snowpark.Session, job_id: str, container_spec: dict[str, Any] | None = None
+) -> int:
     """Return the instance count the job was submitted with.
 
-    Reads ``REPLICAS`` from the job-history parameters, which holds the submitted count after the
-    job is terminal. Single-instance jobs omit ``REPLICAS`` and use the job-service default of one.
+    Reads the submitted count from the container spec, falling back to ``REPLICAS`` in job history
+    for legacy jobs. The history fallback treats a missing ``REPLICAS`` value as one.
 
     Args:
         session: The Snowpark session to use.
         job_id: The fully-qualified job (service) ID.
+        container_spec: Main container specification, when available.
 
     Returns:
         The submitted instance count.
@@ -962,14 +955,28 @@ def _get_submitted_instance_count(session: snowpark.Session, job_id: str) -> int
     Raises:
         RuntimeError: If the submitted count cannot be read.
     """
-    try:
-        row = _get_service_info_spcs(session, job_id)
-        params = json.loads(row["PARAMETERS"])
-        replicas = int(params.get("REPLICAS", 1))
-    except (AttributeError, SnowparkSQLException, TypeError, KeyError, ValueError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Couldn't determine the submitted instance count for job {job_id}") from e
+    env = container_spec.get("env", {}) if container_spec else {}
+    if constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR in env:
+        raw_replicas = env[constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR]
+        try:
+            replicas = int(raw_replicas)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"Invalid submitted instance count in job spec for job {job_id}: {raw_replicas!r}"
+            ) from e
+        source = "job spec"
+    else:
+        try:
+            row = _get_service_info_spcs(session, job_id)
+            params = json.loads(row["PARAMETERS"])
+            replicas = int(params.get("REPLICAS", 1))
+        except (AttributeError, SnowparkSQLException, TypeError, KeyError, ValueError, json.JSONDecodeError) as e:
+            raise RuntimeError(
+                f"Couldn't determine the submitted instance count from job history for job {job_id}"
+            ) from e
+        source = "job history"
     if replicas < 1:
-        raise RuntimeError(f"Invalid submitted instance count for job {job_id}: {replicas}")
+        raise RuntimeError(f"Invalid submitted instance count in {source} for job {job_id}: {replicas}")
     return replicas
 
 
@@ -977,10 +984,10 @@ def _get_logs_spcs(
     session: snowpark.Session,
     fully_qualified_name: str,
     limit: int = -1,
-    instance_id: Optional[int] = None,
-    container_name: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
+    instance_id: int | None = None,
+    container_name: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
 ) -> list[Row]:
     query = [
         f"SELECT LOG FROM table({fully_qualified_name}!spcs_get_logs(",

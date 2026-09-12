@@ -86,7 +86,7 @@ class HPOCorrectness(parameterized.TestCase):
         for k, v in cv_result_1.items():
             if isinstance(v, np.ndarray):
                 if k.startswith("param_"):  # compare the masked array
-                    np.ma.allequal(v, cv_result_2[k])  # type: ignore[no-untyped-call]
+                    np.ma.allequal(v, cv_result_2[k])
                 elif k == "params":  # compare the parameter combination
                     self.assertEqual(v.tolist(), cv_result_2[k])
                 elif k.endswith("test_score"):  # compare the test score

@@ -201,6 +201,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             **({constants.PREFLIGHT_ENV_VAR: "true"} if self.preflight else {}),
             **({constants.PREFLIGHT_REFERENCE_STEP_ENV_VAR: "true"} if self.preflight == "reference" else {}),
             **(self.env_vars or {}),
+            # Keep after user env vars to prevent overrides via env_vars.
+            constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: str(self.target_instances),
         }
         self.entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]
         self.spec_options = type_utils.SpecOptions(

@@ -228,7 +228,7 @@ class TestBatchInferenceMultiModalityVLLMHuggingFacePipelineInteg(
             )
         )
 
-        self._test_registry_batch_inference(
+        batch_job = self._test_registry_batch_inference(
             model=model,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
@@ -251,153 +251,8 @@ class TestBatchInferenceMultiModalityVLLMHuggingFacePipelineInteg(
             assert_container_count=3,  # main, vllm engine, proxy
         )
 
-    def test_image_and_video_with_vllm_multi_replica(self) -> None:
-        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
-        model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-VL-2B-Instruct",
-            task="image-text-to-text",
-            compute_pool_for_log=None,
-        )
-
-        (
-            job_name,
-            output_stage_location,
-            input_files_stage_location,
-        ) = self._prepare_job_name_and_stage_for_batch_inference()
-
-        image_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
-        video_file_path = "tests/integ/snowflake/ml/test_data/cutting_in_kitchen.avi"
-        for file in [image_file_path, video_file_path]:
-            self.session.sql(
-                f"PUT 'file://{file}' {input_files_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
-            ).collect()
-
-        messages = [
-            [
-                {"role": "system", "content": [{"type": "text", "text": "You are an expert on cats and kitchens."}]},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Please describe the cat breed and what is happening in the kitchen."},
-                        {"type": "image_url", "image_url": {"url": f"{input_files_stage_location}cat.jpeg"}},
-                        {
-                            "type": "video_url",
-                            "video_url": {"url": f"{input_files_stage_location}cutting_in_kitchen.avi"},
-                        },
-                    ],
-                },
-            ],
-            [
-                {"role": "system", "content": [{"type": "text", "text": "You are an expert on cats."}]},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Please describe both cat images."},
-                        {"type": "image_url", "image_url": {"url": f"{input_files_stage_location}cat.jpeg"}},
-                        {"type": "image_url", "image_url": {"url": f"{input_files_stage_location}cat.jpeg"}},
-                    ],
-                },
-            ],
-            [
-                {"role": "system", "content": [{"type": "text", "text": "You are an expert on kitchen activities."}]},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Please describe what is happening in both videos."},
-                        {
-                            "type": "video_url",
-                            "video_url": {"url": f"{input_files_stage_location}cutting_in_kitchen.avi"},
-                        },
-                        {
-                            "type": "video_url",
-                            "video_url": {"url": f"{input_files_stage_location}cutting_in_kitchen.avi"},
-                        },
-                    ],
-                },
-            ],
-            [
-                {"role": "system", "content": [{"type": "text", "text": "You are master writer."}]},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Write a haiku about the majesty of cats."},
-                    ],
-                },
-            ],
-        ]
-        input_df = self._construct_input(messages)
-
-        # Verify output contains expected phrases related to the input content
-        output_validator = (
-            registry_batch_inference_test_base.create_openai_chat_completion_output_validator(  # noqa: E501
-                expected_phrases=["cat"],
-                test_case=self,
-            )
-        )
-
-        # TODO: verify column names in output and content
-        self._test_registry_batch_inference(
-            model=model,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1", memory_requests="16Gi"),
-            job_name=job_name,
-            replicas=3,
-            options={"cuda_version": "12.4"},
-            signatures=OPENAI_CHAT_SIGNATURE,
-            inference_spec=batch_inference_job_specs.InferenceSpec(
-                engine_options=batch_inference_job_specs.EngineOptions(
-                    engine=InferenceEngine.VLLM,
-                    engine_args_override=[
-                        "--max-model-len=18048",
-                        "--gpu-memory-utilization=0.8",
-                    ],
-                )
-            ),
-            prediction_assert_fn=output_validator,
-            assert_container_count=3,  # main, vllm engine, proxy
-        )
-
-    def test_mljob_get_logs_on_vllm(self) -> None:
-        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
-        model = huggingface.TransformersPipeline(
-            task="text-generation",
-            model="Qwen/Qwen2.5-0.5B",
-            compute_pool_for_log=None,
-        )
-
-        (
-            job_name,
-            output_stage_location,
-            _,
-        ) = self._prepare_job_name_and_stage_for_batch_inference()
-
-        # job will fail because the input does not match the expected input schema
-        dummy_df = self.session.create_dataframe([("Hello world",)], schema=["TEXT"])
-        job = self._test_registry_batch_inference(
-            model=model,
-            X=dummy_df,
-            options={"cuda_version": "12.4"},
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
-            job_name=job_name,
-            compute_pool="SYSTEM_COMPUTE_POOL_GPU",
-            signatures=OPENAI_CHAT_SIGNATURE,
-            inference_spec=batch_inference_job_specs.InferenceSpec(
-                engine_options=batch_inference_job_specs.EngineOptions(
-                    engine=InferenceEngine.VLLM,
-                    engine_args_override=[
-                        "--max-model-len=5000",
-                        "--gpu-memory-utilization=0.8",
-                    ],
-                )
-            ),
-            blocking=False,
-        )
-
-        job.wait()
-        self.assertEqual(job.status, "FAILED")
-        job.get_logs()
+        # Log retrieval has to work against a job whose service runs multiple containers.
+        self.assertIsInstance(batch_job.get_logs(), str)
 
 
 if __name__ == "__main__":

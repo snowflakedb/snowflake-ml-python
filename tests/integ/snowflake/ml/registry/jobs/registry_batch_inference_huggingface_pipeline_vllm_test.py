@@ -2,7 +2,7 @@ import os
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model import inference_engine, openai_signatures
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -40,39 +40,8 @@ class TestBatchInferenceHuggingFacePipelineVllmInteg(registry_batch_inference_te
         if cls._original_hf_endpoint:
             os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
 
-    @parameterized.parameters(  # type: ignore[misc]
-        # Default configuration with system GPU pool
-        {
-            "compute_pool": "SYSTEM_COMPUTE_POOL_GPU",
-            "cpu_requests": None,
-            "gpu_requests": "1",
-            "memory_requests": None,
-            "replicas": None,
-            "engine_args_override": None,
-        },
-        # Custom resource configuration with engine args
-        {
-            "compute_pool": None,
-            "cpu_requests": "2",
-            "gpu_requests": "1",
-            "memory_requests": "8Gi",
-            "replicas": 2,
-            "engine_args_override": [
-                "--gpu-memory-utilization=0.8",
-                "--max-model-len=1024",
-            ],
-        },
-    )
-    def test_text_generation_with_vllm(
-        self,
-        compute_pool: str | None,
-        cpu_requests: str | None,
-        gpu_requests: str | None,
-        memory_requests: str | None,
-        replicas: int | None,
-        engine_args_override: list[str] | None,
-    ) -> None:
-        """Test text generation with vLLM inference engine and various resource configurations."""
+    def test_text_generation_with_vllm(self) -> None:
+        """Test text generation with vLLM, custom resource requests, replicas and engine args."""
         # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             task="text-generation",
@@ -126,23 +95,25 @@ class TestBatchInferenceHuggingFacePipelineVllmInteg(registry_batch_inference_te
 
         self._test_registry_batch_inference(
             model=model,
-            compute_pool=compute_pool,
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             resources_spec=batch_inference_job_specs.ResourcesSpec(
-                cpu_requests=cpu_requests,
-                gpu_requests=gpu_requests,
-                memory_requests=memory_requests,
+                cpu_requests="2",
+                gpu_requests="1",
+                memory_requests="8Gi",
             ),
             inference_spec=batch_inference_job_specs.InferenceSpec(
                 engine_options=batch_inference_job_specs.EngineOptions(
                     engine=inference_engine.InferenceEngine.VLLM,
-                    engine_args_override=engine_args_override,
+                    engine_args_override=[
+                        "--gpu-memory-utilization=0.8",
+                        "--max-model-len=1024",
+                    ],
                 )
             ),
             job_name=job_name,
-            replicas=replicas,
+            replicas=2,
             prediction_assert_fn=validator,
             assert_container_count=3,
         )

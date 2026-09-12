@@ -4,7 +4,6 @@ import argparse
 import logging
 import os
 import sys
-from typing import Optional
 
 import requests
 from packaging.requirements import Requirement
@@ -12,8 +11,8 @@ from packaging.version import Version, parse as parse_version
 from ruamel.yaml import YAML
 
 yaml = YAML()
-yaml.preserve_quotes = True  # type: ignore[assignment]
-yaml.explicit_start = True  # type: ignore[assignment]
+yaml.preserve_quotes = True
+yaml.explicit_start = True
 yaml.indent(mapping=2, sequence=2, offset=0)
 
 DEFAULT_CONDA_CHANNEL = "https://repo.anaconda.com/pkgs/snowflake"
@@ -23,7 +22,7 @@ PYPI_BASE_URL = "https://pypi.org/pypi"
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def get_latest_pypi_version(pkg_name: str) -> Optional[Version]:
+def get_latest_pypi_version(pkg_name: str) -> Version | None:
     """
     Query PyPI for the latest version of pkg_name.
 
@@ -46,7 +45,7 @@ def get_latest_pypi_version(pkg_name: str) -> Optional[Version]:
         return None
 
 
-def get_latest_conda_version(pkg_name: str, from_channel: str = DEFAULT_CONDA_CHANNEL) -> Optional[Version]:
+def get_latest_conda_version(pkg_name: str, from_channel: str = DEFAULT_CONDA_CHANNEL) -> Version | None:
     """
     Query Conda for the latest version of pkg_name using `conda search`.
 
@@ -84,7 +83,7 @@ def bump_upper_bound(latest: Version) -> str:
     return f"{major + 1}"
 
 
-def parse_version_requirements(req: str) -> Optional[tuple[str, str]]:
+def parse_version_requirements(req: str) -> tuple[str, str] | None:
     """
     Parse the version_requirements string using packaging.requirements.
 
@@ -122,7 +121,7 @@ def parse_version_requirements(req: str) -> Optional[tuple[str, str]]:
     return None
 
 
-def update_version_requirement(req: str, latest_version: Version) -> Optional[str]:
+def update_version_requirement(req: str, latest_version: Version) -> str | None:
     """
     Update the upper bound of the version requirement.
 
@@ -146,8 +145,8 @@ def update_version_requirement(req: str, latest_version: Version) -> Optional[st
 
 def update_requirements(
     package_entry: dict[str, str],
-    latest_pypi: Optional[Version],
-    latest_conda: Optional[Version],
+    latest_pypi: Version | None,
+    latest_conda: Version | None,
     dry_run: bool,
 ) -> bool:
     """

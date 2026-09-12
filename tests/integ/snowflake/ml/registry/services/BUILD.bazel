@@ -119,6 +119,24 @@ py_test(
 )
 
 py_test(
+    name = "registry_model_garden_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_model_garden_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
+        "//snowflake/ml/model:inference_engine",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
     name = "registry_transformer_non_paramspec_signature_test",
     timeout = "eternal",
     srcs = ["registry_transformer_non_paramspec_signature_test.py"],
@@ -237,7 +255,10 @@ py_test(
     srcs = ["registry_custom_model_deployment_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "smoke_test",
+    ],
     deps = [
         ":registry_model_deployment_test_base",
     ],

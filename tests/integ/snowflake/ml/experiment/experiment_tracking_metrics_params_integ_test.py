@@ -4,6 +4,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.experiment import ExperimentTracking
+from snowflake.snowpark import functions
 from tests.integ.snowflake.ml.experiment._integ_test_base import (
     ExperimentTrackingIntegTestBase,
 )
@@ -189,6 +190,68 @@ class ExperimentMetricsParamsIntegTest(ExperimentTrackingIntegTestBase):
         self.assertAlmostEqual(run_a_metrics[0]["accuracy"], 0.95)
         self.assertAlmostEqual(run_a_metrics[0]["loss"], 0.05)
         self.assertAlmostEqual(run_a_metrics[0]["f1"], 0.90)
+
+    def test_get_metric_history(self) -> None:
+        """Test get_metric_history returns every logged step, not just the highest one."""
+        experiment_name = "TEST_EXPERIMENT_METRIC_HISTORY"
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+
+        with self.exp.start_run(run_name="RUN_A"):
+            self.exp.log_metric("accuracy", 0.80, step=1)
+            self.exp.log_metric("accuracy", 0.90, step=2)
+            self.exp.log_metric("accuracy", 0.95, step=3)
+            self.exp.log_metric("loss", 0.50, step=1)
+            self.exp.log_metric("loss", 0.05, step=2)
+
+            # An active run is used when no run_name is given.
+            active_history = self.exp.get_metric_history(metric_name="accuracy").to_pandas()
+            self.assertEqual(active_history["value"].tolist(), [0.80, 0.90, 0.95])
+
+        with self.exp.start_run(run_name="RUN_B"):
+            self.exp.log_metric("accuracy", 0.70, step=1)
+
+        # Every metric of a run, sorted by name then step.
+        all_history = self.exp.get_metric_history(run_name="RUN_A").to_pandas()
+        self.assertIn("timestamp", all_history.columns)
+        expected_all_history = pd.DataFrame(
+            [
+                {"name": "accuracy", "step": 1, "value": 0.80},
+                {"name": "accuracy", "step": 2, "value": 0.90},
+                {"name": "accuracy", "step": 3, "value": 0.95},
+                {"name": "loss", "step": 1, "value": 0.50},
+                {"name": "loss", "step": 2, "value": 0.05},
+            ]
+        )
+        pd.testing.assert_frame_equal(all_history.drop(columns=["timestamp"]), expected_all_history, check_dtype=False)
+
+        # A single metric of a run.
+        loss_history = self.exp.get_metric_history(run_name="RUN_A", metric_name="loss").to_pandas()
+        self.assertEqual(loss_history["name"].tolist(), ["loss", "loss"])
+        self.assertEqual(loss_history["step"].tolist(), [1, 2])
+        self.assertEqual(loss_history["value"].tolist(), [0.50, 0.05])
+
+        # History is scoped to the requested run.
+        run_b_history = self.exp.get_metric_history(run_name="RUN_B").to_pandas()
+        self.assertEqual(run_b_history["value"].tolist(), [0.70])
+
+        # An unknown metric name yields no rows rather than raising.
+        self.assertEqual(len(self.exp.get_metric_history(run_name="RUN_A", metric_name="nonexistent").collect()), 0)
+
+        # Aggregation on "value" is numeric, not lexicographic.
+        best_accuracy = (
+            self.exp.get_metric_history(run_name="RUN_A", metric_name="accuracy")
+            .agg(functions.max(functions.col('"value"')))
+            .collect()[0][0]
+        )
+        self.assertAlmostEqual(best_accuracy, 0.95)
+
+    def test_get_metric_history_no_run_raises(self) -> None:
+        """Test get_metric_history requires a run when none is active."""
+        self.exp.set_experiment(experiment_name="TEST_EXPERIMENT_METRIC_HISTORY_NO_RUN")
+        with self.assertRaises(RuntimeError) as ctx:
+            self.exp.get_metric_history()
+        self.assertIn("No run is active", str(ctx.exception))
 
     def test_list_params(self) -> None:
         """Test list_params returns a pivoted Snowpark DataFrame with parameters per run."""

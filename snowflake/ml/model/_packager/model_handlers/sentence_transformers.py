@@ -5,7 +5,7 @@ import os
 import pathlib
 import shutil
 from importlib import metadata as importlib_metadata
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Sequence, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -69,7 +69,7 @@ def _get_available_default_methods(model: "sentence_transformers.SentenceTransfo
     return available_methods
 
 
-def _get_sentence_transformers_version() -> Optional[version.Version]:
+def _get_sentence_transformers_version() -> version.Version | None:
     """Return the installed sentence-transformers version, or None if not installed."""
     try:
         return version.parse(importlib_metadata.version("sentence-transformers"))
@@ -94,7 +94,7 @@ def _supports_encode_truncate_dim_param() -> bool:
 
 def _capture_model_truncate_dim(
     model: Union["sentence_transformers.SentenceTransformer", snowml_huggingface.SentenceTransformer],
-) -> Optional[int]:
+) -> int | None:
     """Read and validate the model's truncate_dim attribute, returning None if unset.
 
     Args:
@@ -114,7 +114,7 @@ def _capture_model_truncate_dim(
     return model_truncate_dim
 
 
-def _capture_pretrained_model_name(model: "sentence_transformers.SentenceTransformer") -> Optional[str]:
+def _capture_pretrained_model_name(model: "sentence_transformers.SentenceTransformer") -> str | None:
     """Read the pretrained model identifier from a SentenceTransformer instance.
 
     Args:
@@ -176,10 +176,10 @@ def _encode_sentences_with_nulls(
 def _auto_infer_signature(
     target_method: str,
     embedding_dim: int,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     *,
     include_truncate_dim_param: bool = False,
-) -> Optional[model_signature.ModelSignature]:
+) -> model_signature.ModelSignature | None:
     """Auto-infer signature for SentenceTransformer models.
 
     SentenceTransformer models have a simple signature: they take a string input
@@ -240,7 +240,7 @@ _POOLING_MODES = frozenset(
 )
 
 
-def _get_module_embedding_dim_from_config(module_type: str, module_config: dict[str, Any]) -> Optional[int]:
+def _get_module_embedding_dim_from_config(module_type: str, module_config: dict[str, Any]) -> int | None:
     """Extract embedding dimension from a single sentence-transformers module config."""
     if "Dense" in module_type:
         out_features = module_config.get("out_features")
@@ -288,7 +288,7 @@ def _get_module_embedding_dim_from_config(module_type: str, module_config: dict[
     return None
 
 
-def _get_embedding_dim_from_config(repo_snapshot_dir: str) -> Optional[int]:
+def _get_embedding_dim_from_config(repo_snapshot_dir: str) -> int | None:
     """Extract the embedding dimension from a sentence-transformers snapshot.
 
     Walks ``modules.json`` in reverse and reads each module's ``config.json``,
@@ -334,7 +334,7 @@ def _get_embedding_dim_from_config(repo_snapshot_dir: str) -> Optional[int]:
     return None
 
 
-def _resolve_wrapper_target_methods(target_methods: Optional[Sequence[str]]) -> Sequence[str]:
+def _resolve_wrapper_target_methods(target_methods: Sequence[str] | None) -> Sequence[str]:
     """Resolve target methods for wrapper local-mode signature inference.
 
     Defaults to ``_DEFAULT_WRAPPER_TARGET_METHODS`` (sentence-transformers 5.x
@@ -367,7 +367,7 @@ def _infer_signatures_for_target_methods(
     *,
     embedding_dim: int,
     target_methods: Sequence[str],
-    batch_size: Optional[int],
+    batch_size: int | None,
     include_truncate_dim_param: bool = False,
 ) -> None:
     """Auto-infer and register signatures for each target method.
@@ -401,7 +401,7 @@ def _infer_signatures_for_target_methods(
 
 def _add_inference_params(
     model_meta: model_meta_api.ModelMetadata,
-    batch_size: Optional[int],
+    batch_size: int | None,
     *,
     include_truncate_dim_param: bool = False,
 ) -> None:
@@ -515,7 +515,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         import sentence_transformers
 
         assert isinstance(model, sentence_transformers.SentenceTransformer)
-        return model
+        return model  # type: ignore[no-any-return]
 
     @classmethod
     def save_model(
@@ -524,15 +524,15 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model: Union["sentence_transformers.SentenceTransformer", snowml_huggingface.SentenceTransformer],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.SentenceTransformersSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for Sentence Transformer model.")
 
-        user_defined_batch_size: Optional[int] = kwargs.get("batch_size", None)
+        user_defined_batch_size: int | None = kwargs.get("batch_size", None)
         if user_defined_batch_size is not None and (
             not isinstance(user_defined_batch_size, int) or user_defined_batch_size <= 0
         ):
@@ -625,10 +625,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model: snowml_huggingface.SentenceTransformer,
         model_meta: model_meta_api.ModelMetadata,
         model_blob_path: str,
-        batch_size: Optional[int],
+        batch_size: int | None,
         *,
-        is_sub_model: Optional[bool] = False,
-        target_methods: Optional[Sequence[str]] = None,
+        is_sub_model: bool | None = False,
+        target_methods: Sequence[str] | None = None,
     ) -> None:
         """Save a SentenceTransformer wrapper using pickle and optional snapshot copy.
 
@@ -690,10 +690,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     def _set_signatures_from_config(
         cls,
         model_meta: model_meta_api.ModelMetadata,
-        repo_snapshot_dir: Optional[str],
-        batch_size: Optional[int],
+        repo_snapshot_dir: str | None,
+        batch_size: int | None,
         *,
-        target_methods: Optional[Sequence[str]] = None,
+        target_methods: Sequence[str] | None = None,
     ) -> None:
         """Set auto-inferred signatures using config files from a local snapshot.
 
@@ -741,9 +741,9 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         cls,
         model: "sentence_transformers.SentenceTransformer",
         model_meta: model_meta_api.ModelMetadata,
-        sample_input_data: Optional[model_types.SupportedDataType],
-        batch_size: Optional[int],
-        target_methods: Optional[Sequence[str]],
+        sample_input_data: model_types.SupportedDataType | None,
+        batch_size: int | None,
+        target_methods: Sequence[str] | None,
         *,
         include_truncate_dim_param: bool = False,
         has_user_defined_batch_size: bool = False,
@@ -875,7 +875,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     @staticmethod
     def _get_device_config(
         **kwargs: Unpack[model_types.SentenceTransformersLoadOptions],
-    ) -> Optional[str]:
+    ) -> str | None:
         if kwargs.get("device", None) is not None:
             return kwargs["device"]
         elif kwargs.get("use_gpu", False):
@@ -925,7 +925,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             device=cls._get_device_config(**kwargs),
             **additional_kwargs,
         )
-        return model
+        return model  # type: ignore[no-any-return]
 
     @classmethod
     def _load_from_wrapper_snapshot(
@@ -957,10 +957,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         if "trust_remote_code" in inspect.signature(sentence_transformers.SentenceTransformer).parameters:
             additional_kwargs["trust_remote_code"] = bool(wrapper.trust_remote_code)
 
-        return sentence_transformers.SentenceTransformer(
+        return sentence_transformers.SentenceTransformer(  # type: ignore[no-any-return]
             model_blob_file_or_dir_path,
             device=cls._get_device_config(**kwargs),
-            **additional_kwargs,  # type: ignore[arg-type]
+            **additional_kwargs,
         )
 
     @classmethod
@@ -968,7 +968,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         cls,
         raw_model: "sentence_transformers.SentenceTransformer",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.SentenceTransformersLoadOptions],
     ) -> custom_model.CustomModel:
         import sentence_transformers

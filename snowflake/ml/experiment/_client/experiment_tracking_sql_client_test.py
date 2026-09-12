@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import cast
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -97,6 +97,51 @@ class PivotRunAttributesTest(absltest.TestCase):
         self.assertEqual(data, [["RUN_A", "2", "3", "1"]])
 
 
+class GetRunMetricsHistoryTest(absltest.TestCase):
+    """Tests for the table function call behind ``get_run_metrics_history``."""
+
+    def setUp(self) -> None:
+        self.mock_session = MagicMock(spec=session.Session)
+        self.client = sql_client.ExperimentTrackingSQLClient(
+            self.mock_session,
+            database_name=sql_identifier.SqlIdentifier("TEST_DB"),
+            schema_name=sql_identifier.SqlIdentifier("TEST_SCHEMA"),
+        )
+
+    def _get_table_function_args(self) -> tuple[str, list[str]]:
+        """Return the function name and the value of each literal argument."""
+        func_name, *args = self.mock_session.table_function.call_args.args
+        return func_name, [arg._expression.value for arg in args]
+
+    def test_calls_table_function_with_literal_names(self) -> None:
+        self.client.get_run_metrics_history(
+            experiment_name=sql_identifier.SqlIdentifier("TEST_EXPERIMENT"),
+            run_name=sql_identifier.SqlIdentifier("TEST_RUN"),
+        )
+
+        func_name, arg_values = self._get_table_function_args()
+        self.assertEqual(func_name, "SYSTEM$GET_EXPERIMENT_RUN_METRICS")
+        self.assertEqual(arg_values, ["TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", "TEST_RUN"])
+
+    def test_run_name_containing_quote_is_passed_as_a_literal(self) -> None:
+        self.client.get_run_metrics_history(
+            experiment_name=sql_identifier.SqlIdentifier("TEST_EXPERIMENT"),
+            run_name=sql_identifier.SqlIdentifier('"O\'BRIEN"'),
+        )
+
+        _, arg_values = self._get_table_function_args()
+        self.assertEqual(arg_values, ["TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", '"O\'BRIEN"'])
+
+    def test_history_is_returned_lazily(self) -> None:
+        result = self.client.get_run_metrics_history(
+            experiment_name=sql_identifier.SqlIdentifier("TEST_EXPERIMENT"),
+            run_name=sql_identifier.SqlIdentifier("TEST_RUN"),
+        )
+
+        self.mock_session.table_function.return_value.select.return_value.sort.assert_called_once()
+        self.assertIs(result, self.mock_session.table_function.return_value.select.return_value.sort.return_value)
+
+
 class ExperimentTrackingSQLClientTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self, check_call_sequence_completion=True)
@@ -113,7 +158,7 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
     def tearDown(self) -> None:
         self.m_session.finalize()  # Check that all expected operations were executed
 
-    def _create_mock_df(self, result: Optional[list[row.Row]] = None) -> mock_data_frame.MockDataFrame:
+    def _create_mock_df(self, result: list[row.Row] | None = None) -> mock_data_frame.MockDataFrame:
         if result is None:
             result = [row.Row("")]
         return mock_data_frame.MockDataFrame(collect_result=result)

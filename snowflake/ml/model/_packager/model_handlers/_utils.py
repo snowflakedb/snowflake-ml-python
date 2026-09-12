@@ -5,7 +5,7 @@ import logging
 import os
 import pathlib
 import warnings
-from typing import Any, Callable, Iterable, Optional, Sequence, cast
+from typing import Any, Callable, Iterable, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -65,7 +65,7 @@ def validate_signature(
     model: model_types.SupportedRequireSignatureModelType,
     model_meta: model_meta.ModelMetadata,
     target_methods: Iterable[str],
-    sample_input_data: Optional[model_types.SupportedDataType],
+    sample_input_data: model_types.SupportedDataType | None,
     get_prediction_fn: Callable[[str, model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
     is_for_modeling_model: bool = False,
 ) -> model_meta.ModelMetadata:
@@ -105,7 +105,7 @@ def validate_signature(
 
 
 def get_input_signature(
-    model_meta: model_meta.ModelMetadata, target_method: Optional[str]
+    model_meta: model_meta.ModelMetadata, target_method: str | None
 ) -> Sequence[core.BaseFeatureSpec]:
     if target_method is None or target_method not in model_meta.signatures:
         raise ValueError(f"Signature for target method {target_method} is missing or no method to explain.")
@@ -119,7 +119,7 @@ def add_inferred_explain_method_signature(
     target_method: str,
     background_data: model_types.SupportedDataType,
     explain_fn: Callable[[model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
-    output_feature_names: Optional[Sequence[str]] = None,
+    output_feature_names: Sequence[str] | None = None,
 ) -> model_meta.ModelMetadata:
     inputs = get_input_signature(model_meta, target_method)
     if output_feature_names is None:  # If not provided, assume output feature names are the same as input feature names
@@ -152,7 +152,7 @@ def add_inferred_explain_method_signature(
 def add_explain_method_signature(
     model_meta: model_meta.ModelMetadata,
     explain_method: str,
-    target_method: Optional[str],
+    target_method: str | None,
     output_return_type: model_signature.DataType = model_signature.DataType.DOUBLE,
 ) -> model_meta.ModelMetadata:
     inputs = get_input_signature(model_meta, target_method)
@@ -171,9 +171,9 @@ def add_explain_method_signature(
 
 
 def get_explainability_supported_background(
-    sample_input_data: Optional[model_types.SupportedDataType],
+    sample_input_data: model_types.SupportedDataType | None,
     meta: model_meta.ModelMetadata,
-    explain_target_method: Optional[str],
+    explain_target_method: str | None,
 ) -> pd.DataFrame:
     if sample_input_data is None or explain_target_method is None:
         return None
@@ -191,7 +191,7 @@ def get_explainability_supported_background(
 
 def get_target_methods(
     model: model_types.SupportedModelType,
-    target_methods: Optional[Sequence[str]],
+    target_methods: Sequence[str] | None,
     default_target_methods: Iterable[str],
 ) -> Sequence[str]:
     if target_methods is None:
@@ -236,7 +236,7 @@ def convert_explanations_to_2D_df(
         return pd.DataFrame(explanations)
 
     if hasattr(model, "classes_"):
-        classes_list = [str(cl) for cl in model.classes_]
+        classes_list = [str(cl) for cl in model.classes_]  # type: ignore[union-attr]
         len_classes = len(classes_list)
         if explanations.shape[2] != len_classes:
             raise ValueError(f"Model has {len_classes} classes but explanations have {explanations.shape[2]}")
@@ -273,9 +273,7 @@ def validate_model_task(passed_model_task: model_types.Task, inferred_model_task
     return passed_model_task
 
 
-def get_explain_target_method(
-    model_metadata: model_meta.ModelMetadata, target_methods_list: list[str]
-) -> Optional[str]:
+def get_explain_target_method(model_metadata: model_meta.ModelMetadata, target_methods_list: list[str]) -> str | None:
     """Returns the first target method that is found in the model metadata signatures."""
     for method in target_methods_list:
         if method in model_metadata.signatures.keys():

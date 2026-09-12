@@ -9,7 +9,7 @@ small when individual responsibilities are migrated to Global Services.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from snowflake.ml.feature_store.decl.errors import FeatureStoreNotInitializedError
 from snowflake.ml.feature_store.decl.imperative_executor import (
@@ -75,7 +75,7 @@ def parse_service_status(raw_json: str) -> dict[str, Any]:
     return _parse(raw_json)
 
 
-def get_service_endpoint(status: dict[str, Any], name: str) -> Optional[str]:
+def get_service_endpoint(status: dict[str, Any], name: str) -> str | None:
     """Extract an endpoint URL by name from a parsed status dict.
 
     Args:
@@ -126,9 +126,9 @@ def format_describe_display(
     oft_name: str,
     entities: list[str],
     describe_rows: list[dict[str, Any]],
-    show_row: Optional[dict[str, Any]] = None,
-    spec: Optional[dict[str, Any]] = None,
-    examples: Optional[list[str]] = None,
+    show_row: dict[str, Any] | None = None,
+    spec: dict[str, Any] | None = None,
+    examples: list[str] | None = None,
 ) -> str:
     """Format a rich describe display for a feature view."""
     from snowflake.ml.feature_store.decl.service import format_describe_display as _fmt
@@ -175,9 +175,9 @@ def build_describe_examples(
     version: str,
     source_name: str,
     describe_rows: list[dict[str, Any]],
-    ingest_url: Optional[str],
-    query_url: Optional[str],
-    spec: Optional[dict[str, Any]] = None,
+    ingest_url: str | None,
+    query_url: str | None,
+    spec: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build example curl commands for ingest and query.
 
@@ -203,7 +203,7 @@ def build_describe_examples(
     return _build(fv_name, version, source_name, describe_rows, ingest_url, query_url, spec)
 
 
-def load_specs(files: list[str], config: Optional[dict[str, Any]] = None) -> SpecBatch:
+def load_specs(files: list[str], config: dict[str, Any] | None = None) -> SpecBatch:
     """Load and parse spec files into a ``SpecBatch``.
 
     Accepts ``.py``, ``.yaml``, ``.yml``, and ``.json`` files. Applies Jinja2
@@ -303,10 +303,10 @@ def export_specs(
     database: str,
     schema: str,
     *,
-    specification_map: Optional[dict[str, dict[str, Any]]] = None,
-    entity_rows: Optional[list[dict[str, Any]]] = None,
-    feature_group_rows: Optional[list[dict[str, Any]]] = None,
-    applied_state: Optional[Any] = None,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+    applied_state: Any | None = None,
     layout: str = "db_schema",
 ) -> dict[str, Any]:
     """Reconstruct YAML specs from raw SHOW/DESCRIBE results and write to disk.
@@ -381,16 +381,16 @@ def export_specs(
 
 def fetch_applied_state(
     raw_show_results: list[dict[str, Any]],
-    raw_table_results: Optional[list[dict[str, Any]]] = None,
-    describe_map: Optional[dict[str, list[dict[str, Any]]]] = None,
+    raw_table_results: list[dict[str, Any]] | None = None,
+    describe_map: dict[str, list[dict[str, Any]]] | None = None,
     *,
-    specification_map: Optional[dict[str, dict[str, Any]]] = None,
-    entity_rows: Optional[list[dict[str, Any]]] = None,
-    dt_text_map: Optional[dict[str, str]] = None,
-    feature_view_rows: Optional[list[dict[str, Any]]] = None,
-    feature_group_rows: Optional[list[dict[str, Any]]] = None,
-    stream_source_rows: Optional[list[dict[str, Any]]] = None,
-    datasources_by_table: Optional[dict[str, Any]] = None,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    dt_text_map: dict[str, str] | None = None,
+    feature_view_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+    stream_source_rows: list[dict[str, Any]] | None = None,
+    datasources_by_table: dict[str, Any] | None = None,
     default_database: str = "",
     default_schema: str = "",
 ) -> AppliedState:
@@ -437,7 +437,7 @@ def fetch_applied_state(
             applied state.  Each row becomes a
             ``AppliedObject(kind="FeatureGroup")`` whose
             ``spec_payload`` reconstructs the declarative shape so the
-            planner's ``_fg_content_hash`` matches the local hash on
+            planner's ``fg_content_hash`` matches the local hash on
             an unchanged round-trip.
         stream_source_rows: Optional rows produced by
             :func:`fetch_stream_source_rows` (delegates to the
@@ -451,16 +451,12 @@ def fetch_applied_state(
             today's FV-derived-only behaviour for back-compat with
             CLI callers that have not yet wired the new read path.
             See ``plans/stream_source_contract.md`` §§5–6.
-        datasources_by_table: Optional ``{physical_table_ident →
-            logical BatchSource.name}`` lookup constructed by
-            :func:`build_datasources_by_table` from the locally
-            loaded specs.  When provided, BatchFV source-binding
-            recovery prefers the operator-authored logical name
-            from the local ``sources/datasources/`` tree over the
-            physical table identifier recovered from the Dynamic
-            Table DDL.  ``None`` (the default) preserves the legacy
-            table-as-name behaviour (cold-start contract for fresh
-            ``snow feature init`` against a never-seen schema).
+        datasources_by_table: Unused back-compat slot (a
+            ``{physical_table_ident → logical BatchSource.name}`` lookup
+            from :func:`build_datasources_by_table`).  No longer consumed —
+            the shim that read it was removed once ``FV_SOURCE_REFS``
+            metadata made sources recoverable.  Still forwarded because CLI
+            callers pass it.
         default_database: Database name used when a row does not include one.
         default_schema: Schema name used when a row does not include one.
 
@@ -517,8 +513,8 @@ def build_datasources_by_table(specs: Sequence[Any]) -> dict[str, Any]:
 
 
 def parse_specification_rows(
-    rows: Optional[list[dict[str, Any]]],
-) -> Optional[dict[str, Any]]:
+    rows: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
     """Parse rows from ``DESCRIBE ... TYPE = SPECIFICATION`` into spec JSON.
 
     Delegates to :func:`decl.state.parse_specification_rows`.
@@ -540,7 +536,7 @@ def compile_to_spec(
     database: str,
     schema: str,
     *,
-    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Compile a YAML authoring-format spec into imperative FeatureViewSpec format.
 
@@ -596,6 +592,33 @@ def describe_columns_query(name: str, database: str, schema: str) -> str:
     from snowflake.ml.feature_store.decl.queries import describe_columns_query as _dcq
 
     return _dcq(name, database, schema)
+
+
+def resolve_oft_name(
+    show_rows: Sequence[dict[str, Any]],
+    name: str,
+    version: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve a ``(name, version)`` request to a single deployed OFT name.
+
+    Thin re-export of :func:`decl.state.resolve_oft_name` so the CLI never
+    reaches past ``api`` for the ``<base>$<version>$ONLINE`` naming
+    convention.
+
+    Args:
+        show_rows: Rows from ``SHOW ONLINE FEATURE TABLES``.
+        name: Feature-view name (or full OFT name) requested by the
+            operator.
+        version: Optional version used to disambiguate when multiple
+            versions of ``name`` are deployed.
+
+    Returns:
+        A ``(oft_name, error)`` tuple — ``oft_name`` set on success, or
+        ``error`` set to an actionable message on failure.
+    """
+    from snowflake.ml.feature_store.decl.state import resolve_oft_name as _ron
+
+    return _ron(show_rows, name, version)
 
 
 def dynamic_tables_query(database: str, schema: str) -> str:
@@ -805,11 +828,11 @@ def list_state_queries(database: str, schema: str) -> dict[str, str]:
 
 def enrich_list_results(
     show_rows: list[dict[str, Any]],
-    describe_map: Optional[dict[str, list[dict[str, Any]]]] = None,
+    describe_map: dict[str, list[dict[str, Any]]] | None = None,
     *,
-    entity_rows: Optional[list[dict[str, Any]]] = None,
-    specification_map: Optional[dict[str, dict[str, Any]]] = None,
-    feature_group_rows: Optional[list[dict[str, Any]]] = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Enrich raw SHOW/DESCRIBE/TAG rows into a multi-kind list output.
 
@@ -876,7 +899,7 @@ def enrich_list_results(
         # The same ``spec`` is then used to derive both the FV subkind
         # (for the ``type`` column) and the entities list, keeping the
         # two derivations consistent.
-        spec: Optional[dict[str, Any]] = specification_map.get(oft_name) if specification_map else None
+        spec: dict[str, Any] | None = specification_map.get(oft_name) if specification_map else None
         if spec is None:
             raw_embedded = r.get("specification") or r.get("SPECIFICATION") or ""
             if raw_embedded:
@@ -1390,7 +1413,7 @@ def load_manifest(project_root: Path) -> FSManifest:
     return FSManifest.load(project_root)
 
 
-def discover_project(start: Optional[Path] = None) -> FSProjectPaths:
+def discover_project(start: Path | None = None) -> FSProjectPaths:
     """Walk up from ``start`` (default cwd) until ``manifest.yml`` is found.
 
     Thin facade over :meth:`FSProjectPaths.discover`. The underlying
@@ -1410,7 +1433,7 @@ def discover_project(start: Optional[Path] = None) -> FSProjectPaths:
 
 def resolve_target(
     manifest: FSManifest,
-    target_name: Optional[str] = None,
+    target_name: str | None = None,
 ) -> FSTarget:
     """Return the effective :class:`FSTarget` by name or default.
 
@@ -1434,7 +1457,7 @@ def resolve_target(
 def _merge_template_vars(
     manifest: FSManifest,
     target: FSTarget,
-    runtime_vars: Optional[dict[str, Any]],
+    runtime_vars: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Compute the effective template-variable dict for a target.
 
@@ -1492,7 +1515,7 @@ def load_project(
     project_root: Path,
     *,
     target: FSTarget,
-    runtime_vars: Optional[dict[str, Any]] = None,
+    runtime_vars: dict[str, Any] | None = None,
 ) -> SpecBatch:
     """Load every spec under ``<project_root>/sources/`` qualified by ``target``.
 

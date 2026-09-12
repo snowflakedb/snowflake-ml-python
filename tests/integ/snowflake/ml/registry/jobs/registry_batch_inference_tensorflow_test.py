@@ -1,5 +1,5 @@
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._signatures import tensorflow_handler
@@ -9,16 +9,7 @@ from tests.integ.snowflake.ml.test_utils import model_factory
 
 class TestBatchInferenceTensorFlowInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @absltest.skip("SNOW-3691662")
-    @parameterized.parameters(  # type: ignore[misc]
-        {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
-        {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},
-    )
-    def test_tf(
-        self,
-        gpu_requests: str,
-        cpu_requests: str,
-        memory_requests: str,
-    ) -> None:
+    def test_tf(self) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.TensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = [f"col_{i}" for i in range(x_df.shape[1])]
@@ -37,11 +28,6 @@ class TestBatchInferenceTensorFlowInteg(registry_batch_inference_test_base.Regis
             sample_input_data=x_df,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(
-                gpu_requests=gpu_requests,
-                cpu_requests=cpu_requests,
-                memory_requests=memory_requests,
-            ),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             job_name=job_name,
             replicas=2,

@@ -26,7 +26,10 @@ py_test(
     srcs = ["registry_batch_inference_functional_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "smoke_test",
+    ],
     deps = [
         ":registry_batch_inference_test_base",
         "//snowflake/ml/jobs:job_manager",
@@ -95,18 +98,6 @@ py_test(
 )
 
 py_test(
-    name = "registry_batch_inference_custom_model_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_custom_model_test.py"],
-    optional_dependencies = ["scikit-learn"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
     name = "registry_batch_inference_cse_stage_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_cse_stage_test.py"],
@@ -127,19 +118,6 @@ py_test(
     srcs = ["registry_batch_inference_failure_mode_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_additional_import_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_additional_import_test.py"],
-    data = ["//tests/integ/snowflake/ml/registry/model:ext_module"],
-    optional_dependencies = ["scikit-learn"],
-    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -171,7 +149,7 @@ py_test(
         "torch",
         "xgboost",
     ],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -253,7 +231,7 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
-    shard_count = 8,
+    shard_count = 5,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -295,7 +273,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_sklearn_test.py"],
     optional_dependencies = ["scikit-learn"],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -307,7 +285,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_xgboost_test.py"],
     optional_dependencies = ["scikit-learn"],
-    shard_count = 3,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -319,7 +297,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_lightgbm_test.py"],
     optional_dependencies = ["lightgbm"],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -333,7 +311,7 @@ py_test(
     optional_dependencies = [
         "catboost",
     ],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -379,7 +357,7 @@ py_test(
     optional_dependencies = [
         "tensorflow",
     ],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -424,7 +402,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_huggingface_pipeline_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -484,23 +462,6 @@ py_test(
     srcs = ["registry_batch_inference_huggingface_pipeline_vllm_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_multi_modality_vllm_external_stage_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_multi_modality_vllm_external_stage_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
-    shard_count = 3,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",

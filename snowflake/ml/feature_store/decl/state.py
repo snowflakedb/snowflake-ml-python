@@ -15,18 +15,19 @@ recovery path consumes authoritative metadata:
   returned by :meth:`FeatureStore.get_feature_view` (fetched via
   :func:`decl.imperative_executor.fetch_feature_view_object`).
 
-The legacy ``_build_datasources_by_table`` name-lookup shim is retained
-as a fallback ONLY for FVs registered before the ``FV_SOURCE_REFS``
-metadata row existed; when it engages, a once-per-FV ``logger.warning``
-recommends re-apply so the operator can recover the authoritative
-source bindings.
+FVs registered before the ``FV_SOURCE_REFS`` metadata row existed cannot
+recover their source bindings; :func:`_warn_if_sources_unrecovered` warns
+that the FV will be recreated on the next apply to stamp the metadata. The
+old ``_build_datasources_by_table`` name-lookup shim was removed, so the
+``datasources_by_table`` parameter is now an unused back-compat slot (CLI
+callers still pass it).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional, Sequence, cast
+from typing import Any, Sequence, cast
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.decl.invariants import (
@@ -91,7 +92,7 @@ _SOURCE_REF_PASS_THROUGH_KEYS: tuple[str, ...] = (
 )
 
 
-def _normalize_source_ref(raw: Any) -> Optional[dict[str, Any]]:
+def _normalize_source_ref(raw: Any) -> dict[str, Any] | None:
     """Coerce a single ``source_refs[i]`` entry to a canonical dict.
 
     The metadata write path stores ``SourceRef`` entries via the same
@@ -159,7 +160,7 @@ def _coerce_source_refs(raw: Any) -> list[dict[str, Any]]:
 
 def _inject_batch_fv_source_from_metadata(
     spec_payload: dict[str, Any],
-    source_refs: Optional[Sequence[Any]],
+    source_refs: Sequence[Any] | None,
 ) -> bool:
     """Populate ``spec.sources[]`` from authoritative ``FV_SOURCE_REFS``
     metadata.
@@ -180,14 +181,12 @@ def _inject_batch_fv_source_from_metadata(
             value or a ``_build_offline_fv_object`` output), mutated
             in place.
         source_refs: The decoded ``source_refs`` cell from the
-            list-FV row.  ``None`` or empty signals a legacy
-            deployment with no metadata row — caller falls back to
-            the once-per-FV warning + legacy shim path.
+            list-FV row.  ``None`` or empty means a legacy deployment
+            with no metadata row, so ``spec.sources`` is left empty.
 
     Returns:
         ``True`` when ``spec.sources[]`` was populated from metadata,
-        ``False`` when no metadata was available (caller should
-        engage the legacy fallback).
+        ``False`` when no metadata was available.
     """
     inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
     if inner is None:
@@ -197,6 +196,85 @@ def _inject_batch_fv_source_from_metadata(
         return False
     inner["sources"] = decoded
     return True
+
+
+def _warn_if_sources_unrecovered(spec_payload: dict[str, Any], name: str, version: str) -> None:
+    """Warn when a BatchFV's ``spec.sources`` is still empty after recovery.
+
+    Call this after every source-recovery path has run. A still-empty
+    ``sources`` list means the FV pre-dates the ``FV_SOURCE_REFS`` metadata
+    row, so the planner will hash-mismatch and route a destructive
+    ``RECREATE_FV`` (gated on ``--allow-recreate``) that stamps the metadata.
+    Gating on the empty result (not on a missing metadata cell) avoids a
+    false alarm when another path already populated the source.
+
+    Args:
+        spec_payload: The recovered BatchFV spec dict.
+        name: FV name (for the warning message).
+        version: FV version (for the warning message).
+    """
+    inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
+    if inner is not None and inner.get("sources"):
+        return
+    logger.warning(
+        "decl.state: feature view %s/%s: source bindings not preserved from original "
+        "deployment (no FV_SOURCE_REFS metadata); the feature view will be recreated on "
+        "the next apply (requires --allow-recreate) to stamp the metadata. Once stamped, "
+        "replans recover the source without a recreate.",
+        name,
+        version,
+    )
+
+
+def _coerce_applied_bool(value: Any) -> bool:
+    """Coerce a boolean-ish applied-state cell to a Python ``bool``.
+
+    ``list_feature_views`` returns ``append_only`` as a ``BooleanType`` column,
+    but depending on the cursor / transport it can surface as a native ``bool``,
+    the strings ``"true"`` / ``"false"`` (any casing), or ``"1"`` / ``"0"``.
+    Normalise all of these so the append-only injector never mistakes the string
+    ``"false"`` (which is truthy in Python) for an enabled flag.
+
+    Args:
+        value: The raw cell value (``bool``, ``str``, ``int``, or ``None``).
+
+    Returns:
+        ``True`` only for a genuine truthy signal; ``False`` otherwise.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "t", "1", "yes")
+    return False
+
+
+def _inject_fv_desc_from_list_row(spec_payload: dict[str, Any], row: dict[str, Any]) -> None:
+    """Inject the deployed FV description onto the top level of *spec_payload*.
+
+    Kind-agnostic: the deployed ``desc`` (from ``list_feature_views().desc``,
+    which mirrors the DT / OFT ``COMMENT``) lands at the TOP level of
+    *spec_payload* so :func:`planner._resolve_applied_desc` — which probes the
+    top-level key first — finds the value.  ``description`` is an operational
+    knob stripped from the structural hash (:data:`invariants._OPERATIONAL_FV_KEYS`);
+    surfacing it here lets the planner route a description edit through the
+    non-destructive ``UPDATE_FV`` path and, more importantly, lets a clean
+    ``snow feature init`` + ``snow feature plan`` round-trip to ``NO_CHANGE``
+    once the exporter re-emits the same ``description`` (see
+    :func:`exporter._build_full_fidelity_fv`).
+
+    Additive and idempotent: skipped when *spec_payload* already carries a
+    ``desc`` (e.g. the imperative ``_serialize_batch_fv_spec`` enrichment) and a
+    no-op for an empty / missing cell (the planner treats missing == empty).
+
+    Args:
+        spec_payload: An FV spec dict, mutated in place.
+        row: The list-FV row for this FV; only its ``desc`` cell is read.
+    """
+    desc_cell = row.get("desc") if isinstance(row, dict) else None
+    if isinstance(desc_cell, str) and desc_cell.strip() and "desc" not in spec_payload:
+        spec_payload["desc"] = desc_cell.strip()
 
 
 def _inject_batch_fv_fields_from_list_row(
@@ -213,6 +291,19 @@ def _inject_batch_fv_fields_from_list_row(
 
     * ``cluster_by`` ← ``row["cluster_by"]`` (list-FV column).
     * ``refresh_mode`` ← ``row["refresh_mode"]`` (list-FV column).
+    * ``warehouse`` ← ``row["warehouse"]`` (list-FV column, the DT refresh
+      warehouse).  The deployed ``DESCRIBE … TYPE = SPECIFICATION`` payload
+      never carries the warehouse (it is a Dynamic Table property, not an
+      OFT/spec property), so online-only BFVs recovered via the OFT DESCRIBE
+      path would otherwise leave ``spec.warehouse`` absent and trip
+      ``planner._warehouse_drifted`` into a permanent authored-vs-absent drift
+      (spurious ``UPDATE_FV`` every replan, root cause B).  Mirrors the
+      offline-only injection in
+      :func:`decl.imperative_executor._serialize_batch_fv_spec`.
+    * ``append_only`` ← ``row["append_only"]`` (list-FV BooleanType
+      column), falling back to ``fv_obj.append_only``.  Only injected
+      when truthy — the default ``False`` is stripped from the
+      structural hash on both sides.
     * ``initialize`` ← ``fv_obj.initialize`` when *fv_obj* is supplied
       (the rehydrated :class:`FeatureView` from
       :func:`decl.imperative_executor.fetch_feature_view_object`).
@@ -238,14 +329,12 @@ def _inject_batch_fv_fields_from_list_row(
         row: The list-FV row for this FV (see
             :func:`decl.imperative_executor.fetch_feature_view_rows`
             contract).  Carries ``cluster_by`` (string,
-            possibly comma-separated), ``refresh_mode`` (string), and
-            ``desc`` (string).
+            possibly comma-separated), ``refresh_mode`` (string),
+            ``warehouse`` (string), and ``desc`` (string).
         fv_obj: Optional rehydrated :class:`FeatureView` object.
             When supplied, ``initialize`` is read from it.
     """
-    desc_cell = row.get("desc") if isinstance(row, dict) else None
-    if isinstance(desc_cell, str) and desc_cell.strip() and "desc" not in spec_payload:
-        spec_payload["desc"] = desc_cell.strip()
+    _inject_fv_desc_from_list_row(spec_payload, row)
 
     inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
     if inner is None:
@@ -259,6 +348,36 @@ def _inject_batch_fv_fields_from_list_row(
     refresh_cell = row.get("refresh_mode") if isinstance(row, dict) else None
     if isinstance(refresh_cell, str) and refresh_cell.strip() and "refresh_mode" not in inner:
         inner["refresh_mode"] = refresh_cell.strip().upper()
+
+    # ``warehouse`` (the DT refresh warehouse) rides on the dedicated
+    # ``warehouse`` column of the list-FV row.  The deployed
+    # ``DESCRIBE … TYPE = SPECIFICATION`` payload never carries it (it is a
+    # Dynamic Table property, not an OFT/spec property), so for online-only
+    # BFVs — recovered via the OFT DESCRIBE path — ``spec.warehouse`` is
+    # otherwise absent and ``planner._warehouse_drifted`` reports a permanent
+    # authored-vs-absent drift (spurious ``UPDATE_FV`` every replan, root
+    # cause B).  This mirrors the offline-only injection in
+    # ``imperative_executor._serialize_batch_fv_spec`` and is additive (skipped
+    # when the offline path already populated it).
+    warehouse_cell = row.get("warehouse") if isinstance(row, dict) else None
+    if isinstance(warehouse_cell, str) and warehouse_cell.strip() and "warehouse" not in inner:
+        inner["warehouse"] = warehouse_cell.strip()
+
+    # ``append_only`` rides on the dedicated ``append_only`` column of the
+    # list-FV row (``list_feature_views().append_only``, a BooleanType) with a
+    # fallback to the rehydrated FeatureView object.  Only inject the truthy
+    # value: the default ``False`` is stripped from the structural hash on both
+    # sides so writing it would be redundant and risks a string-vs-bool
+    # mismatch.  The symmetric compile-side emission and default-strip
+    # (``spec_compiler`` and ``invariants._strip_default_append_only``) land
+    # on the ``6e1`` slice; this applied-side injection is inert until ``6d1``
+    # supplies the ``append_only`` column on the list-FV row.
+    if "append_only" not in inner:
+        append_only_cell = row.get("append_only") if isinstance(row, dict) else None
+        if append_only_cell is None and fv_obj is not None:
+            append_only_cell = getattr(fv_obj, "append_only", None)
+        if _coerce_applied_bool(append_only_cell):
+            inner["append_only"] = True
 
     if fv_obj is not None and "initialize" not in inner:
         initialize = getattr(fv_obj, "initialize", None)
@@ -308,20 +427,29 @@ def _inject_fv_refresh_freq_from_list_row(
     online BFV without authored ``target_lag``) — the original BACKFILL
     re-plan invariant break.
 
-    Kind-aware: realtime and **non-tiled** streaming spec_payloads are
-    skipped entirely.  A non-tiled streaming FV materialises to a
-    zero-lag VIEW and a realtime FV computes on lookup — neither has an
-    offline Dynamic Table to recover a cadence from, and the spec
-    validator (``FeatureView._reject_refresh_freq_on_stream_or_realtime``)
-    rejects ``refresh_freq`` authoring on those shapes.  Without this
-    skip the runtime-stamped ``target_lag_sec=0`` would round-trip into
-    YAML as ``refresh_freq: "0 seconds"`` and the next ``snow feature
-    plan`` would reject the file on load.  A **tiled** streaming FV
-    (aggregation windows) DOES schedule an offline tile Dynamic Table, so
-    its ``REFRESH_FREQ`` is recovered here — otherwise the planner
-    compares the local cadence against the OFT ``target_lag_sec=0``
-    sentinel and emits a spurious ``UPDATE_FV`` on every replan.
+    Kind-aware, mirroring the spec-validator
+    (``FeatureView._reject_refresh_freq_on_stream_or_realtime``).  A
+    **tiled** streaming FV (aggregation windows) DOES schedule an offline
+    tile Dynamic Table, so its ``REFRESH_FREQ`` is recovered here —
+    otherwise the planner compares the local cadence against the OFT
+    ``target_lag_sec=0`` sentinel and emits a spurious ``UPDATE_FV`` on
+    every replan.  A non-tiled streaming FV materialises to a zero-lag
+    VIEW (no cadence to recover); recovering the runtime-stamped
+    ``target_lag_sec=0`` there would round-trip into YAML as
+    ``refresh_freq: "0 seconds"`` and fail the next ``snow feature plan``
+    load.
 
+    * ``RealtimeFeatureView`` — skipped entirely (no offline DT).
+    * Non-tiled ``StreamingFeatureView`` — skipped.  A non-tiled
+      streaming FV compiles to a zero-lag VIEW, so the row carries no DT
+      cadence; skipping also prevents a runtime-stamped
+      ``target_lag_sec=0`` from round-tripping into YAML as
+      ``refresh_freq: "0 seconds"`` and failing the next
+      ``snow feature plan`` load.
+    * Tiled ``StreamingFeatureView`` — injected.  The aggregate is an
+      offline Dynamic Table whose ``REFRESH_FREQ`` is the authored
+      cadence; the validator accepts ``refresh_freq`` on this shape.
+    * ``BatchFeatureView`` — injected (the original contract).
     Additive: an existing ``spec.refresh_freq`` (e.g. one populated via
     a pre-enrichment path) is preserved.
 
@@ -344,8 +472,8 @@ def _inject_fv_refresh_freq_from_list_row(
     if inner is None:
         return
 
-    # Non-tiled streaming FVs have no offline DT (zero-lag VIEW), so skip
-    # them; tiled streaming and batch always schedule a DT.
+    # Non-tiled streaming FVs compile to a zero-lag VIEW — no DT cadence
+    # to recover, and the validator rejects ``refresh_freq`` on them.
     if kind == "StreamingFeatureView" and not _spec_has_aggregation_windows(inner):
         return
 
@@ -359,7 +487,7 @@ def _inject_fv_refresh_freq_from_list_row(
     inner["refresh_freq"] = raw_value
 
 
-def _resolve_cluster_column(value: Any) -> Optional[str]:
+def _resolve_cluster_column(value: Any) -> str | None:
     """Normalise a single ``cluster_by`` column value to a resolved identifier.
 
     Uses :func:`identifier.resolve_identifier` so a quoted identifier with an
@@ -383,7 +511,7 @@ def _resolve_cluster_column(value: Any) -> Optional[str]:
         return text.strip('"').strip() or None
 
 
-def _parse_cluster_by_list(raw: Any) -> Optional[list[str]]:
+def _parse_cluster_by_list(raw: Any) -> list[str] | None:
     """Coerce a ``list_feature_views`` ``cluster_by`` cell to a column list.
 
     Snowpark / cursor paths surface this column in **three** observed
@@ -460,11 +588,11 @@ def _parse_cluster_by_list(raw: Any) -> Optional[list[str]]:
 def _build_datasources_by_table(specs: Sequence[Any]) -> dict[str, Any]:
     """Build a physical-table → logical-source-name lookup from local specs.
 
-    **Legacy fallback only** (Phase B4).  Retained for FVs registered
-    before the ``FV_SOURCE_REFS`` metadata row existed; engaged from
-    :func:`fetch_applied_state` ONLY when a list-FV row carries no
-    ``source_refs`` payload, accompanied by a once-per-FV
-    ``logger.warning`` recommending re-apply for full source recovery.
+    **No longer consumed by applied-state recovery** — the shim it fed was
+    removed once ``FV_SOURCE_REFS`` metadata made source bindings
+    recoverable.  Kept on the public surface
+    (``api.build_datasources_by_table``) only because CLI callers still
+    build the lookup.
 
     Walks every spec in *specs* and indexes every ``BatchSource``
     (skipping query- / query_file-backed sources, which have no
@@ -533,10 +661,10 @@ def _build_offline_fv_object(
     *,
     default_database: str,
     default_schema: str,
-    datasources_by_table: Optional[dict[str, Any]] = None,
+    datasources_by_table: dict[str, Any] | None = None,
     fv_obj_provider: Any = None,
     dt_text_map: Any = None,
-) -> Optional[AppliedObject]:
+) -> AppliedObject | None:
     """Build an ``AppliedObject`` for an offline-only FV from a list-FV row.
 
     Reconstructs the SPECIFICATION-equivalent ``spec_payload`` from
@@ -564,13 +692,9 @@ def _build_offline_fv_object(
             :func:`decl.imperative_executor._serialize_batch_fv_spec`).
         default_database: Fallback database when the row omits one.
         default_schema: Fallback schema when the row omits one.
-        datasources_by_table: Optional physical → logical source-name
-            lookup, consumed ONLY when ``source_refs`` is absent (the
-            legacy fallback path — plan section B4).  A
-            ``logger.warning`` is emitted once per FV when this path
-            engages, so the operator notices that source recovery is
-            degraded and that re-apply will restore the metadata
-            row.
+        datasources_by_table: Unused back-compat slot (the shim that read
+            it was removed).  When ``source_refs`` is absent the sources
+            stay empty and :func:`_warn_if_sources_unrecovered` fires.
         fv_obj_provider: Optional zero-argument callable returning a
             rehydrated :class:`FeatureView` (see
             :func:`decl.imperative_executor.fetch_feature_view_object`).
@@ -625,8 +749,8 @@ def _build_offline_fv_object(
         entities_list = []
     entities = [str(e) for e in entities_list if e is not None]
 
-    target_lag_sec: Optional[int] = None
-    target_lag_raw: Optional[str] = None
+    target_lag_sec: int | None = None
+    target_lag_raw: str | None = None
     # The imperative ``list_feature_views()`` row reports the deployed DT
     # cadence under ``REFRESH_FREQ`` (the column ``SHOW DYNAMIC TABLES``
     # populates).  Older callers shipped ``target_lag`` directly on the
@@ -726,20 +850,14 @@ def _build_offline_fv_object(
 
     if kind == "BatchFeatureView":
         # B3 — authoritative source-binding recovery from FV_SOURCE_REFS
-        # metadata; falls through to the legacy shim with a once-per-FV
-        # warning when the row carries no ``source_refs`` payload.
+        # metadata; falls through to the inline warning when the row
+        # carries no ``source_refs`` payload.
         source_refs = fv_row.get("source_refs") if isinstance(fv_row, dict) else None
-        injected = _inject_batch_fv_source_from_metadata(spec_payload, source_refs)
-        if not injected:
-            _engage_legacy_source_shim(
-                spec_payload,
-                fv_name=name,
-                fv_version=version,
-                datasources_by_table=datasources_by_table,
-            )
+        _inject_batch_fv_source_from_metadata(spec_payload, source_refs)
         # B1 — cluster_by / refresh_mode / initialize from metadata.
         fv_obj = fv_obj_provider() if callable(fv_obj_provider) else None
         _inject_batch_fv_fields_from_list_row(spec_payload, fv_row, fv_obj=fv_obj)
+        _warn_if_sources_unrecovered(spec_payload, name, version)
 
     content_hash = _full_spec_hash(spec_payload)
     # Pass the authoritative row version as a top-level fallback so the
@@ -755,47 +873,6 @@ def _build_offline_fv_object(
         spec_payload=spec_payload,
         columns=[],
         from_specification=True,
-    )
-
-
-def _engage_legacy_source_shim(
-    spec_payload: dict[str, Any],
-    *,
-    fv_name: str,
-    fv_version: str,
-    datasources_by_table: Optional[dict[str, Any]] = None,
-) -> None:
-    """Legacy fallback for FVs lacking ``FV_SOURCE_REFS`` metadata (Phase B4).
-
-    Emits a once-per-FV ``logger.warning`` recommending re-apply for full
-    source recovery, then leaves ``spec.sources`` empty.  The planner's
-    ``_normalise_fv_sources_for_hash`` projects both sides to ``[]`` so
-    a re-apply that does not change the source still resolves to
-    ``NO_CHANGE`` — the warning is the operator-visible signal that the
-    metadata row is missing and a re-apply will close the gap.
-
-    The legacy ``_build_datasources_by_table`` lookup (a physical-table
-    → logical-name map) is preserved on the import surface for any
-    out-of-tree callers that already construct it, but is intentionally
-    NOT consulted here: without DT-text parsing there is no recovered
-    physical-table ident to look up.
-
-    Args:
-        spec_payload: The BatchFV spec dict; ``spec.sources`` is left
-            empty when the legacy shim engages.
-        fv_name: FV name (used in the warning message).
-        fv_version: FV version (used in the warning message).
-        datasources_by_table: Reserved for future use; accepted on the
-            signature for back-compat but unused.
-    """
-    del datasources_by_table  # legacy back-compat slot, intentionally unused
-    logger.warning(
-        "decl.state: feature view %s/%s has no FV_SOURCE_REFS metadata; "
-        "source bindings cannot be recovered authoritatively. Re-apply "
-        "the FV (snow feature apply) to populate the metadata row and "
-        "restore full source recovery on the next replan.",
-        fv_name,
-        fv_version,
     )
 
 
@@ -827,7 +904,74 @@ def _parse_oft_name(name: str) -> tuple[str, str]:
     return name, ""
 
 
-def _extract_spec_from_oft(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+def resolve_oft_name(
+    show_rows: Sequence[dict[str, Any]],
+    name: str,
+    version: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve a user-supplied ``(name, version)`` to a single deployed OFT.
+
+    Maps a bare feature-view name (optionally disambiguated by
+    ``version``) onto exactly one ``<base>$<version>$ONLINE`` name from a
+    ``SHOW ONLINE FEATURE TABLES`` result set.  A fully-qualified OFT name
+    passed as ``name`` (matching a row's ``name`` verbatim,
+    case-insensitively) wins immediately, but only when *version* is
+    ``None`` or matches that row — a full name paired with a conflicting
+    ``--version`` is reported as not-found rather than silently honoured.
+
+    Args:
+        show_rows: Rows from ``SHOW ONLINE FEATURE TABLES`` — each a dict
+            carrying at least a ``name`` key.
+        name: The feature-view name (or a full ``NAME$VERSION$ONLINE``
+            name) requested by the operator.  Matched case-insensitively.
+        version: Optional version (e.g. ``"V2"``) used to disambiguate
+            when multiple versions of ``name`` are deployed.  Matched
+            case-insensitively.
+
+    Returns:
+        A ``(oft_name, error)`` tuple.  On success ``oft_name`` is the
+        resolved OFT name and ``error`` is ``None``.  On failure
+        ``oft_name`` is ``None`` and ``error`` is a human-readable message
+        explaining why (not found, or ambiguous and needing ``--version``).
+    """
+    want_name = name.upper()
+    want_version = version.upper() if version else None
+
+    matches: list[str] = []
+    for row in show_rows:
+        candidate = row.get("name", "") or ""
+        if not candidate:
+            continue
+        base_name, cand_version = _parse_oft_name(candidate)
+        # A fully-qualified OFT name passed directly is unambiguous — but
+        # honour it only when no conflicting version was supplied.
+        if candidate.upper() == want_name and (want_version is None or cand_version.upper() == want_version):
+            return candidate, None
+        if base_name.upper() != want_name:
+            continue
+        if want_version is not None and cand_version.upper() != want_version:
+            continue
+        matches.append(candidate)
+
+    if not matches:
+        if version:
+            return (
+                None,
+                f"{name} version {version}: not found in deployed feature views",
+            )
+        return None, f"{name}: not found in deployed feature views"
+
+    if version is None and len(matches) > 1:
+        versions = ", ".join(sorted(_parse_oft_name(m)[1] for m in matches))
+        return (
+            None,
+            f"multiple versions of {name} are deployed ({versions}); " "specify --version to select one",
+        )
+
+    return matches[0], None
+
+
+def _extract_spec_from_oft(row: dict[str, Any]) -> dict[str, Any] | None:
     """Extract and parse the embedded JSON specification from an OFT row.
 
     Args:
@@ -845,6 +989,78 @@ def _extract_spec_from_oft(row: dict[str, Any]) -> Optional[dict[str, Any]]:
     except (json.JSONDecodeError, TypeError):
         logger.debug("Could not parse specification JSON for row: %s", row.get("name", "?"))
         return None
+
+
+# Diagnostic-only cross-check of ``SHOW ONLINE FEATURE TABLES`` rows.
+#
+# After the FV-retrieval unification, ``FeatureStore.list_feature_views``
+# is the authoritative discovery source for applied-state recovery and
+# ``SHOW ONLINE FEATURE TABLES`` is demoted to a diagnostic side channel.
+# ``orphaned_oft_warnings`` flags any OFT whose ``(name, version)`` has no
+# matching ``list_feature_views`` row (nor a ``list_feature_groups`` row)
+# — the genuinely unrecoverable case where the backing Dynamic Table was
+# dropped (or never created) but the OFT lingered.  Such an OFT cannot
+# round-trip through ``snow feature apply`` and would otherwise be a silent
+# inconsistency; surfacing a named warning lets the operator repair it.
+#
+# The check is deliberately conservative: ``feature_view_rows is None``
+# means the caller did not fetch the list, so no cross-check is possible
+# and the function returns ``[]`` rather than false-flagging every OFT; an
+# explicit empty list means "no feature views registered" so every OFT is
+# orphaned; FeatureGroup-backing OFTs (matched against ``feature_group_rows``)
+# are never flagged.  This helper never suppresses discovery — surfacing FVs
+# into applied state is the list-driven path's job (``fetch_applied_state``).
+def orphaned_oft_warnings(
+    raw_show_results: list[dict[str, Any]],
+    *,
+    feature_view_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Return one warning per OFT with no matching listed feature view.
+
+    Args:
+        raw_show_results: Rows from ``SHOW ONLINE FEATURE TABLES``.
+        feature_view_rows: ``list_feature_views`` rows; ``None`` disables
+            the cross-check.
+        feature_group_rows: ``list_feature_groups`` rows, used to avoid
+            false-flagging FeatureGroup-backing OFTs.
+
+    Returns:
+        A list of warning strings, empty when every OFT is consistent.
+    """
+    if feature_view_rows is None:
+        return []
+
+    # Upper-case both name AND version so the cross-check matches
+    # ``resolve_oft_name`` / ``_build_spec_key``.  Otherwise a case-only
+    # version difference (row ``v1`` vs OFT-name ``V1``) is a false orphan.
+    known: set[tuple[str, str]] = set()
+    for fv_row in feature_view_rows:
+        name = str(fv_row.get("name") or "")
+        version = str(fv_row.get("version") or "")
+        if name:
+            known.add((name.upper(), version.upper()))
+    for fg_row in feature_group_rows or []:
+        name = str(fg_row.get("name") or "")
+        version = str(fg_row.get("version") or "")
+        if name:
+            known.add((name.upper(), version.upper()))
+
+    warnings: list[str] = []
+    for row in raw_show_results:
+        oft_name = str(row.get("name") or "")
+        if not oft_name:
+            continue
+        base_name, version = _parse_oft_name(oft_name)
+        if (base_name.upper(), version.upper()) not in known:
+            warnings.append(
+                f"OFT '{oft_name}' has no matching feature view in "
+                f"list_feature_views() (its backing dynamic table appears to "
+                f"have been dropped); it is unmanageable in the current state. "
+                f"Investigate and drop the Online Feature Table or re-register "
+                f"the feature view."
+            )
+    return warnings
 
 
 def _build_spec_key(kind: str, spec: dict[str, Any]) -> str:
@@ -917,8 +1133,8 @@ def _describe_feature_cols(desc_rows: list[dict[str, Any]]) -> list[dict[str, st
 
 
 def parse_specification_rows(
-    rows: Optional[list[dict[str, Any]]],
-) -> Optional[dict[str, Any]]:
+    rows: list[dict[str, Any]] | None,
+) -> dict[str, Any] | None:
     """Parse rows returned by ``DESCRIBE ... TYPE = SPECIFICATION``.
 
     The new SQL primitive returns a single row carrying the original spec
@@ -968,7 +1184,7 @@ def _build_entity_object(
     row: dict[str, Any],
     default_db: str,
     default_schema: str,
-) -> Optional[AppliedObject]:
+) -> AppliedObject | None:
     """Build an Entity ``AppliedObject`` from a ``SHOW TAGS`` row."""
     raw_name = row.get("name") or row.get("NAME") or ""
     if not raw_name:
@@ -1117,7 +1333,7 @@ def _datasource_objects_from_specs(
     default_db: str,
     default_schema: str,
     *,
-    known_fv_names: Optional[set[str]] = None,
+    known_fv_names: set[str] | None = None,
 ) -> list[AppliedObject]:
     """Derive Datasource AppliedObjects by unioning ``spec.sources[]``.
 
@@ -1230,16 +1446,16 @@ def _datasource_objects_from_specs(
 
 def fetch_applied_state(
     raw_show_results: list[dict[str, Any]],
-    raw_table_results: Optional[list[dict[str, Any]]] = None,
-    describe_map: Optional[dict[str, list[dict[str, Any]]]] = None,
+    raw_table_results: list[dict[str, Any]] | None = None,
+    describe_map: dict[str, list[dict[str, Any]]] | None = None,
     *,
-    specification_map: Optional[dict[str, dict[str, Any]]] = None,
-    entity_rows: Optional[list[dict[str, Any]]] = None,
-    dt_text_map: Optional[dict[str, str]] = None,
-    feature_view_rows: Optional[list[dict[str, Any]]] = None,
-    feature_group_rows: Optional[list[dict[str, Any]]] = None,
-    stream_source_rows: Optional[list[dict[str, Any]]] = None,
-    datasources_by_table: Optional[dict[str, Any]] = None,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    dt_text_map: dict[str, str] | None = None,
+    feature_view_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+    stream_source_rows: list[dict[str, Any]] | None = None,
+    datasources_by_table: dict[str, Any] | None = None,
     default_database: str = "",
     default_schema: str = "",
 ) -> AppliedState:
@@ -1263,9 +1479,10 @@ def fetch_applied_state(
        ``source_refs`` column added in plan section A1), populate
        ``spec.sources[]`` directly from it — operator-authored logical
        names, columns, table / query bindings, tiled-vs-non-tiled
-       irrelevant.  Legacy FVs that pre-date the metadata row engage
-       the ``_build_datasources_by_table`` fallback with a once-per-FV
-       ``logger.warning`` recommending re-apply for full source recovery.
+       irrelevant.  Legacy FVs that pre-date the metadata row leave
+       ``spec.sources`` empty and trigger the
+       :func:`_warn_if_sources_unrecovered` warning (the FV is recreated
+       on the next apply to stamp the metadata).
     6. Derive ``Datasource`` AppliedObjects from a runtime-authoritative
        merge of two sources (see ``plans/stream_source_contract.md``
        §5b): first, one ``Datasource`` per row in ``stream_source_rows``
@@ -1336,19 +1553,12 @@ def fetch_applied_state(
             back-compat with every existing call site.  ``None`` and
             ``[]`` are equivalent — both contribute zero runtime
             ``Datasource`` entries.
-        datasources_by_table: Optional mapping of uppercased
-            unqualified physical table ident → operator-authored
-            logical ``BatchSource.name``. Built by
-            :func:`_build_datasources_by_table` from the local
-            ``sources/datasources/`` tree. When provided, the BatchFV
-            source-binding recovery (step 5) prefers the local logical
-            name over the recovered physical table identifier — closing
-            the export round-trip where operators saw ``MISSING_SOURCE``
-            on every re-plan after ``snow feature init`` rewrote
-            ``sources[0].name`` to the underlying table name.  ``None``
-            (the default) falls back to the legacy table-as-name
-            behaviour, preserving cold-start ``init`` against a
-            never-seen schema.
+        datasources_by_table: Unused back-compat slot (a ``{physical table
+            ident → logical BatchSource.name}`` lookup from
+            :func:`_build_datasources_by_table`).  No longer consumed — the
+            shim that read it was removed once ``FV_SOURCE_REFS`` metadata
+            made sources recoverable.  Still accepted because CLI callers
+            pass it.
         default_database: Database to use when a row does not include one.
         default_schema: Schema to use when a row does not include one.
 
@@ -1364,17 +1574,22 @@ def fetch_applied_state(
     objects: dict[str, AppliedObject] = {}
     spec_payloads_for_datasources: list[dict[str, Any]] = []
 
-    # Build a (name_upper, version_str) → list-FV row index so the OFT
+    # Build a (name_upper, version_upper) → list-FV row index so the OFT
     # loop below can look up the authoritative ``source_refs`` /
     # ``cluster_by`` / ``refresh_mode`` / ``fv_obj_provider`` for an
-    # OFT-backed BatchFV.
+    # OFT-backed BatchFV.  Upper-case BOTH name AND version (identity is
+    # case-insensitive on both, matching ``orphaned_oft_warnings`` /
+    # ``_build_spec_key`` / ``invariants.spec_key``): the OFT name parses
+    # to an upper-cased version (``FOO$V1$ONLINE`` → ``V1``) while
+    # ``list_feature_views`` may report the authored case (``v1``), so a
+    # version-only case difference must not miss the row.
     fv_row_by_name_version: dict[tuple[str, str], dict[str, Any]] = {}
     if feature_view_rows:
         for fv_row in feature_view_rows:
             fv_name = fv_row.get("name") or ""
             fv_version = fv_row.get("version") or ""
             if fv_name and fv_version:
-                fv_row_by_name_version[(str(fv_name).upper(), str(fv_version))] = fv_row
+                fv_row_by_name_version[(str(fv_name).upper(), str(fv_version).upper())] = fv_row
 
     for row in raw_show_results:
         oft_name = row.get("name", "")
@@ -1411,23 +1626,25 @@ def fetch_applied_state(
                         "name": base_name,
                         "version": version,
                     }
+                matched_row = fv_row_by_name_version.get((str(base_name).upper(), str(version).upper()))
+                # Recover the deployed ``desc`` for every kind (Batch /
+                # Streaming / Realtime) before the kind dispatch.  Streaming
+                # and realtime SPECIFICATION payloads never carry it but the
+                # list-FV row does, and ``desc`` is operational for all three
+                # kinds, so without this a described FV re-plans as a spurious
+                # ``UPDATE_FV``.  Idempotent (skipped if ``desc`` is already
+                # set), so the BatchFV path's internal call below is a no-op.
+                if matched_row is not None:
+                    _inject_fv_desc_from_list_row(spec_payload, matched_row)
                 # BatchFV source-binding recovery (Phase B3) — read
                 # authoritative ``FV_SOURCE_REFS`` metadata from the
                 # matching ``feature_view_rows`` entry and inject it
                 # BEFORE hashing so the resulting ``content_hash``
                 # reflects the recovered ``sources[]``.
                 if kind == "BatchFeatureView":
-                    matched_row = fv_row_by_name_version.get((str(base_name).upper(), str(version)))
                     if matched_row is not None:
                         source_refs = matched_row.get("source_refs")
-                        injected = _inject_batch_fv_source_from_metadata(spec_payload, source_refs)
-                        if not injected:
-                            _engage_legacy_source_shim(
-                                spec_payload,
-                                fv_name=base_name,
-                                fv_version=version,
-                                datasources_by_table=datasources_by_table,
-                            )
+                        _inject_batch_fv_source_from_metadata(spec_payload, source_refs)
                         _inject_batch_fv_fields_from_list_row(spec_payload, matched_row, fv_obj=None)
                         # Plumb the deployed DT cadence onto the BFV
                         # ``spec.refresh_freq`` so the planner's
@@ -1436,6 +1653,7 @@ def fetch_applied_state(
                         # No-op for streaming / realtime kinds (the
                         # helper short-circuits internally).
                         _inject_fv_refresh_freq_from_list_row(spec_payload, matched_row)
+                        _warn_if_sources_unrecovered(spec_payload, base_name, version)
                 elif kind == "StreamingFeatureView":
                     # A tiled StreamingFeatureView schedules an offline
                     # tile Dynamic Table whose ``TARGET_LAG`` is
@@ -1445,7 +1663,6 @@ def fetch_applied_state(
                     # streaming, refuses to read the OFT ``target_lag_sec=0``
                     # sentinel).  The helper self-guards: it is a no-op for
                     # a non-tiled streaming FV (zero-lag VIEW, no DT).
-                    matched_row = fv_row_by_name_version.get((str(base_name).upper(), str(version)))
                     if matched_row is not None:
                         _inject_fv_refresh_freq_from_list_row(spec_payload, matched_row)
                 content_hash = _full_spec_hash(spec_payload)
@@ -1524,14 +1741,24 @@ def fetch_applied_state(
             from_specification=False,
         )
 
-    # Offline FV AppliedObjects from FeatureStore.list_feature_views().
+    # List-driven discovery: FeatureStore.list_feature_views() is the
+    # authoritative enumeration of every registered FeatureView.  This
+    # loop surfaces every FV that has no Online Feature Table into applied
+    # state, covering BOTH "invisible FV" bug classes:
     #
-    # Surfaces FVs that have no Online Feature Table — primarily
-    # offline-only ``BatchFeatureView``s (``online: false``).  The OFT
-    # loop above already populated ``objects`` for online FVs; entries
-    # here are skipped on key-collision so the OFT-derived
-    # ``spec_payload`` (the authoritative DESCRIBE-TYPE-SPECIFICATION
-    # JSON) always wins.
+    #   * offline-only ``BatchFeatureView``s (``online: false``) that
+    #     never had an OFT (bug_offline_bfv_invisible_after_apply), and
+    #   * FVs whose backing Dynamic Table is still listable but whose OFT
+    #     was dropped (bug_exporter_fv_without_oft_invisible).
+    #
+    # The OFT loop above supplies the authoritative
+    # DESCRIBE-TYPE-SPECIFICATION ``spec_payload`` for online kinds; when
+    # the same FV is discoverable via both paths the OFT-derived payload
+    # wins on key-collision (skipped here).  ``_build_offline_fv_object``
+    # reconstructs a SPECIFICATION-equivalent payload for any OFT-less
+    # kind, so no listed FV is ever silently missing from applied state.
+    # (SHOW ONLINE FEATURE TABLES is otherwise a diagnostic-only side
+    # channel — see :func:`orphaned_oft_warnings`.)
     if feature_view_rows:
         for fv_row in feature_view_rows:
             offline_obj = _build_offline_fv_object(
@@ -1613,7 +1840,7 @@ def _build_feature_group_object(
     fg_row: dict[str, Any],
     default_database: str,
     default_schema: str,
-) -> Optional[AppliedObject]:
+) -> AppliedObject | None:
     """Reify one FG row from :func:`imperative_executor.fetch_feature_group_rows`
     as an ``AppliedObject(kind="FeatureGroup")``.
 

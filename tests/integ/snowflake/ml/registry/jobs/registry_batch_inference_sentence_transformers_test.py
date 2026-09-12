@@ -3,8 +3,7 @@ import random
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest, parameterized
-from packaging import version as pkg_version
+from absl.testing import absltest
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
@@ -37,27 +36,7 @@ class TestBatchInferenceSentenceTransformerInteg(registry_batch_inference_test_b
             os.environ[HF_HOME] = self._original_hf_home
         self.cache_dir.cleanup()
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"pip_requirements": ["sentence-transformers"], "gpu_requests": None},
-        {"pip_requirements": None, "gpu_requests": "1"},
-    )
-    def test_sentence_transformers(
-        self,
-        gpu_requests: str | None,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if pip_requirements is None:
-            import sentence_transformers
-            import transformers
-
-            if pkg_version.parse(sentence_transformers.__version__) >= pkg_version.parse("5.3.0") and pkg_version.parse(
-                transformers.__version__
-            ) >= pkg_version.parse("5.0.0"):
-                self.skipTest(
-                    f"sentence-transformers {sentence_transformers.__version__} with transformers "
-                    f"{transformers.__version__}: model serving container image build fails because pinned "
-                    "transformers>=5.0.0 conflicts with sentence-transformers requiring transformers<5.0.0."
-                )
+    def test_sentence_transformers(self) -> None:
         import sentence_transformers
 
         # Sample Data
@@ -89,10 +68,9 @@ class TestBatchInferenceSentenceTransformerInteg(registry_batch_inference_test_b
             model=model,
             sample_input_data=sentences,
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            pip_requirements=pip_requirements,
+            pip_requirements=["sentence-transformers"],
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests=gpu_requests),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="encode",
             job_name=job_name,
@@ -139,20 +117,7 @@ class TestBatchInferenceSentenceTransformerInteg(registry_batch_inference_test_b
             expected_predictions=expected_predictions,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"pip_requirements": ["sentence-transformers"], "gpu_requests": None},
-        {"pip_requirements": None, "gpu_requests": "1"},
-    )
-    def test_sentence_transformer_wrapper(
-        self,
-        gpu_requests: str | None,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if not pip_requirements:
-            self.skipTest(
-                """SNOW-3420922: Skipping test due to known issue with
-                sentence-transformers and transformers package conflict"""
-            )
+    def test_sentence_transformer_wrapper(self) -> None:
         import sentence_transformers
 
         model_name = random.choice(MODEL_NAMES)
@@ -183,10 +148,9 @@ class TestBatchInferenceSentenceTransformerInteg(registry_batch_inference_test_b
             model=wrapper,
             sample_input_data=sentences,
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            pip_requirements=pip_requirements,
+            pip_requirements=["sentence-transformers"],
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests=gpu_requests),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="encode",
             job_name=job_name,

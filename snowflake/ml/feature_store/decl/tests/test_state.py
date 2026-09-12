@@ -15,6 +15,8 @@ from snowflake.ml.feature_store.decl.state import (
     _parse_cluster_by_list,
     _parse_oft_name,
     fetch_applied_state,
+    orphaned_oft_warnings,
+    resolve_oft_name,
 )
 from snowflake.ml.test_utils import pytest_driver
 
@@ -70,6 +72,152 @@ class TestParseOftName:
         base, version = _parse_oft_name("FV$V1$ONLINE")
         assert base == "FV"
         assert version == "V1"
+
+
+# ---------------------------------------------------------------------------
+# resolve_oft_name tests
+# ---------------------------------------------------------------------------
+
+
+def _oft_row(name: str) -> dict[str, Any]:
+    return {"name": name}
+
+
+class TestResolveOftName:
+    """``resolve_oft_name`` maps a user-supplied ``(name, version)`` onto a
+    single deployed OFT name, or returns an actionable error string when the
+    request is ambiguous or unresolvable.
+    """
+
+    def test_single_version_resolves_by_bare_name(self) -> None:
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V1$ONLINE"
+
+    def test_bare_name_is_case_insensitive(self) -> None:
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "user_clicks")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V1$ONLINE"
+
+    def test_version_selects_matching_oft(self) -> None:
+        rows = [
+            _oft_row("USER_CLICKS$V1$ONLINE"),
+            _oft_row("USER_CLICKS$V2$ONLINE"),
+        ]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS", "V2")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V2$ONLINE"
+
+    def test_version_is_case_insensitive(self) -> None:
+        rows = [
+            _oft_row("USER_CLICKS$V1$ONLINE"),
+            _oft_row("USER_CLICKS$V2$ONLINE"),
+        ]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS", "v2")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V2$ONLINE"
+
+    def test_ambiguous_bare_name_returns_error_listing_versions(self) -> None:
+        rows = [
+            _oft_row("USER_CLICKS$V2$ONLINE"),
+            _oft_row("USER_CLICKS$V1$ONLINE"),
+        ]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS")
+        assert oft_name is None
+        assert error is not None
+        # Versions listed in deterministic (sorted) order and the message
+        # tells the operator how to disambiguate.
+        assert "V1" in error and "V2" in error
+        assert error.index("V1") < error.index("V2")
+        assert "--version" in error
+
+    def test_not_found_bare_name(self) -> None:
+        rows = [_oft_row("OTHER$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS")
+        assert oft_name is None
+        assert error is not None
+        assert "not found" in error
+
+    def test_not_found_with_version(self) -> None:
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS", "V9")
+        assert oft_name is None
+        assert error is not None
+        assert "not found" in error
+        assert "V9" in error
+
+    def test_full_oft_name_passthrough(self) -> None:
+        rows = [
+            _oft_row("USER_CLICKS$V1$ONLINE"),
+            _oft_row("USER_CLICKS$V2$ONLINE"),
+        ]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS$V2$ONLINE")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V2$ONLINE"
+
+    def test_full_oft_name_passthrough_case_insensitive(self) -> None:
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "user_clicks$v1$online")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V1$ONLINE"
+
+    def test_full_oft_name_with_matching_version_resolves(self) -> None:
+        """A full OFT name paired with the matching ``--version`` still
+        resolves via the fast path."""
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS$V1$ONLINE", "V1")
+        assert error is None
+        assert oft_name == "USER_CLICKS$V1$ONLINE"
+
+    def test_full_oft_name_with_conflicting_version_is_not_found(self) -> None:
+        """A full OFT name plus a conflicting ``--version`` must not return
+        the wrong OFT.
+
+        Before the guard, ``resolve_oft_name("USER_CLICKS$V1$ONLINE",
+        version="V2")`` silently returned the V1 OFT.  Now the fast path is
+        skipped and no row matches, so the caller gets a not-found error.
+        """
+        rows = [
+            _oft_row("USER_CLICKS$V1$ONLINE"),
+            _oft_row("USER_CLICKS$V2$ONLINE"),
+        ]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS$V1$ONLINE", "V2")
+        assert oft_name is None
+        assert error is not None
+        assert "not found" in error
+
+    def test_full_oft_name_with_unavailable_version_errors(self) -> None:
+        """Full name + a version that matches nothing → not-found error,
+        never the mismatched fast-path row."""
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE")]
+        oft_name, error = resolve_oft_name(rows, "USER_CLICKS$V1$ONLINE", "V9")
+        assert oft_name is None
+        assert error is not None
+        assert "V9" in error
+
+
+class TestApiResolveOftNameFacade:
+    """``api.resolve_oft_name`` is a thin re-export of
+    ``state.resolve_oft_name``.  Pin that the facade delegates rather than
+    drifting from the implementation.
+    """
+
+    def test_facade_delegates_success(self) -> None:
+        from snowflake.ml.feature_store.decl import api as decl_api
+
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE"), _oft_row("USER_CLICKS$V2$ONLINE")]
+        assert decl_api.resolve_oft_name(rows, "USER_CLICKS", "V2") == resolve_oft_name(rows, "USER_CLICKS", "V2")
+        assert decl_api.resolve_oft_name(rows, "USER_CLICKS", "V2")[0] == "USER_CLICKS$V2$ONLINE"
+
+    def test_facade_delegates_error(self) -> None:
+        from snowflake.ml.feature_store.decl import api as decl_api
+
+        rows = [_oft_row("USER_CLICKS$V1$ONLINE"), _oft_row("USER_CLICKS$V2$ONLINE")]
+        oft_name, error = decl_api.resolve_oft_name(rows, "USER_CLICKS")
+        assert oft_name is None
+        assert error is not None and "--version" in error
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +304,30 @@ class TestFetchAppliedState:
         # Key should follow kind:db.schema:name format
         assert ":" in key
 
+    def test_same_name_two_versions_do_not_shadow(self) -> None:
+        """Two deployed versions of one FV name must not collide.
+
+        Object identity is (name, version); before the fix both versions
+        keyed to ``kind:DB.SCH:USER_CLICKS`` and the second silently
+        overwrote the first in ``AppliedState.objects``.
+        """
+        v1_spec = copy.deepcopy(_SPEC_PAYLOAD)
+        v2_spec = copy.deepcopy(_SPEC_PAYLOAD)
+        v2_spec["metadata"] = dict(v2_spec["metadata"], version="V2")
+        v1_row: dict[str, Any] = {
+            "name": "USER_CLICKS$V1$ONLINE",
+            "created_on": "2024-01-01 00:00:00",
+            "specification": json.dumps(v1_spec),
+        }
+        v2_row: dict[str, Any] = {
+            "name": "USER_CLICKS$V2$ONLINE",
+            "created_on": "2024-01-02 00:00:00",
+            "specification": json.dumps(v2_spec),
+        }
+        state = fetch_applied_state([v1_row, v2_row], None)
+        assert len(state.objects) == 2
+        assert {obj.version for obj in state.objects.values()} == {"V1", "V2"}
+
 
 # ---------------------------------------------------------------------------
 # fetch_applied_state with describe_map (Phase 1 — idempotent apply)
@@ -193,7 +365,7 @@ class TestFetchAppliedStateWithDescribeMap:
         assert len(obj.content_hash) == 64  # SHA-256 hex
 
     def test_describe_map_key_format(self) -> None:
-        """Key must be StreamingFeatureView:DB.SCH:CLICK_FV:V1 (versioned identity)."""
+        """Key must be StreamingFeatureView:DB.SCH:CLICK_FV:V1 (identity = name+version)."""
         state = fetch_applied_state(
             [self._SHOW_ROW_NO_SPEC],
             None,
@@ -564,6 +736,97 @@ class TestFetchAppliedStateWithSpecificationMap:
         assert ds_objs[0].name == "USER_EVENTS"
 
 
+class TestRealtimeDescRecovery:
+    """The deployed ``desc`` must be recovered for a ``RealtimeFeatureView``
+    too, not just Batch / Streaming.
+
+    The RTFV SPECIFICATION payload never carries ``desc`` but the list-FV
+    row does, and ``desc`` is operational for realtime, so without the
+    kind-agnostic hoist a described RTFV re-plans as a spurious ``UPDATE_FV``.
+    """
+
+    _RTFV_SPEC: dict[str, Any] = {
+        "kind": "RealtimeFeatureView",
+        "metadata": {"name": "rt_fv", "version": "v1", "database": "DB", "schema": "SCH"},
+        "spec": {
+            "ordered_entity_column_names": ["user_id"],
+            "sources": [{"name": "req_src", "source_type": "Request"}],
+            "udf": {
+                "function_name": "transform",
+                "function_definition": "def transform(x): return x",
+                "language": "python",
+                "output_columns": [{"name": "score", "type": "DoubleType"}],
+            },
+        },
+    }
+
+    _SHOW_ROW: dict[str, Any] = {
+        "name": "RT_FV$V1$ONLINE",
+        "database_name": "DB",
+        "schema_name": "SCH",
+        "created_on": "2024-01-01 00:00:00",
+    }
+
+    def _fv_row(self, desc: str) -> dict[str, Any]:
+        return {
+            "name": "RT_FV",
+            "version": "V1",
+            "database_name": "DB",
+            "schema_name": "SCH",
+            "kind": "REALTIME",
+            "entities": ["USER_ID"],
+            "desc": desc,
+        }
+
+    def test_realtime_desc_injected_at_top_level(self) -> None:
+        state = fetch_applied_state(
+            [self._SHOW_ROW],
+            None,
+            specification_map={"RT_FV$V1$ONLINE": copy.deepcopy(self._RTFV_SPEC)},
+            feature_view_rows=[self._fv_row("rt docs")],
+        )
+        rt_objs = [o for o in state.objects.values() if o.kind == "RealtimeFeatureView"]
+        assert len(rt_objs) == 1
+        assert rt_objs[0].spec_payload.get("desc") == "rt docs"
+
+    def test_realtime_empty_desc_not_injected(self) -> None:
+        state = fetch_applied_state(
+            [self._SHOW_ROW],
+            None,
+            specification_map={"RT_FV$V1$ONLINE": copy.deepcopy(self._RTFV_SPEC)},
+            feature_view_rows=[self._fv_row("")],
+        )
+        rt_objs = [o for o in state.objects.values() if o.kind == "RealtimeFeatureView"]
+        assert len(rt_objs) == 1
+        assert "desc" not in rt_objs[0].spec_payload
+
+    def test_realtime_desc_recovered_when_list_row_version_case_differs(self) -> None:
+        """A list-FV row whose ``version`` differs only in case from the OFT
+        name's parsed version must still match the recovery index.
+
+        Unquoted identifiers in ``SHOW ONLINE FEATURE TABLES`` come back
+        upper-cased (``RT_FV$V1$ONLINE`` → parsed ``V1``), but
+        ``list_feature_views`` can return the authored case (``v1``).  The
+        ``fv_row_by_name_version`` index and its lookup must both
+        ``.upper()`` the version — mirroring the ``(name, version)``
+        identity in :func:`orphaned_oft_warnings` / :func:`_build_spec_key`
+        / :func:`invariants.spec_key` — or the case-only difference silently
+        skips desc / ``source_refs`` / ``refresh_freq`` recovery.
+        """
+        lowercase_version_row = self._fv_row("rt docs")
+        lowercase_version_row["version"] = "v1"
+
+        state = fetch_applied_state(
+            [self._SHOW_ROW],
+            None,
+            specification_map={"RT_FV$V1$ONLINE": copy.deepcopy(self._RTFV_SPEC)},
+            feature_view_rows=[lowercase_version_row],
+        )
+        rt_objs = [o for o in state.objects.values() if o.kind == "RealtimeFeatureView"]
+        assert len(rt_objs) == 1
+        assert rt_objs[0].spec_payload.get("desc") == "rt docs"
+
+
 # ---------------------------------------------------------------------------
 # Phase B1/B3: ``dt_text_map`` is no longer the recovery path for BatchFV
 # source bindings.  ``FV_SOURCE_REFS`` metadata (surfaced via
@@ -831,6 +1094,71 @@ class TestInjectBatchFvFields:
     imperative-API list-FV row and ``fv_obj`` (the result of
     :meth:`FeatureStore.get_feature_view`)."""
 
+    def test_no_duplicate_refresh_mode_initialize_block(self) -> None:
+        """Pin that the ``refresh_mode`` / ``initialize`` injection is
+        emitted exactly once.
+
+        A prior merge left an identical copy of both injection blocks
+        back-to-back inside
+        ``_inject_batch_fv_fields_from_list_row``.  The
+        ``"refresh_mode" not in inner`` / ``"initialize" not in inner``
+        guards made the second copy a permanent no-op, so no behavioural
+        test could catch it — this structural pin keeps the dead
+        duplicate from reappearing.
+
+        Uses an AST walk (count assignments to the ``inner["refresh_mode"]``
+        subscript and reads of ``fv_obj.initialize``) rather than string
+        counting, so reformatting the assignment line does not
+        false-fail the pin.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(_inject_batch_fv_fields_from_list_row)))
+
+        refresh_assignments = 0
+        initialize_reads = 0
+        for node in ast.walk(tree):
+            # Count ``inner["refresh_mode"] = ...`` assignments.
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "inner"
+                        and isinstance(target.slice, ast.Constant)
+                        and target.slice.value == "refresh_mode"
+                    ):
+                        refresh_assignments += 1
+            # Count ``getattr(fv_obj, "initialize", ...)`` reads.
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "fv_obj"
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "initialize"
+            ):
+                initialize_reads += 1
+
+        assert refresh_assignments == 1, (
+            "_inject_batch_fv_fields_from_list_row must assign "
+            f"inner['refresh_mode'] exactly once (found {refresh_assignments}); "
+            "remove the duplicated injection block."
+        )
+        assert initialize_reads == 1, (
+            "_inject_batch_fv_fields_from_list_row must read "
+            f"fv_obj.initialize exactly once (found {initialize_reads}); "
+            "remove the duplicated injection block."
+        )
+
     def test_uses_list_row_columns_no_regex(self) -> None:
         """Pin AS4: after Phase B1 the ``re`` module is never bound in
         ``decl/state.py``'s namespace — every recovery path consumes
@@ -941,6 +1269,165 @@ class TestInjectBatchFvFields:
         spec_with_description["description"] = "new comment"
         assert _full_spec_hash(spec_no_desc) == _full_spec_hash(spec_with_desc)
         assert _full_spec_hash(spec_no_desc) == _full_spec_hash(spec_with_description)
+
+    def test_warehouse_injected_from_list_row(self) -> None:
+        """The deployed refresh ``warehouse`` (list-FV ``warehouse`` column)
+        lands on ``spec.warehouse``.
+
+        The SPECIFICATION payload never carries the warehouse (it's a DT
+        property), so without this injection ``_warehouse_drifted`` sees a
+        permanent authored-vs-absent drift and re-plans every time.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        spec_payload: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_WH", "version": "V1"},
+            "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+        }
+        row: dict[str, Any] = {
+            "name": "BFV_WH",
+            "version": "V1",
+            "warehouse": "WH_AIML",
+            "cluster_by": "",
+            "refresh_mode": "",
+            "desc": "",
+        }
+        _inject_batch_fv_fields_from_list_row(spec_payload, row, fv_obj=None)
+        assert spec_payload["spec"]["warehouse"] == "WH_AIML"
+
+    def test_warehouse_injection_does_not_overwrite_existing(self) -> None:
+        """The warehouse injection is additive: a ``spec.warehouse`` that
+        the offline enrichment path (``_serialize_batch_fv_spec``) already
+        populated is preserved, never clobbered by the list-row cell.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        spec_payload: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_WH", "version": "V1"},
+            "spec": {
+                "ordered_entity_column_names": ["USER_ID"],
+                "sources": [],
+                "features": [],
+                "warehouse": "WH_PREEXISTING",
+            },
+        }
+        row: dict[str, Any] = {
+            "name": "BFV_WH",
+            "version": "V1",
+            "warehouse": "WH_FROM_ROW",
+            "cluster_by": "",
+            "refresh_mode": "",
+            "desc": "",
+        }
+        _inject_batch_fv_fields_from_list_row(spec_payload, row, fv_obj=None)
+        assert spec_payload["spec"]["warehouse"] == "WH_PREEXISTING"
+
+    def test_empty_warehouse_cell_not_injected(self) -> None:
+        """An empty / whitespace ``warehouse`` cell (realtime and static
+        view-backed FVs report SQL ``NULL`` → ``""``) does not stamp a
+        blank ``spec.warehouse`` key.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        spec_payload: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_WH", "version": "V1"},
+            "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+        }
+        _inject_batch_fv_fields_from_list_row(
+            spec_payload,
+            {"name": "BFV_WH", "version": "V1", "warehouse": "  ", "cluster_by": "", "refresh_mode": ""},
+            fv_obj=None,
+        )
+        assert "warehouse" not in spec_payload["spec"]
+
+    def test_append_only_injected_from_list_row_when_true(self) -> None:
+        """A truthy ``append_only`` cell injects ``spec.append_only = True``,
+        accepting the transport spellings ``_coerce_applied_bool`` normalises.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        for truthy in (True, "true", "TRUE", "1", 1):
+            spec_payload: dict[str, Any] = {
+                "kind": "BatchFeatureView",
+                "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_AO", "version": "V1"},
+                "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+            }
+            _inject_batch_fv_fields_from_list_row(
+                spec_payload,
+                {"name": "BFV_AO", "version": "V1", "append_only": truthy, "cluster_by": "", "refresh_mode": ""},
+                fv_obj=None,
+            )
+            assert spec_payload["spec"].get("append_only") is True, f"cell {truthy!r} should inject True"
+
+    def test_append_only_not_injected_when_falsy_or_absent(self) -> None:
+        """The default ``False`` (and its string / ``None`` / absent
+        spellings) must NOT stamp ``spec.append_only``.  In particular the
+        string ``"false"`` (truthy in Python) must not be read as enabled.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        for falsy in (False, "false", "FALSE", "0", 0, None):
+            spec_payload: dict[str, Any] = {
+                "kind": "BatchFeatureView",
+                "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_AO", "version": "V1"},
+                "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+            }
+            _inject_batch_fv_fields_from_list_row(
+                spec_payload,
+                {"name": "BFV_AO", "version": "V1", "append_only": falsy, "cluster_by": "", "refresh_mode": ""},
+                fv_obj=None,
+            )
+            assert "append_only" not in spec_payload["spec"], f"cell {falsy!r} must not inject"
+
+        # Absent cell, no fv_obj → not injected.
+        spec_payload_absent: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_AO", "version": "V1"},
+            "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+        }
+        _inject_batch_fv_fields_from_list_row(
+            spec_payload_absent,
+            {"name": "BFV_AO", "version": "V1", "cluster_by": "", "refresh_mode": ""},
+            fv_obj=None,
+        )
+        assert "append_only" not in spec_payload_absent["spec"]
+
+    def test_append_only_falls_back_to_fv_obj(self) -> None:
+        """When the row omits ``append_only`` the rehydrated FeatureView's
+        ``append_only`` attribute is the fallback source.
+        """
+        from snowflake.ml.feature_store.decl.state import (
+            _inject_batch_fv_fields_from_list_row,
+        )
+
+        class _FvObj:
+            append_only = True
+            initialize = None
+
+        spec_payload: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": "BFV_AO", "version": "V1"},
+            "spec": {"ordered_entity_column_names": ["USER_ID"], "sources": [], "features": []},
+        }
+        _inject_batch_fv_fields_from_list_row(
+            spec_payload,
+            {"name": "BFV_AO", "version": "V1", "cluster_by": "", "refresh_mode": ""},
+            fv_obj=_FvObj(),
+        )
+        assert spec_payload["spec"].get("append_only") is True
 
 
 class TestTiledBfvSpecRecovery:
@@ -1219,10 +1706,13 @@ class TestSourceRefsConsumption:
 
 
 class TestLegacyShimFallback:
-    """Phase B4: ``_build_datasources_by_table`` becomes a fallback-only
-    shim.  When a list-FV row carries ``source_refs`` we skip the shim
-    entirely.  When the column is absent (legacy pre-A1 deployment) we
-    emit a once-per-FV warning and fall back to the shim path."""
+    """Legacy (pre-``FV_SOURCE_REFS``) source-recovery behaviour.  When a
+    list-FV row carries ``source_refs`` the metadata path supplies
+    ``sources[0]`` and no warning is emitted.  When the column is absent
+    (legacy pre-A1 deployment) ``sources`` stays empty and
+    :func:`state._warn_if_sources_unrecovered` warns that the FV will be
+    recreated on the next apply to stamp the metadata (the
+    ``_build_datasources_by_table`` name-lookup shim was removed)."""
 
     _BATCH_SPEC: dict[str, Any] = {
         "kind": "BatchFeatureView",
@@ -1251,16 +1741,17 @@ class TestLegacyShimFallback:
 
     def test_fv_without_source_refs_falls_back_to_shim_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         """A FV row missing ``source_refs`` (legacy deployment) keeps
-        ``sources = []`` and emits a ``logger.warning`` recommending
-        re-apply so the operator notices that source recovery is
-        degraded.
+        ``sources = []`` and emits a ``logger.warning`` telling the
+        operator the FV will be recreated on the next apply to stamp the
+        metadata.
 
-        Pin for AS10: legacy shim engagement is gated on the
-        absence of ``source_refs`` and is visible at WARNING level.
+        Pin for AS10: the unrecovered-source warning is gated on the
+        recovered ``sources`` still being empty and is visible at WARNING
+        level.
 
         Args:
             caplog: Pytest log-capture fixture used to assert that
-                ``decl.state`` emits the legacy-fallback warning.
+                ``decl.state`` emits the unrecovered-source warning.
         """
         import logging
 
@@ -1291,12 +1782,11 @@ class TestLegacyShimFallback:
             default_schema="SCH",
         )
         bfv = next(o for o in state.objects.values() if o.kind == "BatchFeatureView")
-        # Legacy fallback leaves ``sources`` empty (the shim is only a
-        # name lookup, not a source synthesizer) — this is the signal
-        # to the operator that re-apply is needed.
+        # Legacy fallback leaves ``sources`` empty; the operator must run apply
+        # once so the FV is recreated and the source metadata row is stamped.
         assert bfv.spec_payload["spec"]["sources"] == []
         warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("legacy_fv" in m and "re-apply" in m.lower() for m in warn_msgs), warn_msgs
+        assert any("legacy_fv" in m and "will be recreated" in m.lower() for m in warn_msgs), warn_msgs
 
     def test_fv_with_source_refs_skips_shim(self, caplog: pytest.LogCaptureFixture) -> None:
         """When ``source_refs`` is present the legacy fallback is NOT
@@ -1350,10 +1840,55 @@ class TestLegacyShimFallback:
         warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
         assert not any("modern_fv" in m and "re-apply" in m.lower() for m in warn_msgs), warn_msgs
 
+    def test_fv_without_source_refs_warning_says_will_be_recreated(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Bug C (Fix 2): when a legacy FV has no source_refs, the warning
+        must tell the operator the FV will be recreated once to stamp metadata.
+
+        The old shim message said 're-apply'; the new actionable message says
+        'will be recreated' so operators understand what happens next.
+
+        Args:
+            caplog: Pytest log-capture fixture.
+        """
+        import copy
+        import logging
+
+        from snowflake.ml.feature_store.decl.state import fetch_applied_state
+
+        row: dict[str, Any] = {
+            "name": "legacy_fv",
+            "version": "v1",
+            "database_name": "DB",
+            "schema_name": "SCH",
+            "kind": "BATCH",
+            "entities": ["USER_ID"],
+            "online_enabled": False,
+            "target_lag": "",
+            "refresh_freq": "60 seconds",
+            "warehouse": "WH",
+            "desc": "",
+            "physical_dt_name": "LEGACY_FV$V1",
+            "spec_text": copy.deepcopy(self._BATCH_SPEC),
+            # No source_refs — simulates a pre-A1 deployment.
+        }
+        caplog.set_level(logging.WARNING, logger="snowflake.ml.feature_store.decl.state")
+        fetch_applied_state(
+            [],
+            None,
+            feature_view_rows=[row],
+            default_database="DB",
+            default_schema="SCH",
+        )
+        warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "legacy_fv" in m and "will be recreated" in m.lower() for m in warn_msgs
+        ), f"Expected 'will be recreated' in warning; got: {warn_msgs}"
+
 
 # ---------------------------------------------------------------------------
 # Bug A regression: phantom source suppression
 # ---------------------------------------------------------------------------
+
 _DB = "JKEW_DB"
 _SCH = "JKEW_SCHEMA"
 
@@ -1373,12 +1908,7 @@ def _fg_backed_bfv_spec_payload(fv_name: str = "USER_CLICKS_FG_DECL") -> dict[st
     """
     return {
         "kind": "BatchFeatureView",
-        "metadata": {
-            "database": _DB,
-            "schema": _SCH,
-            "name": fv_name,
-            "version": "V1",
-        },
+        "metadata": {"database": _DB, "schema": _SCH, "name": fv_name, "version": "V1"},
         "spec": {
             "ordered_entity_column_names": ["USER_ID"],
             "sources": [{"name": fv_name, "kind": "FeatureGroup"}],
@@ -1406,12 +1936,7 @@ def _regular_bfv_spec_payload(
     """
     return {
         "kind": "BatchFeatureView",
-        "metadata": {
-            "database": _DB,
-            "schema": _SCH,
-            "name": fv_name,
-            "version": "V1",
-        },
+        "metadata": {"database": _DB, "schema": _SCH, "name": fv_name, "version": "V1"},
         "spec": {
             "ordered_entity_column_names": ["USER_ID"],
             "sources": [
@@ -1428,26 +1953,20 @@ def _regular_bfv_spec_payload(
 
 
 class TestDatasourceObjectsPhantomSourceSuppression:
-    """Bug A regression: FG-backed BFV must not produce phantom BatchSource."""
+    """Bug A regression: FG-backed BFV must not produce a phantom BatchSource."""
 
     def test_fg_backed_bfv_does_not_produce_phantom_source(self) -> None:
         """_datasource_objects_from_specs must not create a Datasource whose
         name matches an already-recovered FeatureView name (FG-backed BFV pattern).
         """
         fv_name = "USER_CLICKS_FG_DECL"
-        spec_payload = _fg_backed_bfv_spec_payload(fv_name)
         known_fv_names = {fv_name.upper()}
-
         result = _datasource_objects_from_specs(
-            [spec_payload],
-            _DB,
-            _SCH,
-            known_fv_names=known_fv_names,
+            [_fg_backed_bfv_spec_payload(fv_name)], _DB, _SCH, known_fv_names=known_fv_names
         )
-        source_names = [o.name for o in result]
-        assert (
-            fv_name.upper() not in source_names
-        ), f"Phantom Datasource for FG-backed BFV {fv_name!r} must not appear in applied state."
+        assert fv_name.upper() not in [
+            o.name for o in result
+        ], f"Phantom Datasource for FG-backed BFV {fv_name!r} must not appear in applied state."
 
     def test_fg_backed_bfv_without_filter_produces_phantom(self) -> None:
         """Without known_fv_names filter, the phantom source IS created.
@@ -1457,35 +1976,21 @@ class TestDatasourceObjectsPhantomSourceSuppression:
         real rather than testing a vacuous condition.
         """
         fv_name = "USER_CLICKS_FG_DECL"
-        spec_payload = _fg_backed_bfv_spec_payload(fv_name)
-
-        result = _datasource_objects_from_specs(
-            [spec_payload],
-            _DB,
-            _SCH,
-            # no known_fv_names — legacy/unfixed path
-        )
-        source_names = [o.name for o in result]
-        assert fv_name.upper() in source_names, (
-            "Without the filter, the phantom source should be present " "(documents pre-fix behaviour)."
-        )
+        result = _datasource_objects_from_specs([_fg_backed_bfv_spec_payload(fv_name)], _DB, _SCH)
+        assert fv_name.upper() in [
+            o.name for o in result
+        ], "Without the filter, the phantom source should be present (documents pre-fix behaviour)."
 
     def test_independent_batch_source_is_preserved(self) -> None:
         """A source whose name does NOT match any FV name must still appear."""
         fv_name = "MY_BATCH_FV"
         source_name = "RAW_EVENTS"
-        spec_payload = _regular_bfv_spec_payload(fv_name, source_name)
-        # FV name in the filter set, but source name (RAW_EVENTS) is not.
-        known_fv_names = {fv_name.upper()}
-
         result = _datasource_objects_from_specs(
-            [spec_payload],
-            _DB,
-            _SCH,
-            known_fv_names=known_fv_names,
+            [_regular_bfv_spec_payload(fv_name, source_name)], _DB, _SCH, known_fv_names={fv_name.upper()}
         )
-        source_names = [o.name for o in result]
-        assert source_name.upper() in source_names, f"Independent BatchSource {source_name!r} must survive the filter."
+        assert source_name.upper() in [
+            o.name for o in result
+        ], f"Independent BatchSource {source_name!r} must survive the filter."
 
     def test_multiple_fg_backed_bfvs_all_suppressed(self) -> None:
         """All FG-backed phantom sources are suppressed when the full FV name
@@ -1493,14 +1998,9 @@ class TestDatasourceObjectsPhantomSourceSuppression:
         live symptom described in plans/bug_a_phantom_source_drop.md.
         """
         fv_names = ["USER_CLICKS_FG_DECL", "USER_AMOUNTS_FG_DECL"]
-        specs = [_fg_backed_bfv_spec_payload(n) for n in fv_names]
         known_fv_names = {n.upper() for n in fv_names}
-
         result = _datasource_objects_from_specs(
-            specs,
-            _DB,
-            _SCH,
-            known_fv_names=known_fv_names,
+            [_fg_backed_bfv_spec_payload(n) for n in fv_names], _DB, _SCH, known_fv_names=known_fv_names
         )
         source_names = [o.name for o in result]
         for fv_name in fv_names:
@@ -1557,6 +2057,97 @@ class TestParseClusterByIdentifierResolution:
         assert _parse_cluster_by_list(None) is None
         assert _parse_cluster_by_list("") is None
         assert _parse_cluster_by_list([]) is None
+
+
+class TestOrphanedOftDiagnostic:
+    """Diagnostic-only SHOW OFT pass (list-driven-discovery cutover).
+
+    After the FV-retrieval unification, ``list_feature_views()`` is the
+    authoritative discovery source and ``SHOW ONLINE FEATURE TABLES`` is
+    demoted to a diagnostic side channel.  :func:`orphaned_oft_warnings`
+    flags any OFT whose ``(name, version)`` has no matching
+    ``list_feature_views`` row (nor a ``list_feature_groups`` row) — the
+    genuinely unrecoverable case where the backing Dynamic Table was
+    dropped but the OFT remained.  It never warns for a consistent OFT
+    and never suppresses discovery (that is the list-driven path's job).
+    """
+
+    _DB_ = "JKEW_DB"
+    _SCH_ = "JKEW_SCHEMA"
+
+    def _oft_row(self, name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "database_name": self._DB_,
+            "schema_name": self._SCH_,
+            "created_on": "2024-01-01 00:00:00",
+        }
+
+    def _fv_row(self, name: str, version: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "version": version,
+            "database_name": self._DB_,
+            "schema_name": self._SCH_,
+            "kind": "BATCH",
+            "entities": ["USER_ID"],
+            "online_enabled": True,
+            "physical_dt_name": f"{name}${version}",
+        }
+
+    def test_consistent_oft_emits_no_warning(self) -> None:
+        """An OFT whose FV IS listed by ``list_feature_views`` is
+        consistent — no diagnostic warning.
+        """
+        warnings = orphaned_oft_warnings(
+            [self._oft_row("USER_CLICKS$V1$ONLINE")],
+            feature_view_rows=[self._fv_row("USER_CLICKS", "V1")],
+        )
+        assert warnings == []
+
+    def test_orphan_oft_emits_named_warning(self) -> None:
+        """An OFT with NO matching ``list_feature_views`` row (backing DT
+        dropped) must surface exactly one named diagnostic warning.
+        """
+        warnings = orphaned_oft_warnings(
+            [self._oft_row("GHOST_FV$V1$ONLINE")],
+            feature_view_rows=[self._fv_row("USER_CLICKS", "V1")],
+        )
+        assert len(warnings) == 1
+        assert "GHOST_FV" in warnings[0]
+
+    def test_feature_group_backing_oft_not_flagged(self) -> None:
+        """A FeatureGroup registers an OFT that ``list_feature_views``
+        does not return; cross-checking ``feature_group_rows`` avoids a
+        false-positive orphan warning.
+        """
+        warnings = orphaned_oft_warnings(
+            [self._oft_row("MY_FG$V1$ONLINE")],
+            feature_view_rows=[self._fv_row("USER_CLICKS", "V1")],
+            feature_group_rows=[{"name": "MY_FG", "version": "V1"}],
+        )
+        assert warnings == []
+
+    def test_none_feature_view_rows_disables_crosscheck(self) -> None:
+        """When ``feature_view_rows`` is ``None`` the caller did not fetch
+        the list — the diagnostic cannot cross-check and must stay silent
+        rather than false-flag every OFT.
+        """
+        warnings = orphaned_oft_warnings(
+            [self._oft_row("USER_CLICKS$V1$ONLINE")],
+            feature_view_rows=None,
+        )
+        assert warnings == []
+
+    def test_empty_feature_view_rows_flags_every_oft(self) -> None:
+        """An explicit empty list means "no FVs are registered"; every
+        OFT is therefore orphaned.
+        """
+        warnings = orphaned_oft_warnings(
+            [self._oft_row("A$V1$ONLINE"), self._oft_row("B$V2$ONLINE")],
+            feature_view_rows=[],
+        )
+        assert len(warnings) == 2
 
 
 if __name__ == "__main__":

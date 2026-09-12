@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
+@absltest.skip("critical libmamba Could not solve for environment specs")
 class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
     """Integration tests for AI_EMBED against a user-deployed SPCS SentenceTransformer service."""
 

@@ -70,34 +70,35 @@
 #   - `build_test_env`: Used to indicate the package is required in build and test environment to run the tests.
 
 - name: absl-py
-  dev_version: 1.4.0
+  dev_version: 2.1.0
   tags:
     - build_essential
     - build_test_env
 # For fsspec[http] in conda
 - name_conda: aiohttp
-  dev_version_conda: 3.9.5
+  dev_version_conda: 3.13.1
   version_requirements_conda: '!=4.0.0a0, !=4.0.0a1'
 - name: anyio
-  dev_version: 4.2.0
+  dev_version: 4.10.0
   version_requirements: '>=3.5.0,<5'
 - name_conda: python-build
   name_pypi: build
-  dev_version: 0.10.0
+  dev_version: 1.3.0
   tags:
     - build_essential
 - name: boto3
-  dev_version: 1.34.69
+  dev_version: 1.40.54
 - name: catboost
-  dev_version: 1.2.8
+  # Do not lower: 1.2.8 has no py3.14 build on the Snowflake channel, so the ml group cannot solve.
+  dev_version: 1.2.10
   version_requirements: '>=1.2.0, <2'
   requirements_extra_tags:
     - catboost
 - name: cloudpickle
-  dev_version: 2.2.1
+  dev_version: 3.1.1
   version_requirements: '>=2.0.0'
 - name: coverage
-  dev_version: 7.6.1
+  dev_version: 7.6.9
 - name_pypi: datasets
   dev_version_pypi: 3.3.2
   tags:
@@ -105,10 +106,14 @@
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask
-  dev_version: 2.2.2
+  dev_version: 3.1.2
 - name_pypi: fsspec[http]
   name_conda: fsspec
-  dev_version: 2024.6.1
+  # Conda needs >=2025.10.0: it is the earliest version with a py3.14 build on the Snowflake channel.
+  # PyPI stays lower because datasets caps fsspec at <=2024.12.0 until datasets 4.4.0, and fsspec is a
+  # pure-Python wheel there, so the older pin installs fine on every interpreter we test.
+  dev_version_conda: 2025.10.0
+  dev_version_pypi: 2024.6.1
   version_requirements: '>=2024.6.1,<2026'
 - name: h2
   # Required by httpx for HTTP/2 negotiation. httpx pulls h2 only via the ``httpx[http2]`` extra,
@@ -140,7 +145,7 @@
   requirements_extra_tags:
     - feature_store
 - name: importlib_resources
-  dev_version: 6.1.1
+  dev_version: 6.5.2
   version_requirements: '>=6.1.1, <7'
 - name: inflection
   dev_version: 0.5.1
@@ -148,7 +153,7 @@
     - build_essential
     - build_test_env
 - name: jsonschema
-  dev_version: 4.23.0
+  dev_version: 4.25.0
   tags:
     - build_essential
 - name: jinja2
@@ -157,16 +162,16 @@
   tags:
     - build_essential
 - name: joblib
-  dev_version: 1.4.2
+  dev_version: 1.5.2
 - name: lightgbm
-  dev_version: 4.1.0
+  dev_version: 4.6.0
   version_requirements: '>=4.1.0, <5'
   requirements_extra_tags:
     - lightgbm
   tags:
     - build_essential
 - name: shap
-  dev_version: 0.46.0
+  dev_version: 0.51.0
   version_requirements: '>=0.46.0,<1'
   requirements_extra_tags:
     - shap
@@ -179,48 +184,53 @@
     - mlflow
     - llm
 - name: moto
-  dev_version: 5.0.5
+  dev_version: 5.1.13
 - name: mypy
   dev_version: 1.17.1
 - name: networkx
-  dev_version: 3.1
+  dev_version: '3.5'
+- name: numba
+  # Dev/test env only: shap needs numba but the Snowflake channel's shap build omits it, so pin it
+  # explicitly.
+  dev_version: 0.66.0
 - name: numpy
-  dev_version: 1.26.4
+  # Do not lower: 2.3.4 is the earliest version with a py3.14 build on the Snowflake channel.
+  dev_version: 2.3.4
   version_requirements: '>=1.23,<3'
   tags:
     - build_essential
 - name_pypi: orjson
   dev_version_pypi: 3.11.6
 - name: packaging
-  dev_version: '24.1'
+  dev_version: '25.0'
   version_requirements: '>=20.9,<26'
   tags:
     - build_essential
 - name: pandas
-  dev_version: 2.1.4
+  dev_version: 2.3.3
   version_requirements: '>=2.1.4,<3'
 - name: protobuf
-  dev_version: 4.25.3
+  dev_version: 6.33.5
 - name: prophet
-  dev_version: 1.1.5
+  dev_version: 1.3.0
   version_requirements: '>=1.1.0, <2'
   requirements_extra_tags:
     - prophet
 - name: psutil
-  dev_version: 5.9.0
+  dev_version: 7.0.0
   tags:
     - build_test_env
 - name: pyarrow
-  dev_version: 16.1.0
+  dev_version: 23.0.1
   version_requirements: ''
 - name: pydantic
-  dev_version: 2.8.2
+  dev_version: 2.12.3
   version_requirements: '>=2.8.2, <3'
 - name: pyjwt
-  dev_version: 2.8.0
+  dev_version: 2.10.1
   version_requirements: '>=2.0.0, <3'
 - name: pytest
-  dev_version: 7.4.0
+  dev_version: 7.4.4
   tags:
     - build_test_env
 - name: pytest-timeout
@@ -228,12 +238,12 @@
   tags:
     - build_test_env
 - name: pytest-xdist
-  dev_version: 3.5.0
+  dev_version: 3.8.0
   tags:
     - build_test_env
 - name_pypi: torch
   name_conda: pytorch
-  dev_version: 2.5.1
+  dev_version: 2.9.1
   version_requirements: '>=2.0.1,<3'
   requirements_extra_tags:
     - torch
@@ -241,37 +251,37 @@
     - keras
     - llm
 - name: pyyaml
-  dev_version: 6.0.1
+  dev_version: 6.0.2
   version_requirements: '>=6.0,<7'
 - name: retrying
   dev_version: 1.3.3
   version_requirements: '>=1.3.3,<2'
 # For fsspec[http] in conda
 - name_conda: requests
-  dev_version_conda: 2.32.3
+  dev_version_conda: 2.32.5
   version_requirements_conda: ''
 - name: ruamel.yaml
-  dev_version: 0.17.21
+  dev_version: 0.18.16
   tags:
     - build_essential
 - name: scikit-learn
-  dev_version: 1.5.1
+  dev_version: 1.7.2
   version_requirements: <1.9
   requirements_extra_tags:
     - scikit-learn
   tags:
     - build_essential
 - name: scipy
-  dev_version: 1.11.3
+  dev_version: 1.16.2
   version_requirements: '>=1.9,<2'
 - name: sentencepiece
-  dev_version: 0.1.99
+  dev_version: 0.2.1
   version_requirements: '>=0.1.95,<0.3'
   requirements_extra_tags:
     - transformers
     - llm
 - name: sentence-transformers
-  dev_version: 5.3.0
+  dev_version: 5.6.0
   version_requirements: '>=2.7.0,<6'
   requirements_extra_tags:
     - transformers
@@ -284,7 +294,7 @@
     - build_test_env
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.18.0
+  dev_version: 4.2.0
   version_requirements: '>=3.17.3,<5'
 - name: snowflake.core
   dev_version: 1.12.0
@@ -294,23 +304,25 @@
   # 1.37.0 is the first release that reads package metadata through importlib.metadata instead of
   # pkg_resources, which setuptools removed in 82.0.0. Older releases fail to import against a
   # current setuptools.
-  dev_version: 1.38.0
+  # Do not lower: only the 1.54.0 build 101 and 1.53.0 build 102 py314 builds carry the corrected
+  # libprotobuf bound, so earlier releases leave the py3.14 environments unsolvable.
+  dev_version: 1.54.0
   version_requirements: '>=1.37.0,<2'
 - name: sphinx
-  dev_version: 5.0.2
+  dev_version: 7.3.7
 - name: starlette
-  dev_version: 0.27.0
+  dev_version: 0.47.3
 - name: sqlparse
-  dev_version: 0.4.4
+  dev_version: 0.5.2
   version_requirements: '>=0.4,<1'
 - name: tensorflow
-  dev_version: 2.17.0
+  dev_version: 2.21.0
   version_requirements: '>=2.17.0,<3'
   requirements_extra_tags:
     - tensorflow
     - keras
 - name: tokenizers
-  dev_version: 0.19.1
+  dev_version: 0.22.2
   version_requirements: '>=0.15.1,<1'
   requirements_extra_tags:
     - transformers
@@ -324,14 +336,14 @@
   tags:
     - build_essential
 - name: torchdata
-  dev_version_conda: 0.6.1
-  dev_version_pypi: 0.8.0
+  dev_version_conda: 0.11.0
+  dev_version_pypi: 0.10.0
   version_requirements: '>=0.4,<1'
   requirements_extra_tags:
     - torch
     - llm
 - name: transformers
-  dev_version: 4.41.2
+  dev_version: 5.3.0
   version_requirements: '>=4.39.3,!=4.51.3,<6'
   requirements_extra_tags:
     - transformers
@@ -343,11 +355,11 @@
 - name: types-requests
   dev_version: 2.30.0.0
 - name: types-protobuf
-  dev_version: 4.23.0.1
+  dev_version: 5.29.1.20241207
 - name: types-PyYAML
   dev_version: 6.0.12.12
 - name: keras
-  dev_version: 3.6.0
+  dev_version: 3.14.0
   version_requirements: '>=2.0.0,<4'
   requirements_extra_tags:
     - keras
@@ -356,30 +368,30 @@
   tags:
     - build_essential
 - name: typing-extensions
-  dev_version: 4.11.0
+  dev_version: 4.15.0
   version_requirements: '>=4.1.0,<5'
 - name: xgboost
-  dev_version: 2.1.4
+  dev_version: 3.2.0
   version_requirements: <4
   requirements_extra_tags:
     - xgboost
   tags:
     - build_essential
 - name: werkzeug
-  dev_version: 2.3.8
+  dev_version: 3.1.3
 - name: cachetools
-  dev_version: 5.3.3
+  dev_version: 5.5.1
   version_requirements: '>=3.1.1'
 - name: pytimeparse
   dev_version: 1.1.8
   version_requirements: '>=1.1.8,<2'
 - name: altair
-  dev_version: 5.5.0
+  dev_version: 6.0.0
   version_requirements: '>=5,<7'
   requirements_extra_tags:
     - altair
 - name: streamlit
-  dev_version: 1.44.1
+  dev_version: 1.52.2
   version_requirements: '>=1.30.0,<2'
   requirements_extra_tags:
     - streamlit
@@ -403,7 +415,10 @@
     - transformers
     - llm
 - name_pypi: tf-keras
-  dev_version_pypi: 2.17.0
+  # Must track the tensorflow pin: this is pip-installed into every BuildSnowML conda test env and
+  # is the only thing that puts tensorflow there, so a stale pin either drops tensorflow from the
+  # env or contradicts the tensorflow pin in the keras pip requirements.
+  dev_version_pypi: 2.21.0
   tags:
     - build_test_env
   requirements_extra_tags:

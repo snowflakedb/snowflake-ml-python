@@ -3,7 +3,7 @@ import os
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -13,25 +13,21 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 class TestBatchInferenceHuggingFacePipelineInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @classmethod
     def setUpClass(self) -> None:
+        # HF_HOME, not TRANSFORMERS_CACHE: the latter is ignored by current huggingface_hub, which
+        # then falls back to ~/.cache/huggingface and fails on the read-only Bazel sandbox.
         self.cache_dir = tempfile.TemporaryDirectory()
-        self._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
-        os.environ["TRANSFORMERS_CACHE"] = self.cache_dir.name
+        self._original_cache_dir = os.getenv("HF_HOME", None)
+        os.environ["HF_HOME"] = self.cache_dir.name
 
     @classmethod
     def tearDownClass(self) -> None:
         if self._original_cache_dir:
-            os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
+            os.environ["HF_HOME"] = self._original_cache_dir
+        else:
+            os.environ.pop("HF_HOME", None)
         self.cache_dir.cleanup()
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["transformers", "torch==2.6.0"]],
-    )
-    def test_text_generation(
-        self,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if pip_requirements is None:
-            self.skipTest("SNOW-3691662")
+    def test_text_generation(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -118,7 +114,7 @@ class TestBatchInferenceHuggingFacePipelineInteg(registry_batch_inference_test_b
         self._test_registry_batch_inference(
             model=model,
             options={},
-            pip_requirements=pip_requirements,
+            pip_requirements=["transformers", "torch==2.6.0"],
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),

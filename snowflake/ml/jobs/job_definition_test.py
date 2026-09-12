@@ -33,7 +33,16 @@ class MLJobDefinitionTest(parameterized.TestCase):
         runtime_value: str | None,
         env_vars: dict[str, str] | None = None,
     ) -> job_definition.MLJobDefinition[[Any], Any]:
-        expected_env_vars = {constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "true", **(env_vars or {})}
+        job_options = type_utils.JobOptions(
+            query_warehouse="TEST_WH",
+            target_instances=1,
+            min_instances=1,
+        )
+        expected_env_vars = {
+            constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "true",
+            **(env_vars or {}),
+            constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: str(job_options.target_instances),
+        }
         spec_options = type_utils.SpecOptions(
             stage_path=self.uploaded_payload.stage_path.as_posix(),
             args=None,
@@ -41,11 +50,6 @@ class MLJobDefinitionTest(parameterized.TestCase):
             runtime=runtime_value,
             env_vars=expected_env_vars,
             enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
-        )
-        job_options = type_utils.JobOptions(
-            query_warehouse="TEST_WH",
-            target_instances=1,
-            min_instances=1,
         )
         job_def: job_definition.MLJobDefinition[[Any], Any] = job_definition.MLJobDefinition(
             source="entry.py",
@@ -358,6 +362,15 @@ class MLJobDefinitionTest(parameterized.TestCase):
             result.spec_options.env_vars[constants.LAUNCH_BACKEND_ENV_VAR],
             constants.LAUNCH_BACKEND_PASSTHROUGH,
         )
+
+    def test_register_persists_submitted_target_instances(self) -> None:
+        result = self._register_with_env_vars(
+            target_instances=3,
+            min_instances=1,
+            env_vars={constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: "99"},
+        )
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars[constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR], "3")
 
     def test_parallel_omitted_does_not_set_launch_backend(self) -> None:
         # Backward-compat contract: when parallel is not provided the launch-backend env var must be

@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -66,8 +66,8 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         model: Union["lightgbm.Booster", "lightgbm.LGBMModel"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.LGBMModelSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -195,7 +195,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         cls,
         raw_model: Union["lightgbm.Booster", "lightgbm.LGBMModel"],
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.LGBMModelLoadOptions],
     ) -> custom_model.CustomModel:
         import lightgbm

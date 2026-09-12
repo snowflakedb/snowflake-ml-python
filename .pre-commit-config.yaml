@@ -27,6 +27,15 @@ repos:
         args:
           - --py310-plus
           - --keep-runtime-typing
+        # Snowpark derives stored procedure and UDF signatures from these annotations at runtime
+        # and only understands typing.Optional/Union, so a PEP 604 rewrite makes registration fail
+        # with "invalid type". --keep-runtime-typing does not cover this: it only suppresses the
+        # rewrite under "from __future__ import annotations", not under --py310-plus.
+        exclude: |
+          (?x)^(
+            snowflake/ml/modeling/_internal/snowpark_implementations/.*\.py|
+            snowflake/ml/modeling/preprocessing/one_hot_encoder\.py
+          )$
   - repo: https://github.com/PyCQA/isort  # config: .isort.cfg
     rev: 5.12.0
     hooks:

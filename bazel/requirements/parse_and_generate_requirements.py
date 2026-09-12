@@ -4,7 +4,7 @@ import functools
 import itertools
 import json
 import sys
-from typing import Literal, MutableMapping, Optional, Sequence, TypedDict, Union, cast
+from typing import Literal, MutableMapping, Sequence, TypedDict, cast
 
 import jsonschema
 import toml
@@ -15,10 +15,10 @@ SNOWFLAKE_CONDA_CHANNEL = "https://repo.anaconda.com/pkgs/snowflake"
 
 yaml = YAML()
 yaml.default_flow_style = False
-yaml.map_indent = 2  # type: ignore[assignment]
+yaml.map_indent = 2
 yaml.sequence_dash_offset = 2
-yaml.sequence_indent = 4  # type: ignore[assignment]
-yaml.width = 120  # type: ignore[assignment]
+yaml.sequence_indent = 4
+yaml.width = 120
 
 
 class RequirementInfo(TypedDict, total=False):
@@ -41,7 +41,7 @@ class RequirementInfo(TypedDict, total=False):
 def filter_by_tag(
     req_info: RequirementInfo,
     field: Literal["tags", "requirements_extra_tags"],
-    tag_filter: Optional[str] = None,
+    tag_filter: str | None = None,
 ) -> bool:
     """Filter the requirement by whether given tag filter appears in the given field in the requirement information.
     The field is an array.
@@ -73,7 +73,7 @@ def filter_by_extras(req_info: RequirementInfo, mode: Literal["no_extras", "extr
     )
 
 
-def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]) -> Optional[str]:
+def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]) -> str | None:
     """Get the name of the requirement in the given env.
     For each env, env specific name will be chosen, if not presented, common name will be chosen.
 
@@ -106,7 +106,7 @@ def get_req_name(req_info: RequirementInfo, env: Literal["conda", "pip", "conda-
 
 def generate_dev_pinned_string(
     req_info: RequirementInfo, env: Literal["conda", "pip", "conda-only", "pip-only"]
-) -> Optional[str]:
+) -> str | None:
     """Get the pinned version for dev environment of the requirement in the given env.
     For each env, env specific pinned version will be chosen, if not presented, common pinned version will be chosen.
 
@@ -156,7 +156,7 @@ def generate_dev_pinned_string(
         raise ValueError("Unreachable")
 
 
-def generate_user_requirements_string(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> Optional[str]:
+def generate_user_requirements_string(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> str | None:
     """Get the user requirements version specifier string of the requirement in the given env.
     For each env, env specific user requirements version will be chosen, if not presented, common one will be chosen.
 
@@ -186,7 +186,7 @@ def generate_user_requirements_string(req_info: RequirementInfo, env: Literal["c
     return f"{name}{specifiers}"
 
 
-def generate_user_requirements_string_conda_or_pip(req_info: RequirementInfo) -> Optional[str]:
+def generate_user_requirements_string_conda_or_pip(req_info: RequirementInfo) -> str | None:
     """Get user requirements string, preferring conda name with pip fallback for PyPI-only packages."""
     return generate_user_requirements_string(req_info, "conda") or generate_user_requirements_string(req_info, "pip")
 
@@ -259,10 +259,10 @@ def generate_requirements(
     schema_file_path: str,
     pyproject_file_path: str,
     mode: str,
-    format: Optional[str],
-    extras_filter: Optional[list[str]] = None,
-    tag_filter: Optional[str] = None,
-    version: Optional[str] = None,
+    format: str | None,
+    extras_filter: list[str] | None = None,
+    tag_filter: str | None = None,
+    version: str | None = None,
 ) -> None:
     with open(schema_file_path, encoding="utf-8") as f:
         schema = json.load(f)
@@ -324,7 +324,7 @@ def generate_requirements(
         )
     )
 
-    extended_env: list[Union[str, MutableMapping[str, Sequence[str]]]] = copy.deepcopy(
+    extended_env: list[str | MutableMapping[str, Sequence[str]]] = copy.deepcopy(
         extended_env_conda  # type: ignore[arg-type]
     )
     # Relative order needs to be maintained here without sorting.
@@ -510,7 +510,7 @@ def main() -> None:
     if (args.mode, args.format) not in VALID_SETTINGS:
         raise ValueError("Invalid config combination found.")
 
-    filter_by_extras: Optional[list[str]] = None
+    filter_by_extras: list[str] | None = None
     if args.filter_by_extras:
         filter_by_extras = args.filter_by_extras.split(",")
 

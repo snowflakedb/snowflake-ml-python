@@ -295,16 +295,18 @@ _GPU_XGBOOST_MODEL_SIGNATURES = {
 class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @classmethod
     def setUpClass(cls) -> None:
+        # HF_HOME, not TRANSFORMERS_CACHE: the latter is ignored by current huggingface_hub, which
+        # then falls back to ~/.cache/huggingface and fails on the read-only Bazel sandbox.
         cls.cache_dir = tempfile.TemporaryDirectory()
-        cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
-        os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+        cls._original_cache_dir = os.getenv("HF_HOME", None)
+        os.environ["HF_HOME"] = cls.cache_dir.name
 
     @classmethod
     def tearDownClass(cls) -> None:
         if cls._original_cache_dir:
-            os.environ["TRANSFORMERS_CACHE"] = cls._original_cache_dir
+            os.environ["HF_HOME"] = cls._original_cache_dir
         else:
-            os.environ.pop("TRANSFORMERS_CACHE", None)
+            os.environ.pop("HF_HOME", None)
         cls.cache_dir.cleanup()
 
     def _compare_with_warehouse(

@@ -93,7 +93,7 @@ def get_data_iterator(
             cache_dir_name = tempfile.mkdtemp()
             super().__init__(cache_prefix=os.path.join(cache_dir_name, "cache"))
 
-        def next(self, batch_consumer_fn) -> bool | int:  # type: ignore[no-untyped-def]
+        def next(self, batch_consumer_fn) -> bool | int:  # type: ignore[no-untyped-def, override]
             """Advance the iterator by 1 step and pass the data to XGBoost's batch_consumer_fn.
             This function is called by XGBoost during the construction of ``DMatrix``
 

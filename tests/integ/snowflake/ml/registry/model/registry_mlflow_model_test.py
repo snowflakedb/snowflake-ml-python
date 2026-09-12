@@ -14,6 +14,9 @@ from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
 class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBase):
+    # The deployment environment is built from this list, so the model must be serialized with a
+    # backend it contains. MLflow's default backend differs by version (cloudpickle before 3.14,
+    # skops after), hence the explicit serialization_format on every save/log call below.
     _SKLEARN_CONDA_ENV: dict = {
         "dependencies": [f"python=={env.PYTHON_VERSION}"]
         + list(
@@ -44,7 +47,13 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
         with tempfile.TemporaryDirectory() as tmpdir:
             if use_save_model:
                 save_path = f"{tmpdir}/saved_sklearn_model"
-                mlflow.sklearn.save_model(rf, save_path, signature=signature, conda_env=self._SKLEARN_CONDA_ENV)
+                mlflow.sklearn.save_model(
+                    rf,
+                    save_path,
+                    signature=signature,
+                    conda_env=self._SKLEARN_CONDA_ENV,
+                    serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+                )
                 model = mlflow.pyfunc.load_model(save_path)
                 options: dict = {"ignore_mlflow_dependencies": True, "relax_version": False}
                 if pass_model_uri:
@@ -57,6 +66,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
                         signature=signature,
                         metadata={"author": "halu", "version": "1"},
                         conda_env=self._SKLEARN_CONDA_ENV,
+                        serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
                     )
                 model = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/model")
                 options = {"relax_version": False}

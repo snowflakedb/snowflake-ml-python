@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -152,7 +152,7 @@ class DataType(Enum):
 
 
 def gen_fuzz_data(
-    rows: int, types: list[DataType], low: Union[int, list[int]] = MIN_INT, high: Union[int, list[int]] = MAX_INT
+    rows: int, types: list[DataType], low: int | list[int] = MIN_INT, high: int | list[int] = MAX_INT
 ) -> tuple[list[Any], list[str]]:
     """
     Generate random data based on input column types and row count.
@@ -184,7 +184,7 @@ def gen_fuzz_data(
         else:
             raise ValueError(f"Unsupported data type {t}")
         snowflake_identifiers.append(f'"col_{idx}"')
-    data = np.core.records.fromarrays(data, names=snowflake_identifiers).tolist()  # type: ignore[call-overload]
+    data = np.rec.fromarrays(data, names=snowflake_identifiers).tolist()  # type: ignore[call-overload]
 
     return data, snowflake_identifiers
 
@@ -193,7 +193,7 @@ def get_df(
     session: Session,
     data: list[list[Any]],
     schema: list[str],
-    fillna: Optional[Union[object, ArrayLike]] = None,
+    fillna: object | ArrayLike | None = None,
 ) -> tuple[pd.DataFrame, DataFrame]:
     """Create pandas dataframe and Snowpark dataframes from input data. The schema passed should be
     a snowflake schema using snowflake identifiers.
@@ -227,7 +227,7 @@ def sort_by_columns(array: npt.NDArray[Any], num_col: int = 1) -> npt.NDArray[An
     return array[np.lexsort(keys)]  # type: ignore[no-any-return]
 
 
-def get_pandas_feature(X: Union[npt.NDArray[Any], pd.DataFrame], feature_idx: int) -> npt.NDArray[Any]:
+def get_pandas_feature(X: npt.NDArray[Any] | pd.DataFrame, feature_idx: int) -> npt.NDArray[Any]:
     if hasattr(X, "iloc"):
         # pandas dataframes
         return X.iloc[:, feature_idx]  # type: ignore[no-any-return]
@@ -356,7 +356,7 @@ def equal_pandas_df_ignore_row_order(x1: pd.DataFrame, x2: pd.DataFrame) -> bool
 
 
 def equal_optional_of(equality_func: _EqualityFunc) -> _EqualityFunc:
-    def f(x1: Optional[Any], x2: Optional[Any]) -> bool:
+    def f(x1: Any | None, x2: Any | None) -> bool:
         if x1 is not None and x2 is not None:
             return equality_func(x1, x2)
         return x1 is None and x2 is None

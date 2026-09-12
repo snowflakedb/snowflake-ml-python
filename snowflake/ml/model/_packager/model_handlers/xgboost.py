@@ -1,7 +1,7 @@
 # mypy: disable-error-code="import"
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Union, cast, final
 
 import numpy as np
 import pandas as pd
@@ -69,8 +69,8 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.XGBModelSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -219,7 +219,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         cls,
         raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.XGBModelLoadOptions],
     ) -> custom_model.CustomModel:
         import xgboost
