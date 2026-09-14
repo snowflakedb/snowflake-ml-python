@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import warnings
-from typing import Any, Optional
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -25,7 +25,7 @@ from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 class SKLearnHandlerTest(parameterized.TestCase):
     @parameterized.product(enable_explainability=[False, None])  # type: ignore[misc]
-    def test_skl_multiple_output_proba_no_explain(self, enable_explainability: Optional[bool]) -> None:
+    def test_skl_multiple_output_proba_no_explain(self, enable_explainability: bool | None) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
@@ -116,7 +116,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
             np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]).to_numpy())
 
     @parameterized.product(enable_explainability=[False, None])  # type: ignore[misc]
-    def test_skl_unsupported_explain(self, enable_explainability: Optional[bool]) -> None:
+    def test_skl_unsupported_explain(self, enable_explainability: bool | None) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
@@ -677,7 +677,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
 
                 transformed = onehot.transform(X)
                 expected_explanations = shap.Explainer(regr, transformed)(transformed).values
-                np.testing.assert_allclose(pk.model.explain(X), expected_explanations)  # type: ignore[union-attr]
+                np.testing.assert_allclose(explain_method(X), expected_explanations)
 
                 assert "explain" in pk.meta.signatures
                 explain_signature = pk.meta.signatures["explain"]
@@ -915,7 +915,7 @@ class SklearnHelperFunctionsTest(absltest.TestCase):
             def transform(self, X: model_types.SupportedDataType) -> model_types.SupportedDataType:
                 return X + 1  # type: ignore[operator]
 
-            def get_feature_names_out(self, input_features: Optional[list[str]] = None) -> Optional[list[str]]:
+            def get_feature_names_out(self, input_features: list[str] | None = None) -> list[str] | None:
                 if input_features is None:
                     return None
                 return [f"{f}_transformed" for f in input_features]

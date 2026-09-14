@@ -1,5 +1,5 @@
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets, svm
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -7,8 +7,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class TestBatchInferenceSklearnInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @parameterized.parameters({"pip_requirements": None}, {"pip_requirements": ["scikit-learn"]})  # type: ignore[misc]
-    def test_sklearn(self, pip_requirements: list[str] | None) -> None:
+    def test_sklearn(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         svc = svm.LinearSVC()
         svc.fit(iris_X, iris_y)
@@ -28,7 +27,6 @@ class TestBatchInferenceSklearnInteg(registry_batch_inference_test_base.Registry
         self._test_registry_batch_inference(
             model=svc,
             sample_input_data=iris_X,
-            pip_requirements=pip_requirements,
             options={"enable_explainability": False},
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),

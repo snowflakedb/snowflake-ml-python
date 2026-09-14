@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted|short_regression] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted|short_regression|smoke_test] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -13,6 +13,7 @@
 #       continuous_run (default): run all tests. (For nightly run. Alias: release)
 #       quarantined: Run quarantined tests.
 #       short_regression: run tests tagged with "short_regress".
+#       smoke_test: run only tests tagged with "smoke_test". Narrow, fast tier; skips bazel clean.
 #       local_unit: run all unit tests affected by target defined by -t
 #       local_all: run all tests including integration tests affected by target defined by -t
 #       targeted: run specific Bazel targets defined by --targets
@@ -47,7 +48,7 @@ action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression|smoke_test] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]"
     echo ""
     echo "Options:"
     echo "  -p <version>           Specify Python version (e.g., 3.10, 3.11, 3.12, 3.13, 3.14)"
@@ -65,12 +66,14 @@ help() {
     echo "  local_all       Run all tests affected by -t target"
     echo "  perf            Run performance tests"
     echo "  targeted        Run specific Bazel targets (requires --targets, runs in separate groups)"
+    echo "  smoke_test      Run only tests tagged 'smoke_test' (narrow, fast tier)"
     echo ""
     echo "Examples:"
     echo "  ${PROG} test --tags 'feature:jobs'"
     echo "  ${PROG} test --tags 'feature:jobs,feature:data'"
     echo "  ${PROG} test -p 3.13"
     echo "  ${PROG} test -m continuous_run -p 3.14"
+    echo "  ${PROG} test -m smoke_test"
     echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/model:registry_sklearn_model_test'"
     echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/services/...' -p 3.11"
     echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/model:registry_sklearn_model_test' --test-filter 'test_skl_model'"
@@ -85,7 +88,7 @@ while (($#)); do
     case $1 in
     -m | --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" || $1 = "targeted" || $1 = "short_regression" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" || $1 = "targeted" || $1 = "short_regression" || $1 = "smoke_test" ]]; then
             mode=$1
         else
             help 1
@@ -204,6 +207,11 @@ elif [[ "${mode}" = "targeted" ]]; then
             exit 1
         fi
     fi
+elif [[ "${mode}" = "smoke_test" ]]; then
+    # Smoke mode deliberately skips "bazel clean" so the narrow tier stays fast. Test
+    # results are still never reused: cache_test_results defaults to no, so the smoke
+    # tests really execute while the build cache is reused.
+    :
 else
     "${bazel}" clean
 fi
@@ -321,6 +329,20 @@ short_regression)
         query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
     fi
     ;;
+smoke_test)
+    # Run ONLY targets explicitly tagged "smoke_test": an independent, narrow tier.
+    # Narrowing happens in the query as well as in the tag filter so the target list
+    # stays small, which keeps the per-group compatibility cquery below fast and
+    # avoids NO STATUS noise from untagged targets.
+    echo "Applying smoke_test tag filter for smoke_test mode..."
+    tag_filter="--test_tag_filters=smoke_test"
+
+    if [[ -n "${TAG_FILTERS:-}" ]]; then
+        echo "Note: --tags is ignored in smoke_test mode; the smoke_test tag defines the tier."
+    fi
+
+    query_expr='attr(tags, "smoke_test", kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"')))'
+    ;;
 local_unittest)
     cache_test_results="--cache_test_results=yes"
 
@@ -374,6 +396,14 @@ printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
 
 if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
     exit 0
+fi
+
+# Nothing carries the smoke_test tag. Reporting success here would mean passing
+# without having run a single test, so fail instead.
+if [[ ! -s "${all_test_targets_file}" && "${mode}" = "smoke_test" ]]; then
+    echo "ERROR: no test targets are tagged 'smoke_test'." >&2
+    trap - ERR
+    exit 1
 fi
 
 # Read groups from optional_dependency_groups.bzl

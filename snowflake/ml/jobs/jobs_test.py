@@ -9,7 +9,7 @@ from absl.testing import absltest, parameterized
 import snowflake.snowpark as snowpark
 from snowflake.ml import jobs
 from snowflake.ml.jobs import job
-from snowflake.ml.jobs._utils import stage_utils
+from snowflake.ml.jobs._utils import constants, stage_utils
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.row import Row
 
@@ -31,10 +31,39 @@ class JobTest(parameterized.TestCase):
             target_instances = job._get_target_instances(mock_session, "jobs_DB.jobs_schema.test_id")
             self.assertEqual(target_instances, expected_result)
 
-    def test_get_submitted_instance_count_reads_replicas(self) -> None:
+    def test_get_submitted_instance_count_reads_immutable_spec_value(self) -> None:
+        container_spec = {"env": {constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: "3"}}
+        with patch.object(job, "_get_service_info_spcs") as get_history:
+            self.assertEqual(
+                job._get_submitted_instance_count(
+                    MagicMock(), "jobs_DB.jobs_schema.test_id", container_spec=container_spec
+                ),
+                3,
+            )
+        get_history.assert_not_called()
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("null", None),
+        ("non-numeric", "many"),
+        ("non-positive", 0),
+    )
+    def test_get_submitted_instance_count_rejects_invalid_spec_value(self, value: Any) -> None:
+        container_spec = {"env": {constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: value}}
+        with patch.object(job, "_get_service_info_spcs") as get_history, self.assertRaisesRegex(
+            RuntimeError, "Invalid submitted instance count in job spec"
+        ):
+            job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id", container_spec=container_spec)
+        get_history.assert_not_called()
+
+    def test_get_submitted_instance_count_falls_back_to_history_when_spec_value_missing(self) -> None:
         row = Row(PARAMETERS=json.dumps({"ASYNC": True, "REPLICAS": 3}))
         with patch.object(job, "_get_service_info_spcs", return_value=row):
-            self.assertEqual(job._get_submitted_instance_count(MagicMock(), "jobs_DB.jobs_schema.test_id"), 3)
+            self.assertEqual(
+                job._get_submitted_instance_count(
+                    MagicMock(), "jobs_DB.jobs_schema.test_id", container_spec={"env": {}}
+                ),
+                3,
+            )
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("other parameters present", {"ASYNC": True}),
@@ -431,12 +460,17 @@ class DistributedResultApiTest(parameterized.TestCase):
         j = self._make_job(distributed=True)
         j.__dict__["min_instances"] = 2
         dr = jobs.DistributedResult(success=True, exit_codes={0: 0}, failed_instance=None, return_value=None)
-        with patch.object(j, "wait"), patch.object(job, "_get_submitted_instance_count", return_value=3), patch.object(
+        with patch.object(j, "wait"), patch.object(
+            job, "_get_submitted_instance_count", return_value=3
+        ) as get_submitted_count, patch.object(
             job.MLJob, "_result_path", new_callable=PropertyMock, return_value="@stage/r"
-        ), patch.object(job, "_reduce_distributed_result", return_value=dr), self.assertLogs(
+        ), patch.object(
+            job, "_reduce_distributed_result", return_value=dr
+        ), self.assertLogs(
             job.logger, level="WARNING"
         ) as logs:
             self.assertIs(j.distributed_result(), dr)
+        get_submitted_count.assert_called_once_with(j._session, j.id, j._container_spec)
         self.assertTrue(any("min_instances" in line for line in logs.output))
 
     def test_has_distributed_result_deleted_job_no_keyerror(self) -> None:

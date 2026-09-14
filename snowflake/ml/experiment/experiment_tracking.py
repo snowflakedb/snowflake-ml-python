@@ -6,7 +6,7 @@ import traceback
 import warnings
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Optional, Union
+from typing import Any, Optional
 from urllib.parse import quote
 
 from snowflake import snowpark
@@ -28,6 +28,7 @@ from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import type_hints
 from snowflake.ml.utils import sql_client as sql_client_utils
+from snowflake.snowpark import functions
 
 DEFAULT_EXPERIMENT_NAME = sql_identifier.SqlIdentifier("DEFAULT")
 
@@ -48,8 +49,8 @@ class ExperimentTracking:
         self,
         session: snowpark.Session,
         *,
-        database_name: Optional[str] = None,
-        schema_name: Optional[str] = None,
+        database_name: str | None = None,
+        schema_name: str | None = None,
         capture_source_info: bool = True,
     ) -> None:
         """
@@ -116,11 +117,11 @@ class ExperimentTracking:
         self._session = session
 
         # The experiment in context
-        self._experiment: Optional[entities.Experiment] = None
+        self._experiment: entities.Experiment | None = None
         # The run in context
-        self._run: Optional[entities.Run] = None
+        self._run: entities.Run | None = None
         # The logging context used for patching stdout and stderr.
-        self._logging_context: Optional[experiment_logging.ExperimentLoggingContext] = None
+        self._logging_context: experiment_logging.ExperimentLoggingContext | None = None
         self._live_logging_enabled = False
 
         self._initialized = True
@@ -182,8 +183,8 @@ class ExperimentTracking:
     def set_experiment(
         self,
         experiment_name: str,
-        database_name: Optional[str] = None,
-        schema_name: Optional[str] = None,
+        database_name: str | None = None,
+        schema_name: str | None = None,
     ) -> entities.Experiment:
         """
         Set the experiment in context. Creates a new experiment if it doesn't exist.
@@ -228,8 +229,8 @@ class ExperimentTracking:
     def delete_experiment(
         self,
         experiment_name: str,
-        database_name: Optional[str] = None,
-        schema_name: Optional[str] = None,
+        database_name: str | None = None,
+        schema_name: str | None = None,
     ) -> None:
         """
         Delete an experiment.
@@ -270,7 +271,7 @@ class ExperimentTracking:
     @functools.wraps(registry.Registry.log_model)
     def log_model(
         self,
-        model: Union[type_hints.SupportedModelType, ml_model.ModelVersion],
+        model: type_hints.SupportedModelType | ml_model.ModelVersion,
         *,
         model_name: str,
         **kwargs: Any,
@@ -279,7 +280,7 @@ class ExperimentTracking:
         with experiment_info.ExperimentInfoPatcher(experiment_info=run._get_experiment_info()):
             return self._registry.log_model(model, model_name=model_name, **kwargs)
 
-    def list_model_versions(self, run_name: Optional[str] = None) -> list[ml_model.ModelVersion]:
+    def list_model_versions(self, run_name: str | None = None) -> list[ml_model.ModelVersion]:
         """
         List the model versions that were logged under a run.
 
@@ -319,7 +320,7 @@ class ExperimentTracking:
 
     def start_run(
         self,
-        run_name: Optional[str] = None,
+        run_name: str | None = None,
     ) -> entities.Run:
         """
         Start a new run. If a run name of an existing run is provided, resumes the run if it is running.
@@ -354,7 +355,7 @@ class ExperimentTracking:
                 return self._run
 
         run_name = sql_identifier.SqlIdentifier(run_name)
-        source_info_json: Optional[str] = None
+        source_info_json: str | None = None
         if self._capture_source_info:
             captured = source_info.SourceInfo.collect()
             if not captured.is_empty():
@@ -368,7 +369,7 @@ class ExperimentTracking:
         assert self._run is not None  # for mypy
         return self._run
 
-    def end_run(self, run_name: Optional[str] = None, status: Optional[str] = None) -> None:
+    def end_run(self, run_name: str | None = None, status: str | None = None) -> None:
         """
         End the current run if no run name is provided. Otherwise, the specified run is ended.
 
@@ -526,7 +527,7 @@ class ExperimentTracking:
     def log_artifact(
         self,
         local_path: str,
-        artifact_path: Optional[str] = None,
+        artifact_path: str | None = None,
     ) -> None:
         """
         Log an artifact or a directory of artifacts under the current run. If no run is active, this method will create
@@ -546,11 +547,12 @@ class ExperimentTracking:
                 file_path=file_path,
             )
 
-    def list_metrics(self, run_name: Optional[str] = None) -> snowpark.DataFrame:
+    def list_metrics(self, run_name: str | None = None) -> snowpark.DataFrame:
         """
         List metrics for runs within the current experiment.
 
         When a metric is logged at multiple steps, the returned value corresponds to the highest step.
+        Use ``get_metric_history`` to retrieve every logged step.
 
         The returned DataFrame has a ``run_name`` column (str) and one float column per distinct metric name.
         Runs that did not log a given metric have ``NULL`` for that column.
@@ -588,7 +590,52 @@ class ExperimentTracking:
 
         return sql_client.pivot_run_attributes(self._session, rows, run_names=run_names, cast_value=float)
 
-    def list_params(self, run_name: Optional[str] = None) -> snowpark.DataFrame:
+    def get_metric_history(
+        self,
+        run_name: str | None = None,
+        metric_name: str | None = None,
+    ) -> snowpark.DataFrame:
+        """Return the full history of metrics logged under a run as a Snowpark DataFrame.
+
+        Unlike ``list_metrics``, which collapses each metric to its highest step, this returns every
+        recorded point. The result has columns ``name``, ``step``, ``value``, and ``timestamp``,
+        ordered by name then step.
+
+        Filtering and aggregation are pushed down to Snowflake::
+
+            history = experiment.get_metric_history(run_name="RUN_A", metric_name="accuracy")
+            best = history.agg(functions.max_(functions.col('"value"'))).collect()[0][0]
+
+        Args:
+            run_name: Run to query. If None, uses the currently active run.
+            metric_name: Metric to filter on. If None, returns all metrics of the run.
+
+        Returns:
+            A Snowpark DataFrame. Use ``.to_pandas()`` for a pandas DataFrame or ``.collect()``
+            for a list of Row objects.
+
+        Raises:
+            RuntimeError: If no experiment is set, or if no run is active and ``run_name`` is None.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please set an experiment before getting metric history.")
+
+        if run_name:
+            resolved_run_name = sql_identifier.SqlIdentifier(run_name)
+        elif self._run:
+            resolved_run_name = self._run.name
+        else:
+            raise RuntimeError("No run is active. Please provide a run_name or start a run.")
+
+        history = self._sql_client.get_run_metrics_history(
+            experiment_name=self._experiment.name,
+            run_name=resolved_run_name,
+        )
+        if metric_name is not None:
+            history = history.filter(functions.col('"name"') == metric_name)
+        return history
+
+    def list_params(self, run_name: str | None = None) -> snowpark.DataFrame:
         """
         List parameters for runs within the current experiment.
 
@@ -632,7 +679,7 @@ class ExperimentTracking:
     def list_artifacts(
         self,
         run_name: str,
-        artifact_path: Optional[str] = None,
+        artifact_path: str | None = None,
     ) -> list[artifact.ArtifactInfo]:
         """
         List artifacts for a given run within the current experiment.
@@ -660,8 +707,8 @@ class ExperimentTracking:
     def download_artifacts(
         self,
         run_name: str,
-        artifact_path: Optional[str] = None,
-        target_path: Optional[str] = None,
+        artifact_path: str | None = None,
+        target_path: str | None = None,
     ) -> None:
         """
         Download artifacts from a run to a local directory.
@@ -770,7 +817,7 @@ class ExperimentTracking:
 
     def _try_patch_ipython_showtraceback(
         self, stderr_logger: experiment_logging.ExperimentLogger
-    ) -> tuple[Any, Optional[Callable[..., None]]]:
+    ) -> tuple[Any, Callable[..., None] | None]:
         try:
             from IPython import get_ipython
 
@@ -780,7 +827,7 @@ class ExperimentTracking:
 
                 def _patched_showtraceback(
                     etype: type[BaseException],
-                    evalue: Optional[BaseException],
+                    evalue: BaseException | None,
                     stb: list[str],
                 ) -> None:
                     try:
@@ -804,8 +851,8 @@ class ExperimentTracking:
     def _try_log_exception(
         self,
         exc_type: type[BaseException],
-        exc_value: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_value: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Append a traceback to the stderr logger before unpatching.
 
@@ -844,7 +891,7 @@ class ExperimentTracking:
         assert self._experiment is not None and self._run is not None  # for mypy
         stdout_logger, stderr_logger, stdout_ctx, stderr_ctx = None, None, None, None  # for exception handling
         ip: Any = None
-        original_showtraceback: Optional[Callable[..., None]] = None
+        original_showtraceback: Callable[..., None] | None = None
         try:
             exp_id = self._sql_client.get_experiment_id(self._experiment.name)
             run_id = self._sql_client.get_run_id(

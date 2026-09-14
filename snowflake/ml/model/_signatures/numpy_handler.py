@@ -20,7 +20,7 @@ class NumpyArrayHandler(base_handler.BaseDataHandler[model_types._SupportedNumpy
 
     @staticmethod
     def count(data: model_types._SupportedNumpyArray) -> int:
-        return data.shape[0]
+        return int(data.shape[0])
 
     @staticmethod
     def truncate(data: model_types._SupportedNumpyArray, length: int) -> model_types._SupportedNumpyArray:

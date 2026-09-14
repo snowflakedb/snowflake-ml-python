@@ -3,7 +3,7 @@ import os
 import pathlib
 import shutil
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Union, cast, final
 
 import cloudpickle
 import pandas as pd
@@ -115,8 +115,8 @@ class TransformersPipelineHandler(
         ],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.HuggingFaceSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -338,13 +338,13 @@ class TransformersPipelineHandler(
     def _load_pickle_model(
         pickle_file: str,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
-    ) -> Union[huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline]:
+    ) -> huggingface_pipeline.HuggingFacePipelineModel | huggingface_base.TransformersPipeline:
         with open(pickle_file, "rb") as f:
             m = cloudpickle.load(f)
         assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
             m, huggingface_base.TransformersPipeline
         )
-        torch_dtype: Optional[str] = None
+        torch_dtype: str | None = None
         device_config = None
         if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
             device_config = TransformersPipelineHandler._get_device_config(**kwargs)
@@ -408,7 +408,7 @@ class TransformersPipelineHandler(
 
             device_config = TransformersPipelineHandler._get_device_config(**kwargs)
 
-            m = transformers.pipeline(
+            m = transformers.pipeline(  # type: ignore[call-overload]
                 model_blob_options["task"],
                 model=model_blob_file_or_dir_path,
                 trust_remote_code=False,
@@ -418,16 +418,16 @@ class TransformersPipelineHandler(
             )
 
             m.__dict__.update(pipeline_params)
-            return m
+            return m  # type: ignore[no-any-return]
 
         def _create_pipeline_from_model(
             model_blob_file_or_dir_path: str,
-            m: Union[huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline],
+            m: huggingface_pipeline.HuggingFacePipelineModel | huggingface_base.TransformersPipeline,
             **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
         ) -> "transformers.Pipeline":
             import transformers
 
-            return transformers.pipeline(
+            return transformers.pipeline(  # type: ignore[no-any-return, call-overload]
                 m.task,
                 model=model_blob_file_or_dir_path,
                 trust_remote_code=m.trust_remote_code,
@@ -481,7 +481,7 @@ class TransformersPipelineHandler(
             "transformers.Pipeline",
         ],
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
     ) -> custom_model.CustomModel:
         import transformers

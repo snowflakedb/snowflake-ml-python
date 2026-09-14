@@ -24,7 +24,7 @@
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 # feature-areas: Comma-separated list of feature areas to test (e.g., "jobs,core").
-#   Valid areas: model_registry, feature_store, jobs, observability, experiment_tracking, cortex, core, modeling,
+#   Valid areas: model_registry, feature_store, jobs, experiment_tracking, cortex, core, modeling,
 #     model_serving, data, none
 #
 # Action

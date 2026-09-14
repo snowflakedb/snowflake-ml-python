@@ -1282,7 +1282,7 @@ class OneHotEncoder(base.BaseTransformer):
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ATTRIBUTE,
                     original_exception=ValueError(
-                        "`drop` must be one of 'first', 'if_binary', an array-like of "  # type: ignore[str-bytes-safe]
+                        "`drop` must be one of 'first', 'if_binary', an array-like of "
                         f"shape (n_features,), or None, got {self.drop}."
                     ),
                 )

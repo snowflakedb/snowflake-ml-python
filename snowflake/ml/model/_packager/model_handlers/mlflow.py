@@ -83,6 +83,48 @@ def _sqlite_tracking_backend() -> Generator[str, None, None]:
             mlflow.set_tracking_uri(previous_uri)
 
 
+def _get_native_model(model: "mlflow.pyfunc.PyFuncModel") -> Any:
+    """Return the flavor's native model, unwrapping MLflow's PyFunc wrapper when one is present.
+
+    Flavor ``log_model`` functions expect the native model (for example the scikit-learn estimator),
+    not the wrapper that ``PyFuncModel`` holds. Serializers that only understand flavor-native types,
+    such as skops, reject the wrapper outright.
+
+    Args:
+        model: The loaded MLflow PyFunc model.
+
+    Returns:
+        The native model when the wrapper exposes one, otherwise the wrapper itself.
+    """
+    try:
+        return model.get_raw_model()
+    except (AttributeError, NotImplementedError):
+        return model._model_impl
+
+
+def _get_sklearn_serialization_kwargs(model: "mlflow.pyfunc.PyFuncModel") -> dict[str, Any]:
+    """Return the scikit-learn serialization settings the model was originally saved with.
+
+    Re-logging without them lets the artifact switch serialization backends, since MLflow's default
+    has changed across versions. A switched backend pulls in a serializer dependency that the model's
+    environment does not declare, which then fails to load at inference time.
+
+    Args:
+        model: The loaded MLflow PyFunc model.
+
+    Returns:
+        Keyword arguments to forward to ``mlflow.sklearn.log_model``.
+    """
+    import mlflow
+
+    flavor_config = model.metadata.flavors.get(mlflow.sklearn.FLAVOR_NAME, {})
+    return {
+        key: flavor_config[key]
+        for key in ("serialization_format", "skops_trusted_types")
+        if flavor_config.get(key) is not None
+    }
+
+
 def _re_log_to_mlflow_run(
     model: "mlflow.pyfunc.PyFuncModel",
     experiment_id: str,
@@ -139,10 +181,14 @@ def _re_log_to_mlflow_run(
                 signature=model.metadata.signature,
             )
         elif hasattr(loader_module, "log_model"):
+            log_model_kwargs = (
+                _get_sklearn_serialization_kwargs(model) if loader_module_name == "mlflow.sklearn" else {}
+            )
             loader_module.log_model(
-                model._model_impl,
+                _get_native_model(model),
                 artifact_path=artifact_path,
                 signature=model.metadata.signature,
+                **log_model_kwargs,
             )
         else:
             raise ValueError(f"The MLflow flavor module '{loader_module_name}' does not have a log_model function.")

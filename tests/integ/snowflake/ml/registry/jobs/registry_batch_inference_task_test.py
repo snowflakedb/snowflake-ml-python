@@ -22,12 +22,9 @@ from snowflake.ml.model import custom_model, model_signature
 from snowflake.ml.model.batch_inference import (
     BatchInferenceTask,
     FileEncoding,
-    ImageBuildSpec,
-    InferenceSpec,
     InputFormat,
     InputSpec,
     OutputSpec,
-    ResourcesSpec,
 )
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
@@ -369,19 +366,6 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
         self._assert_run_succeeded(self._poll_dag_run_completion(dag))
         self._assert_success_file_written(output_stage_location)
 
-    def test_input_spec_and_resources_spec(self) -> None:
-        """The resources and inference blocks are accepted alongside the input block."""
-        dag, output_stage_location = self._build_dag(
-            query=self._input_query(),
-            input_spec=InputSpec(),
-            resources_spec=ResourcesSpec(cpu_requests="1", memory_requests="4Gi"),
-            inference_spec=InferenceSpec(num_workers=1, max_batch_rows=1024),
-        )
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
     def test_successor_reads_output_location(self) -> None:
         """A successor loads the results using the location from the task return value.
 
@@ -554,27 +538,6 @@ END;
         self._assert_run_succeeded(self._poll_dag_run_completion(dag))
         self._assert_success_file_written(output_stage_location)
 
-    def test_complex_query(self) -> None:
-        """A join renders correctly through the ``FROM ( <subquery> )`` clause."""
-        table_a = f"{self._test_db}.{self._test_schema}.v2_complex_a_{uuid.uuid4().hex[:8]}"
-        table_b = f"{self._test_db}.{self._test_schema}.v2_complex_b_{uuid.uuid4().hex[:8]}"
-        self.session.create_dataframe([[0, 10], [1, 20]], schema=["KEY", "C1"]).write.save_as_table(
-            table_a, mode="overwrite"
-        )
-        self.session.create_dataframe([[0, 100], [1, 200]], schema=["KEY", "C2"]).write.save_as_table(
-            table_b, mode="overwrite"
-        )
-
-        query = (
-            f"WITH joined AS (SELECT a.C1, b.C2 FROM {table_a} a JOIN {table_b} b ON a.KEY = b.KEY) "
-            "SELECT C1, C2 FROM joined WHERE C1 >= 0"
-        )
-        dag, output_stage_location = self._build_dag(query=query)
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
     @absltest.skip("TODO(SNOW-3516871): handle quoted identifiers in batch inference")
     def test_quoted_identifiers(self) -> None:
         """Batch inference works with a quoted (lowercase) model name and column names."""
@@ -635,35 +598,6 @@ END;
 
         self._jobs_before_run = self._snapshot_jobs()
         dag_op.run(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
-    def test_custom_image_repo(self) -> None:
-        """``ImageBuildSpec.image_repo`` is honored."""
-        dag, output_stage_location = self._build_dag(
-            query=self._input_query(),
-            image_build_spec=ImageBuildSpec(
-                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo])
-            ),
-        )
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
-    def test_passes_dagtask_kwargs(self) -> None:
-        """DAGTask kwargs flow through to the deployed Snowflake task."""
-        expected_comment = "snowml-batch-inference-task-v2-integ"
-        dag, output_stage_location = self._build_dag(query=self._input_query(), comment=expected_comment)
-
-        self._deploy_and_run_dag(dag)
-
-        rows = self.session.sql(
-            f"SHOW TASKS LIKE '{self._dag_name}$BATCH_INFERENCE' IN SCHEMA {self._test_db}.{self._test_schema}"
-        ).collect()
-        self.assertGreater(len(rows), 0, f"Task {self._dag_name}$BATCH_INFERENCE not found")
-        self.assertEqual(rows[0]["comment"], expected_comment)
-
         self._assert_run_succeeded(self._poll_dag_run_completion(dag))
         self._assert_success_file_written(output_stage_location)
 

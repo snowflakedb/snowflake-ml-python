@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 from importlib import metadata as importlib_metadata
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 from unittest import mock
 
 import numpy as np
@@ -120,8 +120,8 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
     def _check_loaded_pipeline_wrapper_object(
         self,
-        original: Union[huggingface_pipeline.HuggingFacePipelineModel, hf_base.TransformersPipeline],
-        loaded: Union[huggingface_pipeline.HuggingFacePipelineModel, hf_base.TransformersPipeline],
+        original: huggingface_pipeline.HuggingFacePipelineModel | hf_base.TransformersPipeline,
+        loaded: huggingface_pipeline.HuggingFacePipelineModel | hf_base.TransformersPipeline,
         use_gpu: bool = False,
     ) -> None:
         original_dict = original.__dict__
@@ -140,13 +140,13 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         options: dict[str, object],
         check_pipeline_fn: Callable[["transformers.Pipeline", "transformers.Pipeline"], None],
         check_udf_res_fn: Callable[[pd.DataFrame], None],
-        signature: Optional[model_signature.ModelSignature] = None,
+        signature: model_signature.ModelSignature | None = None,
         check_gpu: bool = True,
         has_chat_template: bool = False,
     ) -> None:
         import transformers
 
-        model = transformers.pipeline(task=task, model=model_id, **options)
+        model = transformers.pipeline(task=task, model=model_id, **options)  # type: ignore[call-overload]
         self._basic_test_case_with_transformers_pipeline(
             model=model,
             task=task,
@@ -167,8 +167,8 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         options: dict[str, object],
         check_pipeline_fn: Callable[["transformers.Pipeline", "transformers.Pipeline"], None],
         check_udf_res_fn: Callable[[pd.DataFrame], None],
-        model_id: Optional[str] = None,
-        signature: Optional[model_signature.ModelSignature] = None,
+        model_id: str | None = None,
+        signature: model_signature.ModelSignature | None = None,
         check_gpu: bool = True,
         has_chat_template: bool = False,
     ) -> None:
@@ -638,7 +638,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertListEqual(original_res, loaded_res)
 
         def get_check_udf_res_fn(
-            aggregation_strategy: Optional[str] = None,
+            aggregation_strategy: str | None = None,
         ) -> Callable[[pd.DataFrame], None]:
             def check_udf_res(res: pd.DataFrame) -> None:
                 pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
@@ -933,7 +933,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertListEqual(original_res, loaded_res)
 
         def get_check_udf_res_fn(
-            top_k: Optional[int] = None,
+            top_k: int | None = None,
         ) -> Callable[[pd.DataFrame], None]:
             def check_udf_res(res: pd.DataFrame) -> None:
                 if top_k:
@@ -989,8 +989,10 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         x_df = pd.DataFrame([x], columns=["inputs"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            original_res = original(x)
-            loaded_res = loaded(x)
+            # Force deterministic greedy decoding so the round-trip comparison is stable; otherwise the model
+            # samples and the original vs loaded outputs diverge.
+            original_res = original(x, do_sample=False, max_new_tokens=64)
+            loaded_res = loaded(x, do_sample=False, max_new_tokens=64)
             self.assertListEqual(original_res, loaded_res)
 
         def check_udf_res(res: pd.DataFrame) -> None:
@@ -1077,8 +1079,10 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         x_df = pd.DataFrame([x], columns=["messages", "max_completion_tokens"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            original_res = original(x[0])
-            loaded_res = loaded(x[0])
+            # transformers >=5 validates the full (input + output) length against max_length and raises when the
+            # chat-templated input already exceeds the model's default; bound generation with max_new_tokens.
+            original_res = original(x[0], max_new_tokens=20)
+            loaded_res = loaded(x[0], max_new_tokens=20)
             self.assertEqual(len(original_res), len(loaded_res))
 
         def check_udf_res(res: pd.DataFrame) -> None:
@@ -1152,7 +1156,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         x_df = pd.DataFrame([x], columns=["inputs"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            self.assertIsNone(loaded.tokenizer.chat_template)
+            self.assertIsNone(loaded.tokenizer.chat_template)  # type: ignore[union-attr]
             original_res = original(x[0], max_length=60, num_return_sequences=1)
             loaded_res = loaded(x[0], max_length=60, num_return_sequences=1)
             self.assertEqual(len(original_res), len(loaded_res))
@@ -1171,7 +1175,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
         # Define a very small GPT-2 configuration (approximately 350k parameters)
         # without a chat template
-        small_config = transformers.GPT2Config(
+        small_config = transformers.GPT2Config(  # type: ignore[no-untyped-call]
             n_embd=128,  # Embedding dimension
             n_head=4,  # Number of attention heads
             n_layer=2,  # Number of transformer layers
@@ -1180,10 +1184,10 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         )
 
         # Initialize the model with the small configuration
-        model = transformers.GPT2LMHeadModel(small_config)
+        model = transformers.GPT2LMHeadModel(small_config)  # type: ignore[no-untyped-call]
 
         # Load BERT tokenizer which doesn't have chat template
-        tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
+        tokenizer = transformers.AutoTokenizer.from_pretrained("bert-base-uncased")
         # make model have multiple eos tokens
         model.config.eos_token_id = [50256, 50257]
         # Resize model embeddings to match new tokenizer
@@ -1461,7 +1465,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
         model_id = "hf-internal-testing/tiny-gpt2-with-chatml-template"
         pipeline = transformers.pipeline("text-generation", model=model_id)
-        pipeline.tokenizer.pad_token = pipeline.tokenizer.eos_token
+        pipeline.tokenizer.pad_token = pipeline.tokenizer.eos_token  # type: ignore[union-attr]
         model = hf_pipeline_handler.HuggingFaceOpenAICompatibleModel(pipeline)
         self.assertEqual(model.model_name, model_id)
 
@@ -1476,7 +1480,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         self.assertTrue("role" in res["choices"][0]["message"])
 
         # remove the chat template
-        pipeline.tokenizer.chat_template = None
+        pipeline.tokenizer.chat_template = None  # type: ignore[union-attr]
         res = model.generate_chat_completion(messages, max_completion_tokens=250, n=3)
         self.assertLen(res["choices"], 3)
         self.assertTrue("message" in res["choices"][0])
@@ -1487,15 +1491,15 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         """Verify that save_pretrained is called with safe_serialization=True."""
         import transformers
 
-        small_config = transformers.GPT2Config(
+        small_config = transformers.GPT2Config(  # type: ignore[no-untyped-call]
             n_embd=16,
             n_head=1,
             n_layer=1,
             n_positions=128,
             vocab_size=128,
         )
-        model = transformers.GPT2LMHeadModel(small_config)
-        tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
+        model = transformers.GPT2LMHeadModel(small_config)  # type: ignore[no-untyped-call]
+        tokenizer = transformers.AutoTokenizer.from_pretrained("bert-base-uncased")
         model.resize_token_embeddings(len(tokenizer))
         pipe = transformers.pipeline(
             "text-generation",
@@ -1642,7 +1646,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         )
 
         custom_model = TransformersPipelineHandler.convert_as_custom_model(
-            raw_model=fake_pipeline,
+            raw_model=fake_pipeline,  # type: ignore[arg-type]
             model_meta=meta,
         )
 
@@ -1682,7 +1686,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         )
 
         custom_model = TransformersPipelineHandler.convert_as_custom_model(
-            raw_model=fake_pipeline,
+            raw_model=fake_pipeline,  # type: ignore[arg-type]
             model_meta=meta,
         )
 

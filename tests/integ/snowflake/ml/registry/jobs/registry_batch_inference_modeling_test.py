@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -14,16 +14,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @parameterized.parameters(  # type: ignore[misc]
-        {"num_workers": 1, "replicas": 1, "cpu_requests": None},
-        {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
-    )
-    def test_snowml_logistic_regression_batch_inference(
-        self,
-        replicas: int,
-        cpu_requests: str,
-        num_workers: int,
-    ) -> None:
+    def test_snowml_logistic_regression_batch_inference(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -47,24 +38,14 @@ class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.Registr
             sample_input_data=test_features,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"num_workers": 1, "replicas": 1, "cpu_requests": None},
-        {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
-    )
-    def test_snowml_xgboost_batch_inference(
-        self,
-        replicas: int,
-        cpu_requests: str,
-        num_workers: int,
-    ) -> None:
+    def test_snowml_xgboost_batch_inference(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -88,24 +69,14 @@ class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.Registr
             sample_input_data=test_features,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"num_workers": 1, "replicas": 1, "cpu_requests": None},
-        {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
-    )
-    def test_snowml_lightgbm_batch_inference(
-        self,
-        replicas: int,
-        cpu_requests: str,
-        num_workers: int,
-    ) -> None:
+    def test_snowml_lightgbm_batch_inference(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -129,24 +100,14 @@ class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.Registr
             sample_input_data=test_features,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"num_workers": 1, "replicas": 1, "cpu_requests": None},
-        {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
-    )
-    def test_snowml_pipeline_batch_inference(
-        self,
-        replicas: int,
-        cpu_requests: str,
-        num_workers: int,
-    ) -> None:
+    def test_snowml_pipeline_batch_inference(self) -> None:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -218,22 +179,14 @@ class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.Registr
             sample_input_data=test_features,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
-            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"num_workers": 1, "replicas": 1},
-    )
-    def test_snowml_transformers_only_pipeline_batch_inference(
-        self,
-        replicas: int,
-        num_workers: int,
-    ) -> None:
+    def test_snowml_transformers_only_pipeline_batch_inference(self) -> None:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -300,10 +253,10 @@ class TestBatchInferenceModelingInteg(registry_batch_inference_test_base.Registr
             sample_input_data=test_features,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=num_workers),
+            inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="transform",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 

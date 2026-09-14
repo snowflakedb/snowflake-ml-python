@@ -1,6 +1,8 @@
+import glob
 import os
 import sys
 import tempfile
+import zipfile
 from importlib import metadata as importlib_metadata
 
 import numpy as np
@@ -117,13 +119,12 @@ class ModelLoadHygieneTest(absltest.TestCase):
                         "embed_local_ml_library": True,
                     },
                 )
-                self.assertTrue(
-                    os.path.exists(
-                        os.path.join(
-                            workspace, "model1", "code", "snowflake", "ml", "model", "_packager", "model_packager.py"
-                        )
-                    )
-                )
+                # embed_local_ml_library packages snowflake.ml as a zip under the runtime directory. Verify the
+                # zip was produced and contains the embedded library sources.
+                embedded_zips = glob.glob(os.path.join(workspace, "model1", "runtimes", "*", "snowflake-ml-python.zip"))
+                self.assertTrue(embedded_zips)
+                with zipfile.ZipFile(embedded_zips[0]) as zf:
+                    self.assertIn("snowflake/ml/model/_packager/model_packager.py", zf.namelist())
             finally:
                 sys.path.remove(zipped_snowml_path)
 

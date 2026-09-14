@@ -1,15 +1,19 @@
 """Unit tests for OFT SHOW row ``store_type`` → ``OnlineConfig`` reconstruction."""
 
+import datetime
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock
 
 import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
-from snowflake.ml.feature_store import feature_store as fs_mod
+from snowflake.ml.feature_store import (
+    feature_store as fs_mod,
+    realtime_registration as rtfv_mod,
+)
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_store import FeatureStore
@@ -20,6 +24,7 @@ from snowflake.ml.feature_store.feature_view import (
     OnlineConfig,
     OnlineStoreType,
 )
+from snowflake.ml.feature_store.metadata_manager import RealtimeConfigMetadata
 from snowflake.ml.feature_store.realtime_config import RealtimeConfig
 from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 from snowflake.snowpark import Row
@@ -171,6 +176,250 @@ class CaseSensitiveNameOftLookupTest(parameterized.TestCase):
 
         self.assertTrue(cfg.enable)
         self.assertEqual(cfg.store_type, OnlineStoreType.POSTGRES)
+
+
+class OftSetupStatusFieldsTest(parameterized.TestCase):
+    """Tests for the defensive readers behind the optional setup-readiness columns.
+
+    ``setup_status`` / ``setup_error_msg`` / ``setup_time`` are absent from the SHOW row
+    entirely -- rather than present-and-NULL -- when no setup-readiness information is
+    available for the table. Absence is an ordinary case and must never raise.
+    """
+
+    def test_optional_field_absent_reports_not_present(self) -> None:
+        present, value = fs_mod._oft_show_row_optional_field(Row(TARGET_LAG="10s"), "setup_status")
+        self.assertFalse(present)
+        self.assertIsNone(value)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("uppercase_key", "SETUP_STATUS"),
+        ("lowercase_key", "setup_status"),
+    )
+    def test_optional_field_both_casings(self, key: str) -> None:
+        row = Row(**{key: "SETUP_READY"})
+        present, value = fs_mod._oft_show_row_optional_field(row, "setup_status")
+        self.assertTrue(present)
+        self.assertEqual(value, "SETUP_READY")
+
+    def test_optional_field_present_but_null_is_distinguished_from_absent(self) -> None:
+        """Present-and-NULL must not be reported the same way as absent: they mean different things."""
+        present, value = fs_mod._oft_show_row_optional_field(Row(SETUP_STATUS=None), "setup_status")
+        self.assertTrue(present)
+        self.assertIsNone(value)
+
+    def test_absent_columns_yield_no_fields(self) -> None:
+        row = Row(TARGET_LAG="10s", REFRESH_MODE="AUTO", SCHEDULING_STATE="STARTED")
+        self.assertEqual(fs_mod._oft_setup_status_display_fields(row), {})
+
+    def test_present_but_null_columns_yield_explicit_nulls(self) -> None:
+        """A non-Postgres-backed OFT reports all three as NULL; that is neither ready nor failed."""
+        row = Row(TARGET_LAG="10s", SETUP_STATUS=None, SETUP_ERROR_MSG=None, SETUP_TIME=None)
+        self.assertEqual(
+            fs_mod._oft_setup_status_display_fields(row),
+            {"setup_status": None, "setup_error_msg": None, "setup_time": None},
+        )
+
+    def test_setup_time_datetime_is_json_encodable(self) -> None:
+        setup_time = datetime.datetime(2026, 8, 10, 12, 34, 56)
+        row = Row(SETUP_STATUS="SETUP_READY", SETUP_ERROR_MSG=None, SETUP_TIME=setup_time)
+        fields = fs_mod._oft_setup_status_display_fields(row)
+        self.assertEqual(fields["setup_time"], setup_time.isoformat())
+        # Must survive the json.dumps the listing path performs.
+        self.assertEqual(json.loads(json.dumps(fields))["setup_time"], setup_time.isoformat())
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("ready", "SETUP_READY", None),
+        ("notready", "SETUP_NOTREADY", None),
+        ("failed", "SETUP_FAILED", "postgres cluster provisioning timed out"),
+    )
+    def test_statuses_are_passed_through_verbatim(self, status: str, error_msg: Optional[str]) -> None:
+        row = Row(SETUP_STATUS=status, SETUP_ERROR_MSG=error_msg)
+        fields = fs_mod._oft_setup_status_display_fields(row)
+        self.assertEqual(fields["setup_status"], status)
+        self.assertEqual(fields["setup_error_msg"], error_msg)
+        self.assertNotIn("setup_time", fields)
+
+
+class DetermineOnlineConfigSetupStatusTest(parameterized.TestCase):
+    """Setup-readiness fields on the batch/streaming listing path."""
+
+    def _display_data(self, oft_row: Row) -> dict[str, Any]:
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_find_object", MagicMock(return_value=[oft_row]))
+        json_str = fs._determine_online_config_from_oft("my_fv", "v1", include_online_service_metadata=True)
+        data: dict[str, Any] = json.loads(json_str)
+        return data
+
+    def _oft_row(self, **extra: Any) -> Row:
+        return Row(
+            TARGET_LAG="15 seconds",
+            REFRESH_MODE="AUTO",
+            SCHEDULING_STATE="STARTED",
+            STORE_TYPE="POSTGRES",
+            **extra,
+        )
+
+    def test_absent_columns_do_not_raise_and_omit_keys(self) -> None:
+        """A row without the setup-readiness columns must omit the keys, not raise."""
+        data = self._display_data(self._oft_row())
+        for key in ("setup_status", "setup_error_msg", "setup_time"):
+            self.assertNotIn(key, data)
+        # The pre-existing display fields are untouched.
+        self.assertEqual(data["refresh_mode"], "AUTO")
+        self.assertEqual(data["store_type"], "postgres")
+
+    def test_present_but_null_columns_not_misreported(self) -> None:
+        data = self._display_data(
+            Row(
+                TARGET_LAG="15 seconds",
+                REFRESH_MODE="AUTO",
+                SCHEDULING_STATE="STARTED",
+                STORE_TYPE="hybrid_table",
+                SETUP_STATUS=None,
+                SETUP_ERROR_MSG=None,
+                SETUP_TIME=None,
+            )
+        )
+        # Keys present (so callers can tell "readiness does not apply to this table" from
+        # "no readiness information available at all") but null: not ready, not failed.
+        self.assertIn("setup_status", data)
+        self.assertIsNone(data["setup_status"])
+        self.assertIsNone(data["setup_error_msg"])
+        self.assertIsNone(data["setup_time"])
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("ready", "SETUP_READY", None),
+        ("notready", "SETUP_NOTREADY", None),
+        ("failed", "SETUP_FAILED", "online store setup failed: quota exceeded"),
+    )
+    def test_each_status_surfaced(self, status: str, error_msg: Optional[str]) -> None:
+        setup_time = datetime.datetime(2026, 8, 10, 1, 2, 3)
+        data = self._display_data(self._oft_row(SETUP_STATUS=status, SETUP_ERROR_MSG=error_msg, SETUP_TIME=setup_time))
+        self.assertEqual(data["setup_status"], status)
+        self.assertEqual(data["setup_error_msg"], error_msg)
+        self.assertEqual(data["setup_time"], setup_time.isoformat())
+
+    def test_lowercase_setup_columns_handled(self) -> None:
+        data = self._display_data(
+            Row(
+                target_lag="15 seconds",
+                refresh_mode="AUTO",
+                scheduling_state="STARTED",
+                store_type="postgres",
+                setup_status="SETUP_FAILED",
+                setup_error_msg="boom",
+            )
+        )
+        self.assertEqual(data["setup_status"], "SETUP_FAILED")
+        self.assertEqual(data["setup_error_msg"], "boom")
+
+    def test_non_display_json_stays_online_config_parseable(self) -> None:
+        """``_compose_feature_view`` calls ``OnlineConfig.from_json`` on the non-display JSON.
+
+        ``from_json`` is ``cls(**data)`` and so rejects unknown keys; the setup fields must stay out
+        of the ``include_online_service_metadata=False`` result.
+        """
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(
+            fs,
+            "_find_object",
+            MagicMock(return_value=[self._oft_row(SETUP_STATUS="SETUP_NOTREADY", SETUP_ERROR_MSG=None)]),
+        )
+        json_str = fs._determine_online_config_from_oft("my_fv", "v1")
+        self.assertNotIn("setup_status", json.loads(json_str))
+        cfg = OnlineConfig.from_json(json_str)
+        self.assertEqual(cfg.store_type, OnlineStoreType.POSTGRES)
+
+
+class RealtimeListingSetupStatusTest(parameterized.TestCase):
+    """Setup-readiness fields on the RTFV listing path."""
+
+    # Snowpark normalizes StructField names to uppercase, hence the case-insensitive match.
+    _ONLINE_CONFIG_INDEX = [f.name.strip('"').upper() for f in fs_mod._LIST_FEATURE_VIEW_BASE_FIELDS].index(
+        "ONLINE_CONFIG"
+    )
+
+    def _rtfv_metadata(self) -> RealtimeConfigMetadata:
+        return RealtimeConfigMetadata(
+            name="RTFV",
+            version="v1",
+            desc="a realtime fv",
+            compute_fn_name="_rtfv_compute_fn",
+            compute_fn_source="def _rtfv_compute_fn(txn): ...",
+            sources=[],
+            request_schema_json=None,
+            output_schema_json="{}",
+            output_columns=["risk_score"],
+            entity_names=["USER"],
+        )
+
+    def _online_config_for(self, oft_show_row: Optional[Row]) -> dict[str, Any]:
+        fs = MagicMock()
+        output_values: list[list[Any]] = []
+        output_values_extra: list[list[Any]] = []
+        rtfv_mod.append_realtime_listing_row(
+            feature_store=fs,
+            rtfv_metadata=self._rtfv_metadata(),
+            oft_show_row=oft_show_row,
+            output_values=output_values,
+            output_values_extra=output_values_extra,
+            fv_kind_realtime="REALTIME",
+            default_storage_config_json='{"format": "snowflake"}',
+        )
+        self.assertLen(output_values, 1)
+        data: dict[str, Any] = json.loads(output_values[0][self._ONLINE_CONFIG_INDEX])
+        return data
+
+    def test_absent_columns_leave_online_config_unchanged(self) -> None:
+        """Without the setup-readiness columns, the RTFV blob must stay byte-identical."""
+        data = self._online_config_for(Row(name="RTFV$v1$ONLINE", created_on=None, owner="ROLE"))
+        self.assertNotIn("setup_status", data)
+        # Still round-trips through the strict OnlineConfig parser.
+        self.assertEqual(
+            OnlineConfig.from_json(json.dumps(data)).store_type,
+            OnlineStoreType.POSTGRES,
+        )
+
+    def test_missing_oft_row_does_not_raise(self) -> None:
+        data = self._online_config_for(None)
+        self.assertNotIn("setup_status", data)
+        self.assertTrue(data["enable"])
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("ready", "SETUP_READY", None),
+        ("notready", "SETUP_NOTREADY", None),
+        ("failed", "SETUP_FAILED", "postgres schema creation failed"),
+    )
+    def test_each_status_surfaced(self, status: str, error_msg: Optional[str]) -> None:
+        setup_time = datetime.datetime(2026, 8, 10, 9, 8, 7)
+        data = self._online_config_for(
+            Row(
+                name="RTFV$v1$ONLINE",
+                created_on=None,
+                owner="ROLE",
+                SETUP_STATUS=status,
+                SETUP_ERROR_MSG=error_msg,
+                SETUP_TIME=setup_time,
+            )
+        )
+        self.assertEqual(data["setup_status"], status)
+        self.assertEqual(data["setup_error_msg"], error_msg)
+        self.assertEqual(data["setup_time"], setup_time.isoformat())
+        # RTFVs are always Postgres-backed, so setup readiness always applies to them.
+        self.assertEqual(data["store_type"], OnlineStoreType.POSTGRES.value)
+
+    def test_lowercase_setup_columns_handled(self) -> None:
+        data = self._online_config_for(
+            Row(
+                name="RTFV$v1$ONLINE",
+                created_on=None,
+                owner="ROLE",
+                setup_status="SETUP_NOTREADY",
+                setup_error_msg=None,
+            )
+        )
+        self.assertEqual(data["setup_status"], "SETUP_NOTREADY")
+        self.assertIsNone(data["setup_error_msg"])
 
 
 class UpdateFeatureViewPreservesTiledIdentityTest(absltest.TestCase):

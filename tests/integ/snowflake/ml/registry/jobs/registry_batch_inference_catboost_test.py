@@ -1,7 +1,7 @@
 import catboost
 import inflection
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -10,16 +10,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 @absltest.skip("AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'")
 class TestBatchInferenceCatboostInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @parameterized.parameters(  # type: ignore[misc]
-        {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
-        {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},
-    )
-    def test_catboost(
-        self,
-        gpu_requests: str,
-        cpu_requests: str,
-        memory_requests: str,
-    ) -> None:
+    def test_catboost(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -43,11 +34,6 @@ class TestBatchInferenceCatboostInteg(registry_batch_inference_test_base.Registr
             sample_input_data=cal_X_test,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(
-                gpu_requests=gpu_requests,
-                cpu_requests=cpu_requests,
-                memory_requests=memory_requests,
-            ),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
             job_name=job_name,

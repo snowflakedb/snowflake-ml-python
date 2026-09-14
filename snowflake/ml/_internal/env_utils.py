@@ -8,7 +8,7 @@ import textwrap
 import warnings
 from enum import Enum
 from importlib import metadata as importlib_metadata
-from typing import Any, DefaultDict, Optional
+from typing import Any, DefaultDict
 
 import yaml
 from packaging import requirements, specifiers, version
@@ -376,51 +376,11 @@ def get_package_spec_with_supported_ops_only(req: requirements.Requirement) -> r
         A requirements.Requirement object with supported ops only
     """
 
-    if req.name == "numpy":
-        import numpy as np
-
-        package_specifiers = get_numpy_specifiers(req, version.Version(np.__version__).major)
-    else:
-        package_specifiers = [spec for spec in req.specifier if spec.operator in _SUPPORTED_PACKAGE_SPEC_OPS]
+    package_specifiers = [spec for spec in req.specifier if spec.operator in _SUPPORTED_PACKAGE_SPEC_OPS]
 
     new_req = copy.deepcopy(req)
     new_req.specifier = specifiers.SpecifierSet(specifiers=",".join([str(spec) for spec in package_specifiers]))
     return new_req
-
-
-def get_numpy_specifiers(
-    req: requirements.Requirement,
-    client_numpy_major_version: int,
-) -> list[specifiers.Specifier]:
-    """Get the package spec with supported ops only including ==, >=, <=, > and < based on the client numpy
-    major version.
-
-    Args:
-        req: A requirements.Requirement object showing the requirement.
-        client_numpy_major_version: The major version of numpy to be used.
-
-    Returns:
-        A list of specifiers with supported ops only
-    """
-    req_specifiers = []
-    for org_spec in req.specifier:
-        # check specifier that provides upper bound
-        if org_spec.operator in ["<", "<="]:
-            client_version = version.Version(str(client_numpy_major_version))
-            org_spec_version = version.Version(org_spec.version)
-            # check if the client's numpy major version is less than the specifier's upper bound
-            # if so, pin to max possible client major version
-            if client_version.major < org_spec_version.major:
-                modified_spec = specifiers.Specifier(f"<{client_version.major + 1}")
-                req_specifiers.append(modified_spec)
-            else:
-                # use the original specifier
-                req_specifiers.append(org_spec)
-        else:
-            # use the original specifier
-            req_specifiers.append(org_spec)
-
-    return req_specifiers
 
 
 def _relax_specifier_set(
@@ -493,7 +453,7 @@ def get_matched_package_versions_in_information_schema(
     session: session.Session,
     reqs: list[requirements.Requirement],
     python_version: str,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> dict[str, list[version.Version]]:
     """Look up the information_schema table to check if a package with the specified specifier exists in the Snowflake
     Conda channel. Note that this is not the source of truth due to the potential delay caused by a package that might
@@ -567,7 +527,7 @@ def save_conda_env_file(
     path: pathlib.Path,
     conda_chan_deps: DefaultDict[str, list[requirements.Requirement]],
     python_version: str,
-    cuda_version: Optional[str] = None,
+    cuda_version: str | None = None,
     default_channel_override: str = SNOWFLAKE_CONDA_CHANNEL_URL,
 ) -> None:
     """Generate conda.yml file given a dict of dependencies after validation.
@@ -688,7 +648,7 @@ def _has_torch_dependency(pip_deps: list[requirements.Requirement]) -> bool:
 def save_requirements_file(
     path: pathlib.Path,
     pip_deps: list[requirements.Requirement],
-    cuda_version: Optional[str] = None,
+    cuda_version: str | None = None,
 ) -> list[str]:
     """Generate Python requirements.txt file in the given directory path.
 
@@ -727,9 +687,9 @@ def load_conda_env_file(
     path: pathlib.Path,
 ) -> tuple[
     DefaultDict[str, list[requirements.Requirement]],
-    Optional[list[requirements.Requirement]],
-    Optional[str],
-    Optional[str],
+    list[requirements.Requirement] | None,
+    str | None,
+    str | None,
 ]:
     """Read conda.yml file to get a dict of dependencies after validation.
     The channels part of conda.yml file will be processed with following rules:
@@ -830,7 +790,7 @@ def load_requirements_file(path: pathlib.Path) -> list[requirements.Requirement]
 PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+))?(\.*)?")
 
 
-def parse_python_version_string(dep: str) -> Optional[str]:
+def parse_python_version_string(dep: str) -> str | None:
     if dep.startswith("python"):
         m = PYTHON_VERSION_PATTERN.match(dep)
         if m is None:
@@ -849,7 +809,7 @@ def parse_python_version_string(dep: str) -> Optional[str]:
 
 def _find_conda_dep_spec(
     conda_chan_deps: DefaultDict[str, list[requirements.Requirement]], pkg_name: str
-) -> Optional[tuple[str, requirements.Requirement]]:
+) -> tuple[str, requirements.Requirement] | None:
     for channel in conda_chan_deps:
         spec = next(filter(lambda req: req.name == pkg_name, conda_chan_deps[channel]), None)
         if spec:
@@ -857,7 +817,7 @@ def _find_conda_dep_spec(
     return None
 
 
-def _find_pip_req_spec(pip_reqs: list[requirements.Requirement], pkg_name: str) -> Optional[requirements.Requirement]:
+def _find_pip_req_spec(pip_reqs: list[requirements.Requirement], pkg_name: str) -> requirements.Requirement | None:
     spec = next(filter(lambda req: req.name == pkg_name, pip_reqs), None)
     return spec
 
@@ -866,9 +826,9 @@ def find_dep_spec(
     conda_chan_deps: DefaultDict[str, list[requirements.Requirement]],
     pip_reqs: list[requirements.Requirement],
     conda_pkg_name: str,
-    pip_pkg_name: Optional[str] = None,
+    pip_pkg_name: str | None = None,
     remove_spec: bool = False,
-) -> Optional[requirements.Requirement]:
+) -> requirements.Requirement | None:
     if pip_pkg_name is None:
         pip_pkg_name = conda_pkg_name
     spec_conda = _find_conda_dep_spec(conda_chan_deps, conda_pkg_name)

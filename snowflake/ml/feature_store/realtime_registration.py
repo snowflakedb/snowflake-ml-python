@@ -786,6 +786,16 @@ def append_realtime_listing_row(
     (``created_on``, ``owner``). Missing OFT row → ``owner=None,
     created_on=None`` (matches FG listings).
 
+    The OFT's setup-readiness fields (``setup_status``, ``setup_error_msg``,
+    ``setup_time``) are folded into the emitted ``online_config`` JSON when SHOW
+    returns those columns, and omitted when it does not. RTFVs are always
+    Postgres-backed, so setup readiness always applies to them; unlike batch FVs
+    they never see the "present but NULL" case. ``SETUP_NOTREADY`` means setup has
+    not concluded yet, not that setup failed; ``SETUP_FAILED`` is the failure
+    signal. ``SETUP_READY`` is also reported when nothing has ever been reported
+    for the table, and in that case ``setup_status`` may later read
+    ``SETUP_FAILED``.
+
     Args:
         feature_store: Calling ``FeatureStore``.
         rtfv_metadata: Persisted RTFV configuration row.
@@ -808,6 +818,21 @@ def append_realtime_listing_row(
     created_on = oft_show_row["created_on"] if oft_show_row is not None else None
     owner = oft_show_row["owner"] if oft_show_row is not None else None
 
+    # Fold the OFT's setup-readiness fields into the online_config JSON, matching
+    # how the batch/streaming listing path surfaces them. Imported lazily because
+    # ``feature_store`` is a TYPE_CHECKING-only import here (module cycle).
+    online_config_json = online_config.to_json()
+    if oft_show_row is not None:
+        from snowflake.ml.feature_store.feature_store import (
+            _oft_setup_status_display_fields,
+        )
+
+        setup_fields = _oft_setup_status_display_fields(oft_show_row)
+        if setup_fields:
+            display_data = json.loads(online_config_json)
+            display_data.update(setup_fields)
+            online_config_json = json.dumps(display_data)
+
     values: list[Any] = [
         rtfv_metadata.name,
         rtfv_metadata.version,
@@ -822,7 +847,7 @@ def append_realtime_listing_row(
         None,  # scheduling_state
         None,  # warehouse
         None,  # cluster_by
-        online_config.to_json(),
+        online_config_json,
         default_storage_config_json,
         None,  # stream_config
         fv_kind_realtime,

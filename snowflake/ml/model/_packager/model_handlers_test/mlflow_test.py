@@ -243,6 +243,36 @@ class MLFlowHandlerTest(absltest.TestCase):
                 # load_model loads directly from disk without opening a run, so no extra backend call.
                 self.assertEqual(sqlite_backend.call_count, save_time_backend_calls)
 
+    def test_mlflow_save_model_relog_preserves_native_model_and_serialization_format(self) -> None:
+        # Re-logging must hand the scikit-learn estimator, not MLflow's PyFunc wrapper, to the flavor's
+        # log_model, and must keep the serialization backend the model was saved with. The skops backend
+        # (MLflow's default from 3.14 on) rejects the wrapper, and silently switching backends adds a
+        # serializer dependency that the model environment does not declare.
+        db = datasets.load_diabetes(as_frame=True)
+        X_train, _, y_train, _ = model_selection.train_test_split(db.data, db.target)
+        rf = ensemble.RandomForestRegressor(n_estimators=10, max_depth=3, max_features=3)
+        rf.fit(X_train, y_train)
+        signature = mlflow.models.signature.infer_signature(X_train, rf.predict(X_train))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "saved_model")
+            mlflow.sklearn.save_model(
+                rf,
+                save_path,
+                signature=signature,
+                serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            )
+            saved_model = mlflow.pyfunc.load_model(save_path)
+
+            with mlflow_handler._sqlite_tracking_backend() as experiment_id:
+                re_logged_model = mlflow_handler._re_log_to_mlflow_run(saved_model, experiment_id)
+
+                self.assertIsInstance(re_logged_model.get_raw_model(), ensemble.RandomForestRegressor)
+                self.assertEqual(
+                    re_logged_model.metadata.flavors[mlflow.sklearn.FLAVOR_NAME]["serialization_format"],
+                    mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+                )
+
     def test_mlflow_model_df_inputs(self) -> None:
         db = datasets.load_diabetes(as_frame=True)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)

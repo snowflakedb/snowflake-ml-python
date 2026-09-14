@@ -434,7 +434,15 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     def test_delete_streaming_fv_with_dependent_fg_fails_before_offline_drop(self) -> None:
         """delete_feature_view must raise 099940 before dropping the offline DT when a
         FeatureGroup still depends on the streaming FV's OFT.
+
+        The rejection comes from the server-side drop guard, which is account-gated, so this
+        only asserts anything where that gate is on. Where it is off the DROP is accepted and
+        nothing is raised, which is correct behavior rather than a failure.
         """
+        rows = self._session.sql("SHOW PARAMETERS LIKE 'ENABLE_OFT_DROP_GUARD_ENFORCE' IN ACCOUNT").collect()
+        if not rows or rows[0]["value"].lower() != "true":
+            self.skipTest("ENABLE_OFT_DROP_GUARD_ENFORCE is not enabled on this account")
+
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
         fv_name = f"STREAM_FV_{s}"

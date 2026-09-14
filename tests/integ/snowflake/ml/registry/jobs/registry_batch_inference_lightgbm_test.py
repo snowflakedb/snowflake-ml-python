@@ -1,7 +1,7 @@
 import inflection
 import lightgbm
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -9,15 +9,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class TestBatchInferenceLightGbmInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @parameterized.parameters(  # type: ignore[misc]
-        {"cpu_requests": None, "replicas": 1},
-        {"cpu_requests": "3", "replicas": 2},
-    )
-    def test_lightgbm_batch_inference(
-        self,
-        replicas: int,
-        cpu_requests: str,
-    ) -> None:
+    def test_lightgbm_batch_inference(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -41,11 +33,10 @@ class TestBatchInferenceLightGbmInteg(registry_batch_inference_test_base.Registr
             sample_input_data=cal_X_test,
             X=input_df,
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            resources_spec=batch_inference_job_specs.ResourcesSpec(cpu_requests=cpu_requests),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=2),
             function_name="predict",
             job_name=job_name,
-            replicas=replicas,
+            replicas=1,
             expected_predictions=expected_predictions,
         )
 

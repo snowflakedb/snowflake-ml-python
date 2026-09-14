@@ -1,6 +1,6 @@
 import os
 import tempfile
-from typing import Iterable, Optional
+from typing import Iterable
 from unittest import mock
 
 import cloudpickle as cp
@@ -37,9 +37,9 @@ class DataConnectorTest(parameterized.TestCase):
         dp = self._sut.to_torch_datapipe(batch_size=2, shuffle=False, drop_last_batch=True)
         count = 0
         for batch in dp:
-            np.testing.assert_array_equal(batch["col1"], expected_res[count]["col1"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col2"], expected_res[count]["col2"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col1"], expected_res[count]["col1"])
+            np.testing.assert_array_equal(batch["col2"], expected_res[count]["col2"])
+            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])
             count += 1
         self.assertEqual(count, len(expected_res))
 
@@ -54,9 +54,9 @@ class DataConnectorTest(parameterized.TestCase):
         # Ensure iterating through a second time (e.g. second epoch) works
         count2 = 0
         for batch in dl:
-            np.testing.assert_array_equal(batch["col1"].numpy(), expected_res[count2]["col1"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col2"].numpy(), expected_res[count2]["col2"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col1"].numpy(), expected_res[count2]["col1"])
+            np.testing.assert_array_equal(batch["col2"].numpy(), expected_res[count2]["col2"])
+            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])
             count2 += 1
         self.assertEqual(count2, len(expected_res))
 
@@ -71,7 +71,7 @@ class DataConnectorTest(parameterized.TestCase):
         )
 
     @parameterized.parameters((1, 2), (2, None), (None, 2), (None, 7), (7, None))  # type: ignore[misc]
-    def test_to_torch_dataset_batch_sizes(self, native_batch: Optional[int], data_loader_batch: Optional[int]) -> None:
+    def test_to_torch_dataset_batch_sizes(self, native_batch: int | None, data_loader_batch: int | None) -> None:
         # The expected dimensions of each column will be (data_loader_batch, native_batch, sample_dim).
         # Column 1 - scalar data: (data_loader_batch, native_batch, 1)
         # Column 2 - 2D numerical data: (data_loader_batch, native_batch, 2)
@@ -110,18 +110,18 @@ class DataConnectorTest(parameterized.TestCase):
         count = 0
         loader = torch_data.DataLoader(ds, batch_size=None)
         for batch in loader:
-            np.testing.assert_array_equal(batch["col1"], expected_res[count]["col1"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col2"], expected_res[count]["col2"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col1"], expected_res[count]["col1"])
+            np.testing.assert_array_equal(batch["col2"], expected_res[count]["col2"])
+            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])
             count += 1
         self.assertEqual(count, len(expected_res))
 
         # Ensure iterating through a second time (e.g. second epoch) works
         count2 = 0
         for batch in loader:
-            np.testing.assert_array_equal(batch["col1"].numpy(), expected_res[count2]["col1"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col2"].numpy(), expected_res[count2]["col2"])  # type: ignore[arg-type]
-            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col1"].numpy(), expected_res[count2]["col1"])
+            np.testing.assert_array_equal(batch["col2"].numpy(), expected_res[count2]["col2"])
+            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])
             count2 += 1
         self.assertEqual(count2, len(expected_res))
 
@@ -205,7 +205,7 @@ class DataConnectorTest(parameterized.TestCase):
         for batch in loader:
             torch.testing.assert_close(batch["col1"], expected_res[count]["col1"])
             torch.testing.assert_close(batch["col2"], expected_res[count]["col2"], equal_nan=True)
-            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col3"], expected_res[count]["col3"])
             count += 1
         self.assertEqual(count, len(expected_res))
 
@@ -214,7 +214,7 @@ class DataConnectorTest(parameterized.TestCase):
         for batch in loader:
             torch.testing.assert_close(batch["col1"], expected_res[count2]["col1"])
             torch.testing.assert_close(batch["col2"], expected_res[count2]["col2"], equal_nan=True)
-            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])  # type: ignore[arg-type]
+            np.testing.assert_array_equal(batch["col3"], expected_res[count2]["col3"])
             count2 += 1
         self.assertEqual(count2, len(expected_res))
 

@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
@@ -6,7 +6,7 @@ from snowflake.ml.experiment._client import artifact
 from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import dataframe, file_operation, row, session, types
+from snowflake.snowpark import dataframe, file_operation, functions, row, session, types
 
 RUN_NAME_COL_NAME = "name"
 RUN_METADATA_COL_NAME = "metadata"
@@ -16,7 +16,7 @@ def pivot_run_attributes(
     sp_session: session.Session,
     rows: list[row.Row],
     run_names: list[str],
-    cast_value: Optional[type] = None,
+    cast_value: type | None = None,
 ) -> dataframe.DataFrame:
     """Pivot SHOW RUN METRICS/PARAMETERS rows into one row per run.
 
@@ -123,7 +123,7 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         *,
         experiment_name: sql_identifier.SqlIdentifier,
         run_name: sql_identifier.SqlIdentifier,
-        source_info: Optional[str] = None,
+        source_info: str | None = None,
     ) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         query = f"ALTER EXPERIMENT {experiment_fqn} ADD RUN {run_name}"
@@ -139,7 +139,7 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         *,
         experiment_name: sql_identifier.SqlIdentifier,
         run_name: sql_identifier.SqlIdentifier,
-        status: Optional[run_metadata.RunStatus] = None,
+        status: run_metadata.RunStatus | None = None,
     ) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         query = f"ALTER EXPERIMENT {experiment_fqn} COMMIT RUN {run_name}"
@@ -255,7 +255,7 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
     def show_runs_in_experiment(
-        self, *, experiment_name: sql_identifier.SqlIdentifier, like: Optional[str] = None
+        self, *, experiment_name: sql_identifier.SqlIdentifier, like: str | None = None
     ) -> list[row.Row]:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         like_clause = f"LIKE '{like}'" if like else ""
@@ -268,8 +268,8 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         self,
         *,
         experiment_name: sql_identifier.SqlIdentifier,
-        run_name: Optional[sql_identifier.SqlIdentifier] = None,
-        like: Optional[str] = None,
+        run_name: sql_identifier.SqlIdentifier | None = None,
+        like: str | None = None,
     ) -> list[row.Row]:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         run_name_clause = f"RUN {run_name}" if run_name else ""
@@ -279,12 +279,45 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         ).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def get_run_metrics_history(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: sql_identifier.SqlIdentifier,
+    ) -> dataframe.DataFrame:
+        """Return every logged metric point of a run, ordered by name then step.
+
+        Args:
+            experiment_name: Name of the experiment containing the run.
+            run_name: Name of the run to read metric history from.
+
+        Returns:
+            A Snowpark DataFrame with ``name``, ``step``, ``value``, and ``timestamp`` columns.
+        """
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        history: dataframe.DataFrame = (
+            self._session.table_function(
+                "SYSTEM$GET_EXPERIMENT_RUN_METRICS",
+                functions.lit(experiment_fqn),
+                functions.lit(str(run_name)),
+            )
+            .select(
+                functions.col("METRIC_NAME").alias('"name"'),
+                functions.col("STEP").cast(types.IntegerType()).alias('"step"'),
+                functions.col("VALUE").cast(types.DoubleType()).alias('"value"'),
+                functions.col("TIMESTAMP").alias('"timestamp"'),
+            )
+            .sort(functions.col('"name"').asc(), functions.col('"step"').asc())
+        )
+        return history
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
     def show_run_parameters_in_experiment(
         self,
         *,
         experiment_name: sql_identifier.SqlIdentifier,
-        run_name: Optional[sql_identifier.SqlIdentifier] = None,
-        like: Optional[str] = None,
+        run_name: sql_identifier.SqlIdentifier | None = None,
+        like: str | None = None,
     ) -> list[row.Row]:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         run_name_clause = f"RUN {run_name}" if run_name else ""

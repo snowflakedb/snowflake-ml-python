@@ -145,7 +145,7 @@ def _validate_feature_area_tag(attrs):
     Args:
         attrs: Rule attributes
     """
-    VALID_FEATURE_AREAS = ["model_registry", "feature_store", "jobs", "observability", "experiment_tracking", "cortex", "core", "modeling", "model_serving", "data", "none"]
+    VALID_FEATURE_AREAS = ["model_registry", "feature_store", "jobs", "experiment_tracking", "cortex", "core", "modeling", "model_serving", "data", "none"]
 
     tags = attrs.get("tags", [])
     feature_tags = [tag for tag in tags if tag.startswith("feature:")]

@@ -247,6 +247,100 @@ def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
     return OnlineStoreType.HYBRID_TABLE
 
 
+# Setup-readiness columns on SHOW ONLINE FEATURE TABLES. When setup-readiness
+# information is not available for a table, these columns are **absent from the result
+# row entirely** rather than present-and-NULL. "Column missing" is therefore an
+# ordinary case and must never raise -- reads go through
+# ``_oft_show_row_optional_field`` rather than the strict ``extract_field`` used for
+# always-present columns such as ``target_lag``.
+_OFT_SETUP_STATUS_FIELDS = ("setup_status", "setup_error_msg", "setup_time")
+
+
+def _oft_show_row_optional_field(row: Row, field_name: str) -> tuple[bool, Any]:
+    """Read a possibly-absent SHOW ONLINE FEATURE TABLES column.
+
+    Same defensive shape as :func:`_store_type_from_oft_show_row`: try the
+    lowercase key, then the uppercase key, then report absence instead of
+    raising. Absence and a present NULL are reported distinctly because they
+    mean different things for the setup-readiness columns (no setup-readiness
+    information is available at all vs. the table is not Postgres-backed, so
+    readiness does not apply to it).
+
+    Args:
+        row: A Snowpark ``Row`` from SHOW ONLINE FEATURE TABLES.
+        field_name: Lowercase column name to read.
+
+    Returns:
+        ``(present, value)``. ``present`` is False only when the column is
+        absent under both casings, in which case ``value`` is ``None``.
+    """
+    if field_name in row:
+        return True, row[field_name]
+    upper = field_name.upper()
+    if upper in row:
+        return True, row[upper]
+    return False, None
+
+
+def _json_safe_oft_value(value: Any) -> Any:
+    """Coerce a SHOW column value into something ``json.dumps`` accepts.
+
+    Strings (``setup_status``, ``setup_error_msg``) and ``None`` pass through
+    untouched so statuses stay verbatim; ``setup_time`` arrives as a
+    ``datetime`` and is rendered ISO-8601.
+
+    Args:
+        value: Raw value read off the SHOW row.
+
+    Returns:
+        The value unchanged when it is already JSON-encodable as-is, its
+        ``isoformat()`` when it is date-like, otherwise ``str(value)``.
+    """
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)
+
+
+def _oft_setup_status_display_fields(row: Row) -> dict[str, Any]:
+    """Extract the OFT setup-readiness fields from a SHOW row for display.
+
+    Keys are emitted verbatim (``setup_status``, ``setup_error_msg``,
+    ``setup_time``) and only for columns actually present on the row, so the
+    resulting dict is empty when the row does not carry those columns. A column
+    that is present but NULL is emitted as ``None`` -- for ``setup_status`` that
+    means the online feature table is not Postgres-backed, so setup readiness
+    does not apply to it.
+
+    ``setup_status`` values, passed through exactly as SHOW reports them:
+
+    - ``SETUP_READY``: setup concluded successfully, **or** nothing has ever been
+      reported for the table. These two are indistinguishable here, and in the
+      never-reported case a first report can still arrive later, so a
+      ``SETUP_READY`` may subsequently read ``SETUP_FAILED``.
+    - ``SETUP_NOTREADY``: setup has not concluded yet. This is **not** a failure
+      and it may persist. ``SETUP_FAILED`` is the failure signal.
+    - ``SETUP_FAILED``: setup failed; ``setup_error_msg`` carries the reason.
+
+    ``setup_error_msg`` is NULL for both non-failure statuses.
+
+    Args:
+        row: A Snowpark ``Row`` from SHOW ONLINE FEATURE TABLES.
+
+    Returns:
+        Mapping of present setup columns to JSON-encodable values; empty when
+        none of the columns are present on the row.
+    """
+    fields: dict[str, Any] = {}
+    for field_name in _OFT_SETUP_STATUS_FIELDS:
+        present, value = _oft_show_row_optional_field(row, field_name)
+        if present:
+            fields[field_name] = _json_safe_oft_value(value)
+    return fields
+
+
 # Module-local alias kept so existing callers continue to reference
 # ``_ENTITY_TAG_PREFIX``; the canonical value lives in
 # :data:`snowflake.ml.feature_store.spec.enums.ENTITY_TAG_PREFIX`.
@@ -2073,6 +2167,29 @@ class FeatureStore:
             FeatureViews information as a Snowpark DataFrame. Each row always includes
             ``append_only`` (bool). ``initialization_warehouse``, ``source_refs`` and
             ``backup_source`` (all string, nullable) are included only when ``verbose=True``.
+
+            The JSON in the ``online_config`` column may additionally carry the online feature
+            table's setup-readiness fields:
+
+            - ``setup_status``: one of ``SETUP_READY``, ``SETUP_NOTREADY`` or ``SETUP_FAILED``.
+            - ``setup_error_msg``: the failure reason when ``setup_status`` is ``SETUP_FAILED``;
+              null otherwise.
+            - ``setup_time``: ISO-8601 timestamp for when setup concluded.
+
+            These keys are absent from the JSON when no setup-readiness information is available
+            for the online feature table, and are present-but-null when the table is not
+            Postgres-backed, since readiness does not apply to it. Test for key presence rather
+            than assuming the keys exist.
+
+            ``SETUP_FAILED`` is the failure signal, and ``setup_error_msg`` carries the reason.
+            ``SETUP_NOTREADY`` means setup has not concluded yet; it is not a failure, and it may
+            persist.
+
+            Known limitation: ``SETUP_READY`` is reported both when setup concluded successfully
+            and when nothing has ever been reported for the table, and callers cannot distinguish
+            the two. In the second case a first report can still arrive later, so ``setup_status``
+            may change from ``SETUP_READY`` to ``SETUP_FAILED``. Treat ``SETUP_READY`` as "no
+            failure has been reported" rather than as confirmation that setup completed.
 
         Example::
 
@@ -8235,6 +8352,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             version: Feature view version
             include_online_service_metadata: If True, includes additional Online Service metadata
                 (refresh_mode, scheduling_state) in the JSON for display purposes.
+                Also includes the setup-readiness fields (``setup_status``, ``setup_error_msg``,
+                ``setup_time``) when SHOW returns those columns; see
+                ``_oft_setup_status_display_fields`` for their meaning. They are omitted
+                entirely when SHOW does not return those columns.
                 If False, returns only OnlineConfig-compatible JSON.
 
         Returns:
@@ -8294,6 +8415,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
                 display_data["refresh_mode"] = extract_field(oft_row, "refresh_mode")
                 display_data["scheduling_state"] = extract_field(oft_row, "scheduling_state")
+                # Setup-readiness columns: omitted entirely when SHOW does not return them.
+                display_data.update(_oft_setup_status_display_fields(oft_row))
 
                 return json.dumps(display_data)
             else:

@@ -760,6 +760,54 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertEqual(call_kwargs["artifact_path"], rel_path)
             self.assertEqual(call_kwargs["target_path"], local_dir)
 
+    def test_get_metric_history_no_experiment_raises(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.get_metric_history()
+        self.assertIn("No experiment set", str(ctx.exception))
+
+    def test_get_metric_history_no_run_raises(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.get_metric_history()
+        self.assertIn("No run is active", str(ctx.exception))
+        self.mock_sql_client.get_run_metrics_history.assert_not_called()
+
+    def test_get_metric_history_uses_active_run(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.start_run("RUN1")
+
+        exp.get_metric_history()
+
+        kwargs = self.mock_sql_client.get_run_metrics_history.call_args[1]
+        self.assertEqual(kwargs["experiment_name"].identifier(), "EXP1")
+        self.assertEqual(kwargs["run_name"].identifier(), "RUN1")
+
+    def test_get_metric_history_with_run_name(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+
+        history = self.mock_sql_client.get_run_metrics_history.return_value
+        result = exp.get_metric_history(run_name="RUN_A")
+
+        kwargs = self.mock_sql_client.get_run_metrics_history.call_args[1]
+        self.assertEqual(kwargs["run_name"].identifier(), "RUN_A")
+        # Without a metric name, no filter is applied.
+        history.filter.assert_not_called()
+        self.assertIs(result, history)
+
+    def test_get_metric_history_with_metric_name_filters(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+
+        history = self.mock_sql_client.get_run_metrics_history.return_value
+        result = exp.get_metric_history(run_name="RUN_A", metric_name="accuracy")
+
+        history.filter.assert_called_once()
+        self.assertIs(result, history.filter.return_value)
+
     def test_list_metrics_no_experiment_raises(self) -> None:
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
         with self.assertRaises(RuntimeError) as ctx:

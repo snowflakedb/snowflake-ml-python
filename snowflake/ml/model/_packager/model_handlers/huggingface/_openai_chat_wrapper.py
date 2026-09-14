@@ -1,7 +1,7 @@
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, cast
 
 from packaging import version
 
@@ -27,9 +27,11 @@ class HuggingFaceOpenAICompatibleModel:
         """
 
         self.pipeline = pipeline
-        self.model = self.pipeline.model
-        self.tokenizer = self.pipeline.tokenizer
-        self.model_name = self.pipeline.model.name_or_path
+        # transformers 5.x types pipeline.model / pipeline.tokenizer as optional/union backends; at runtime they
+        # are the concrete model and tokenizer objects, so keep them dynamically typed here.
+        self.model: Any = cast(Any, self.pipeline.model)
+        self.tokenizer: Any = cast(Any, self.pipeline.tokenizer)
+        self.model_name = self.model.name_or_path
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -66,17 +68,17 @@ class HuggingFaceOpenAICompatibleModel:
                         )
                     # TODO: implement other content types
 
-        # Use the tokenizer's apply_chat_template method.
-        # We ensured a template exists in __init__.
-        if hasattr(self.tokenizer, "apply_chat_template"):
+        # Only delegate to the tokenizer when it has a chat template; otherwise apply ChatML formatting
+        # ourselves so a model without a chat template still works through the OpenAI-compatible endpoint.
+        has_chat_template = getattr(self.tokenizer, "chat_template", None) is not None
+        if has_chat_template and hasattr(self.tokenizer, "apply_chat_template"):
             return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
                 final_messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
 
-        # Fallback for very old transformers without apply_chat_template
-        # Manually apply ChatML-like formatting
+        # Manually apply ChatML-like formatting when the tokenizer has no chat template.
         prompt = ""
         for message in final_messages:
             role = message.get("role", "user")
@@ -109,13 +111,13 @@ class HuggingFaceOpenAICompatibleModel:
     def generate_chat_completion(
         self,
         messages: list[dict[str, Any]],
-        max_completion_tokens: Optional[int] = None,
-        stream: Optional[bool] = False,
-        stop_strings: Optional[list[str]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
+        max_completion_tokens: int | None = None,
+        stream: bool | None = False,
+        stop_strings: list[str] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
         n: int = 1,
     ) -> dict[str, Any]:
         """
@@ -174,7 +176,7 @@ class HuggingFaceOpenAICompatibleModel:
         do_sample = actual_temperature > 0.0
 
         # Set up generation config following best practices from serve.py
-        generation_config = transformers.GenerationConfig(
+        generation_config = transformers.GenerationConfig(  # type: ignore[no-untyped-call]
             max_new_tokens=max_completion_tokens if max_completion_tokens is not None else 1024,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,

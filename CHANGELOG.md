@@ -1,6 +1,33 @@
 # Release History
 
-## 2.0.0
+## 2.1.0
+
+### New Features
+
+* Experiment Tracking: Added `ExperimentTracking.get_metric_history`, which returns every logged step of a
+  metric instead of only the value at the highest step reported by `list_metrics`. Pass a metric name to scope
+  the result to one metric, or omit it to get every metric of the run. The result is a lazy Snowpark DataFrame
+  with `name`, `step`, `value`, and `timestamp` columns, so filtering and aggregation run in Snowflake.
+
+* Feature Store: `list_feature_views()` now surfaces the online feature table's setup readiness in the
+  `online_config` JSON as `setup_status`, `setup_error_msg` and `setup_time`, for both batch/streaming
+  and realtime feature views. The keys are present only when setup-readiness information is available
+  for the table, so test for key presence. `SETUP_NOTREADY` means setup has not concluded yet, not
+  that setup failed; `SETUP_FAILED` is the failure signal. Note that `SETUP_READY` is also reported
+  when nothing has ever been reported for the table, and in that case `setup_status` may later change
+  to `SETUP_FAILED`.
+
+### Bug Fixes
+
+* Registry: Fixed logging of MLflow models created with `mlflow.sklearn.save_model()`. The model is
+  now re-logged from the scikit-learn estimator using the serialization format it was saved with,
+  instead of from MLflow's PyFunc wrapper with the version-dependent default format.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.0.0 (2026-09-09)
 
 Release candidate for the `snowflake-ml-python` 2.0 major release. This is a breaking
 release that removes deprecated APIs and slims down the default install footprint.
@@ -11,6 +38,10 @@ release that removes deprecated APIs and slims down the default install footprin
   call returns as soon as the request is recorded; the change runs in the background and can take hours on a large
   Online Service, which keeps serving online reads and stream ingestion throughout. Poll
   `get_online_service_status()` until `status` is `RUNNING` at the requested size.
+
+* ML Jobs: `submit_file`, `submit_directory`, `submit_from_stage`, and `@remote` accept a `comment` kwarg, attached as
+  the comment on the job service. When omitted, the comment defaults to the `application` name configured on the
+  session, so jobs submitted by a tool or partner integration remain attributable after the fact.
 
 ### Bug Fixes
 
@@ -90,9 +121,6 @@ release that removes deprecated APIs and slims down the default install footprin
 
 * Experiment Tracking: Source provenance now also records the id of the enclosing ML job when a run is created from
   inside one.
-* ML Jobs: `submit_file`, `submit_directory`, `submit_from_stage`, and `@remote` accept a `comment` kwarg, attached as
-  the comment on the job service. When omitted, the comment defaults to the `application` name configured on the
-  session, so jobs submitted by a tool or partner integration remain attributable after the fact.
 
 ### Bug Fixes
 
@@ -104,6 +132,9 @@ release that removes deprecated APIs and slims down the default install footprin
 * Feature Store: Fixed FeatureStore.update_feature_view() failing with `SQL compilation error:
   invalid value 'ADAPTIVE' for property 'REFRESH_MODE'` when enabling online storage for an existing
   feature view.
+* Feature Store: online feature reads and stream ingestion no longer fail while the Online Service is
+  changing size (status `UPDATING_SIZE`). The service serves reads and writes throughout a size
+  change, which can take hours, so it is now treated as serviceable like `UPDATING` already was.
 
 ### Behavior Changes
 
@@ -137,10 +168,6 @@ release that removes deprecated APIs and slims down the default install footprin
   other store types.
 
 ### Bug Fixes
-
-* Feature Store: online feature reads and stream ingestion no longer fail while the Online Service is
-  changing size (status `UPDATING_SIZE`). The service serves reads and writes throughout a size
-  change, which can take hours, so it is now treated as serviceable like `UPDATING` already was.
 
 ### Behavior Changes
 
