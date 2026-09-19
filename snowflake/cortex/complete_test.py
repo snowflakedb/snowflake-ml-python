@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from io import BytesIO
 from types import GeneratorType
-from typing import Any, Iterable, Iterator, Union, cast
+from typing import Any, Iterable, Iterator, cast
 
 import _test_util
 from absl.testing import absltest
@@ -280,8 +280,8 @@ def fake_xp_request_handler(
     assert "/cortex/" in url
 
     def _handle_json_mode_xp(
-        response_format_obj: dict[str, Any], prompt: Union[str, list[ConversationMessage], Column]
-    ) -> Union[dict[str, Any], None]:
+        response_format_obj: dict[str, Any], prompt: str | list[ConversationMessage] | Column
+    ) -> dict[str, Any] | None:
         def _prepare_error_response_template(
             status_code: int, message: str, error_code: str, request_id: str
         ) -> dict[str, Any]:
@@ -773,7 +773,7 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
     def _execute_json_mode_complete_xp(
         self, model_name: str, jsonmode_utils_obj: schema_utils.JsonModeTestUtils
-    ) -> Union[str, Iterator[str], snowpark.Column]:
+    ) -> str | Iterator[str] | snowpark.Column:
         return _complete._complete_impl(
             snow_api_xp_request_handler=fake_xp_request_handler,
             model=model_name,
@@ -784,7 +784,7 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
     def _execute_json_mode_complete_rest(
         self, model_name: str, jsonmode_utils_obj: schema_utils.JsonModeTestUtils
-    ) -> Union[str, Iterator[str], snowpark.Column]:
+    ) -> str | Iterator[str] | snowpark.Column:
         return _complete._complete_impl(
             model=model_name,
             prompt=jsonmode_utils_obj.prompt,

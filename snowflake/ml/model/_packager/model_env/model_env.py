@@ -3,7 +3,7 @@ import itertools
 import os
 import pathlib
 import warnings
-from typing import DefaultDict, Optional
+from typing import DefaultDict
 
 from packaging import requirements, version
 
@@ -45,8 +45,8 @@ def is_pip_only_packaging_enabled() -> bool:
 
 def resolve_prefer_pip_for_automatic_dependencies(
     *,
-    target_platforms: Optional[list[model_types.TargetPlatform]],
-    conda_dependencies: Optional[list[str]],
+    target_platforms: list[model_types.TargetPlatform] | None,
+    conda_dependencies: list[str] | None,
     force_conda_defaults: bool = False,
 ) -> bool:
     """Return whether automatic packaging deps should go on pip (vs conda).
@@ -75,10 +75,10 @@ def resolve_prefer_pip_for_automatic_dependencies(
 class ModelEnv:
     def __init__(
         self,
-        conda_env_rel_path: Optional[str] = None,
-        pip_requirements_rel_path: Optional[str] = None,
+        conda_env_rel_path: str | None = None,
+        pip_requirements_rel_path: str | None = None,
         prefer_pip_for_automatic_dependencies: bool = False,
-        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
+        target_platforms: list[model_types.TargetPlatform] | None = None,
     ) -> None:
         if conda_env_rel_path is None:
             conda_env_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_CONDA_ENV_FILENAME)
@@ -87,12 +87,12 @@ class ModelEnv:
         self.prefer_pip_for_automatic_dependencies: bool = prefer_pip_for_automatic_dependencies
         self.conda_env_rel_path = pathlib.PurePosixPath(pathlib.Path(conda_env_rel_path).as_posix())
         self.pip_requirements_rel_path = pathlib.PurePosixPath(pathlib.Path(pip_requirements_rel_path).as_posix())
-        self.artifact_repository_map: Optional[dict[str, str]] = None
-        self.resource_constraint: Optional[dict[str, str]] = None
+        self.artifact_repository_map: dict[str, str] | None = None
+        self.resource_constraint: dict[str, str] | None = None
         self._conda_dependencies: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(list)
         self._pip_requirements: list[requirements.Requirement] = []
         self._python_version: version.Version = version.parse(snowml_env.PYTHON_VERSION)
-        self._cuda_version: Optional[version.Version] = None
+        self._cuda_version: version.Version | None = None
         self._snowpark_ml_version: version.Version = version.parse(snowml_version.VERSION)
         self._target_platforms = target_platforms
         self._warnings_shown: set[str] = set()
@@ -109,7 +109,7 @@ class ModelEnv:
     @conda_dependencies.setter
     def conda_dependencies(
         self,
-        conda_dependencies: Optional[list[str]] = None,
+        conda_dependencies: list[str] | None = None,
     ) -> None:
         self._conda_dependencies = env_utils.validate_conda_dependency_string_list(
             conda_dependencies if conda_dependencies else [], add_local_version_specifier=True
@@ -123,7 +123,7 @@ class ModelEnv:
     @pip_requirements.setter
     def pip_requirements(
         self,
-        pip_requirements: Optional[list[str]] = None,
+        pip_requirements: list[str] | None = None,
     ) -> None:
         self._pip_requirements = env_utils.validate_pip_requirement_string_list(
             pip_requirements if pip_requirements else [], add_local_version_specifier=True
@@ -134,18 +134,18 @@ class ModelEnv:
         return f"{self._python_version.major}.{self._python_version.minor}"
 
     @python_version.setter
-    def python_version(self, python_version: Optional[str] = None) -> None:
+    def python_version(self, python_version: str | None = None) -> None:
         if python_version:
             self._python_version = version.parse(python_version)
 
     @property
-    def cuda_version(self) -> Optional[str]:
+    def cuda_version(self) -> str | None:
         if self._cuda_version:
             return f"{self._cuda_version.major}.{self._cuda_version.minor}"
         return None
 
     @cuda_version.setter
-    def cuda_version(self, cuda_version: Optional[str] = None) -> None:
+    def cuda_version(self, cuda_version: str | None = None) -> None:
         # We need to check this as CUDA version would be set inside the handler, while python_version or snowpark
         # ML version would not.
         if cuda_version:
@@ -163,12 +163,12 @@ class ModelEnv:
         return str(self._snowpark_ml_version)
 
     @snowpark_ml_version.setter
-    def snowpark_ml_version(self, snowpark_ml_version: Optional[str] = None) -> None:
+    def snowpark_ml_version(self, snowpark_ml_version: str | None = None) -> None:
         if snowpark_ml_version:
             self._snowpark_ml_version = version.parse(snowpark_ml_version)
 
     @property
-    def target_platforms(self) -> Optional[list[model_types.TargetPlatform]]:
+    def target_platforms(self) -> list[model_types.TargetPlatform] | None:
         """The target platforms for this model, or None if not explicitly set."""
         return self._target_platforms
 
@@ -306,7 +306,7 @@ class ModelEnv:
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=False
         )
         if xgboost_spec:
-            pinned_major: Optional[int] = None
+            pinned_major: int | None = None
             for spec in xgboost_spec.specifier:
                 if spec.operator in ("==", "===", ">", ">="):
                     try:
@@ -482,7 +482,7 @@ class ModelEnv:
         self,
         base_dir: pathlib.Path,
         default_channel_override: str = env_utils.SNOWFLAKE_CONDA_CHANNEL_URL,
-        is_gpu: Optional[bool] = False,
+        is_gpu: bool | None = False,
     ) -> model_meta_schema.ModelEnvDict:
         cuda_version = self.cuda_version if is_gpu else None
         has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())

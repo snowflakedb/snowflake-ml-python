@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import pathlib
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -85,7 +85,7 @@ class FSTemplating:
     configurations: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Optional[dict[str, Any]]) -> FSTemplating:
+    def from_dict(cls, data: dict[str, Any] | None) -> FSTemplating:
         if not data:
             return cls()
         configurations = data.get("configurations") or {}
@@ -109,7 +109,7 @@ class FSTarget:
     database: str
     schema: str
     role: str = ""
-    templating_config: Optional[str] = None
+    templating_config: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FSTarget:
@@ -154,7 +154,7 @@ class FSManifest:
 
     manifest_version: int
     project_type: str
-    default_target: Optional[str] = None
+    default_target: str | None = None
     targets: dict[str, FSTarget] = field(default_factory=dict)
     templating: FSTemplating = field(default_factory=FSTemplating)
 
@@ -305,7 +305,7 @@ class FSManifest:
         self._validate_target_configuration_exists(target)
         return target
 
-    def get_effective_target(self, target_name: Optional[str] = None) -> FSTarget:
+    def get_effective_target(self, target_name: str | None = None) -> FSTarget:
         """Resolve an explicit target or fall back to ``default_target``.
 
         Args:

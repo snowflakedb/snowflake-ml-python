@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any
 
 from absl.testing import absltest
 
@@ -17,7 +17,7 @@ class ExperimentTrackingSourceInfoIntegTest(ExperimentTrackingIntegTestBase):
     JSON payload and the deployed server must accept it and create the run.
     """
 
-    def _add_run(self, experiment_name: str, run_name: str, source_info: Optional[_source_info.SourceInfo]) -> None:
+    def _add_run(self, experiment_name: str, run_name: str, source_info: _source_info.SourceInfo | None) -> None:
         self.exp.set_experiment(experiment_name=experiment_name)
         source_info_json = None
         if source_info is not None and not source_info.is_empty():

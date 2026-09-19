@@ -1,6 +1,6 @@
 import copy
 import functools
-from typing import Any, Callable, Optional, get_args
+from typing import Any, Callable, get_args
 
 from snowflake import snowpark
 from snowflake.ml.data import data_source
@@ -34,9 +34,9 @@ def _wrap_class_func(fn: Callable[..., snowpark.DataFrame]) -> Callable[..., sno
     return wrapped
 
 
-def get_data_sources(*args: Any) -> Optional[list[data_source.DataSource]]:
+def get_data_sources(*args: Any) -> list[data_source.DataSource] | None:
     """Helper method for extracting data sources attribute from DataFrames in an argument list"""
-    result: Optional[list[data_source.DataSource]] = None
+    result: list[data_source.DataSource] | None = None
     for arg in args:
         srcs = getattr(arg, _DATA_SOURCES_ATTR, None)
         if isinstance(srcs, list) and all(isinstance(s, get_args(data_source.DataSource)) for s in srcs):
@@ -46,7 +46,7 @@ def get_data_sources(*args: Any) -> Optional[list[data_source.DataSource]]:
     return result
 
 
-def set_data_sources(obj: Any, data_sources: Optional[list[data_source.DataSource]]) -> None:
+def set_data_sources(obj: Any, data_sources: list[data_source.DataSource] | None) -> None:
     """Helper method for attaching data sources to an object"""
     if data_sources:
         assert all(isinstance(ds, get_args(data_source.DataSource)) for ds in data_sources)

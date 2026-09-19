@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 from warnings import warn
 
 import xgboost as xgb
@@ -21,9 +21,9 @@ class SnowflakeXgboostCallback(xgb.callback.TrainingCallback):
         log_metrics: bool = True,
         log_params: bool = True,
         log_every_n_epochs: int = 1,
-        model_name: Optional[str] = None,
-        version_name: Optional[str] = None,
-        model_signature: Optional["ModelSignature"] = None,
+        model_name: str | None = None,
+        version_name: str | None = None,
+        model_signature: "ModelSignature | None" = None,
     ) -> None:
         """
         Initialize the callback.

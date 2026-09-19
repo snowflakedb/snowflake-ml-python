@@ -1205,6 +1205,24 @@ py_test(
 )
 
 py_test(
+    name = "fetch_progress_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_fetch_progress.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_fetch_progress.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "api_project_test",
     srcs = [
         "tests/__init__.py",
@@ -1689,6 +1707,40 @@ py_test(
     ],
     data = [":decl_loader_test_fixtures"],
     main = "tests/test_planner_batch_feature_view.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "append_only_cron_roundtrip_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_append_only_cron_roundtrip.py",
+    ],
+    main = "tests/test_append_only_cron_roundtrip.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "cron_refresh_freq_parity_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_cron_refresh_freq_parity.py",
+    ],
+    main = "tests/test_cron_refresh_freq_parity.py",
     tags = [
         "feature:feature_store",
         "short_regress",

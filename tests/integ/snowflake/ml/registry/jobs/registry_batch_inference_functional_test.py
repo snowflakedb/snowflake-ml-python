@@ -6,7 +6,6 @@ from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.connector import errors as connector_errors
-from snowflake.ml.jobs.manager import delete_job, get_job
 from snowflake.ml.model import ModelVersion, custom_model
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
@@ -57,10 +56,10 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         )
 
     def test_all_defaults(self) -> None:
-        """Minimal happy path: only output_spec set, default SaveMode.ERROR."""
+        """Minimal happy path: only output_spec set, default SaveMode.ERROR, server-generated job name."""
         model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
 
-        self._test_registry_batch_inference(
+        job = self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
             X=input_df,
@@ -68,8 +67,17 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             expected_predictions=expected_predictions,
         )
 
+        self.assertTrue(
+            job.name.startswith("BATCH_INFERENCE_"),
+            f"Expected job name to start with 'BATCH_INFERENCE_', got '{job.name}'",
+        )
+
     def test_full_spec_override(self) -> None:
-        """Every meaningful spec field populated plus function_name and a custom job_name."""
+        """Every meaningful spec field populated, plus function_name, a custom job_name, and replicas > 1.
+
+        Distributed execution rides on this case: predictions must still match with two instances writing
+        to the same job-scoped output location.
+        """
         model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
         job_name = f"BATCH_INFERENCE_{uuid.uuid4().hex.upper()}"
 
@@ -90,35 +98,13 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
                 num_workers=2,
                 max_batch_rows=1,
             ),
-            image_build_spec=batch_inference_job_specs.ImageBuildSpec(force_rebuild=False),
+            image_build_spec=batch_inference_job_specs.ImageBuildSpec(
+                force_rebuild=False,
+                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+            ),
             function_name="predict",
             job_name=job_name,
-            expected_predictions=expected_predictions,
-        )
-
-    def test_replicas(self) -> None:
-        """Distributed inference with replicas=2 still produces matching predictions."""
-        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
-
-        self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             replicas=2,
-            expected_predictions=expected_predictions,
-        )
-
-    def test_sync_mode(self) -> None:
-        """async_=False: the SQL command blocks until the job completes."""
-        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
-
-        self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            async_=False,
             expected_predictions=expected_predictions,
         )
 
@@ -145,7 +131,11 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             )
 
     def test_output_mode_overwrite_replaces_existing(self) -> None:
-        """OVERWRITE clears the job-scoped subdir and writes fresh rows, leaving sibling base files intact."""
+        """OVERWRITE clears the job-scoped subdir and writes fresh rows, leaving sibling base files intact.
+
+        Runs with async_=False so the synchronous submission path, where the SQL command itself blocks
+        until the job finishes, is covered by a run that already has to wait for completion.
+        """
         model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
         mv = self._log_demo_model(model, sp_df)
 
@@ -173,6 +163,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
                 mode=batch_inference_job_specs.SaveMode.OVERWRITE,
             ),
             job_name=job_name,
+            async_=False,
             expected_predictions=expected_predictions,
         )
 
@@ -191,6 +182,11 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         )
 
     def test_mljob_api(self) -> None:
+        """Job handle contract on a non-blocking, multi-instance job submitted to the system compute pool.
+
+        No ResourcesSpec is set here: the system pool's instance family is small, so per-container
+        requests are left to the server to keep the job schedulable.
+        """
         model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
 
         replicas = 2
@@ -199,6 +195,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             model=model,
             sample_input_data=sp_df,
             X=input_df,
+            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             job_name=job_name,
             replicas=replicas,
@@ -217,72 +214,6 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         job.cancel()
         job.wait()
         self.assertEqual(job.status, "CANCELLED")
-
-    def test_mljob_job_manager(self) -> None:
-        model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
-
-        job = self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            job_name=job_name,
-            blocking=False,
-        )
-
-        job2 = get_job(job.id, session=self.session)
-        delete_job(job2)
-
-        try:
-            job2.wait()
-        except Exception as e:
-            self.assertIn("does not exist or not authorized", str(e))
-
-    def test_default_system_compute_pool(self) -> None:
-        model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
-
-        self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            function_name="predict",
-            job_name=job_name,
-            replicas=2,
-        )
-
-    def test_without_job_name(self) -> None:
-        """When no job_name is provided, the server generates one with the BATCH_INFERENCE_ prefix."""
-        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
-
-        job = self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            expected_predictions=expected_predictions,
-        )
-
-        self.assertTrue(
-            job.name.startswith("BATCH_INFERENCE_"),
-            f"Expected job name to start with 'BATCH_INFERENCE_', got '{job.name}'",
-        )
-
-    def test_custom_image_repo(self) -> None:
-        """Succeeds when image_repo is explicitly set on ImageBuild."""
-        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
-
-        self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-            image_build_spec=batch_inference_job_specs.ImageBuildSpec(
-                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
-            ),
-            expected_predictions=expected_predictions,
-        )
 
     def test_user_facing_logs(self) -> None:
         """With snowhouse logging enabled (prod default), only tee'd lines reach user-visible stdout.

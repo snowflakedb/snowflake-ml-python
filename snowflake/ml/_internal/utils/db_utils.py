@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.snowpark import session
@@ -17,9 +17,9 @@ def db_object_exists(
     object_type: SnowflakeDbObjectType,
     object_name: sql_identifier.SqlIdentifier,
     *,
-    database_name: Optional[sql_identifier.SqlIdentifier] = None,
-    schema_name: Optional[sql_identifier.SqlIdentifier] = None,
-    statement_params: Optional[dict[str, Any]] = None,
+    database_name: sql_identifier.SqlIdentifier | None = None,
+    schema_name: sql_identifier.SqlIdentifier | None = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> bool:
     """Check if object exists in database.
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Literal, Mapping, Optional, cast
+from typing import Any, Literal, Mapping, cast
 
 from snowflake.ml.feature_store.decl.compiler import canonicalize_sql_for_hash
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
@@ -1274,7 +1274,7 @@ def compute_local_spec_hash(
     database: str,
     schema: str,
     *,
-    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
 ) -> str:
     """Compile a local FV spec dict and return its full-spec hash.
 
@@ -1541,7 +1541,7 @@ def _check_feature_aggregations(spec: dict[str, Any]) -> list[ValidationResult]:
 
 def _check_versions(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
 ) -> list[ValidationResult]:
     """Version management invariants.
 
@@ -1593,11 +1593,11 @@ def _check_versions(
 
 def _check_idempotency(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
     target_database: str = "",
     target_schema: str = "",
     *,
-    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
 ) -> tuple[bool, list[ValidationResult]]:
     """Content-hash idempotency check.
 
@@ -1664,7 +1664,7 @@ def _check_idempotency(
 
 def _check_column_evolution(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
 ) -> list[ValidationResult]:
     """Column-evolution invariants for feature views and sources."""
     if applied is None:
@@ -2091,7 +2091,7 @@ def _ordered_join_key_names(payload: Any) -> list[str]:
 
 def _check_entity_join_keys_immutable(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
 ) -> list[ValidationResult]:
     """Reject join-key edits on an already-deployed entity at plan time.
 
@@ -2141,7 +2141,7 @@ def _check_entity_join_keys_immutable(
 
 def _check_destructive(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
 ) -> list[ValidationResult]:
     """Detect changes that require re-materialization.
 
@@ -2205,7 +2205,7 @@ def _check_destructive(
 
 def _check_state_sync(
     spec: dict[str, Any],
-    applied: Optional[AppliedObject],
+    applied: AppliedObject | None,
 ) -> list[ValidationResult]:
     """State-synchronization invariants (concurrent modification / state drift)."""
     if applied is None:
@@ -2343,7 +2343,7 @@ def batch_feature_view_structural_equivalent(
     database: str,
     schema: str,
     *,
-    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
 ) -> bool:
     """Return True if local and deployed batch FVs differ only operationally.
 
@@ -2378,7 +2378,7 @@ def batch_feature_view_structural_equivalent(
     _ri = applied_payload.get("spec")
     remote_inner = _ri if isinstance(_ri, dict) else {}
 
-    def _project(inner: dict[str, Any], ref_inner: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _project(inner: dict[str, Any], ref_inner: dict[str, Any] | None = None) -> dict[str, Any]:
         """Project the FV inner spec onto its semantic-stable subset.
 
         Mirrors the BatchFV parity normalisation in
@@ -2698,7 +2698,7 @@ def _check_source_compatibility(
     # Check 1: column-level changes for sources present in both batch and applied
     # -------------------------------------------------------------------------
     for src_name, new_src in batch_sources.items():
-        applied_src_obj: Optional[AppliedObject] = None
+        applied_src_obj: AppliedObject | None = None
         for obj in applied_state.objects.values():
             if obj.kind in _SOURCE_KINDS and obj.name == src_name:
                 applied_src_obj = obj

@@ -4,7 +4,7 @@ import os
 import posixpath
 import tempfile
 from itertools import chain
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import cloudpickle as cp
 import numpy as np
@@ -124,7 +124,7 @@ class Pipeline(base.BaseTransformer):
         self._transformers_to_input_indices: dict[str, list[int]] = {}
         self._modifies_label_or_sample_weight = True
 
-        self._model_signature_dict: Optional[dict[str, ModelSignature]] = None
+        self._model_signature_dict: dict[str, ModelSignature] | None = None
 
         deps: set[str] = {f"pandas=={pd.__version__}", f"scikit-learn=={skversion}"}
         for _, obj in steps:
@@ -149,7 +149,7 @@ class Pipeline(base.BaseTransformer):
     def _get_transformers(self) -> list[tuple[str, Any]]:
         return self.steps[:-1] if self._is_final_step_estimator else self.steps
 
-    def _get_estimator(self) -> Optional[tuple[str, Any]]:
+    def _get_estimator(self) -> tuple[str, Any] | None:
         return self.steps[-1] if self._is_final_step_estimator else None
 
     def _validate_steps(self) -> None:
@@ -246,17 +246,13 @@ class Pipeline(base.BaseTransformer):
                 all_columns=all_cols, target_columns=input_cols
             )
 
-    def _transform_dataset(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def _transform_dataset(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         transformed_dataset = dataset
         for _, trans in self._get_transformers():
             transformed_dataset = trans.transform(transformed_dataset)
         return transformed_dataset
 
-    def _fit_transform_dataset(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def _fit_transform_dataset(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         self._reset()
         self._modifies_label_or_sample_weight = not self._is_pipeline_modifying_label_or_sample_weight()
         transformed_dataset = dataset
@@ -412,7 +408,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame], squash: Optional[bool] = False) -> "Pipeline":
+    def fit(self, dataset: snowpark.DataFrame | pd.DataFrame, squash: bool | None = False) -> "Pipeline":
         """
         Fit the entire pipeline using the dataset.
 
@@ -465,7 +461,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Call `transform` of each transformer in the pipeline.
 
@@ -514,9 +510,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_transform(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def fit_transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and transforms data using the
         estimator. This will only be available if the estimator (or final step) has fit_transform or transform
@@ -560,7 +554,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def fit_predict(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def fit_predict(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Fits all the transformer objs one after another and transforms the data. Then fits and predicts using the
         estimator. This will only be available if the estimator (or final step) has fit_predict or predict
@@ -598,7 +592,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def predict(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and predict using the estimator.
 
@@ -615,9 +609,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def score_samples(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def score_samples(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and predict using the estimator.
 
@@ -634,9 +626,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_proba(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def predict_proba(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_proba` using the estimator.
 
@@ -653,9 +643,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict_log_proba(
-        self, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def predict_log_proba(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `predict_log_proba` using the
         estimator.
@@ -673,7 +661,7 @@ class Pipeline(base.BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def score(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def score(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply `score` using the estimator.
 
@@ -687,8 +675,8 @@ class Pipeline(base.BaseTransformer):
         return self._invoke_estimator_func("score", dataset)
 
     def _invoke_estimator_func(
-        self, func_name: str, dataset: Union[snowpark.DataFrame, pd.DataFrame]
-    ) -> Union[snowpark.DataFrame, pd.DataFrame]:
+        self, func_name: str, dataset: snowpark.DataFrame | pd.DataFrame
+    ) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the dataset by applying all the transformers in order and apply specified estimator function.
 
@@ -888,7 +876,7 @@ class Pipeline(base.BaseTransformer):
     def _get_dependencies(self) -> list[str]:
         return self._deps
 
-    def _generate_model_signatures(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
+    def _generate_model_signatures(self, dataset: snowpark.DataFrame | pd.DataFrame) -> None:
         self._model_signature_dict = dict()
 
         input_columns = self._get_sanitized_list_of_columns(dataset.columns)

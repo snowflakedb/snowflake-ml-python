@@ -4,7 +4,7 @@ import enum
 import logging
 import textwrap
 from collections.abc import Generator
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import yaml
 
@@ -34,11 +34,11 @@ def build_execute_inference_job_service_sql(
     yaml_body: str,
     compute_pool_name: sql_identifier.SqlIdentifier,
     model_fqn: str,
-    version: Optional[sql_identifier.SqlIdentifier],
-    function_name: Optional[str],
-    job_fqn: Optional[str],
+    version: sql_identifier.SqlIdentifier | None,
+    function_name: str | None,
+    job_fqn: str | None,
     async_: bool,
-    replicas: Optional[int],
+    replicas: int | None,
     from_source: str,
 ) -> str:
     """Build the text of an ``EXECUTE INFERENCE JOB SERVICE`` command.
@@ -106,10 +106,10 @@ class ServiceStatusInfo:
     """
 
     service_status: ServiceStatus
-    instance_id: Optional[int] = None
-    instance_status: Optional[str] = None
-    container_status: Optional[str] = None
-    message: Optional[str] = None
+    instance_id: int | None = None
+    instance_status: str | None = None
+    container_status: str | None = None
+    message: str | None = None
 
 
 class ServiceSQLClient(_base._BaseSQLClient):
@@ -147,11 +147,11 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def deploy_model(
         self,
         *,
-        stage_path: Optional[str] = None,
-        model_deployment_spec_yaml_str: Optional[str] = None,
-        model_deployment_spec_file_rel_path: Optional[str] = None,
-        query_params: Optional[list[Any]] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        stage_path: str | None = None,
+        model_deployment_spec_yaml_str: str | None = None,
+        model_deployment_spec_file_rel_path: str | None = None,
+        query_params: list[Any] | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> tuple[str, snowpark.AsyncJob]:
         assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
         if model_deployment_spec_yaml_str:
@@ -179,13 +179,13 @@ class ServiceSQLClient(_base._BaseSQLClient):
         yaml_body: str,
         compute_pool_name: sql_identifier.SqlIdentifier,
         model_fqn: str,
-        version: Optional[sql_identifier.SqlIdentifier],
-        function_name: Optional[str],
-        job_fqn: Optional[str],
+        version: sql_identifier.SqlIdentifier | None,
+        function_name: str | None,
+        job_fqn: str | None,
         async_: bool,
-        replicas: Optional[int],
+        replicas: int | None,
         from_stage_path: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> tuple[str, snowpark.AsyncJob]:
         """Run an ``EXECUTE INFERENCE JOB SERVICE`` SQL command.
 
@@ -228,15 +228,15 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def invoke_function_method(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
         input_df: dataframe.DataFrame,
         input_args: list[sql_identifier.SqlIdentifier],
         returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
-        statement_params: Optional[dict[str, Any]] = None,
-        params: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None,
+        statement_params: dict[str, Any] | None = None,
+        params: list[tuple[sql_identifier.SqlIdentifier, Any]] | None = None,
         unpack_object: bool = True,
     ) -> dataframe.DataFrame:
         with_statements = []
@@ -322,12 +322,12 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def get_service_logs(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
         instance_id: str = "0",
         container_name: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> str:
         system_func = "SYSTEM$GET_SERVICE_LOGS"
         rows = (
@@ -348,11 +348,11 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def get_service_container_statuses(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
         include_message: bool = False,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[ServiceStatusInfo]:
         fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         query = f"SHOW SERVICE CONTAINERS IN SERVICE {fully_qualified_object_name}"
@@ -381,10 +381,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def show_services(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        starts_with: Optional[str] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        starts_with: str | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[row.Row]:
         """Run ``SHOW SERVICES [STARTS WITH '<prefix>'] IN SCHEMA <db>.<schema>``.
 
@@ -419,10 +419,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def describe_service(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> row.Row:
         fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         query = f"DESCRIBE SERVICE {fully_qualified_object_name}"
@@ -465,10 +465,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def drop_service(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -479,10 +479,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     def show_endpoints(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[row.Row]:
         fully_qualified_service_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         res = (

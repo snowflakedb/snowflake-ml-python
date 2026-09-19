@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import numbers
 import uuid
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -102,14 +102,14 @@ class OrdinalEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, list[type_utils.LiteralNDArrayType], dict[str, type_utils.LiteralNDArrayType]] = "auto",
+        categories: str | list[type_utils.LiteralNDArrayType] | dict[str, type_utils.LiteralNDArrayType] = "auto",
         handle_unknown: str = "error",
-        unknown_value: Optional[Union[int, float]] = None,
-        encoded_missing_value: Union[int, float] = np.nan,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        unknown_value: int | float | None = None,
+        encoded_missing_value: int | float = np.nan,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Encode categorical features as an integer column.
@@ -184,7 +184,7 @@ class OrdinalEncoder(base.BaseTransformer):
         if hasattr(self, "_state_pandas"):
             del self._state_pandas
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "OrdinalEncoder":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "OrdinalEncoder":
         """
         Fit the OrdinalEncoder to dataset.
 
@@ -290,7 +290,7 @@ class OrdinalEncoder(base.BaseTransformer):
                 and unknown categories exist in dataset.
         """
         # states of categories found in dataset
-        found_state_df: Optional[snowpark.DataFrame] = None
+        found_state_df: snowpark.DataFrame | None = None
         for input_col in self.input_cols:
             distinct_dataset = dataset[[input_col]].distinct()
 
@@ -467,7 +467,7 @@ class OrdinalEncoder(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform dataset to ordinal codes.
 
@@ -695,7 +695,7 @@ class OrdinalEncoder(base.BaseTransformer):
         ) -> snowpark.DataFrame:
             # dataframe with unknown values
             # columns: COLUMN_NAME, UNKNOWN_VALUE
-            unknown_df: Optional[snowpark.DataFrame] = None
+            unknown_df: snowpark.DataFrame | None = None
             for input_col, output_col in zip(input_cols, output_cols):
                 unknown_columns = [
                     F.lit(input_col),

@@ -4,7 +4,6 @@ import logging
 import os
 import time
 import unittest
-from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest
@@ -165,7 +164,7 @@ class TestRegistryFeatureRetrievalDeploymentInteg(registry_model_deployment_test
 
     def _wait_offline_rows(self, timeout_s: float = 300.0) -> None:
         deadline = time.time() + timeout_s
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         while time.time() < deadline:
             try:
                 if self.fs.read_feature_view(self._registered_fv, store_type=StoreType.OFFLINE).count() > 0:
@@ -178,7 +177,7 @@ class TestRegistryFeatureRetrievalDeploymentInteg(registry_model_deployment_test
     def _wait_online_visible(self, timeout_s: float = 600.0) -> None:
         """Per-key poll until the seed row is visible via OFT vnext (Postgres FVs require keys)."""
         deadline = time.time() + timeout_s
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         while time.time() < deadline:
             try:
                 pdf = self.fs.read_feature_view(

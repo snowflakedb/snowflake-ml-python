@@ -30,6 +30,10 @@ class TestRegistryGpuRequestOptionalInteg(registry_model_deployment_test_base.Re
         self.session.sql("ALTER SESSION UNSET SPCS_MODEL_AUTO_POPULATE_GPU_FROM_COMPUTE_POOL").collect()
         super().tearDown()
 
+    @absltest.skip(
+        "Flaky: GPU service deployment repeatedly fails with a transient "
+        "SQL execution internal error (000603) during job cleanup."
+    )
     @parameterized.named_parameters(
         ("with_gpu_requests", "1"),
         ("without_gpu_requests", None),

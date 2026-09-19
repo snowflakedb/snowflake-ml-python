@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model._client.sql import _base
@@ -9,14 +9,14 @@ class ModuleTagSQLClient(_base._BaseSQLClient):
     def set_tag_on_model(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
         tag_value: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
         fq_tag_name = self.fully_qualified_object_name(tag_database_name, tag_schema_name, tag_name)
@@ -29,13 +29,13 @@ class ModuleTagSQLClient(_base._BaseSQLClient):
     def unset_tag_on_model(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
         fq_tag_name = self.fully_qualified_object_name(tag_database_name, tag_schema_name, tag_name)
@@ -48,13 +48,13 @@ class ModuleTagSQLClient(_base._BaseSQLClient):
     def get_tag_value(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        tag_database_name: Optional[sql_identifier.SqlIdentifier],
-        tag_schema_name: Optional[sql_identifier.SqlIdentifier],
+        tag_database_name: sql_identifier.SqlIdentifier | None,
+        tag_schema_name: sql_identifier.SqlIdentifier | None,
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> row.Row:
         fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
         fq_tag_name = self.fully_qualified_object_name(tag_database_name, tag_schema_name, tag_name)
@@ -72,10 +72,10 @@ class ModuleTagSQLClient(_base._BaseSQLClient):
     def get_tag_list(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[row.Row]:
         fq_model_name = self.fully_qualified_object_name(database_name, schema_name, model_name)
         actual_database_name = database_name or self._database_name

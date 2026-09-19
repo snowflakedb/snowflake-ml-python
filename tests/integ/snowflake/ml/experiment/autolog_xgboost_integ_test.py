@@ -1,5 +1,3 @@
-from typing import Union
-
 import xgboost as xgb
 from absl.testing import absltest, parameterized
 
@@ -12,7 +10,7 @@ from tests.integ.snowflake.ml.experiment.autolog_integ_test_base import (
 class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCase):
     def _train_model(
         self,
-        model_class: type[Union[xgb.XGBModel, xgb.Booster]],
+        model_class: type[xgb.XGBModel | xgb.Booster],
         callback: SnowflakeXgboostCallback,
     ) -> None:
         if issubclass(model_class, xgb.XGBModel):
@@ -31,7 +29,7 @@ class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCa
         (xgb.Booster, "train:rmse", 3),
     )  # type: ignore[misc]
     def test_autolog(
-        self, model_class: type[Union[xgb.XGBModel, xgb.Booster]], metric_name: str, log_every_n_epochs: int
+        self, model_class: type[xgb.XGBModel | xgb.Booster], metric_name: str, log_every_n_epochs: int
     ) -> None:
         """Test that autologging works for XGBoost models."""
         # TODO: Re-enable model logging once xgboost's transitive dependencies (nvidia-nccl-cu12)

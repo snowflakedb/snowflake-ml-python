@@ -1,5 +1,3 @@
-from typing import Union
-
 import lightgbm as lgb
 from absl.testing import absltest, parameterized
 
@@ -12,7 +10,7 @@ from tests.integ.snowflake.ml.experiment.autolog_integ_test_base import (
 class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCase):
     def _train_model(
         self,
-        model_class: type[Union[lgb.LGBMModel, lgb.Booster]],
+        model_class: type[lgb.LGBMModel | lgb.Booster],
         callback: SnowflakeLightgbmCallback,
     ) -> None:
         if issubclass(model_class, lgb.LGBMModel):
@@ -31,7 +29,7 @@ class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCa
         (lgb.Booster, "training:l2", 3),
     )  # type: ignore[misc]
     def test_autolog(
-        self, model_class: type[Union[lgb.LGBMModel, lgb.Booster]], metric_name: str, log_every_n_epochs: int
+        self, model_class: type[lgb.LGBMModel | lgb.Booster], metric_name: str, log_every_n_epochs: int
     ) -> None:
         """Test that autologging works for LightGBM models."""
         self._test_autolog(

@@ -2,7 +2,6 @@
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 _ERR_ROOT_NOT_FOUND = "CodePath: root '{root}' does not exist (resolved to {resolved})."
 _ERR_WILDCARDS_NOT_SUPPORTED = "CodePath: Wildcards are not supported in filter. Got '{filter}'. Use exact paths only."
@@ -33,7 +32,7 @@ class CodePath:
     """
 
     root: str
-    filter: Optional[str] = None
+    filter: str | None = None
 
     def __post_init__(self) -> None:
         if self.filter == "":
@@ -44,7 +43,7 @@ class CodePath:
             return f"CodePath({self.root!r}, filter={self.filter!r})"
         return f"CodePath({self.root!r})"
 
-    def _validate_filter(self) -> Optional[str]:
+    def _validate_filter(self) -> str | None:
         """Validate and normalize filter, returning normalized filter or None.
 
         Returns:

@@ -80,6 +80,10 @@ def has_legacy_distinct_n_aggregations(features: Sequence[AggregationSpec], auth
 _TILE_START_COL = "TILE_START"
 _TILE_BOUNDARY_COL = "TILE_BOUNDARY"
 
+# Iceberg TIME/TIMESTAMP columns reject Snowflake's default scale of 9.
+# TIME_SLICE always returns TIMESTAMP_NTZ(9), even when its input is TIMESTAMP_NTZ(6).
+_ICEBERG_TILE_START_SQL_TYPE = "TIMESTAMP_NTZ(6)"
+
 
 class TilingSqlGenerator:
     """Generates SQL for creating tile Dynamic Tables.
@@ -101,6 +105,8 @@ class TilingSqlGenerator:
         feature_granularity: str,
         features: list[AggregationSpec],
         authoring_pkg_version: str | None = None,
+        *,
+        iceberg: bool = False,
     ) -> None:
         """Initialize the TilingSqlGenerator.
 
@@ -112,6 +118,8 @@ class TilingSqlGenerator:
             features: List of aggregation specifications.
             authoring_pkg_version: snowml version that authored this FV.
                 Controls tile column format for distinct aggregations.
+            iceberg: When True, cast TILE_START to TIMESTAMP_NTZ(6). Iceberg
+                rejects TIME_SLICE's TIMESTAMP_NTZ(9) return type.
 
         Raises:
             ValueError: If list aggregations (LAST_N / FIRST_N / LAST_DISTINCT_N /
@@ -122,6 +130,7 @@ class TilingSqlGenerator:
         self._timestamp_col = timestamp_col
         self._feature_granularity = feature_granularity
         self._features = features
+        self._iceberg = iceberg
 
         # Derive the FV-level secondary key from the synthesized keys-specs
         # (each carries ``source_column = secondary_key``).
@@ -153,6 +162,13 @@ class TilingSqlGenerator:
                 "cannot be combined with secondary-key aggregations."
             )
 
+    def _time_slice_expr(self) -> str:
+        """Return the TIME_SLICE expression for TILE_START, Iceberg-narrowed when needed."""
+        expr = f"TIME_SLICE({self._timestamp_col}, {self._interval_value}, '{self._interval_unit}', 'START')"
+        if self._iceberg:
+            return f"({expr})::{_ICEBERG_TILE_START_SQL_TYPE}"
+        return expr
+
     def generate(self) -> str:
         """Generate the complete tiling SQL query.
 
@@ -165,7 +181,6 @@ class TilingSqlGenerator:
         tile_columns = self._generate_tile_columns()
         # Join keys and timestamp_col are already properly formatted by SqlIdentifier
         join_keys_str = ", ".join(self._join_keys)
-        ts_col = self._timestamp_col
 
         # New-version distinct aggregations are deduplicated in a single pass:
         # an inner subquery marks the first occurrence of each distinct value
@@ -178,9 +193,7 @@ class TilingSqlGenerator:
             tile_start_select = _TILE_START_COL
         else:
             tile_source = f"({self._source_query})"
-            tile_start_select = (
-                f"TIME_SLICE({ts_col}, {self._interval_value}, '{self._interval_unit}', 'START') AS {_TILE_START_COL}"
-            )
+            tile_start_select = f"{self._time_slice_expr()} AS {_TILE_START_COL}"
 
         if not self._has_lifetime_features:
             # Simple case: no lifetime features, just partial aggregations
@@ -227,7 +240,7 @@ FROM (
         """
         join_keys_str = ", ".join(self._join_keys)
         ts_col = self._timestamp_col
-        tile_start_expr = f"TIME_SLICE({ts_col}, {self._interval_value}, '{self._interval_unit}', 'START')"
+        tile_start_expr = self._time_slice_expr()
 
         dedup_cols: list[str] = []
         seen_rn: set[str] = set()
@@ -273,7 +286,6 @@ FROM (
         """
         assert self._secondary_key is not None  # invariant: gated by caller
         join_keys_str = ", ".join(self._join_keys)
-        ts_col = self._timestamp_col
         secondary_key = self._secondary_key
 
         tile_columns = self._generate_tile_columns()
@@ -282,7 +294,7 @@ FROM (
 SELECT
     {join_keys_str},
     {secondary_key},
-    TIME_SLICE({ts_col}, {self._interval_value}, '{self._interval_unit}', 'START') AS {_TILE_START_COL},
+    {self._time_slice_expr()} AS {_TILE_START_COL},
     {', '.join(tile_columns)}
 FROM ({self._source_query})
 GROUP BY {join_keys_str}, {secondary_key}, {_TILE_START_COL}

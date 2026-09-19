@@ -17,7 +17,7 @@ Layers (now shared with SFV via
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -49,14 +49,14 @@ from snowflake.snowpark.types import DoubleType, StringType, StructField, Struct
 # ============================================================================
 
 
-def _make_request_source(columns: Optional[list[tuple[str, str]]] = None) -> RequestSource:
+def _make_request_source(columns: list[tuple[str, str]] | None = None) -> RequestSource:
     fields = columns or [("amount", "double")]
     return RequestSource(
         schema=StructType([StructField(n, DoubleType() if t == "double" else StringType()) for n, t in fields])
     )
 
 
-def _make_upstream_fv(name: str = "TXN_FV", feature_cols: Optional[list[str]] = None) -> FeatureView:
+def _make_upstream_fv(name: str = "TXN_FV", feature_cols: list[str] | None = None) -> FeatureView:
     """Build a registered-looking FeatureView for source tests."""
     feature_cols = feature_cols or ["avg_amount"]
     schema = StructType([StructField("USER_ID", StringType())] + [StructField(c, DoubleType()) for c in feature_cols])

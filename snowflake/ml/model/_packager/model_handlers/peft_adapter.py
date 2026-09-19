@@ -2,7 +2,7 @@ import json
 import os
 import shutil
 import tempfile
-from typing import NoReturn, Optional, cast, final
+from typing import NoReturn, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -63,7 +63,7 @@ def _blob_options_from_config(config_path: str) -> model_meta_schema.PeftAdapter
     return options
 
 
-def _join_subfolder(root: str, subfolder: Optional[str]) -> str:
+def _join_subfolder(root: str, subfolder: str | None) -> str:
     if subfolder is None:
         return root
     return os.path.join(root, subfolder)
@@ -93,10 +93,10 @@ def _copy_top_level_files(*, source_dir: str, dest_dir: str) -> None:
 def _snapshot_download_adapter_repo(
     *,
     repo_id: str,
-    revision: Optional[str],
-    token: Optional[str],
+    revision: str | None,
+    token: str | None,
     local_dir: str,
-    allow_patterns: Optional[str] = None,
+    allow_patterns: str | None = None,
 ) -> str:
     import huggingface_hub
 
@@ -139,8 +139,8 @@ class PeftAdapterModelHandler(_base.BaseModelHandler["peft_adapter_type.PeftAdap
         model: "peft_adapter_type.PeftAdapter",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.PeftAdapterSaveOptions],
     ) -> None:
         _require_lora_adapters_enabled()
@@ -218,7 +218,7 @@ class PeftAdapterModelHandler(_base.BaseModelHandler["peft_adapter_type.PeftAdap
         cls,
         raw_model: "peft_adapter_type.PeftAdapter",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.PeftAdapterLoadOptions],
     ) -> custom_model.CustomModel:
         _invalid_argument("Adapters cannot be converted for warehouse run.")

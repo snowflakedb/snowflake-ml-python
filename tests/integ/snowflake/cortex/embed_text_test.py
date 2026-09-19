@@ -7,6 +7,8 @@ from snowflake.snowpark import Session, functions
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 _TEXT = "Text to embed"
+_MODEL_768 = "e5-base-v2"
+_MODEL_1024 = "multilingual-e5-large"
 
 
 @absltest.skipUnless(
@@ -21,8 +23,8 @@ class EmbedTextTest(absltest.TestCase):
         self._session.close()
 
     def test_embed_text_768(self) -> None:
-        df_in = self._session.create_dataframe([snowpark.Row(model="e5-base-v2", text=_TEXT)])
-        df_out = df_in.select(EmbedText768(functions.col("model"), functions.col("text")))
+        df_in = self._session.create_dataframe([snowpark.Row(text=_TEXT)])
+        df_out = df_in.select(EmbedText768(functions.lit(_MODEL_768), functions.col("text")))
         res = df_out.collect()[0][0]
         self.assertIsInstance(res, list)
         self.assertEqual(len(res), 768)
@@ -31,8 +33,8 @@ class EmbedTextTest(absltest.TestCase):
             self.assertAlmostEqual(first, second, delta=0.01)
 
     def test_embed_text_1024(self) -> None:
-        df_in = self._session.create_dataframe([snowpark.Row(model="multilingual-e5-large", text=_TEXT)])
-        df_out = df_in.select(EmbedText1024(functions.col("model"), functions.col("text")))
+        df_in = self._session.create_dataframe([snowpark.Row(text=_TEXT)])
+        df_out = df_in.select(EmbedText1024(functions.lit(_MODEL_1024), functions.col("text")))
         res = df_out.collect()[0][0]
         self.assertIsInstance(res, list)
         self.assertEqual(len(res), 1024)

@@ -42,6 +42,32 @@ class TilingSqlGeneratorTest(parameterized.TestCase):
         self.assertIn("SUM(AMOUNT)", sql)
         self.assertIn("GROUP BY", sql)
         self.assertIn("USER_ID", sql)
+        self.assertNotIn("TIMESTAMP_NTZ(6)", sql)
+
+    def test_iceberg_casts_tile_start_to_microseconds(self) -> None:
+        """Iceberg rejects TIME_SLICE's TIMESTAMP_NTZ(9); TILE_START is narrowed to scale 6."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_SUM_24H",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            iceberg=True,
+        )
+        sql = generator.generate()
+
+        self.assertIn(
+            "(TIME_SLICE(EVENT_TS, 1, 'HOUR', 'START'))::TIMESTAMP_NTZ(6) AS TILE_START",
+            sql,
+        )
 
     def test_count_aggregation(self) -> None:
         """Test generating tiling SQL for COUNT aggregation."""
@@ -356,6 +382,33 @@ class TilingSqlGeneratorTest(parameterized.TestCase):
         self.assertNotIn("_DEDUP_0", sql)
         # DESC ordering for LAST (in both the dedup window and the array build)
         self.assertIn("ORDER BY EVENT_TS DESC", sql)
+
+    def test_iceberg_casts_distinct_n_tile_start_to_microseconds(self) -> None:
+        """New-version distinct-N Iceberg tiles narrow TIME_SLICE inside the dedup source."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version="1.42.0",
+            iceberg=True,
+        )
+        sql = generator.generate()
+
+        self.assertIn(
+            "(TIME_SLICE(EVENT_TS, 1, 'HOUR', 'START'))::TIMESTAMP_NTZ(6) AS TILE_START",
+            sql,
+        )
 
     def test_new_version_first_distinct_n_dedup_cte(self) -> None:
         """New-version FIRST_DISTINCT_N dedups in a single pass via ROW_NUMBER + CASE."""
@@ -1922,6 +1975,32 @@ class TilingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         self.assertIn("AD_ID,", sql)
         self.assertIn("TIME_SLICE(EVENT_TS, 1, 'HOUR', 'START') AS TILE_START", sql)
         self.assertIn("GROUP BY USER_ID, AD_ID, TILE_START", sql)
+        self.assertNotIn("TIMESTAMP_NTZ(6)", sql)
+
+    def test_iceberg_casts_secondary_key_tile_start_to_microseconds(self) -> None:
+        """Secondary-key Iceberg tiles also narrow TIME_SLICE to TIMESTAMP_NTZ(6)."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_SUM",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=_prepend_keys_specs(features, ["AD_ID"]),
+            iceberg=True,
+        )
+        sql = generator.generate()
+
+        self.assertIn(
+            "(TIME_SLICE(EVENT_TS, 1, 'HOUR', 'START'))::TIMESTAMP_NTZ(6) AS TILE_START",
+            sql,
+        )
 
     def test_secondary_key_avg_emits_scalar_sum_and_count_partials(self) -> None:
         """AVG with a secondary key lands as scalar ``_PARTIAL_SUM`` + ``_PARTIAL_COUNT``.

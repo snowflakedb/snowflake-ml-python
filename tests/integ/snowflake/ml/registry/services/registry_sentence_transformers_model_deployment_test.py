@@ -1,7 +1,6 @@
 import os
 import random
 import tempfile
-from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -38,12 +37,12 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self.cache_dir.cleanup()
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0"]],
+        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0", "transformers"]],
     )
     # TODO: Remove torch dependency when the version is available in go/conda
     def test_sentence_transformers(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
         if pip_requirements is None:
             import sentence_transformers
@@ -103,11 +102,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         )
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0"]],
+        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0", "transformers"]],
     )
     def test_sentence_transformer_wrapper(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
         if not pip_requirements:
             self.skipTest(

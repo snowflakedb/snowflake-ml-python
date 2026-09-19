@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 from warnings import warn
 
 import keras
@@ -21,9 +21,9 @@ class SnowflakeKerasCallback(keras.callbacks.Callback):
         log_metrics: bool = True,
         log_params: bool = True,
         log_every_n_epochs: int = 1,
-        model_name: Optional[str] = None,
-        version_name: Optional[str] = None,
-        model_signature: Optional["ModelSignature"] = None,
+        model_name: str | None = None,
+        version_name: str | None = None,
+        model_signature: "ModelSignature | None" = None,
     ) -> None:
         """
         Creates a new Keras callback.
@@ -57,12 +57,12 @@ class SnowflakeKerasCallback(keras.callbacks.Callback):
         self.version_name = version_name
         self.model_signature = model_signature
 
-    def on_train_begin(self, logs: Optional[dict[str, Any]] = None) -> None:
+    def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
         if self.log_params:
             params = json.loads(self.model.to_json())
             self._experiment_tracking.log_params(utils.flatten_nested_params(params))
 
-    def on_epoch_end(self, epoch: int, logs: Optional[dict[str, Any]] = None) -> None:
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
         if self.log_metrics and logs and epoch % self.log_every_n_epochs == 0:
             for key, value in logs.items():
                 try:
@@ -72,7 +72,7 @@ class SnowflakeKerasCallback(keras.callbacks.Callback):
                 else:
                     self._experiment_tracking.log_metric(key=key, value=value, step=epoch)
 
-    def on_train_end(self, logs: Optional[dict[str, Any]] = None) -> None:
+    def on_train_end(self, logs: dict[str, Any] | None = None) -> None:
         if self.log_model:
             if not self.model_signature:
                 warn(

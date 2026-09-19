@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 from absl.testing import absltest
@@ -30,7 +30,7 @@ def _make_registered_fv(
     online: bool = True,
     store_type: OnlineStoreType = OnlineStoreType.POSTGRES,
     entity_name: str = "USER",
-    entity_join_keys: Optional[list[str]] = None,
+    entity_join_keys: list[str] | None = None,
     schema_key_col: str = "USER_ID",
 ) -> FeatureView:
     join_keys = entity_join_keys or ["USER_ID"]
@@ -58,8 +58,8 @@ def _make_registered_fv(
 
 def _new_fs_with_mocks(
     *,
-    metadata_manager: Optional[MagicMock] = None,
-    session: Optional[MagicMock] = None,
+    metadata_manager: MagicMock | None = None,
+    session: MagicMock | None = None,
 ) -> FeatureStore:
     fs = object.__new__(FeatureStore)
     sess = session or MagicMock()
@@ -82,7 +82,7 @@ def _make_registered_fg(
     *,
     name: str = "FG",
     version: str = "v1",
-    fv: Optional[FeatureView] = None,
+    fv: FeatureView | None = None,
     auto_prefix: bool = True,
 ) -> FeatureGroup:
     fv = fv or _make_registered_fv(name="USER_FV", version="v1", feature_columns=["F1"])

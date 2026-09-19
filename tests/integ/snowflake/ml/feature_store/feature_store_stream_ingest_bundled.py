@@ -22,7 +22,7 @@ import json
 import uuid
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from common_utils import execute_snapshot_refresh
 from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
@@ -81,7 +81,7 @@ def _multi_entity_transform(df: pd.DataFrame) -> pd.DataFrame:
 _multi_entity_transform.__module__ = "__main__"
 
 
-class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
+class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, parameterized.TestCase):
     """Online Service ingest + online read for a key supplied only via ``stream_ingest``."""
 
     def _create_minimal_probe_backfill_table(self, fs: FeatureStore, suffix: str) -> str:
@@ -103,11 +103,22 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
         ).collect()
         return table_name
 
-    def test_stream_ingest_then_spec_oft_online_read_new_key(self) -> None:
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_stream_ingest_then_spec_oft_online_read_new_key(self, iceberg: bool) -> None:
+        """A key written through the stream source after registration reaches Postgres OFT.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table and both landing tables with
+                Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
-        fv_name = f"STREAM_INGEST_FV_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"STREAM_INGEST_FV_{label}_{s}"
         self._make_stream_source(fs, stream)
         backfill_table = self._create_minimal_probe_backfill_table(fs, s)
         backfill_df = self._session.table(backfill_table)
@@ -122,6 +133,7 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -215,12 +227,21 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
         self._poll_online_read(fs, fv_name, "v1", keys=[[pos_key]], validate_fn=_validate_pos, desc="stream +Inf")
         self._poll_online_read(fs, fv_name, "v1", keys=[[neg_key]], validate_fn=_validate_neg, desc="stream -Inf")
 
-    def test_stream_ingest_tiled_fv_spec_oft_online_read(self) -> None:
-        """Tiled streaming FV: ingest multiple raw rows; online read returns tile aggregates for that key."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_stream_ingest_tiled_fv_spec_oft_online_read(self, iceberg: bool) -> None:
+        """Tiled streaming FV: ingest multiple raw rows; online read returns tile aggregates for that key.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
-        fv_name = f"STREAM_INGEST_TILED_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"STREAM_INGEST_TILED_{label}_{s}"
         self._make_stream_source(fs, stream)
         backfill_table = self._create_minimal_probe_backfill_table(fs, s)
         backfill_df = self._session.table(backfill_table)
@@ -241,6 +262,7 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -360,14 +382,26 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             desc="stream ingest continuous tiled",
         )
 
-    def test_stream_ingest_continuous_null_head_tail_events_skipped(self) -> None:
-        """Continuous FV: NULL events at the window edges are skipped; interior valued events drive the aggregate."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_stream_ingest_continuous_null_head_tail_events_skipped(self, iceberg: bool) -> None:
+        """Continuous FV: NULL events at the window edges are skipped; interior valued events drive the aggregate.
+
+        List aggregations are omitted on Iceberg because they tile into ARRAY columns that Iceberg
+        cannot store.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
-        fv_name = f"STREAM_INGEST_CONT_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"STREAM_INGEST_CONT_{label}_{s}"
 
         fs.register_stream_source(
             StreamSource(
@@ -408,11 +442,16 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             Feature.stddev("AMOUNT", "2d").alias("F_STDDEV"),
             Feature.var("AMOUNT", "2d").alias("F_VAR"),
             Feature.approx_count_distinct("CATEGORY", "2d").alias("F_ACD"),
-            Feature.last_n("CATEGORY", "2d", n=3).alias("F_LAST_N"),
-            Feature.first_n("CATEGORY", "2d", n=3).alias("F_FIRST_N"),
-            Feature.last_distinct_n("CATEGORY", "2d", n=3).alias("F_LAST_DISTINCT_N"),
-            Feature.first_distinct_n("CATEGORY", "2d", n=3).alias("F_FIRST_DISTINCT_N"),
         ]
+        if not iceberg:
+            features.extend(
+                [
+                    Feature.last_n("CATEGORY", "2d", n=3).alias("F_LAST_N"),
+                    Feature.first_n("CATEGORY", "2d", n=3).alias("F_FIRST_N"),
+                    Feature.last_distinct_n("CATEGORY", "2d", n=3).alias("F_LAST_DISTINCT_N"),
+                    Feature.first_distinct_n("CATEGORY", "2d", n=3).alias("F_FIRST_DISTINCT_N"),
+                ]
+            )
         fv = FeatureView(
             name=fv_name,
             entities=[self.user_entity],
@@ -421,6 +460,7 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
             feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
         )
@@ -483,14 +523,15 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             self.assertAlmostEqual(float(row["F_STDDEV"]), 81.6497, places=1)
             self.assertAlmostEqual(float(row["F_VAR"]), 6666.6667, places=1)  # population; sample would be 10000
             self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
-            self.assertEqual(_as_list(row["F_LAST_N"]), ["cat1", "cat1", "cat1"], f"last_n={row['F_LAST_N']!r}")
-            self.assertEqual(_as_list(row["F_FIRST_N"]), ["cat1", "cat1", "cat1"], f"first_n={row['F_FIRST_N']!r}")
-            self.assertEqual(
-                _as_list(row["F_LAST_DISTINCT_N"]), ["cat1"], f"last_distinct_n={row['F_LAST_DISTINCT_N']!r}"
-            )
-            self.assertEqual(
-                _as_list(row["F_FIRST_DISTINCT_N"]), ["cat1"], f"first_distinct_n={row['F_FIRST_DISTINCT_N']!r}"
-            )
+            if not iceberg:
+                self.assertEqual(_as_list(row["F_LAST_N"]), ["cat1", "cat1", "cat1"], f"last_n={row['F_LAST_N']!r}")
+                self.assertEqual(_as_list(row["F_FIRST_N"]), ["cat1", "cat1", "cat1"], f"first_n={row['F_FIRST_N']!r}")
+                self.assertEqual(
+                    _as_list(row["F_LAST_DISTINCT_N"]), ["cat1"], f"last_distinct_n={row['F_LAST_DISTINCT_N']!r}"
+                )
+                self.assertEqual(
+                    _as_list(row["F_FIRST_DISTINCT_N"]), ["cat1"], f"first_distinct_n={row['F_FIRST_DISTINCT_N']!r}"
+                )
 
         self._poll_online_read(
             fs,
@@ -501,12 +542,21 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             desc="continuous null head/tail",
         )
 
-    def test_stream_ingest_tiled_approx_count_distinct_online_read(self) -> None:
-        """Tiled streaming FV with approx_count_distinct: ingest rows; online read returns HLL estimate."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_stream_ingest_tiled_approx_count_distinct_online_read(self, iceberg: bool) -> None:
+        """Tiled streaming FV with approx_count_distinct: ingest rows; online read returns HLL estimate.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         stream = f"CAT_{s}"
-        fv_name = f"STREAM_INGEST_HLL_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"STREAM_INGEST_HLL_{label}_{s}"
 
         fs.register_stream_source(
             StreamSource(
@@ -548,6 +598,7 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")

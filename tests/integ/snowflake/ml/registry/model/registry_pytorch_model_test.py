@@ -1,5 +1,3 @@
-from typing import Optional
-
 import pandas as pd
 import torch
 from absl.testing import absltest
@@ -642,7 +640,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
                 super().__init__()
                 self.linear = torch.nn.Linear(10, 3, dtype=torch.float64)
 
-            def forward(self, x: torch.Tensor, *, weights: Optional[list[float]] = None) -> torch.Tensor:
+            def forward(self, x: torch.Tensor, *, weights: list[float] | None = None) -> torch.Tensor:
                 out = self.linear(x)
                 if weights is not None:
                     out = out * torch.tensor(weights, dtype=out.dtype)
@@ -709,7 +707,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
                 super().__init__()
                 self.linear = torch.nn.Linear(10, 3, dtype=torch.float64)
 
-            def forward(self, x: torch.Tensor, *, transform: Optional[list[list[float]]] = None) -> torch.Tensor:
+            def forward(self, x: torch.Tensor, *, transform: list[list[float]] | None = None) -> torch.Tensor:
                 out = self.linear(x)  # (batch, 3)
                 if transform is not None:
                     t = torch.tensor(transform, dtype=out.dtype)  # (3, 3)
@@ -788,7 +786,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
                 super().__init__()
                 self.linear = torch.nn.Linear(10, 1, dtype=torch.float64)
 
-            def forward(self, src: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+            def forward(self, src: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
                 out = self.linear(src)
                 if mask is not None:
                     out = out * mask.unsqueeze(-1).to(out.dtype)

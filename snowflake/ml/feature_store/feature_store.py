@@ -639,6 +639,7 @@ _FV_KIND_REALTIME = "REALTIME"
 _DEFAULT_STORAGE_CONFIG_JSON = StorageConfig().to_json()  # {"format": "snowflake"}
 _DEFAULT_ICEBERG_STORAGE_CONFIG_JSON = StorageConfig(format=StorageFormat.ICEBERG).to_json()  # {"format": "iceberg"}
 
+
 CreationMode = sql_client.CreationOption
 CreationMode.__module__ = __name__
 
@@ -1285,11 +1286,16 @@ class FeatureStore:
                     ),
                 )
 
-        for e in feature_view.entities:
-            if not self._validate_entity_exists(e.name):
+        # Iceberg storage incompatibilities are checked here, ahead of the entity
+        # lookup, because none needs a round trip — and checking at create rather
+        # than at define keeps an already-registered feature view reconstructable.
+        self._validate_iceberg_storage(feature_view)
+
+        for entity in feature_view.entities:
+            if not self._validate_entity_exists(entity.name):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
-                    original_exception=ValueError(f"Entity {e.name} has not been registered."),
+                    original_exception=ValueError(f"Entity {entity.name} has not been registered."),
                 )
 
         # Fail fast if name+version or a column would overflow the Postgres online store identifiers.
@@ -1698,6 +1704,13 @@ class FeatureStore:
 
         # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
+
+        # No update parameter switches storage format, and a str+version argument is
+        # reloaded from the backend. But a caller-supplied FeatureView object is used
+        # as passed, so a locally mutated _storage_config can still reach the recreate
+        # path — re-check here.
+        self._validate_iceberg_storage(feature_view)
+
         # None when _UNSET (user didn't pass refresh_freq); the existing
         # _refresh_freq is preserved below via the conditional assignment.
         actual_refresh_freq: str | None = refresh_freq if refresh_freq is not _UNSET else None
@@ -6981,6 +6994,12 @@ END;"""
         Creates a temporary VIEW, then atomically swaps it with the existing DYNAMIC TABLE.
         Also cleans up any scheduled refresh task and online feature table associated with the DYNAMIC TABLE.
 
+        Note:
+            Dynamic Iceberg tables are managed with ALTER/DROP DYNAMIC TABLE (no ICEBERG keyword),
+            so this also covers re-registering an Iceberg streaming feature view without a
+            refresh cadence, which turns its Dynamic Iceberg Table into a View while its
+            landing tables stay Iceberg.
+
         Args:
             fully_qualified_name: Fully qualified name for the target object.
             column_descs: Column descriptions clause used in the CREATE statement.
@@ -8278,6 +8297,18 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             if not iceberg_config_cache:
                 iceberg_config_cache.update(self._get_all_iceberg_storage_configs())
             storage_config = iceberg_config_cache.get(fv_name.resolved())
+            if storage_config is None and fv_metadata.is_streaming:
+                # A View-backed streaming feature view is absent from SHOW ICEBERG TABLES; its
+                # $UDF_TRANSFORMED landing table carries the Iceberg config. The cache already
+                # covers the whole schema, so this costs no extra query. The listing reports
+                # that SHOW path as-is.
+                landing_config = iceberg_config_cache.get(
+                    FeatureView._get_udf_transformed_table_name(fv_name).resolved()
+                )
+                if landing_config is not None:
+                    # Report the landing-table SHOW path as-is
+                    # (``{registered}_UDF_TRANSFORMED.{randomId}``).
+                    storage_config = landing_config
 
             if storage_config:
                 storage_config_json = storage_config.to_json()
@@ -8490,6 +8521,21 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         storage_config: StorageConfig | None = None
         if fv_metadata.is_iceberg:
             storage_config = self._get_iceberg_storage_config(fv_name)
+            if storage_config is None and fv_metadata.is_streaming:
+                # A streaming feature view with no refresh cadence keeps a View as its offline
+                # object, and a View has no Iceberg form — so it is absent from SHOW ICEBERG
+                # TABLES. Its rows live in the $UDF_TRANSFORMED landing table, which registration
+                # created as an Iceberg table on the same external volume, so recover from there
+                # and report that SHOW path as-is.
+                # The name is derived from this feature view's own physical name inside the
+                # feature store's schema, so it cannot resolve to an unrelated feature view's
+                # storage; a table left behind by an earlier registration of this same
+                # name/version is this feature view's own landing table.
+                landing_config = self._get_iceberg_storage_config(FeatureView._get_udf_transformed_table_name(fv_name))
+                if landing_config is not None:
+                    # Report the landing-table SHOW path as-is
+                    # (``{registered}_UDF_TRANSFORMED.{randomId}``).
+                    storage_config = landing_config
             if storage_config is None:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWML_ERROR,
@@ -8890,13 +8936,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 if resolved_key not in seen_join_keys:
                     seen_join_keys.add(resolved_key)
                     ordered_join_keys.append(resolved_key)
-        # GS dedupes ingest on the OFT primary key from spec; Quake strips
-        # the secondary key back out of the PK after we add it.
         if config.store_type == OnlineStoreType.POSTGRES and feature_view.aggregation_secondary_keys:
-            for sk in feature_view.aggregation_secondary_keys:
-                if sk not in seen_join_keys:
-                    seen_join_keys.add(sk)
-                    ordered_join_keys.append(sk)
+            for secondary_key in feature_view.aggregation_secondary_keys:
+                resolved_secondary_key = SqlIdentifier(secondary_key).resolved()
+                if resolved_secondary_key not in seen_join_keys:
+                    seen_join_keys.add(resolved_secondary_key)
+                    ordered_join_keys.append(resolved_secondary_key)
         primary_key_clause = fv_mod.build_oft_primary_key_clause(ordered_join_keys)
         target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._BATCH_OFT_TARGET_LAG
         # StreamingFeatureView OFTs are spec-backed and require request-time freshness.
@@ -9136,14 +9181,6 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 if resolved not in seen_entity_cols:
                     seen_entity_cols.add(resolved)
                     entity_columns.append(resolved)
-
-        # GS dedupes on ``ordered_entity_column_names`` and ignores
-        # ``ordered_secondary_key_column_names``; Quake strips SKs back out
-        # before storing.
-        if feature_view.aggregation_secondary_keys:
-            for sk in feature_view.aggregation_secondary_keys:
-                if sk not in seen_entity_cols:
-                    entity_columns.append(sk)
 
         if feature_view.is_tiled:
             if offline_materialized_schema is None:
@@ -9444,6 +9481,23 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 ),
             )
         return sorted_versions
+
+    def _validate_iceberg_storage(self, feature_view: FeatureView) -> None:
+        """Wrap Iceberg storage checks as INVALID_ARGUMENT for create and update.
+
+        Args:
+            feature_view: Feature view about to be registered or updated.
+
+        Raises:
+            SnowflakeMLException: [ValueError] Iceberg storage is incompatible with
+                this feature view.
+        """
+        try:
+            feature_view._validate_iceberg_storage()
+        except ValueError as validation_error:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT, original_exception=validation_error
+            ) from validation_error
 
     def _validate_feature_view_name_and_version_input(
         self, feature_view: FeatureView | str, version: str | None = None

@@ -1,12 +1,14 @@
 import contextlib
 import functools
+import inspect
 import io
 import os
 import subprocess
 import sys
 import tempfile
+import typing
 from pathlib import Path
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Callable, Generator
 
 from absl.testing import absltest, parameterized
 
@@ -33,7 +35,7 @@ def function_with_pos_arg_modules(a: str, b: int) -> None:
     print(a, b + 1, dummy_function())  # noqa: T201: we need to print here.
 
 
-def function_with_opt_arg(a: str, b: int, c: float = 0.0, d: Optional[int] = None) -> None:
+def function_with_opt_arg(a: str, b: int, c: float = 0.0, d: int | None = None) -> None:
     print(a, b + 1, c * 2, d)  # noqa: T201: we need to print here.
 
 
@@ -123,7 +125,7 @@ class PayloadUtilsTests(parameterized.TestCase):
             "snow://headless/abc/versions/v9.8.7/src/main.py",
         ),
     )
-    def test_payload_validate(self, source: str, entrypoint: Optional[str], expected_entrypoint: str) -> None:
+    def test_payload_validate(self, source: str, entrypoint: str | None, expected_entrypoint: str) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
             resolved_source = payload_utils.resolve_source(payload.source)
@@ -190,7 +192,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         ),  # incomplete versioned stage
     )
     def test_payload_validate_negative(
-        self, source: str, entrypoint: Optional[str], expected_error: type[Exception] = ValueError
+        self, source: str, entrypoint: str | None, expected_error: type[Exception] = ValueError
     ) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
@@ -219,7 +221,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         self,
         func: Callable[..., Any],
         args: list[Any],
-        kwargs: Optional[dict[str, Any]] = None,
+        kwargs: dict[str, Any] | None = None,
         source_code_display: bool = False,
     ) -> None:
         kwargs = kwargs or {}
@@ -272,6 +274,19 @@ class PayloadUtilsTests(parameterized.TestCase):
         with self.assertRaises(error_type):
             payload_utils.generate_python_code(func)
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        # Annotations are built as values rather than written as annotations so that pyupgrade
+        # cannot rewrite the legacy spellings away and silently drop that coverage.
+        ("pep604", int | None, int),
+        ("typing_optional", typing.Optional[int], int),
+        ("typing_union", typing.Union[int, None], int),
+        ("bare", int, int),
+        ("unannotated", inspect.Parameter.empty, None),
+    )
+    def test_get_parameter_type_unwraps_optional(self, annotation: Any, expected_type: type[object] | None) -> None:
+        param = inspect.Parameter("d", inspect.Parameter.KEYWORD_ONLY, annotation=annotation)
+        self.assertIs(expected_type, payload_utils._get_parameter_type(param))
+
     @parameterized.parameters(  # type: ignore[misc]
         ((resolve_path("src/subdir1"), "src.subdir1"), [(resolve_path("src/subdir1"), "src/subdir1")]),
         ((resolve_path("src/subdir2"), "subdir2"), [(resolve_path("src/subdir2"), "subdir2")]),
@@ -280,7 +295,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         ((resolve_path("src/subdir1"), None), [(resolve_path("src/subdir1"), "subdir1")]),
     )
     def test_resolve_import_path(
-        self, imports: tuple[str, Optional[str]], expected_imports: list[tuple[str, Optional[str]]]
+        self, imports: tuple[str, str | None], expected_imports: list[tuple[str, str | None]]
     ) -> None:
 
         with pushd(resolve_path("")):
@@ -302,7 +317,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         (resolve_path("src/file2.py"), "file2"),
         (resolve_path("src/subdir1"), "lib/src/subdir1"),
     )
-    def test_validate_import_path_negative(self, source: str, import_path: Optional[str]) -> None:
+    def test_validate_import_path_negative(self, source: str, import_path: str | None) -> None:
         with pushd(resolve_path("")):
             with self.assertRaises(ValueError):
                 payload_utils.validate_import_path(source, import_path)
@@ -311,7 +326,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         (resolve_path("src/file2.py"), "file2.py"),
         (resolve_path("src/subdir1"), "src/subdir1"),
     )
-    def test_validate_import_path_positive(self, source: str, import_path: Optional[str]) -> None:
+    def test_validate_import_path_positive(self, source: str, import_path: str | None) -> None:
         with pushd(resolve_path("")):
             try:
                 payload_utils.validate_import_path(source, import_path)

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Callable, Optional
+from typing import Callable
 
 import pandas as pd
 from absl.testing import absltest
@@ -407,8 +407,8 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         rtfv_live: FeatureView,
         *,
         keys: list[list[str]],
-        request_context: Optional[pd.DataFrame] = None,
-        validate_fn: Optional[Callable[[pd.DataFrame], None]] = None,
+        request_context: pd.DataFrame | None = None,
+        validate_fn: Callable[[pd.DataFrame], None] | None = None,
         timeout: float = 600.0,
     ) -> pd.DataFrame:
         """Poll ``read_feature_view`` until the RTFV's OFT-backed upstream is ingested.
@@ -431,8 +431,8 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             The pandas DataFrame from the first successful read.
         """
         deadline = time.time() + timeout
-        last_err: Optional[str] = None
-        last_pdf_repr: Optional[str] = None
+        last_err: str | None = None
+        last_pdf_repr: str | None = None
         while time.time() < deadline:
             try:
                 pdf = self.fs.read_feature_view(
@@ -494,7 +494,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         )
 
         version = "v1"
-        registered: Optional[FeatureView] = None
+        registered: FeatureView | None = None
         try:
             registered = self.fs.register_feature_view(rtfv, version)
             self.assertEqual(registered.name.resolved(), rtfv_name)
@@ -1112,7 +1112,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         *,
         suffix: str,
         upstream: FeatureView,
-        rtfv_name: Optional[str] = None,
+        rtfv_name: str | None = None,
         compute_fn=_rtfv_compute_fn,
     ) -> FeatureView:
         """Register an RTFV configured for the dataset-gen path.

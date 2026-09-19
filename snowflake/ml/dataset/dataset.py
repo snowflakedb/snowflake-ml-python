@@ -1,7 +1,7 @@
 import json
 import warnings
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -47,9 +47,9 @@ class DatasetVersion(mixins.SerializableSessionMixin):
         self._version = version
         self._session: snowpark.Session = self._parent._session
 
-        self._properties: Optional[dict[str, Any]] = None
-        self._raw_metadata: Optional[dict[str, Any]] = None
-        self._metadata: Optional[dataset_metadata.DatasetMetadata] = None
+        self._properties: dict[str, Any] | None = None
+        self._raw_metadata: dict[str, Any] | None = None
+        self._metadata: dataset_metadata.DatasetMetadata | None = None
 
     @property
     def name(self) -> str:
@@ -62,8 +62,8 @@ class DatasetVersion(mixins.SerializableSessionMixin):
         return timestamp
 
     @property
-    def comment(self) -> Optional[str]:
-        comment: Optional[str] = self._get_property("comment")
+    def comment(self) -> str | None:
+        comment: str | None = self._get_property("comment")
         return comment
 
     @property
@@ -95,7 +95,7 @@ class DatasetVersion(mixins.SerializableSessionMixin):
             self._properties = match_row.as_dict(True)
         return self._properties.get(property_name, default)
 
-    def _get_metadata(self) -> Optional[dataset_metadata.DatasetMetadata]:
+    def _get_metadata(self) -> dataset_metadata.DatasetMetadata | None:
         if self._raw_metadata is None:
             self._raw_metadata = json.loads(self._get_property("metadata", "{}"))
             try:
@@ -116,7 +116,7 @@ class DatasetVersion(mixins.SerializableSessionMixin):
         return path
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def list_files(self, subdir: Optional[str] = None) -> list[snowpark.Row]:
+    def list_files(self, subdir: str | None = None) -> list[snowpark.Row]:
         """Get the list of remote file paths for the current DatasetVersion."""
         return self._session.sql(f"LIST {self.url()}{subdir or ''}").collect(
             statement_params=_TELEMETRY_STATEMENT_PARAMS
@@ -136,7 +136,7 @@ class Dataset(lineage_node.LineageNode):
         database: str,
         schema: str,
         name: str,
-        selected_version: Optional[str] = None,
+        selected_version: str | None = None,
     ) -> None:
         """Initialize a lazily evaluated Dataset object"""
         self._db = database
@@ -151,7 +151,7 @@ class Dataset(lineage_node.LineageNode):
         )
 
         self._version = DatasetVersion(self, selected_version) if selected_version else None
-        self._reader: Optional[dataset_reader.DatasetReader] = None
+        self._reader: dataset_reader.DatasetReader | None = None
 
     def __repr__(self) -> str:
         return (
@@ -166,7 +166,7 @@ class Dataset(lineage_node.LineageNode):
         return self._lineage_node_name
 
     @property
-    def selected_version(self) -> Optional[DatasetVersion]:
+    def selected_version(self) -> DatasetVersion | None:
         return self._version
 
     @property
@@ -245,7 +245,7 @@ class Dataset(lineage_node.LineageNode):
                 raise
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def list_versions(self, detailed: bool = False) -> Union[list[str], list[snowpark.Row]]:
+    def list_versions(self, detailed: bool = False) -> list[str] | list[snowpark.Row]:
         """Return list of versions"""
         versions = self._list_versions()
         versions.sort(key=lambda r: r[_DATASET_VERSION_NAME_COL])
@@ -272,11 +272,11 @@ class Dataset(lineage_node.LineageNode):
         version: str,
         input_dataframe: snowpark.DataFrame,
         shuffle: bool = False,
-        exclude_cols: Optional[list[str]] = None,
-        label_cols: Optional[list[str]] = None,
-        properties: Optional[dataset_metadata.DatasetPropertiesType] = None,
-        partition_by: Optional[str] = None,
-        comment: Optional[str] = None,
+        exclude_cols: list[str] | None = None,
+        label_cols: list[str] | None = None,
+        properties: dataset_metadata.DatasetPropertiesType | None = None,
+        partition_by: str | None = None,
+        comment: str | None = None,
     ) -> "Dataset":
         """Create a new version of the current Dataset.
 
@@ -424,7 +424,7 @@ class Dataset(lineage_node.LineageNode):
             statement_params=_TELEMETRY_STATEMENT_PARAMS
         )
 
-    def _list_versions(self, pattern: Optional[str] = None) -> list[snowpark.Row]:
+    def _list_versions(self, pattern: str | None = None) -> list[snowpark.Row]:
         """Return list of versions"""
         try:
             pattern_clause = f" LIKE '{pattern}'" if pattern else ""

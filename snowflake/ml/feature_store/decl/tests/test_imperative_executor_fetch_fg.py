@@ -347,7 +347,7 @@ class TestFetchFeatureGroupRowsApiFacade:
         ) as mock_fetch:
             result = decl_api.fetch_feature_group_rows(session, "DB", "SCH", "WH")
 
-        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH")
+        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH", on_progress=None)
         assert result == [{"name": "FG", "version": "V1"}]
 
 

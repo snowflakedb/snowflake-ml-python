@@ -11,7 +11,7 @@ All tests stay client-side; the Online Service Query API is mocked.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -126,10 +126,10 @@ def _build_upstream_fv(
 def _build_rtfv(
     *,
     name: str = "MY_RTFV",
-    upstreams: Optional[list[FeatureView]] = None,
-    declared_entities: Optional[list[Entity]] = None,
+    upstreams: list[FeatureView] | None = None,
+    declared_entities: list[Entity] | None = None,
     query_url: str = "https://q.example/svc",
-    output_schema: Optional[StructType] = None,
+    output_schema: StructType | None = None,
 ) -> FeatureView:
     """Construct a registered RTFV pre-hydrated with a Postgres query URL."""
     sources = [_request_source(), *(upstreams or [_build_upstream_fv()])]
@@ -151,8 +151,8 @@ def _build_rtfv(
 def _build_rtfv_no_request_source(
     *,
     name: str = "MY_RTFV",
-    upstreams: Optional[list[FeatureView]] = None,
-    declared_entities: Optional[list[Entity]] = None,
+    upstreams: list[FeatureView] | None = None,
+    declared_entities: list[Entity] | None = None,
     query_url: str = "https://q.example/svc",
 ) -> FeatureView:
     """Construct a registered RTFV with no RequestSource (single FV upstream only)."""

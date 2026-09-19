@@ -5,7 +5,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model._client.model import inference_engine_utils
+from snowflake.ml.model._client.model import inference_engine_utils, telemetry_params
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model.models import huggingface
 from snowflake.snowpark import async_job, session
@@ -78,15 +78,7 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
     @telemetry.send_api_usage_telemetry(
         project=huggingface._TELEMETRY_PROJECT,
         subproject=huggingface._TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "service_name",
-            "image_build_compute_pool",
-            "service_compute_pool",
-            "image_repo",
-            "gpu_requests",
-            "num_workers",
-            "max_batch_rows",
-        ],
+        func_params_to_log=telemetry_params.HF_LOG_MODEL_AND_CREATE_SERVICE_FUNC_PARAMS_TO_LOG,
     )
     @snowpark._internal.utils.private_preview(version="1.9.1")
     def log_model_and_create_service(

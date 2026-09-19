@@ -132,6 +132,19 @@ class ModelInterfaceTest(parameterized.TestCase):
             mock_save.assert_called_once()
             mock_manifest_save.assert_called_once()
 
+        fallback_stage_path = "@TEMP.TEST.MODEL/V1"
+        with mock.patch.object(
+            file_utils, "upload_directory_to_stage", return_value=None
+        ) as mock_upload_directory_to_stage:
+            m.upload_workspace_to_stage(fallback_stage_path, statement_params={"project": "MLOps"})
+            mock_upload_directory_to_stage.assert_called_once_with(
+                c_session,
+                local_path=m.workspace_path,
+                stage_path=pathlib.PurePosixPath(fallback_stage_path),
+                statement_params={"project": "MLOps"},
+            )
+            self.assertEqual(m.stage_path, pathlib.PurePosixPath(fallback_stage_path))
+
     def test_save_calls_stream_upload_when_lazy_hf_upload_set(self) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)

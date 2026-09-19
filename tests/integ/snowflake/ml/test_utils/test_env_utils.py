@@ -1,6 +1,6 @@
 import functools
 import os
-from typing import Any, Mapping, Union
+from typing import Any, Mapping
 
 from packaging import requirements, version
 
@@ -34,7 +34,7 @@ def _ensure_session_has_warehouse(sess: session.Session, login_opts: Mapping[str
 def get_available_session() -> session.Session:
     if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
         return session._get_active_session()
-    opts: dict[str, Union[str, bytes]] = dict(connection_params.SnowflakeLoginOptions())
+    opts: dict[str, str | bytes] = dict(connection_params.SnowflakeLoginOptions())
     # Snowpark wipes ``password`` from the connection's parameters during ``Session.create()``,
     # so promote a PAT-in-password to ``SNOWFLAKE_PAT`` before the session is built. Only do this
     # when the session actually authenticates with a PAT (``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``);

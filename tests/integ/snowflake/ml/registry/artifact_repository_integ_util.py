@@ -13,7 +13,7 @@ import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class ExternalTestPypiArtifactRepository:
         return {"pip": self.artifact_repository_fqn}
 
 
-def get_private_pypi_credentials() -> Optional[tuple[str, str]]:
+def get_private_pypi_credentials() -> tuple[str, str] | None:
     """Read private PyPI credentials from the environment.
 
     Returns:
@@ -74,8 +74,8 @@ def create_external_test_pypi_artifact_repository(
     database: str,
     schema: str,
     run_id: str,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> ExternalTestPypiArtifactRepository:
     """Create secret, API integration, and external test PyPI artifact repository.
 
@@ -202,7 +202,7 @@ def maybe_create_external_test_pypi_artifact_repository(
     database: str,
     schema: str,
     run_id: str,
-) -> Optional[ExternalTestPypiArtifactRepository]:
+) -> ExternalTestPypiArtifactRepository | None:
     """Create the external test PyPI repo when credentials are available.
 
     Args:

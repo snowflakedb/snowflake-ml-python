@@ -1,19 +1,36 @@
-from typing import Any, Optional
+from typing import Any, Literal
 
 import yaml
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
 
 
+class _InternalInputSpec(batch_inference_job_specs.InputSpec):
+    """YAML input block. Adds server-only fields that are not on public ``InputSpec``."""
+
+    layout: Literal["partitioned"] | None = None
+
+    @classmethod
+    def from_input_spec(
+        cls,
+        input_spec: batch_inference_job_specs.InputSpec | None,
+        *,
+        layout: Literal["partitioned"] | None = None,
+    ) -> "_InternalInputSpec | None":
+        if input_spec is None:
+            return None
+        return cls(**input_spec.model_dump(), layout=layout)
+
+
 class InferenceJobServiceSpec:
     """Builds the YAML body for ``EXECUTE INFERENCE JOB SERVICE``."""
 
     def __init__(self) -> None:
-        self._input: Optional[dict[str, Any]] = None
-        self._output: Optional[dict[str, Any]] = None
-        self._resources: Optional[dict[str, Any]] = None
-        self._inference: Optional[dict[str, Any]] = None
-        self._image_build: Optional[dict[str, Any]] = None
+        self._input: dict[str, Any] | None = None
+        self._output: dict[str, Any] | None = None
+        self._resources: dict[str, Any] | None = None
+        self._inference: dict[str, Any] | None = None
+        self._image_build: dict[str, Any] | None = None
 
     def clear(self) -> None:
         self._input = None
@@ -22,7 +39,7 @@ class InferenceJobServiceSpec:
         self._inference = None
         self._image_build = None
 
-    def add_input_spec(self, input_spec: batch_inference_job_specs.InputSpec) -> "InferenceJobServiceSpec":
+    def add_input_spec(self, input_spec: _InternalInputSpec) -> "InferenceJobServiceSpec":
         # ``params`` and ``column_handling`` are emitted as raw dicts; the
         # server handles encoding for both.
         self._input = input_spec.model_dump(mode="json", exclude_none=True)

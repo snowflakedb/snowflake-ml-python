@@ -36,7 +36,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 from absl.testing import absltest
@@ -426,7 +426,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
     def _wait_until_fg_read_returns_rows(self, fg_live: FeatureGroup, key: str, timeout: float = 600.0) -> None:
         """Poll ``read_feature_group`` until at least one row is returned."""
         deadline = time.time() + timeout
-        last_err: Optional[str] = None
+        last_err: str | None = None
         while time.time() < deadline:
             try:
                 pdf = self.fs.read_feature_group(fg_live, keys=[[key]])
@@ -459,7 +459,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         Raises:
             last_err: The last exception observed if every attempt fails.
         """
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for attempt in range(self._POST_READINESS_RETRIES):
             try:
                 pdf = self.fs.read_feature_group(fg_live, keys=keys)
@@ -502,7 +502,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         )
 
         fg_version = "v1"
-        registered: Optional[FeatureGroup] = None
+        registered: FeatureGroup | None = None
         try:
             registered = self.fs.register_feature_group(fg, fg_version)
             self.assertEqual(registered.name, fg_name)
@@ -770,8 +770,8 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # against its upstream BFV can still see a stale/empty replica during
             # the same call. Wait for the RTFV-computed column itself to converge.
             deadline = time.time() + 300.0
-            last_err: Optional[str] = None
-            pdf: Optional[pd.DataFrame] = None
+            last_err: str | None = None
+            pdf: pd.DataFrame | None = None
             request_context = pd.DataFrame({"WEIGHT": [2.5]})
             attempt = 0
             while time.time() < deadline:
@@ -867,8 +867,8 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # so a "no DOUBLED_BALANCE / always-NaN / always-empty" failure is
             # diagnosable from the test log alone.
             deadline = time.time() + 300.0
-            last_err: Optional[str] = None
-            pdf: Optional[pd.DataFrame] = None
+            last_err: str | None = None
+            pdf: pd.DataFrame | None = None
             attempt = 0
             while time.time() < deadline:
                 attempt += 1
@@ -963,8 +963,8 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # Wait until the OFS catches up; assertWarns covers the call that
             # eventually succeeds since the warning fires on every call.
             deadline = time.time() + 300.0
-            last_err: Optional[str] = None
-            pdf: Optional[pd.DataFrame] = None
+            last_err: str | None = None
+            pdf: pd.DataFrame | None = None
             while time.time() < deadline:
                 try:
                     with self.assertWarns(UserWarning) as warn_ctx:
@@ -1175,11 +1175,11 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             sum_col_token = f"AMOUNT_SUM_3D_{sfx}"
             count_col_token = f"TXN_COUNT_3D_{sfx}"
             deadline = time.time() + 600.0
-            pdf: Optional[pd.DataFrame] = None
+            pdf: pd.DataFrame | None = None
             value = None
             count_value = None
             keys_value = None
-            last_err: Optional[str] = None
+            last_err: str | None = None
             # Poll for the full deadline: OFS catalog skew (404) and tile backfill can
             # both exceed ``_read_feature_group_with_retry``'s ~30s budget. Do not nest
             # that helper here — it raises after 6 attempts and aborts this loop early.

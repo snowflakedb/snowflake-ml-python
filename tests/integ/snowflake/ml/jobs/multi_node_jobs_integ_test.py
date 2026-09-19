@@ -1,5 +1,4 @@
 import re
-from typing import Optional
 
 from absl.testing import absltest, parameterized
 
@@ -170,7 +169,7 @@ class MultiNodeJobsTest(JobTestBase):
         ("src/multinode_import_zip.py", "src/test_data_processor.zip", "data_processor"),
         ("src/multinode_import_module.py", "src/subdir/utils", "src.subdir.utils"),
     )
-    def test_multinode_import(self, entrypoint: str, import_path: str, import_name: Optional[str]) -> None:
+    def test_multinode_import(self, entrypoint: str, import_path: str, import_name: str | None) -> None:
         """Test that imports work on worker nodes in multi-node jobs."""
         job = jobs.submit_file(
             TestAsset(entrypoint).path,

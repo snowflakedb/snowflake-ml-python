@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -65,10 +65,10 @@ class StandardScaler(base.BaseTransformer):
         *,
         with_mean: bool = True,
         with_std: bool = True,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Standardize features by removing the mean and scaling to unit variance.
@@ -106,9 +106,9 @@ class StandardScaler(base.BaseTransformer):
         self.with_mean = with_mean
         self.with_std = with_std
 
-        self.scale_: Optional[dict[str, float]] = {} if with_std else None
-        self.mean_: Optional[dict[str, float]] = {} if with_mean else None
-        self.var_: Optional[dict[str, float]] = {} if with_std else None
+        self.scale_: dict[str, float] | None = {} if with_std else None
+        self.mean_: dict[str, float] | None = {} if with_mean else None
+        self.var_: dict[str, float] | None = {} if with_std else None
 
         self.custom_states: list[str] = []
         if with_mean:
@@ -136,7 +136,7 @@ class StandardScaler(base.BaseTransformer):
         if hasattr(self, "var_"):
             self.var_ = {} if self.with_std else None
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "StandardScaler":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "StandardScaler":
         """
         Compute mean and std values of the dataset.
 
@@ -197,7 +197,7 @@ class StandardScaler(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Perform standardization by centering and scaling.
 

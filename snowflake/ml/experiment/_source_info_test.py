@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import sys
 import types
-from typing import Literal, Optional
+from typing import Literal
 from unittest import mock
 from unittest.mock import patch
 
@@ -800,7 +800,7 @@ class RealGitTest(absltest.TestCase):
         )
         return result.stdout.strip()
 
-    def _init_repo(self, path: str, *, remote: Optional[str] = None) -> None:
+    def _init_repo(self, path: str, *, remote: str | None = None) -> None:
         self._git(path, "init", "-q")
         self._git(path, "config", "user.email", "test@example.com")
         self._git(path, "config", "user.name", "Test User")

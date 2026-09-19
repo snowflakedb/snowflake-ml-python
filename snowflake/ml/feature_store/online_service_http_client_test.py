@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
 
 import httpx
@@ -24,7 +24,7 @@ def _make_response(
     *,
     status: int = 200,
     http_version: str = "HTTP/2",
-    headers: Optional[dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Build an httpx.Response with a forced http_version (httpx defaults vary by transport)."""
     resp = httpx.Response(status_code=status, content=body, headers=headers or {})
@@ -36,7 +36,7 @@ def _make_response(
 def _transport_for(handler: Any) -> Any:
     """Wrap a request handler in an httpx.MockTransport factory the OnlineServiceHttpClient can use."""
 
-    def _factory(*, proxy: Optional[str] = None) -> httpx.MockTransport:
+    def _factory(*, proxy: str | None = None) -> httpx.MockTransport:
         return httpx.MockTransport(handler)
 
     return _factory

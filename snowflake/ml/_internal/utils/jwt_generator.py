@@ -6,7 +6,6 @@ import base64
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -35,8 +34,8 @@ class JWTGenerator:
         account: str,
         user: str,
         private_key: types.PrivateKeyTypes,
-        lifetime: Optional[timedelta] = None,
-        renewal_delay: Optional[timedelta] = None,
+        lifetime: timedelta | None = None,
+        renewal_delay: timedelta | None = None,
     ) -> None:
         """
         Create a new JWTGenerator object.
@@ -60,7 +59,7 @@ class JWTGenerator:
         self.lifetime = lifetime or JWTGenerator._DEFAULT_LIFETIME
         self.renewal_delay = renewal_delay or JWTGenerator._DEFAULT_RENEWAL_DELTA
         self.renew_time = datetime.now(timezone.utc)
-        self.token: Optional[str] = None
+        self.token: str | None = None
 
         logger.info(
             """Creating JWTGenerator with arguments

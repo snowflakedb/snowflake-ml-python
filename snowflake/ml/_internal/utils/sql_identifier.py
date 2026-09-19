@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 from snowflake.ml._internal.utils import identifier
 
 
@@ -83,7 +81,7 @@ def to_sql_identifiers(list_of_str: list[str], *, case_sensitive: bool = False) 
 
 def parse_fully_qualified_name(
     name: str,
-) -> tuple[Optional[SqlIdentifier], Optional[SqlIdentifier], SqlIdentifier]:
+) -> tuple[SqlIdentifier | None, SqlIdentifier | None, SqlIdentifier]:
     db, schema, object = identifier.parse_schema_level_object_identifier(name)
 
     assert name is not None, f"Unable parse the input name `{name}` as fully qualified."
@@ -95,14 +93,14 @@ def parse_fully_qualified_name(
 
 
 def get_fully_qualified_name(
-    db: Union[SqlIdentifier, str, None],
-    schema: Union[SqlIdentifier, str, None],
-    object: Union[SqlIdentifier, str],
-    session_db: Optional[str] = None,
-    session_schema: Optional[str] = None,
+    db: SqlIdentifier | str | None,
+    schema: SqlIdentifier | str | None,
+    object: SqlIdentifier | str,
+    session_db: str | None = None,
+    session_schema: str | None = None,
 ) -> str:
-    db_name: Optional[SqlIdentifier] = None
-    schema_name: Optional[SqlIdentifier] = None
+    db_name: SqlIdentifier | None = None
+    schema_name: SqlIdentifier | None = None
     if not db and session_db:
         db_name = SqlIdentifier(session_db)
     elif isinstance(db, str):

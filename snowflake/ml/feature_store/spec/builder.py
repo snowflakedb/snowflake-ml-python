@@ -50,7 +50,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
@@ -331,7 +331,7 @@ class FeatureViewSpecBuilder:
         schema: str,
         name: str,
         version: str,
-        session: Optional[Session] = None,
+        session: Session | None = None,
     ) -> None:
         """Initialize the builder with feature view identity and kind.
 
@@ -358,12 +358,12 @@ class FeatureViewSpecBuilder:
         self._offline_configs: list[OfflineTableConfig] = []
         self._sources: list[Source] = []
         self._agg_specs: list[AggregationSpec] = []
-        self._udf: Optional[UDF] = None
-        self._source_prefix_map: dict[tuple[str, Optional[str]], str] = {}
+        self._udf: UDF | None = None
+        self._source_prefix_map: dict[tuple[str, str | None], str] = {}
         # Upstream kind per FEATURES source, keyed by (name, source_version).
         # Populated and reset by set_sources; missing entries are skipped by
         # the upstream-kind validators.
-        self._source_kinds: dict[tuple[str, Optional[str]], FeatureViewKind] = {}
+        self._source_kinds: dict[tuple[str, str | None], FeatureViewKind] = {}
         # First-seen union of upstream FVs' ``ordered_entity_columns`` across
         # FEATURES sources, in user-provided source order. Built inside
         # :meth:`set_sources` alongside ``self._sources``; used by RTFV / FG
@@ -373,11 +373,11 @@ class FeatureViewSpecBuilder:
 
         # Properties
         self._entity_columns: list[str] = []
-        self._secondary_key_columns: Optional[list[str]] = None
-        self._timestamp_field: Optional[str] = None
-        self._granularity_sec: Optional[int] = None
-        self._agg_method: Optional[FeatureAggregationMethod] = None
-        self._target_lag_sec: Optional[int] = None
+        self._secondary_key_columns: list[str] | None = None
+        self._timestamp_field: str | None = None
+        self._granularity_sec: int | None = None
+        self._agg_method: FeatureAggregationMethod | None = None
+        self._target_lag_sec: int | None = None
 
     # -----------------------------------------------------------------------
     # set_* methods
@@ -414,12 +414,12 @@ class FeatureViewSpecBuilder:
     def set_properties(
         self,
         *,
-        entity_columns: Optional[list[str]] = None,
-        secondary_key_columns: Optional[list[str]] = None,
-        timestamp_field: Optional[str] = None,
-        granularity: Optional[str] = None,
-        agg_method: Optional[FeatureAggregationMethod] = None,
-        target_lag: Optional[str] = None,
+        entity_columns: list[str] | None = None,
+        secondary_key_columns: list[str] | None = None,
+        timestamp_field: str | None = None,
+        granularity: str | None = None,
+        agg_method: FeatureAggregationMethod | None = None,
+        target_lag: str | None = None,
     ) -> FeatureViewSpecBuilder:
         """Set core spec properties.
 
@@ -526,7 +526,7 @@ class FeatureViewSpecBuilder:
                 raise ValueError(f"Unsupported source type: {type(src).__name__}")
         return self
 
-    def _resolve_materialized_schema(self, fv: FeatureView) -> Optional[StructType]:
+    def _resolve_materialized_schema(self, fv: FeatureView) -> StructType | None:
         """Return the upstream FeatureView's materialized DT/View schema, or None to fall back to ``fv.output_schema``.
 
         Returns ``None`` when no session is available, or for source kinds whose
@@ -667,7 +667,7 @@ class FeatureViewSpecBuilder:
 
     def set_source_prefixes(
         self,
-        prefix_map: dict[tuple[str, Optional[str]], str],
+        prefix_map: dict[tuple[str, str | None], str],
     ) -> FeatureViewSpecBuilder:
         """Set per-source column prefixes for FeatureGroup output column naming.
 
@@ -798,7 +798,7 @@ class FeatureViewSpecBuilder:
         )
 
     @staticmethod
-    def _columns_from_feature_view(fv: FeatureView, materialized_schema: Optional[StructType] = None) -> list[FSColumn]:
+    def _columns_from_feature_view(fv: FeatureView, materialized_schema: StructType | None = None) -> list[FSColumn]:
         """Extract feature columns from a FeatureView's output schema.
 
         RTFV sources rehydrate with an empty ``_feature_desc`` (so
@@ -870,7 +870,7 @@ class FeatureViewSpecBuilder:
         return [_make_fs_column(f.name, f.datatype) for f in schema.fields if f.name in feature_name_set]
 
     @staticmethod
-    def _convert_feature_view(fv: FeatureView, materialized_schema: Optional[StructType] = None) -> Source:
+    def _convert_feature_view(fv: FeatureView, materialized_schema: StructType | None = None) -> Source:
         """Convert a FeatureView to a spec Source with source_type=FEATURES."""
         return Source(
             name=fv.name.resolved(),
@@ -880,7 +880,7 @@ class FeatureViewSpecBuilder:
         )
 
     @staticmethod
-    def _convert_feature_view_slice(fvs: FeatureViewSlice, materialized_schema: Optional[StructType] = None) -> Source:
+    def _convert_feature_view_slice(fvs: FeatureViewSlice, materialized_schema: StructType | None = None) -> Source:
         """Convert a FeatureViewSlice to a spec Source containing only the selected columns.
 
         The slice's caller-requested feature order is preserved in ``columns``.
@@ -911,14 +911,14 @@ class FeatureViewSpecBuilder:
     # Feature resolution
     # -----------------------------------------------------------------------
 
-    def _find_offline_config(self, table_type: TableType) -> Optional[OfflineTableConfig]:
+    def _find_offline_config(self, table_type: TableType) -> OfflineTableConfig | None:
         """Return the first offline config matching *table_type*, or ``None``."""
         for cfg in self._offline_configs:
             if cfg.table_type == table_type:
                 return cfg
         return None
 
-    def _find_batch_source(self) -> Optional[Source]:
+    def _find_batch_source(self) -> Source | None:
         """Return the first BATCH source, or ``None``."""
         for src in self._sources:
             if src.source_type == SourceType.BATCH:
@@ -1018,7 +1018,7 @@ class FeatureViewSpecBuilder:
             raw_offset = interval_to_seconds(agg_spec.offset) if agg_spec.offset != "0" else 0
             offset_sec = raw_offset if raw_offset > 0 else None
 
-            function_value: Optional[str] = None if is_secondary_key_array else agg_spec.function.value
+            function_value: str | None = None if is_secondary_key_array else agg_spec.function.value
 
             spec_features.append(
                 Feature(
@@ -1356,7 +1356,7 @@ class FeatureViewSpecBuilder:
             raise ValueError(f"Duplicate output column name(s) in resolved features: {sorted(set(duplicates))}.{hint}")
 
     @staticmethod
-    def _distinct_partial_column_names(agg_spec: AggregationSpec) -> Optional[tuple[str, str]]:
+    def _distinct_partial_column_names(agg_spec: AggregationSpec) -> tuple[str, str] | None:
         """Return the (value, timestamp) partial column names for an ordered-N spec.
 
         Mirrors the tile-column naming emitted by the tile SQL generator so element

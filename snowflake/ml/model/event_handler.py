@@ -1,12 +1,12 @@
 import os
 import sys
-from typing import Any, Optional
+from typing import Any
 
 
 class _TqdmStatusContext:
     """A tqdm-based context manager for status updates."""
 
-    def __init__(self, label: str, tqdm_module: Any, total: Optional[int] = None) -> None:
+    def __init__(self, label: str, tqdm_module: Any, total: int | None = None) -> None:
         self._label = label
         self._tqdm = tqdm_module
         self._total = total or 1
@@ -46,7 +46,7 @@ class _TqdmStatusContext:
 class _StreamlitStatusContext:
     """A streamlit-based context manager for status updates with progress bar support."""
 
-    def __init__(self, label: str, streamlit_module: Any, total: Optional[int] = None) -> None:
+    def __init__(self, label: str, streamlit_module: Any, total: int | None = None) -> None:
         self._label = label
         self._streamlit = streamlit_module
         self._total = total
@@ -162,7 +162,7 @@ class ModelEventHandler:
         *,
         state: str = "running",
         expanded: bool = True,
-        total: Optional[int] = None,
+        total: int | None = None,
         block: bool = True,
     ) -> Any:
         """Context manager that provides status updates with optional enhanced display capabilities.

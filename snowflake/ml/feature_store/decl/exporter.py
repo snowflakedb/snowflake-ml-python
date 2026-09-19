@@ -26,7 +26,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -327,7 +327,7 @@ def _extract_udf_to_py_file(
     fv_doc: dict[str, Any],
     fv_dir: Path,
     file_stem: str,
-) -> Optional[str]:
+) -> str | None:
     """Externalize ``fv_doc['udf']['function_definition']`` to a sibling ``.py`` file.
 
     Mutates *fv_doc* in place: when a non-empty ``function_definition`` string
@@ -370,7 +370,7 @@ def _extract_query_to_sql_file(
     ds_doc: dict[str, Any],
     ds_dir: Path,
     file_stem: str,
-) -> Optional[str]:
+) -> str | None:
     """Externalize ``ds_doc['query']`` to a sibling ``.sql`` file.
 
     Mirrors :func:`_extract_udf_to_py_file` for the BatchSource ``query`` /
@@ -522,7 +522,7 @@ def _collect_datasources(
     """
     by_name: dict[str, dict[str, Any]] = {}
     name_case: dict[str, str] = {}
-    col_index: dict[str, dict[str, tuple[str, Optional[str], str]]] = {}
+    col_index: dict[str, dict[str, tuple[str, str | None, str]]] = {}
     meta_index: dict[str, dict[str, tuple[Any, str]]] = {}
 
     for oft_name, full_spec in specification_map.items():
@@ -643,7 +643,7 @@ def _entity_cols_from_full_spec(full_spec: dict[str, Any]) -> list[str]:
     return []
 
 
-def _entity_name_from_row(row: dict[str, Any]) -> Optional[str]:
+def _entity_name_from_row(row: dict[str, Any]) -> str | None:
     """Return the prefix-stripped entity name from a SHOW TAGS row.
 
     Mirrors :func:`state._build_entity_object` so the exporter and the
@@ -698,7 +698,7 @@ def _join_keys_from_row(row: dict[str, Any]) -> list[str]:
     return []
 
 
-def _entity_yaml_from_row(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _entity_yaml_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Build a full-fidelity entity authoring dict from a SHOW TAGS row.
 
     The shape mirrors what :func:`state._build_entity_object` emits as
@@ -899,8 +899,8 @@ _FV_APPLIED_KINDS: frozenset[str] = frozenset({"BatchFeatureView", "StreamingFea
 
 def _overlay_applied_state_on_export_inputs(
     show_rows: list[dict[str, Any]],
-    specification_map: Optional[dict[str, dict[str, Any]]],
-    applied_state: Optional[Any],
+    specification_map: dict[str, dict[str, Any]] | None,
+    applied_state: Any | None,
     *,
     default_database: str,
     default_schema: str,
@@ -1038,10 +1038,10 @@ def export_specs(
     database: str,
     schema: str,
     *,
-    specification_map: Optional[dict[str, dict[str, Any]]] = None,
-    entity_rows: Optional[list[dict[str, Any]]] = None,
-    feature_group_rows: Optional[list[dict[str, Any]]] = None,
-    applied_state: Optional[Any] = None,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+    applied_state: Any | None = None,
     layout: str = "db_schema",
 ) -> dict[str, Any]:
     """Reconstruct YAML specs from raw Snowflake query results and write to disk.

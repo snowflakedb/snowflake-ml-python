@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import Union, cast
 
 from typing_extensions import deprecated
 
@@ -11,10 +11,10 @@ from snowflake.ml._internal import telemetry
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def extract_answer(
-    from_text: Union[str, snowpark.Column],
-    question: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    from_text: str | snowpark.Column,
+    question: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     """Calls into the LLM inference service to extract an answer from within specified text.
 
     Args:
@@ -31,10 +31,10 @@ def extract_answer(
 
 def _extract_answer_impl(
     function: str,
-    from_text: Union[str, snowpark.Column],
-    question: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    from_text: str | snowpark.Column,
+    question: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, from_text, question))
 
 

@@ -15,7 +15,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -190,10 +190,10 @@ def _request_source() -> RequestSource:
 def _mock_feature_view(
     name: str = "upstream_fv",
     version: str = "v1",
-    feature_names: Optional[list[str]] = None,
+    feature_names: list[str] | None = None,
     *,
     is_streaming: bool = True,
-    entity_columns: Optional[list[str]] = None,
+    entity_columns: list[str] | None = None,
 ) -> mock.MagicMock:
     """Create a mock FeatureView for source conversion tests.
 
@@ -229,9 +229,9 @@ def _mock_feature_view(
 
 
 def _mock_feature_view_slice(
-    selected_features: Optional[list[str]] = None,
+    selected_features: list[str] | None = None,
     *,
-    entity_columns: Optional[list[str]] = None,
+    entity_columns: list[str] | None = None,
 ) -> mock.MagicMock:
     """Create a mock FeatureViewSlice for source conversion tests.
 
@@ -250,7 +250,7 @@ def _seed_upstream_kind(
     builder: FeatureViewSpecBuilder,
     *,
     name: str,
-    version: Optional[str],
+    version: str | None,
     kind: FeatureViewKind,
 ) -> None:
     """Stamp an upstream FeatureViewKind on *builder* for validation tests.
@@ -800,8 +800,8 @@ class FeatureViewConversionTest(absltest.TestCase):
     def _make_typed_fv(
         name: str = "upstream_fv",
         version: str = "v1",
-        feature_names: Optional[list[str]] = None,
-        output_schema: Optional[StructType] = None,
+        feature_names: list[str] | None = None,
+        output_schema: StructType | None = None,
     ) -> mock.MagicMock:
         """Create a mock non-tiled FeatureView with SqlIdentifier names and real StructType."""
         from snowflake.ml.feature_store.feature_view import FeatureView
@@ -916,7 +916,7 @@ class MaterializedSchemaSourceTest(absltest.TestCase):
         is_streaming: bool = False,
         is_tiled: bool = False,
         realtime_config: object = None,
-        output_schema: Optional[StructType] = None,
+        output_schema: StructType | None = None,
     ) -> mock.MagicMock:
         from snowflake.ml.feature_store.feature_view import FeatureView
 
@@ -1058,7 +1058,7 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         output_schema: StructType,
         name: str = "tiled_fv",
         version: str = "v1",
-        aggregation_secondary_keys: Optional[list[str]] = None,
+        aggregation_secondary_keys: list[str] | None = None,
     ) -> mock.MagicMock:
         """Build a mock tiled FeatureView with the given agg specs and tile schema."""
         from snowflake.ml.feature_store.feature_view import FeatureView
@@ -3739,7 +3739,7 @@ class RealtimeUdfSignatureValidationTest(absltest.TestCase):
     def _builder(
         self,
         *,
-        sources: Optional[list[Source]] = None,
+        sources: list[Source] | None = None,
     ) -> FeatureViewSpecBuilder:
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.RealtimeFeatureView,
@@ -4202,8 +4202,8 @@ class IntervalConversionTest(parameterized.TestCase):
 
 def _make_rt_builder(
     *,
-    entity_columns: Optional[list[str]] = None,
-    timestamp_field: Optional[str] = None,
+    entity_columns: list[str] | None = None,
+    timestamp_field: str | None = None,
 ) -> FeatureViewSpecBuilder:
     """Helper to construct a Realtime builder with sources + properties set.
 
@@ -4344,8 +4344,8 @@ class RealtimePassthroughFeaturesTest(absltest.TestCase):
 def _fg_features_source(
     *,
     name: str = "USER_FV",
-    columns: Optional[list[FSColumn]] = None,
-    source_version: Optional[str] = "v1",
+    columns: list[FSColumn] | None = None,
+    source_version: str | None = "v1",
 ) -> Source:
     """Build a Source with source_type=FEATURES directly (bypassing FV mocks).
 
@@ -4368,8 +4368,8 @@ def _fg_features_source(
 def _make_fg_builder(
     *,
     sources: list[Source],
-    entity_columns: Optional[list[str]] = None,
-    prefix_map: Optional[dict[tuple[str, Optional[str]], str]] = None,
+    entity_columns: list[str] | None = None,
+    prefix_map: dict[tuple[str, str | None], str] | None = None,
     name: str = "fg",
     version: str = "v1",
 ) -> FeatureViewSpecBuilder:

@@ -10,9 +10,86 @@ payload format expected by ``CREATE ONLINE FEATURE TABLE ... FROM SPECIFICATION`
 """
 
 import datetime
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+
+def _is_cron_refresh_freq(refresh_freq: str | None) -> bool:
+    """Return ``True`` iff ``refresh_freq`` is a CRON expression.
+
+    Delegates to the core imperative classifier
+    :func:`snowflake.ml.feature_store.feature_view_refresh_freq._is_cron_refresh_freq`
+    (a two-function, ``pytimeparse``-only module) so the declarative
+    append-only validator classifies *identically* to the imperative
+    registration / update preflight it shadows.  A CRON expression is anything
+    that is neither ``None`` / ``"DOWNSTREAM"`` (case-insensitive) nor a
+    duration string parseable by ``pytimeparse`` (e.g. ``"5 minutes"``,
+    ``"2 weeks"``, ``"1.5h"``).
+
+    An earlier implementation reimplemented this on top of the narrower
+    stdlib-only :mod:`snowflake.ml.feature_store.interval_utils` grammar, but
+    that diverged from core (``interval_utils`` has no ``weeks`` unit, rejects
+    fractions, and treats ``"lifetime"`` as a duration), producing both false
+    accepts (``"2 weeks"`` / ``"1.5h"``) and a false reject (``"lifetime"``)
+    against the thing it exists to mirror.  Duration parsing that must stay on
+    the narrower ``interval_utils`` grammar (the compiler / executor
+    ``target_lag_sec`` guards) uses :func:`_is_interval_duration_refresh_freq`
+    instead.  The import is deferred so it stays off the ``decl/`` module-load
+    path, mirroring the deferred ``interval_utils`` import in
+    :func:`_is_interval_duration_refresh_freq`.
+
+    Args:
+        refresh_freq: The refresh-frequency string to classify, or ``None``.
+
+    Returns:
+        ``True`` when ``refresh_freq`` is a CRON expression; ``False`` when it
+        is ``None``, ``"DOWNSTREAM"``, or a ``pytimeparse``-recognised duration.
+    """
+    from snowflake.ml.feature_store import feature_view_refresh_freq
+
+    return feature_view_refresh_freq._is_cron_refresh_freq(refresh_freq)
+
+
+def _is_interval_duration_refresh_freq(refresh_freq: str | None) -> bool:
+    """Return ``True`` iff ``refresh_freq`` is an ``interval_utils`` duration.
+
+    This is the narrower, stdlib-only classification used by the compiler and
+    the applied-state executor to decide whether a ``refresh_freq`` yields a
+    numeric wire ``target_lag_sec`` via the shared
+    :func:`snowflake.ml.feature_store.interval_utils.interval_to_seconds`
+    parser (and its ``decl`` wrapper ``compiler.parse_duration_to_seconds``).
+    It returns ``True`` only for values that parser can actually consume, so a
+    CRON cadence — or any ``pytimeparse``-only duration the narrower parser
+    cannot handle (e.g. ``"2 weeks"`` / ``"1.5h"``) — is skipped rather than
+    crashing the parser with ``Invalid interval format``.
+
+    Deliberately distinct from :func:`_is_cron_refresh_freq`: that helper
+    mirrors the imperative append-only classifier exactly (``pytimeparse``),
+    whereas this one is bound to the narrower ``interval_utils`` grammar its
+    callers feed.  ``None`` / empty / ``"DOWNSTREAM"`` (case-insensitive) are
+    not durations.
+
+    Args:
+        refresh_freq: The refresh-frequency string to classify, or ``None``.
+
+    Returns:
+        ``True`` when ``refresh_freq`` parses as an ``interval_utils`` duration;
+        ``False`` when it is ``None``, empty, ``"DOWNSTREAM"``, or any string
+        that parser rejects.
+    """
+    from snowflake.ml.feature_store.interval_utils import interval_to_seconds
+
+    if refresh_freq is None:
+        return False
+    text = str(refresh_freq).strip()
+    if not text or text.upper() == "DOWNSTREAM":
+        return False
+    try:
+        interval_to_seconds(text)
+    except (ValueError, KeyError):
+        return False
+    return True
 
 
 class FSColumn(BaseModel):
@@ -25,11 +102,18 @@ class FSColumn(BaseModel):
 
     name: str
     type: str  # FSBaseType value or alias — normalized during compilation
-    length: Optional[int] = None  # For StringType
-    precision: Optional[int] = None  # For DecimalType
-    scale: Optional[int] = None  # For DecimalType
-    tz: Optional[str] = None  # For TimestampType
-    default: Optional[Any] = None  # Backfill value for new columns on deployed views
+    length: int | None = None  # For StringType
+    precision: int | None = None  # For DecimalType
+    scale: int | None = None  # For DecimalType
+    tz: str | None = None  # For TimestampType
+    default: Any | None = None  # Backfill value for new columns on deployed views
+    # Inner element type for ``ArrayType`` columns (e.g. ``last_distinct_n`` /
+    # ``last_n`` aggregation outputs).  The applied
+    # ``DESCRIBE ... TYPE = SPECIFICATION`` payload carries it, so dropping it
+    # here would break the local-vs-applied ``_full_spec_hash`` round-trip and
+    # spuriously flag every array-output FV as ``RECREATE_FV``.  Kept out of the
+    # compiled spec for the common (scalar) case via ``exclude_none=True``.
+    element_type: str | None = None
 
 
 class SpecBase(BaseModel):
@@ -37,10 +121,10 @@ class SpecBase(BaseModel):
 
     kind: str = ""
     name: str = ""
-    version: Optional[str] = None
-    database: Optional[str] = None
-    schema_: Optional[str] = None
-    description: Optional[str] = None
+    version: str | None = None
+    database: str | None = None
+    schema_: str | None = None
+    description: str | None = None
 
 
 class Entity(SpecBase):
@@ -101,11 +185,11 @@ class BatchSource(SpecBase):
     """
 
     kind: str = "BatchSource"
-    source_database: Optional[str] = None
-    source_schema: Optional[str] = None
-    table: Optional[str] = None
-    query: Optional[str] = None
-    query_file: Optional[str] = None
+    source_database: str | None = None
+    source_schema: str | None = None
+    table: str | None = None
+    query: str | None = None
+    query_file: str | None = None
     columns: list[FSColumn] = []
 
     @model_validator(mode="after")
@@ -138,10 +222,10 @@ class SourceRef(BaseModel):
     name: str
     source_type: str  # SourceType value
     columns: list[FSColumn] = Field(default_factory=list)
-    table: Optional[str] = None
-    query: Optional[str] = None
-    source_database: Optional[str] = None
-    source_schema: Optional[str] = None
+    table: str | None = None
+    query: str | None = None
+    source_database: str | None = None
+    source_schema: str | None = None
 
 
 class UDF(BaseModel):
@@ -154,8 +238,8 @@ class UDF(BaseModel):
 
     name: str
     engine: str = "pandas"
-    file: Optional[str] = None  # Path to .py file (YAML authoring)
-    function_definition: Optional[Union[str, Any]] = None  # String source or callable
+    file: str | None = None  # Path to .py file (YAML authoring)
+    function_definition: str | Any | None = None  # String source or callable
     output_columns: list[FSColumn] = []
 
 
@@ -176,12 +260,12 @@ class Feature(BaseModel):
 
     source_column: FSColumn = FSColumn(name="", type="")
     output_column: FSColumn = FSColumn(name="", type="")
-    function: Optional[str] = None
-    window: Optional[Union[str, int]] = None  # Authoring: "5m", "1h"
-    offset: Optional[Union[str, int]] = None  # Authoring: "1m"
-    window_sec: Optional[int] = None  # Imperative-shape (DESCRIBE / exporter)
-    offset_sec: Optional[int] = None  # Imperative-shape (DESCRIBE / exporter)
-    function_params: Optional[dict[str, Any]] = None
+    function: str | None = None
+    window: str | int | None = None  # Authoring: "5m", "1h"
+    offset: str | int | None = None  # Authoring: "1m"
+    window_sec: int | None = None  # Imperative-shape (DESCRIBE / exporter)
+    offset_sec: int | None = None  # Imperative-shape (DESCRIBE / exporter)
+    function_params: dict[str, Any] | None = None
 
 
 class Backfill(BaseModel):
@@ -205,10 +289,10 @@ class Backfill(BaseModel):
     error message can name the FV kind that produced the misuse.
     """
 
-    table: Optional[str] = None
-    start_time: Optional[Union[datetime.datetime, str]] = None
-    overwrite: Optional[bool] = None
-    initialize: Optional[Literal["ON_CREATE", "ON_SCHEDULE"]] = None
+    table: str | None = None
+    start_time: datetime.datetime | str | None = None
+    overwrite: bool | None = None
+    initialize: Literal["ON_CREATE", "ON_SCHEDULE"] | None = None
 
 
 class StorageConfig(BaseModel):
@@ -223,8 +307,8 @@ class StorageConfig(BaseModel):
     """
 
     format: Literal["snowflake", "iceberg"] = "snowflake"
-    external_volume: Optional[str] = None
-    base_location: Optional[str] = None
+    external_volume: str | None = None
+    base_location: str | None = None
 
 
 class FeatureView(SpecBase):
@@ -254,35 +338,35 @@ class FeatureView(SpecBase):
     kind: str = "StreamingFeatureView"
     online: bool = False
     offline: bool = False
-    timestamp_col: Optional[str] = None
-    feature_granularity: Optional[Union[str, int]] = None
-    feature_granularity_sec: Optional[int] = None  # Imperative-shape (DESCRIBE / exporter)
-    feature_aggregation_method: Optional[str] = None
-    target_lag: Optional[Union[str, int]] = None
-    target_lag_sec: Optional[int] = None  # Imperative-shape (DESCRIBE / exporter)
-    refresh_freq: Optional[str] = None
+    timestamp_col: str | None = None
+    feature_granularity: str | int | None = None
+    feature_granularity_sec: int | None = None  # Imperative-shape (DESCRIBE / exporter)
+    feature_aggregation_method: str | None = None
+    target_lag: str | int | None = None
+    target_lag_sec: int | None = None  # Imperative-shape (DESCRIBE / exporter)
+    refresh_freq: str | None = None
     entities: list[Any] = []  # str or Entity
     sources: list[Any] = []  # SourceRef or StreamingSource/BatchSource
-    udf: Optional[UDF] = None
+    udf: UDF | None = None
     features: list[Feature] = []
-    backfill: Optional[Backfill] = None
+    backfill: Backfill | None = None
     # Advanced BFV authoring knobs that map 1:1 onto kwargs of the imperative
     # ``snowflake.ml.feature_store.FeatureView`` constructor.  ``warehouse``
     # is operational (``UPDATE_FV`` via ``FeatureStore.update_feature_view``);
     # ``cluster_by`` is structural (RECREATE_FV).  Remaining slots
     # (refresh_mode / initialize / storage_config / aggregation_secondary_keys)
     # land in Phases 3-6 as each field's TDD pass ships.
-    warehouse: Optional[str] = None
-    cluster_by: Optional[list[str]] = None
-    refresh_mode: Optional[str] = None
+    warehouse: str | None = None
+    cluster_by: list[str] | None = None
+    refresh_mode: str | None = None
     # Promoted from ``backfill.initialize`` to first-class top-level in
     # Phase 4 of the advanced BFV plan.  The legacy nested form is still
     # accepted by ``compile_to_spec`` (back-compat alias); when both are
     # set, the top-level value wins so the compiled-spec hash has a
     # single source of truth.  Anything other than the two canonical enum
     # values raises ``ValidationError`` at load time.
-    initialize: Optional[Literal["ON_CREATE", "ON_SCHEDULE"]] = None
-    storage_config: Optional[StorageConfig] = None
+    initialize: Literal["ON_CREATE", "ON_SCHEDULE"] | None = None
+    storage_config: StorageConfig | None = None
     # ``aggregation_secondary_keys`` is private-preview; valid on both
     # tiled and non-tiled BFVs (on a non-tiled FV it is a spec/OFT
     # identity column, not a no-op).  The only authoring constraint — the
@@ -290,7 +374,17 @@ class FeatureView(SpecBase):
     # ``invariants._check_batch_feature_view_constraints`` so the error
     # message can name the offending FV.  Default ``None`` keeps the
     # field out of the compiled ``spec`` for the common case.
-    aggregation_secondary_keys: Optional[list[str]] = None
+    aggregation_secondary_keys: list[str] | None = None
+    # ``append_only`` opts a BatchFeatureView into the imperative
+    # ``snowflake.ml.feature_store.FeatureView(append_only=True)`` snapshot-
+    # accumulation path (companion ``$SNAPSHOTS`` table + CRON refresh Task for
+    # point-in-time training).  It is structural (toggling it lands as
+    # ``RECREATE_FV``) and carries hard companion requirements enforced by
+    # ``_validate_append_only`` below: ``refresh_mode: FULL``, a CRON
+    # ``refresh_freq``, a ``timestamp_col``, a batch kind, no tiled aggregation,
+    # and no ``backfill.overwrite``.  ``backup_source`` is deliberately not
+    # supported yet.
+    append_only: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -663,6 +757,100 @@ class FeatureView(SpecBase):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_append_only(self) -> "FeatureView":
+        """Enforce the append-only snapshot-accumulation companion contract.
+
+        ``append_only: true`` opts a ``BatchFeatureView`` into the imperative
+        ``snowflake.ml.feature_store.FeatureView(append_only=True)`` path, whose
+        registration validator
+        (``feature_view_append_only_validation.validate_snapshot_config_for_register``)
+        requires ``refresh_mode='FULL'``, a CRON ``refresh_freq`` (with time
+        zone), a ``timestamp_col``, a batch kind, no tiled aggregation, and
+        rejects ``overwrite=True``.  Mirroring those constraints here surfaces an
+        actionable load-time error instead of a late imperative crash at apply.
+
+        Every message contains the stable substring ``"is not valid on"`` so
+        :func:`decl.loader._dict_to_spec` re-raises the ``ValidationError``
+        rather than degrading to a sparse ``SpecBase`` fallback.
+
+        Returns:
+            ``self`` when ``append_only`` is falsy or all companion
+            requirements are satisfied.
+
+        Raises:
+            ValueError: When ``append_only`` is set on a non-batch kind, or on a
+                ``BatchFeatureView`` missing ``refresh_mode: FULL`` / a CRON
+                ``refresh_freq`` / ``timestamp_col``, or carrying tiled
+                aggregation or ``backfill.overwrite: true``.
+        """
+        if not self.append_only:
+            return self
+        name = self.name or "<unnamed>"
+        kind = self.kind or ""
+        if kind != "BatchFeatureView":
+            raise ValueError(
+                f"append_only is not valid on {kind} '{name}' — append-only "
+                "snapshot accumulation is only supported on a BatchFeatureView."
+            )
+        rm = None if self.refresh_mode is None else str(self.refresh_mode).upper()
+        if rm != "FULL":
+            got = "unset" if rm is None else repr(self.refresh_mode)
+            raise ValueError(
+                f"append_only=true is not valid on BatchFeatureView '{name}' "
+                f"with refresh_mode {got} — snapshot accumulation requires "
+                "refresh_mode: FULL."
+            )
+        if not _is_cron_refresh_freq(self.refresh_freq):
+            got = "unset" if self.refresh_freq is None else repr(self.refresh_freq)
+            raise ValueError(
+                f"append_only=true is not valid on BatchFeatureView '{name}' "
+                f"with refresh_freq {got} — snapshot accumulation requires a "
+                "CRON refresh_freq with a time zone (e.g. '0 0 * * * UTC'); "
+                "duration cadences are not supported."
+            )
+        if not self.timestamp_col:
+            raise ValueError(
+                f"append_only=true is not valid on BatchFeatureView '{name}' "
+                "without timestamp_col — point-in-time snapshots require a "
+                "timestamp column."
+            )
+        # Mirror the imperative contract, which rejects a *tiled* (windowed /
+        # rollup-aggregated) feature view — ``feature_view.is_tiled`` — not the
+        # mere presence of a ``features`` list.  Passthrough (1:1) features carry
+        # no ``window`` / ``window_sec`` / aggregation ``function``; applied-state
+        # recovery legitimately enumerates a deployed append-only BFV's
+        # passthrough columns into ``features`` (via DESCRIBE SPECIFICATION /
+        # ``_serialize_batch_fv_spec``), and re-validating that recovered spec on
+        # the plan path must not be rejected.  Only genuine tiling knobs — a
+        # ``feature_granularity`` cadence, an explicit
+        # ``feature_aggregation_method``, or any windowed / aggregated feature —
+        # are disallowed.
+
+        def _feature_is_tiled(feature: "Feature") -> bool:
+            return feature.window is not None or feature.window_sec is not None or feature.function is not None
+
+        tiled = (
+            self.feature_granularity is not None
+            or (self.feature_granularity_sec is not None)
+            or self.feature_aggregation_method is not None
+            or any(_feature_is_tiled(f) for f in (self.features or []))
+        )
+        if tiled:
+            raise ValueError(
+                f"append_only=true is not valid on tiled BatchFeatureView "
+                f"'{name}' — snapshot accumulation is passthrough-only; remove "
+                "windowed/aggregated features / feature_granularity / "
+                "feature_aggregation_method."
+            )
+        if self.backfill is not None and self.backfill.overwrite is True:
+            raise ValueError(
+                f"append_only=true is not valid on BatchFeatureView '{name}' "
+                "with backfill.overwrite: true — append-only feature views do "
+                "not support overwrite."
+            )
+        return self
+
 
 class StreamingFeatureView(FeatureView):
     """``FeatureView`` subclass pinning ``kind`` to ``"StreamingFeatureView"``.
@@ -741,8 +929,8 @@ class FeatureViewRef(BaseModel):
 
     name: str
     version: str
-    slice_columns: Optional[list[str]] = None
-    alias: Optional[str] = None
+    slice_columns: list[str] | None = None
+    alias: str | None = None
 
     @model_validator(mode="after")
     def _validate_feature_view_ref(self) -> "FeatureViewRef":

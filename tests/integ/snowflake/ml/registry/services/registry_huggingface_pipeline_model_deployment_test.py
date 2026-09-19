@@ -1,6 +1,5 @@
 import os
 import tempfile
-from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -41,7 +40,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
     # TODO: Remove torch dependency when the version is available in go/conda
     def test_text_generation(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
 
         import transformers
@@ -201,7 +200,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             None,
         ],
     )
-    def test_remote_log_model(self, compute_pool_for_log: Optional[str]) -> None:
+    def test_remote_log_model(self, compute_pool_for_log: str | None) -> None:
         if compute_pool_for_log is compute_pool.DEFAULT_CPU_COMPUTE_POOL:
             # test the default behavior, do not pass compute_pool_for_log
             model = huggingface.TransformersPipeline(

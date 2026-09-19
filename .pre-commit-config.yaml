@@ -34,7 +34,10 @@ repos:
         exclude: |
           (?x)^(
             snowflake/ml/modeling/_internal/snowpark_implementations/.*\.py|
-            snowflake/ml/modeling/preprocessing/one_hot_encoder\.py
+            snowflake/ml/modeling/preprocessing/one_hot_encoder\.py|
+            snowflake/ml/modeling/preprocessing/k_bins_discretizer\.py|
+            snowflake/ml/modeling/model_selection/grid_search_cv\.py|
+            snowflake/ml/modeling/model_selection/randomized_search_cv\.py
           )$
   - repo: https://github.com/PyCQA/isort  # config: .isort.cfg
     rev: 5.12.0

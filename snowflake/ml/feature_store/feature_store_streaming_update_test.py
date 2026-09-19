@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-from typing import Optional
 from unittest.mock import MagicMock
 
 from absl.testing import absltest
@@ -73,8 +72,8 @@ def _make_streaming_fv(
 
 def _new_fs_with_mocks(
     *,
-    session: Optional[MagicMock] = None,
-    metadata_manager: Optional[MagicMock] = None,
+    session: MagicMock | None = None,
+    metadata_manager: MagicMock | None = None,
     default_warehouse: str = "WH_DEFAULT",
 ) -> FeatureStore:
     """Construct a bare-bones ``FeatureStore`` with all I/O mocked."""

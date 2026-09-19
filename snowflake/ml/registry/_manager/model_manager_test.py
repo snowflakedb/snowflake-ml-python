@@ -1802,6 +1802,116 @@ class ModelManagerTest(parameterized.TestCase):
             )
             self.assertEqual(mv, self.m_mv)
 
+    def test_log_model_hidden_live_commit_failure_falls_back_to_from_stage(self) -> None:
+        m_model = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        pending_model = sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL")
+        live_version = sql_identifier.SqlIdentifier("LIVE_E5F6A7B8_VERSION")
+        live_stage_path = "snow://model/TEMP.TEST.PENDING_A1B2C3D4_MODEL/versions/LIVE_E5F6A7B8_VERSION/"
+        fallback_stage_path = "@TEMP.TEST.MODEL/V1"
+        commit_error = snowpark_exceptions.SnowparkSQLException("Object 'MODEL' already exists.")
+        commit_error.sfqid = "01b6fc10-0002-c121-0000-6ed10736311e"
+
+        with (
+            mock.patch.object(snowpark_utils, "is_in_stored_procedure", return_value=False),
+            mock.patch.object(
+                platform_capabilities.PlatformCapabilities,
+                "is_hidden_live_commit_enabled",
+                return_value=True,
+            ),
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_pending_model_name",
+                return_value=pending_model,
+            ),
+            mock.patch.object(
+                live_commit_naming,
+                "generate_live_version_name",
+                return_value=live_version,
+            ),
+            mock.patch.object(self.m_r._model_ops, "create_live_version") as mock_create_live_version,
+            mock.patch.object(
+                self.m_r._model_ops,
+                "get_model_version_stage_path",
+                return_value=live_stage_path,
+            ),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata),
+            mock.patch.object(
+                model_composer.ModelComposer, "upload_workspace_to_stage"
+            ) as mock_upload_workspace_to_stage,
+            mock.patch.object(
+                self.m_r._model_ops,
+                "commit_live_version",
+                side_effect=commit_error,
+            ) as mock_commit_live_version,
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=fallback_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+            mock.patch.object(telemetry, "send_custom_usage") as mock_send_custom_usage,
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            mock_create_live_version.assert_called_once()
+            mock_commit_live_version.assert_called_once()
+            mock_prepare_model_temp_stage_path.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                statement_params=self._build_expected_create_model_statement_params(
+                    "V1",
+                    model_log_path=model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                    sfqids=commit_error.sfqid,
+                ),
+            )
+            mock_upload_workspace_to_stage.assert_called_once_with(
+                fallback_stage_path,
+                statement_params=self._build_expected_create_model_statement_params(
+                    "V1",
+                    model_log_path=model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                    sfqids=commit_error.sfqid,
+                ),
+            )
+            mock_create_from_stage.assert_called_once_with(
+                composed_model=mock.ANY,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self._build_expected_create_model_statement_params(
+                    "V1",
+                    model_log_path=model_manager.MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK,
+                    sfqids=commit_error.sfqid,
+                ),
+            )
+            self.assertEqual(mock_send_custom_usage.call_count, 2)
+            send_kwargs = mock_send_custom_usage.call_args_list[0].kwargs
+            self.assertEqual(
+                send_kwargs["data"][telemetry.TelemetryField.KEY_FUNC_NAME.value],
+                model_manager._live_commit_fallback_func_name(),
+            )
+            self.assertEqual(send_kwargs[telemetry.TelemetryField.KEY_ERROR_INFO.value], repr(commit_error))
+            outcome_kwargs = mock_send_custom_usage.call_args_list[1].kwargs
+            self.assertEqual(
+                outcome_kwargs["data"][telemetry.TelemetryField.KEY_CUSTOM_TAGS.value][
+                    model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_TAG
+                ],
+                model_manager.LIVE_COMMIT_FALLBACK_OUTCOME_SUCCESS,
+            )
+            self.assertEqual(mv, self.m_mv)
+
     def test_log_model_hidden_live_fallback_failure_telemetry(self) -> None:
         m_model = mock.MagicMock()
         pending_model = sql_identifier.SqlIdentifier("PENDING_A1B2C3D4_MODEL")

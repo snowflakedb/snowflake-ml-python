@@ -20,7 +20,6 @@ REQUIREMENTS = [
     "pyyaml>=6.0,<7",
     "requests",
     "retrying>=1.3.3,<2",
-    "scipy>=1.9,<2",
     "snowflake-connector-python>=3.17.3,<5",
     "snowflake-snowpark-python>=1.37.0,<2",
     "sqlparse>=0.4,<1",

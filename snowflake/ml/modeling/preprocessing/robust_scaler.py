@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -72,10 +72,10 @@ class RobustScaler(base.BaseTransformer):
         with_scaling: bool = True,
         quantile_range: tuple[float, float] = (25.0, 75.0),
         unit_variance: bool = False,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Scale features using statistics that are robust to outliers.
@@ -140,14 +140,14 @@ class RobustScaler(base.BaseTransformer):
         self._state_is_set = False
 
     @property
-    def center_(self) -> Optional[dict[str, float]]:
+    def center_(self) -> dict[str, float] | None:
         return None if (not self.with_centering or not self._state_is_set) else self._center
 
     @property
-    def scale_(self) -> Optional[dict[str, float]]:
+    def scale_(self) -> dict[str, float] | None:
         return None if (not self.with_scaling or not self._state_is_set) else self._scale
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "RobustScaler":
         """
         Compute center, scale and quantile values of the dataset.
 
@@ -216,7 +216,7 @@ class RobustScaler(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Center and scale the data.
 

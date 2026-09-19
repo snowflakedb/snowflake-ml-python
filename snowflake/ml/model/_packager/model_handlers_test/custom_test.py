@@ -266,7 +266,7 @@ class CustomHandlerTest(absltest.TestCase):
                 np.testing.assert_allclose(p2, p3)
                 np.testing.assert_allclose(p2, p4)
 
-        asyncio.get_event_loop().run_until_complete(_test(self))
+        asyncio.run(_test(self))
 
     def test_custom_model_with_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -29,7 +29,7 @@ import linecache
 import re as _re_module
 import textwrap
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -360,7 +360,7 @@ class RealtimeConfig:
         return self._compute_fn_source  # type: ignore[no-any-return,attr-defined]
 
     @property
-    def request_source(self) -> Optional[RequestSource]:
+    def request_source(self) -> RequestSource | None:
         """The :class:`RequestSource` at ``sources[0]``, or ``None`` if not provided."""
         if not self.sources:
             return None
@@ -368,6 +368,6 @@ class RealtimeConfig:
         return first if isinstance(first, RequestSource) else None
 
     @property
-    def feature_view_sources(self) -> list[Union[Any, Any]]:
+    def feature_view_sources(self) -> list[Any | Any]:
         """Upstream :class:`FeatureView` / :class:`FeatureViewSlice` references."""
         return [s for s in self.sources if not isinstance(s, RequestSource)]

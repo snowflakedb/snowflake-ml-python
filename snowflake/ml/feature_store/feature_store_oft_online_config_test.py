@@ -3,7 +3,7 @@
 import datetime
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -72,7 +72,7 @@ class StoreTypeFromOftShowRowTest(parameterized.TestCase):
         ("hybrid_table_upper", "HYBRID_TABLE", OnlineStoreType.HYBRID_TABLE),
         ("missing_column", None, OnlineStoreType.HYBRID_TABLE),
     )
-    def test_store_type_mapping(self, store_type_value: Optional[str], expected: OnlineStoreType) -> None:
+    def test_store_type_mapping(self, store_type_value: str | None, expected: OnlineStoreType) -> None:
         if store_type_value is None:
             row = Row(TARGET_LAG="10s")
         else:
@@ -232,7 +232,7 @@ class OftSetupStatusFieldsTest(parameterized.TestCase):
         ("notready", "SETUP_NOTREADY", None),
         ("failed", "SETUP_FAILED", "postgres cluster provisioning timed out"),
     )
-    def test_statuses_are_passed_through_verbatim(self, status: str, error_msg: Optional[str]) -> None:
+    def test_statuses_are_passed_through_verbatim(self, status: str, error_msg: str | None) -> None:
         row = Row(SETUP_STATUS=status, SETUP_ERROR_MSG=error_msg)
         fields = fs_mod._oft_setup_status_display_fields(row)
         self.assertEqual(fields["setup_status"], status)
@@ -292,7 +292,7 @@ class DetermineOnlineConfigSetupStatusTest(parameterized.TestCase):
         ("notready", "SETUP_NOTREADY", None),
         ("failed", "SETUP_FAILED", "online store setup failed: quota exceeded"),
     )
-    def test_each_status_surfaced(self, status: str, error_msg: Optional[str]) -> None:
+    def test_each_status_surfaced(self, status: str, error_msg: str | None) -> None:
         setup_time = datetime.datetime(2026, 8, 10, 1, 2, 3)
         data = self._display_data(self._oft_row(SETUP_STATUS=status, SETUP_ERROR_MSG=error_msg, SETUP_TIME=setup_time))
         self.assertEqual(data["setup_status"], status)
@@ -353,7 +353,7 @@ class RealtimeListingSetupStatusTest(parameterized.TestCase):
             entity_names=["USER"],
         )
 
-    def _online_config_for(self, oft_show_row: Optional[Row]) -> dict[str, Any]:
+    def _online_config_for(self, oft_show_row: Row | None) -> dict[str, Any]:
         fs = MagicMock()
         output_values: list[list[Any]] = []
         output_values_extra: list[list[Any]] = []
@@ -390,7 +390,7 @@ class RealtimeListingSetupStatusTest(parameterized.TestCase):
         ("notready", "SETUP_NOTREADY", None),
         ("failed", "SETUP_FAILED", "postgres schema creation failed"),
     )
-    def test_each_status_surfaced(self, status: str, error_msg: Optional[str]) -> None:
+    def test_each_status_surfaced(self, status: str, error_msg: str | None) -> None:
         setup_time = datetime.datetime(2026, 8, 10, 9, 8, 7)
         data = self._online_config_for(
             Row(

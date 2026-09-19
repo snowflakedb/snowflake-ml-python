@@ -1,5 +1,5 @@
 import tempfile
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -25,8 +25,8 @@ class DummyProtocol(p.SerializationProtocol):
     def __init__(
         self,
         name: str,
-        version: Optional[str] = None,
-        metadata: Optional[dict[str, str]] = None,
+        version: str | None = None,
+        metadata: dict[str, str] | None = None,
         supported_types: p.Condition = None,
     ) -> None:
         self._protocol_info = ProtocolInfo(
@@ -44,15 +44,15 @@ class DummyProtocol(p.SerializationProtocol):
     def protocol_info(self) -> ProtocolInfo:
         return self._protocol_info
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[Any] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: Any | None = None) -> ProtocolInfo:
         # Simple dummy implementation - just return protocol info with manifest
         return self.protocol_info.with_manifest({"dummy_path": f"{dest_dir}/dummy.pkl"})
 
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[Any] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: Any | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         # Simple dummy implementation - return a dummy object
         manifest_value = payload_info.manifest.get("dummy_path") if payload_info.manifest else None
@@ -102,7 +102,7 @@ class TestProtocols(parameterized.TestCase):
         self,
         protocol: p.SerializationProtocol,
         obj: Any,
-        assertion_func: Optional[Callable[[Any, Any, Any], None]] = None,
+        assertion_func: Callable[[Any, Any, Any], None] | None = None,
     ) -> None:
         """Test serialization and deserialization of supported types."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -232,14 +232,14 @@ class TestAutoProtocol(parameterized.TestCase):
             def protocol_info(self) -> ProtocolInfo:
                 return ProtocolInfo(name="failing")
 
-            def save(self, obj: Any, dest_dir: str, session: Optional[Any] = None) -> ProtocolInfo:
+            def save(self, obj: Any, dest_dir: str, session: Any | None = None) -> ProtocolInfo:
                 return ProtocolInfo(name="failing")
 
             def load(
                 self,
                 payload_info: ProtocolInfo,
-                session: Optional[Any] = None,
-                path_transform: Optional[Callable[[str], str]] = None,
+                session: Any | None = None,
+                path_transform: Callable[[str], str] | None = None,
             ) -> Any:
                 pass
 

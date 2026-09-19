@@ -3,7 +3,7 @@
 import inspect
 import warnings
 from enum import Enum
-from typing import Any, Callable, Iterable, Optional, Union
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import sklearn
@@ -74,13 +74,13 @@ def generate_value_with_prefix(prefix: str) -> str:
 def get_filtered_valid_sklearn_args(
     args: dict[str, Any],
     default_sklearn_args: dict[str, Any],
-    sklearn_initial_keywords: Optional[Union[str, Iterable[str]]] = None,
-    sklearn_unused_keywords: Optional[Union[str, Iterable[str]]] = None,
-    snowml_only_keywords: Optional[Union[str, Iterable[str]]] = None,
-    sklearn_added_keyword_to_version_dict: Optional[dict[str, str]] = None,
-    sklearn_added_kwarg_value_to_version_dict: Optional[dict[str, dict[str, str]]] = None,
-    sklearn_deprecated_keyword_to_version_dict: Optional[dict[str, str]] = None,
-    sklearn_removed_keyword_to_version_dict: Optional[dict[str, str]] = None,
+    sklearn_initial_keywords: str | Iterable[str] | None = None,
+    sklearn_unused_keywords: str | Iterable[str] | None = None,
+    snowml_only_keywords: str | Iterable[str] | None = None,
+    sklearn_added_keyword_to_version_dict: dict[str, str] | None = None,
+    sklearn_added_kwarg_value_to_version_dict: dict[str, dict[str, str]] | None = None,
+    sklearn_deprecated_keyword_to_version_dict: dict[str, str] | None = None,
+    sklearn_removed_keyword_to_version_dict: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Get valid sklearn keyword arguments with non-default values.
@@ -219,7 +219,7 @@ def get_filtered_valid_sklearn_args(
     return sklearn_args
 
 
-def str_to_bool(value: str) -> Union[bool, None]:
+def str_to_bool(value: str) -> bool | None:
     if value is None:
         return None
     elif value.lower() == "true":

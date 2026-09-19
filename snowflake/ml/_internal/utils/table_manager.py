@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting, identifier, query_result_checker
@@ -25,7 +25,7 @@ def create_single_table(
     schema_name: str,
     table_name: str,
     table_schema: list[tuple[str, str]],
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> str:
     """Creates a single table for registry and returns the fully qualified name of the table.
 

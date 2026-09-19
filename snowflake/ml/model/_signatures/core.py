@@ -6,7 +6,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Optional,
     Sequence,
     Union,
     final,
@@ -87,7 +86,7 @@ class DataType(Enum):
         return f"DataType.{self.name}"
 
     @classmethod
-    def from_numpy_type(cls, input_type: Union[npt.DTypeLike, PandasExtensionTypes]) -> "DataType":
+    def from_numpy_type(cls, input_type: npt.DTypeLike | PandasExtensionTypes) -> "DataType":
         """Translate numpy dtype to DataType for signature definition.
 
         Args:
@@ -250,7 +249,7 @@ class DataType(Enum):
         )
 
     @classmethod
-    def shape_from_python_type(cls, python_type: type) -> Optional[tuple[int, ...]]:
+    def shape_from_python_type(cls, python_type: type) -> tuple[int, ...] | None:
         """Get the shape for a Python type annotation.
 
         Args:
@@ -289,7 +288,7 @@ class DataType(Enum):
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""
 
-    def __init__(self, name: str, shape: Optional[tuple[int, ...]]) -> None:
+    def __init__(self, name: str, shape: tuple[int, ...] | None) -> None:
         self._name = name
 
         if shape and not isinstance(shape, tuple):
@@ -310,7 +309,7 @@ class BaseFeatureSpec(ABC):
         """Convert to corresponding Snowpark Type."""
 
     @abstractmethod
-    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+    def as_dtype(self, force_numpy_dtype: bool = False) -> npt.DTypeLike | str | PandasExtensionTypes:
         """Convert to corresponding local Type."""
 
     @abstractmethod
@@ -330,7 +329,7 @@ class FeatureSpec(BaseFeatureSpec):
         self,
         name: str,
         dtype: DataType,
-        shape: Optional[tuple[int, ...]] = None,
+        shape: tuple[int, ...] | None = None,
         nullable: bool = True,
     ) -> None:
         """
@@ -374,7 +373,7 @@ class FeatureSpec(BaseFeatureSpec):
             result_type = spt.ArrayType(result_type)
         return result_type
 
-    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+    def as_dtype(self, force_numpy_dtype: bool = False) -> npt.DTypeLike | str | PandasExtensionTypes:
         """Convert to corresponding local Type."""
 
         if not self._shape:
@@ -478,7 +477,7 @@ class FeatureSpec(BaseFeatureSpec):
 class FeatureGroupSpec(BaseFeatureSpec):
     """Specification of a group of features in Snowflake native model packaging."""
 
-    def __init__(self, name: str, specs: list[BaseFeatureSpec], shape: Optional[tuple[int, ...]] = None) -> None:
+    def __init__(self, name: str, specs: list[BaseFeatureSpec], shape: tuple[int, ...] | None = None) -> None:
         """Initialize a feature group.
 
         Args:
@@ -548,7 +547,7 @@ class FeatureGroupSpec(BaseFeatureSpec):
             f"{base_indent})"
         )
 
-    def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
+    def as_dtype(self, force_numpy_dtype: bool = False) -> npt.DTypeLike | str | PandasExtensionTypes:
         return np.object_
 
     def to_dict(self) -> dict[str, Any]:
@@ -651,7 +650,7 @@ def _convert_mlflow_object(name: str, mlflow_obj: Any) -> FeatureGroupSpec:
 class BaseParamSpec(ABC):
     """Abstract Class for specification of a parameter."""
 
-    def __init__(self, name: str, shape: Optional[tuple[int, ...]] = None) -> None:
+    def __init__(self, name: str, shape: tuple[int, ...] | None = None) -> None:
         self._name = name
 
         if shape is not None and not isinstance(shape, tuple):
@@ -669,7 +668,7 @@ class BaseParamSpec(ABC):
 
     @final
     @property
-    def shape(self) -> Optional[tuple[int, ...]]:
+    def shape(self) -> tuple[int, ...] | None:
         """Shape of the parameter. None means scalar."""
         return self._shape
 
@@ -800,7 +799,7 @@ class ParamSpec(BaseParamSpec):
         name: str,
         dtype: DataType,
         default_value: Any,
-        shape: Optional[tuple[int, ...]] = None,
+        shape: tuple[int, ...] | None = None,
     ) -> None:
         """Initialize a parameter.
 
@@ -818,7 +817,7 @@ class ParamSpec(BaseParamSpec):
         self._default_value = default_value
 
     @staticmethod
-    def _validate_default_value(dtype: DataType, default_value: Any, shape: Optional[tuple[int, ...]]) -> None:
+    def _validate_default_value(dtype: DataType, default_value: Any, shape: tuple[int, ...] | None) -> None:
         """Validate that default_value is compatible with dtype and shape.
 
         Args:
@@ -968,7 +967,7 @@ class ParamGroupSpec(BaseParamSpec):
         name: str,
         specs: list[BaseParamSpec],
         default_value: Any = None,
-        shape: Optional[tuple[int, ...]] = None,
+        shape: tuple[int, ...] | None = None,
     ) -> None:
         """Initialize a parameter group.
 
@@ -1242,7 +1241,7 @@ class ModelSignature:
         self,
         inputs: Sequence[BaseFeatureSpec],
         outputs: Sequence[BaseFeatureSpec],
-        params: Optional[Sequence[BaseParamSpec]] = None,
+        params: Sequence[BaseParamSpec] | None = None,
     ) -> None:
         """Initialize a model signature.
 
@@ -1332,7 +1331,7 @@ class ModelSignature:
         )
 
     def __repr__(self) -> str:
-        def format_spec_list(specs: Sequence[Union[BaseFeatureSpec, BaseParamSpec]], num_indents: int = 2) -> str:
+        def format_spec_list(specs: Sequence[BaseFeatureSpec | BaseParamSpec], num_indents: int = 2) -> str:
             if not specs:
                 return ""
             return ",\n".join(

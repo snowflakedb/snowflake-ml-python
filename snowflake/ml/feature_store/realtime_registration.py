@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -81,7 +81,7 @@ def _build_realtime_feature_view_spec(
     target_lag: str,
     database: str,
     schema: str,
-    session: Optional[Session] = None,
+    session: Session | None = None,
 ) -> FeatureViewSpec:
     """Build a ``FeatureViewSpec`` for an RTFV (no offline configs)."""
     realtime_config = feature_view.realtime_config
@@ -125,7 +125,7 @@ def _build_realtime_feature_view_spec(
 
 def _resolve_realtime_upstream_fvs(
     feature_view: FeatureView,
-) -> list[Union[FeatureView, FeatureViewSlice]]:
+) -> list[FeatureView | FeatureViewSlice]:
     """Upstream FV/Slice list for an RTFV; empty for non-RTFVs."""
     if feature_view.realtime_config is None:
         return []
@@ -146,7 +146,7 @@ def _resolve_realtime_unwrapped_upstream_fvs(
 
 def validate_sources_online_postgres_for_rtfv(realtime_config: RealtimeConfig) -> None:
     """Upstream FVs must be online + Postgres-backed. RequestSource is skipped."""
-    upstream: list[Union[FeatureView, FeatureViewSlice]] = list(realtime_config.feature_view_sources)
+    upstream: list[FeatureView | FeatureViewSlice] = list(realtime_config.feature_view_sources)
     if not upstream:
         return
     validate_sources_online_postgres(upstream, consumer_label="RealtimeFeatureView")
@@ -772,7 +772,7 @@ def append_realtime_listing_row(
     *,
     feature_store: FeatureStore,
     rtfv_metadata: RealtimeConfigMetadata,
-    oft_show_row: Optional[Row],
+    oft_show_row: Row | None,
     output_values: list[list[Any]],
     output_values_extra: list[list[Any]],
     fv_kind_realtime: str,
@@ -863,7 +863,7 @@ def append_realtime_listing_row(
 def append_realtime_listing_rows(
     *,
     feature_store: FeatureStore,
-    feature_view_name_prefix: Optional[SqlIdentifier],
+    feature_view_name_prefix: SqlIdentifier | None,
     output_values: list[list[Any]],
     output_values_extra: list[list[Any]],
     fv_kind_realtime: str,
@@ -937,7 +937,7 @@ def compose_rtfv_from_metadata(
     """
     upstream = hydrate_source_refs(feature_store, metadata.sources)
 
-    request_source: Optional[RequestSource]
+    request_source: RequestSource | None
     if metadata.request_schema_json is not None:
         request_schema = request_schema_from_json(metadata.request_schema_json)
         request_source = RequestSource(schema=request_schema)

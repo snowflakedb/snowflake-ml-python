@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from warnings import warn
 
 import lightgbm as lgb
@@ -20,9 +20,9 @@ class SnowflakeLightgbmCallback(lgb.callback._RecordEvaluationCallback):
         log_metrics: bool = True,
         log_params: bool = True,
         log_every_n_epochs: int = 1,
-        model_name: Optional[str] = None,
-        version_name: Optional[str] = None,
-        model_signature: Optional["ModelSignature"] = None,
+        model_name: str | None = None,
+        version_name: str | None = None,
+        model_signature: "ModelSignature | None" = None,
     ) -> None:
         """
         Creates a new LightGBM callback.

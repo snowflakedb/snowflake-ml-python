@@ -1,4 +1,4 @@
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Union
 
 import cloudpickle as cp
 import numpy as np
@@ -246,18 +246,19 @@ class RandomizedSearchCV(BaseTransformer):
         random_state=None,
         error_score=np.nan,
         return_train_score=False,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        label_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
-        sample_weight_col: Optional[str] = None,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        label_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
+        sample_weight_col: str | None = None,
     ) -> None:
         super().__init__()
         deps: set[str] = {
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
+            f"pandas=={pd.__version__}",
         }
         deps = deps | gather_dependencies(estimator)
         self._deps = list(deps)
@@ -280,7 +281,7 @@ class RandomizedSearchCV(BaseTransformer):
         self._sklearn_object: Any = sklearn.model_selection.RandomizedSearchCV(
             **cleaned_up_init_args,
         )
-        self._model_signature_dict: Optional[dict[str, ModelSignature]] = None
+        self._model_signature_dict: dict[str, ModelSignature] | None = None
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
         self.set_label_cols(label_cols)
@@ -301,7 +302,7 @@ class RandomizedSearchCV(BaseTransformer):
         )
         return selected_cols
 
-    def _fit(self, dataset: Union[DataFrame, pd.DataFrame]) -> "RandomizedSearchCV":
+    def _fit(self, dataset: DataFrame | pd.DataFrame) -> "RandomizedSearchCV":
         """Run fit with all sets of parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.fit]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.fit)
@@ -382,7 +383,7 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def predict(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def predict(self, dataset: DataFrame | pd.DataFrame) -> DataFrame | pd.DataFrame:
         """Call predict on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.predict]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.predict)
@@ -461,7 +462,7 @@ class RandomizedSearchCV(BaseTransformer):
         project=_PROJECT,
         subproject=_SUBPROJECT,
     )
-    def transform(self, dataset: Union[DataFrame, pd.DataFrame]) -> Union[DataFrame, pd.DataFrame]:
+    def transform(self, dataset: DataFrame | pd.DataFrame) -> DataFrame | pd.DataFrame:
         """Call transform on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.transform]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.transform)
@@ -518,8 +519,8 @@ class RandomizedSearchCV(BaseTransformer):
         subproject=_SUBPROJECT,
     )
     def predict_proba(
-        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_proba_"
-    ) -> Union[DataFrame, pd.DataFrame]:
+        self, dataset: DataFrame | pd.DataFrame, output_cols_prefix: str = "predict_proba_"
+    ) -> DataFrame | pd.DataFrame:
         """Call predict_proba on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.predict_proba]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.predict_proba)
@@ -579,8 +580,8 @@ class RandomizedSearchCV(BaseTransformer):
         subproject=_SUBPROJECT,
     )
     def predict_log_proba(
-        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "predict_log_proba_"
-    ) -> Union[DataFrame, pd.DataFrame]:
+        self, dataset: DataFrame | pd.DataFrame, output_cols_prefix: str = "predict_log_proba_"
+    ) -> DataFrame | pd.DataFrame:
         """Call predict_proba on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.predict_proba]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.predict_proba)
@@ -641,8 +642,8 @@ class RandomizedSearchCV(BaseTransformer):
         subproject=_SUBPROJECT,
     )
     def decision_function(
-        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "decision_function_"
-    ) -> Union[DataFrame, pd.DataFrame]:
+        self, dataset: DataFrame | pd.DataFrame, output_cols_prefix: str = "decision_function_"
+    ) -> DataFrame | pd.DataFrame:
         """Call decision_function on the estimator with the best found parameters
         For more details on this function, see [sklearn.model_selection.RandomizedSearchCV.decision_function]
         (https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.RandomizedSearchCV.html#sklearn.model_selection.RandomizedSearchCV.decision_function)
@@ -703,8 +704,8 @@ class RandomizedSearchCV(BaseTransformer):
         custom_tags=dict([("autogen", True)]),
     )
     def score_samples(
-        self, dataset: Union[DataFrame, pd.DataFrame], output_cols_prefix: str = "score_samples_"
-    ) -> Union[DataFrame, pd.DataFrame]:
+        self, dataset: DataFrame | pd.DataFrame, output_cols_prefix: str = "score_samples_"
+    ) -> DataFrame | pd.DataFrame:
         """Call score_samples on the estimator with the best found parameters.
         Only available if refit=True and the underlying estimator supports score_samples.
 
@@ -760,7 +761,7 @@ class RandomizedSearchCV(BaseTransformer):
         return output_df
 
     @available_if(original_estimator_has_callable("score"))  # type: ignore[misc]
-    def score(self, dataset: Union[DataFrame, pd.DataFrame]) -> float:
+    def score(self, dataset: DataFrame | pd.DataFrame) -> float:
         """
         If implemented by the original estimator, return the score for the dataset.
 
@@ -823,7 +824,7 @@ class RandomizedSearchCV(BaseTransformer):
     def _get_dependencies(self) -> list[str]:
         return self._deps
 
-    def _generate_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
+    def _generate_model_signatures(self, dataset: DataFrame | pd.DataFrame) -> None:
         self._model_signature_dict = dict()
 
         PROB_FUNCTIONS = ["predict_log_proba", "predict_proba", "decision_function"]

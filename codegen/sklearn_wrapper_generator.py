@@ -1178,6 +1178,7 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         self.deps = (
             "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', f'cloudpickle=={cp.__version__}'"
+            ", f'pandas=={pd.__version__}'"
         )
         self.supported_export_method = "to_sklearn"
         self.unsupported_export_methods = ["to_xgboost", "to_lightgbm"]
@@ -1212,7 +1213,7 @@ class XGBoostWrapperGenerator(WrapperGeneratorBase):
         self.unsupported_export_methods = ["to_sklearn", "to_lightgbm"]
         self.deps = (
             "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', "
-            + "f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}'"
+            + "f'xgboost=={xgboost.__version__}', f'cloudpickle=={cp.__version__}', f'pandas=={pd.__version__}'"
         )
         self._construct_string_from_lists()
         return self
@@ -1242,7 +1243,7 @@ class LightGBMWrapperGenerator(WrapperGeneratorBase):
 
         self.deps = (
             "f'numpy=={np.__version__}', f'lightgbm=={lightgbm.__version__}', f'cloudpickle=={cp.__version__}'"
-            ", f'scikit-learn=={sklearn.__version__}'"
+            ", f'scikit-learn=={sklearn.__version__}', f'pandas=={pd.__version__}'"
         )
         self.supported_export_method = "to_lightgbm"
         self.unsupported_export_methods = ["to_sklearn", "to_xgboost"]

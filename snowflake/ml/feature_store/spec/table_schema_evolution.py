@@ -7,7 +7,7 @@ set (same as FSColumn / ``validate_schema_types``).
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping
 
 from snowflake.ml.feature_store.spec.models import _SUPPORTED_TYPES
 from snowflake.ml.feature_store.stream_config import _snowpark_type_to_sql
@@ -36,7 +36,7 @@ def get_table_schema_evolution_extend_only_commands(
     old_schema: Mapping[str, DataType],
     new_schema: Mapping[str, DataType],
     *,
-    required_old_columns: Optional[Iterable[str]] = None,
+    required_old_columns: Iterable[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Compute extend-only DDL commands to evolve *old_table* from *old_schema* to *new_schema*.
 

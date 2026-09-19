@@ -1,5 +1,5 @@
 import json
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -14,18 +14,18 @@ def check_sp_df_res(
     expected_pd_df: pd.DataFrame,
     *,
     check_dtype: bool = True,
-    check_index_type: Union[bool, Literal["equiv"]] = "equiv",
-    check_column_type: Union[bool, Literal["equiv"]] = "equiv",
+    check_index_type: bool | Literal["equiv"] = "equiv",
+    check_column_type: bool | Literal["equiv"] = "equiv",
     check_frame_type: bool = True,
     check_names: bool = True,
     check_exact: bool = False,
-    atol: Optional[float] = None,
-    rtol: Optional[float] = None,
-    deserialize_json: Optional[bool] = False,
+    atol: float | None = None,
+    rtol: float | None = None,
+    deserialize_json: bool | None = False,
 ) -> None:
     res_pd_df = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res_sp_df)
 
-    def totuple(a: Union[npt.ArrayLike, tuple[object], object]) -> Union[tuple[object], object]:
+    def totuple(a: npt.ArrayLike | tuple[object] | object) -> tuple[object] | object:
         try:
             return tuple(totuple(i) for i in a)  # type: ignore[union-attr]
         except TypeError:

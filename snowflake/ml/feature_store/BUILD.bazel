@@ -395,6 +395,30 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_iceberg_list_aggregation_test",
+    srcs = ["feature_store_iceberg_list_aggregation_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_iceberg_storage_recovery_test",
+    srcs = ["feature_store_iceberg_storage_recovery_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "feature_store_backfill_test",
     srcs = ["feature_store_backfill_test.py"],
     tags = [

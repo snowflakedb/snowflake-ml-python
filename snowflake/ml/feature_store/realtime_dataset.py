@@ -9,7 +9,7 @@ result back onto the user-visible frame by a synthetic per-spine-row id
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import cloudpickle
 
@@ -266,7 +266,7 @@ def _build_one_rtfv(
     rtfv: FeatureView,
     idx: int,
     augmented_spine: DataFrame,
-    spine_timestamp_col: Optional[str],
+    spine_timestamp_col: str | None,
 ) -> DataFrame:
     """Build one RTFV's private join + ``map_in_pandas`` apply.
 
@@ -359,7 +359,7 @@ def _build_one_rtfv(
         upstream_table_name = upstream_fv.fully_qualified_name()
         src_prefix = _RTFV_SRC_PREFIX_FMT.format(idx=idx, src_idx=src_idx)
 
-        upstream_ts_col: Optional[str] = (
+        upstream_ts_col: str | None = (
             upstream_fv.timestamp_col.identifier() if upstream_fv.timestamp_col is not None else None
         )
         use_asof = spine_timestamp_col is not None and upstream_ts_col is not None and fs._is_asof_join_enabled()
@@ -475,7 +475,7 @@ def apply_rtfvs(
     rtfv_refs_in_order: list[FeatureRef],
     original_features: list[FeatureRef],
     augmented_spine: DataFrame,
-    spine_timestamp_col: Optional[str],
+    spine_timestamp_col: str | None,
     auto_prefix: bool,
 ) -> DataFrame:
     """Drive Stage 2 + Stage 3: per-RTFV apply, combine, project, prefix, reorder.

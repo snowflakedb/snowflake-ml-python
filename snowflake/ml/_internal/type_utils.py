@@ -1,5 +1,5 @@
 import importlib
-from typing import Any, Generic, Type, TypeVar, Union, cast
+from typing import Any, Generic, TypeVar, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -11,7 +11,7 @@ T = TypeVar("T")
 class LazyType(Generic[T]):
     """Utility type to help defer need of importing."""
 
-    def __init__(self, klass: Union[str, type[T]]) -> None:
+    def __init__(self, klass: str | type[T]) -> None:
         self.qualname = ""
         if isinstance(klass, str):
             parts = klass.rsplit(".", 1)
@@ -55,7 +55,7 @@ class LazyType(Generic[T]):
             except ModuleNotFoundError:
                 raise ValueError(f"Module {self.module} not imported.")
 
-            self._runtime_class = cast("Type[T]", getattr(m, self.qualname))
+            self._runtime_class = cast("type[T]", getattr(m, self.qualname))
 
         return self._runtime_class
 

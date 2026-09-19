@@ -1,7 +1,7 @@
 import collections
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 import fsspec
 
@@ -35,8 +35,8 @@ class SnowFileSystem(sfcfs.SFFileSystem):
 
     def __init__(
         self,
-        sf_connection: Optional[connection.SnowflakeConnection] = None,
-        snowpark_session: Optional[snowpark.Session] = None,
+        sf_connection: connection.SnowflakeConnection | None = None,
+        snowpark_session: snowpark.Session | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(sf_connection=sf_connection, snowpark_session=snowpark_session, **kwargs)

@@ -190,6 +190,49 @@ class CleanupStreamingTest(absltest.TestCase):
         # Ref count is still decremented.
         metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
 
+    def test_iceberg_landing_tables_dropped_with_generic_drop_table(self) -> None:
+        """Cleanup issues a plain DROP TABLE even when the landing tables are Iceberg.
+
+        ``run_streaming_preamble`` creates ``$UDF_TRANSFORMED`` / ``$BACKFILL``
+        as Snowflake-managed Iceberg tables when the feature view uses Iceberg
+        storage, and the metadata records that. Cleanup does not read
+        ``is_iceberg``, so if the Iceberg-specific drop is required these
+        tables and their external-volume data survive feature view deletion.
+        """
+        session = MagicMock()
+        metadata_manager = MagicMock()
+        metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="TXN_EVENTS",
+            transformation_fn_name="my_fn",
+        )
+
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+        fv_metadata = _FeatureViewMetadata(
+            entities=["USER_ENTITY"],
+            timestamp_col="EVENT_TIME",
+            is_streaming=True,
+            is_iceberg=True,
+        )
+
+        cleanup_streaming_feature_view(
+            session=session,
+            feature_view_name=feature_view_name,
+            version="v1",
+            fv_name="TEST_FV",
+            fv_metadata=fv_metadata,
+            metadata_manager=metadata_manager,
+            get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+            telemetry_stmp={},
+        )
+
+        issued_sql = [str(c) for c in session.sql.call_args_list]
+        table_drops = [s for s in issued_sql if "DROP TABLE IF EXISTS" in s]
+        self.assertEqual(len(table_drops), 2)
+        self.assertFalse(
+            any("DROP ICEBERG TABLE" in s for s in issued_sql),
+            f"cleanup never emits the Iceberg-specific drop, got: {issued_sql}",
+        )
+
     def test_cleanup_no_streaming_metadata(self) -> None:
         """Test cleanup when streaming metadata is not found."""
         session = MagicMock()
@@ -738,7 +781,10 @@ class RunStreamingPreambleTest(absltest.TestCase):
     """Tests for run_streaming_preamble."""
 
     def _make_streaming_fv(
-        self, backfill_df: MagicMock, backfill_start_time: datetime.datetime | None = None
+        self,
+        backfill_df: MagicMock,
+        backfill_start_time: datetime.datetime | None = None,
+        storage_config: StorageConfig | None = None,
     ) -> FeatureView:
         entity = _make_entity()
         stream_config = StreamConfig(
@@ -752,6 +798,7 @@ class RunStreamingPreambleTest(absltest.TestCase):
             entities=[entity],
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
+            storage_config=storage_config,
         )
 
     def _make_probe_pdf(self) -> pd.DataFrame:
@@ -795,6 +842,67 @@ class RunStreamingPreambleTest(absltest.TestCase):
         # Verify CREATE TABLE was called for both tables
         create_calls = [c for c in session.sql.call_args_list if "CREATE" in str(c)]
         self.assertEqual(len(create_calls), 2)
+
+    def _run_preamble_for_create_sqls(self, fv: FeatureView) -> list[str]:
+        """Run the preamble against a mock session and return its CREATE statements.
+
+        Args:
+            fv: Streaming feature view to register.
+
+        Returns:
+            The CREATE statements issued by the preamble, in call order.
+        """
+        session = MagicMock()
+        run_streaming_preamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=SqlIdentifier("TEST_FV$v1"),
+            overwrite=False,
+            metadata_manager=MagicMock(),
+            telemetry_stmp={},
+            get_stream_source_fn=lambda name: _make_stream_source(),
+            get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+        )
+        return [c[0][0] for c in session.sql.call_args_list if "CREATE" in str(c)]
+
+    def test_preamble_iceberg_creates_udf_and_backfill_as_iceberg(self) -> None:
+        """Iceberg storage_config creates Iceberg $UDF_TRANSFORMED and $BACKFILL."""
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
+
+        fv = self._make_streaming_fv(
+            backfill_df,
+            storage_config=StorageConfig(
+                format=StorageFormat.ICEBERG,
+                external_volume="MY_VOLUME",
+                base_location="snowflake/feature_store/iceberg/DB/SCH/TEST_FV$v1",
+            ),
+        )
+
+        create_sqls = self._run_preamble_for_create_sqls(fv)
+        self.assertEqual(len(create_sqls), 2)
+        udf_sql, backfill_sql = create_sqls
+        self.assertIn("CREATE ICEBERG TABLE", udf_sql)
+        self.assertIn("$UDF_TRANSFORMED", udf_sql)
+        self.assertIn(".UDFT'", udf_sql)
+        self.assertIn('"EVENT_TIME" TIMESTAMP_NTZ(6)', udf_sql)
+        self.assertIn("CREATE ICEBERG TABLE", backfill_sql)
+        self.assertIn("$BACKFILL", backfill_sql)
+        self.assertIn(".BF'", backfill_sql)
+        self.assertIn('"EVENT_TIME" TIMESTAMP_NTZ(6)', backfill_sql)
+
+    def test_preamble_native_storage_keeps_default_timestamp_scale(self) -> None:
+        """Without Iceberg storage, both tables keep the default TIMESTAMP_NTZ scale."""
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
+
+        create_sqls = self._run_preamble_for_create_sqls(self._make_streaming_fv(backfill_df))
+        self.assertEqual(len(create_sqls), 2)
+        for sql in create_sqls:
+            self.assertNotIn("ICEBERG", sql)
+            self.assertIn('"EVENT_TIME" TIMESTAMP_NTZ', sql)
+            self.assertNotIn("TIMESTAMP_NTZ(6)", sql)
 
     def test_preamble_with_overwrite_decrements_old_ref(self) -> None:
         """On overwrite, preamble decrements old stream source ref count."""
@@ -2010,8 +2118,8 @@ class CreateEmptyTableTest(absltest.TestCase):
         sql_arg = session.sql.call_args[0][0]
         self.assertIn("CREATE OR REPLACE TABLE", sql_arg)
 
-    def test_iceberg_storage_emits_timestamp_ntz6_on_snowflake_table(self) -> None:
-        """Iceberg FVs still create Snowflake landing tables, with TIMESTAMP_NTZ(6)."""
+    def test_iceberg_emits_managed_iceberg_ddl(self) -> None:
+        """Iceberg storage_config creates a Snowflake-managed Iceberg table."""
         session = MagicMock()
         schema = StructType(
             [
@@ -2021,26 +2129,72 @@ class CreateEmptyTableTest(absltest.TestCase):
         )
         storage_config = StorageConfig(
             format=StorageFormat.ICEBERG,
-            external_volume="MY_VOL",
-            base_location="test_root/",
+            external_volume="MY_VOLUME",
+            base_location="snowflake/feature_store/iceberg/DB/SCH/TEST_FV$v1",
         )
 
         _create_empty_table(
             session=session,
-            fq_table_name="DB.SCH.MY_TABLE",
+            fq_table_name="DB.SCH.TEST_FV$v1$BACKFILL",
             schema=schema,
             overwrite=False,
+            telemetry_stmp={},
+            storage_config=storage_config,
+            iceberg_location_suffix="BF",
+        )
+
+        sql_arg = session.sql.call_args[0][0]
+        self.assertIn("CREATE ICEBERG TABLE DB.SCH.TEST_FV$v1$BACKFILL", sql_arg)
+        self.assertIn("CATALOG = 'SNOWFLAKE'", sql_arg)
+        self.assertIn("EXTERNAL_VOLUME = MY_VOLUME", sql_arg)
+        self.assertIn(
+            "BASE_LOCATION = 'snowflake/feature_store/iceberg/DB/SCH/TEST_FV$v1.BF'",
+            sql_arg,
+        )
+        self.assertIn('"TS" TIMESTAMP_NTZ(6)', sql_arg)
+        self.assertNotIn("DYNAMIC ICEBERG", sql_arg)
+
+    def test_iceberg_overwrite_adds_or_replace(self) -> None:
+        """overwrite=True adds OR REPLACE, and a trailing slash is stripped from base_location."""
+        session = MagicMock()
+        schema = StructType([StructField("COL", StringType())])
+        storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume="VOL",
+            base_location="path/",
+        )
+
+        _create_empty_table(
+            session=session,
+            fq_table_name="DB.SCH.T",
+            schema=schema,
+            overwrite=True,
             telemetry_stmp={},
             storage_config=storage_config,
         )
 
         sql_arg = session.sql.call_args[0][0]
-        self.assertIn("CREATE TABLE DB.SCH.MY_TABLE", sql_arg)
-        self.assertNotIn("ICEBERG TABLE", sql_arg)
-        self.assertIn('"TS" TIMESTAMP_NTZ(6)', sql_arg)
-        self.assertNotIn("TIMESTAMP_NTZ,", sql_arg)
-        self.assertNotIn("EXTERNAL_VOLUME", sql_arg)
-        self.assertNotIn("BASE_LOCATION", sql_arg)
+        self.assertIn("CREATE OR REPLACE ICEBERG TABLE", sql_arg)
+        self.assertIn("BASE_LOCATION = 'path'", sql_arg)
+
+    def test_iceberg_requires_external_volume(self) -> None:
+        session = MagicMock()
+        schema = StructType([StructField("COL", StringType())])
+        storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume=None,
+            base_location="path",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Iceberg storage requires an external_volume"):
+            _create_empty_table(
+                session=session,
+                fq_table_name="DB.SCH.T",
+                schema=schema,
+                overwrite=False,
+                telemetry_stmp={},
+                storage_config=storage_config,
+            )
 
 
 # ============================================================================

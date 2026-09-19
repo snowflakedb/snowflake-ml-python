@@ -1,5 +1,4 @@
 import datetime
-from typing import Optional
 from uuid import uuid4
 
 from snowflake import snowpark
@@ -85,7 +84,7 @@ class DBManager:
     def create_schema(
         self,
         schema_name: str,
-        db_name: Optional[str] = None,
+        db_name: str | None = None,
         creation_mode: sql_client.CreationMode = _default_creation_mode,
     ) -> str:
         actual_schema_name = identifier.get_inferred_name(schema_name)
@@ -104,7 +103,7 @@ class DBManager:
     def create_random_schema(
         self,
         prefix: str = _COMMON_PREFIX,
-        db_name: Optional[str] = None,
+        db_name: str | None = None,
     ) -> str:
         # Use 16 hex chars (64 bits) instead of a full uuid. With the default
         # prefix this yields ``snowml_test_<16hex>`` (29 chars), which fits the
@@ -116,7 +115,7 @@ class DBManager:
     def use_schema(
         self,
         schema_name: str,
-        db_name: Optional[str] = None,
+        db_name: str | None = None,
     ) -> None:
         actual_schema_name = identifier.get_inferred_name(schema_name)
         if db_name:
@@ -126,7 +125,7 @@ class DBManager:
             full_qual_schema_name = actual_schema_name
         self._session.sql(f"USE SCHEMA {full_qual_schema_name}").collect()
 
-    def show_schemas(self, schema_name: str, db_name: Optional[str] = None) -> snowpark.DataFrame:
+    def show_schemas(self, schema_name: str, db_name: str | None = None) -> snowpark.DataFrame:
         if db_name:
             actual_db_name = identifier.get_inferred_name(db_name)
             location_sql = f" IN DATABASE {actual_db_name}"
@@ -135,11 +134,11 @@ class DBManager:
         sql = f"SHOW SCHEMAS LIKE '{schema_name}'{location_sql}"
         return self._session.sql(sql)
 
-    def assert_schema_existence(self, schema_name: str, db_name: Optional[str] = None, exists: bool = False) -> bool:
+    def assert_schema_existence(self, schema_name: str, db_name: str | None = None, exists: bool = False) -> bool:
         count = self.show_schemas(schema_name, db_name).count()
         return count != 0 if exists else count == 0
 
-    def drop_schema(self, schema_name: str, db_name: Optional[str] = None, if_exists: bool = False) -> None:
+    def drop_schema(self, schema_name: str, db_name: str | None = None, if_exists: bool = False) -> None:
         actual_schema_name = identifier.get_inferred_name(schema_name)
         if db_name:
             actual_db_name = identifier.get_inferred_name(db_name)
@@ -149,9 +148,7 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP SCHEMA{if_exists_sql} {full_qual_schema_name}").collect()
 
-    def cleanup_schemas(
-        self, prefix: str = _COMMON_PREFIX, db_name: Optional[str] = None, expire_days: int = 3
-    ) -> None:
+    def cleanup_schemas(self, prefix: str = _COMMON_PREFIX, db_name: str | None = None, expire_days: int = 3) -> None:
         schemas_df = self.show_schemas(f"{prefix}%", db_name)
         stale_schemas = schemas_df.filter(
             f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
@@ -162,8 +159,8 @@ class DBManager:
     def create_stage(
         self,
         stage_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         creation_mode: sql_client.CreationMode = _default_creation_mode,
         sse_encrypted: bool = False,
     ) -> str:
@@ -185,8 +182,8 @@ class DBManager:
 
     @staticmethod
     def get_show_location_url(
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
     ) -> str:
         if schema_name:
             actual_schema_name = identifier.get_inferred_name(schema_name)
@@ -203,21 +200,21 @@ class DBManager:
     def show_stages(
         self,
         stage_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
     ) -> snowpark.DataFrame:
         location_sql = DBManager.get_show_location_url(schema_name, db_name)
         sql = f"SHOW STAGES LIKE '{stage_name}'{location_sql}"
         return self._session.sql(sql)
 
     def assert_stage_existence(
-        self, stage_name: str, schema_name: Optional[str] = None, db_name: Optional[str] = None, exists: bool = True
+        self, stage_name: str, schema_name: str | None = None, db_name: str | None = None, exists: bool = True
     ) -> bool:
         count = self.show_stages(stage_name, schema_name, db_name).count()
         return count != 0 if exists else count == 0
 
     def drop_stage(
-        self, stage_name: str, schema_name: Optional[str] = None, db_name: Optional[str] = None, if_exists: bool = False
+        self, stage_name: str, schema_name: str | None = None, db_name: str | None = None, if_exists: bool = False
     ) -> None:
         actual_stage_name = identifier.get_inferred_name(stage_name)
         if schema_name:
@@ -236,8 +233,8 @@ class DBManager:
     def cleanup_stages(
         self,
         prefix: str = _COMMON_PREFIX,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         expire_days: int = 3,
     ) -> None:
         stages_df = self.show_stages(f"{prefix}%", schema_name, db_name)
@@ -250,8 +247,8 @@ class DBManager:
     def show_user_functions(
         self,
         function_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
     ) -> snowpark.DataFrame:
         location_sql = DBManager.get_show_location_url(schema_name, db_name)
         sql = f"SHOW USER FUNCTIONS LIKE '{function_name}'{location_sql}"
@@ -259,11 +256,11 @@ class DBManager:
 
     def drop_function(
         self,
-        function_name: Optional[str] = None,
-        args: Optional[list[str]] = None,
-        function_def: Optional[str] = None,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        function_name: str | None = None,
+        args: list[str] | None = None,
+        function_def: str | None = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         if_exists: bool = True,
     ) -> None:
         if not function_def:
@@ -290,8 +287,8 @@ class DBManager:
     def cleanup_user_functions(
         self,
         prefix: str = _COMMON_PREFIX,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         expire_days: int = 3,
     ) -> None:
         user_functions_df = self.show_user_functions(f"{prefix}%", schema_name, db_name)
@@ -430,8 +427,8 @@ class DBManager:
     def create_image_repo(
         self,
         image_repo_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         creation_mode: sql_client.CreationMode = _default_creation_mode,
     ) -> str:
         actual_image_repo_name = identifier.get_inferred_name(image_repo_name)
@@ -452,8 +449,8 @@ class DBManager:
     def drop_image_repo(
         self,
         image_repo_name: str,
-        schema_name: Optional[str] = None,
-        db_name: Optional[str] = None,
+        schema_name: str | None = None,
+        db_name: str | None = None,
         if_exists: bool = False,
     ) -> None:
         actual_image_repo_name = identifier.get_inferred_name(image_repo_name)

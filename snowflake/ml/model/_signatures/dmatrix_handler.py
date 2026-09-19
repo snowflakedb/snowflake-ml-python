@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -76,9 +76,7 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
         return df
 
     @staticmethod
-    def convert_from_df(
-        df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None
-    ) -> "xgboost.DMatrix":
+    def convert_from_df(df: pd.DataFrame, features: Sequence[core.BaseFeatureSpec] | None = None) -> "xgboost.DMatrix":
         import xgboost as xgb
 
         enable_categorical = False

@@ -11,7 +11,7 @@ All functions raise plain ValueError/TypeError. Callers are responsible
 for catching and re-raising as their environment's exception type.
 """
 
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -387,8 +387,8 @@ def _validate_param_group_dict(
 
 
 def validate_params(
-    params: Optional[dict[str, Any]],
-    signature_params: Optional[Sequence[Any]],
+    params: dict[str, Any] | None,
+    signature_params: Sequence[Any] | None,
 ) -> None:
     """Validate user-provided params against signature param specs.
 
@@ -444,7 +444,7 @@ def validate_params(
 
 
 def resolve_params(
-    params: Optional[dict[str, Any]],
+    params: dict[str, Any] | None,
     signature_params: Sequence[Any],
 ) -> dict[str, Any]:
     """Resolve final parameters by applying user overrides over signature defaults.

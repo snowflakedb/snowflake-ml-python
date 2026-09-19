@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
@@ -68,8 +68,8 @@ class PayloadUtilsTests(parameterized.TestCase):
     )
     def test_upload_payload_negative(
         self,
-        source: Union[TestAsset, Callable[..., Any]],
-        entrypoint: Optional[TestAsset],
+        source: TestAsset | Callable[..., Any],
+        entrypoint: TestAsset | None,
         error_type: type[Exception] = ValueError,
     ) -> None:
         payload = payload_utils.JobPayload(
@@ -104,8 +104,8 @@ class PayloadUtilsTests(parameterized.TestCase):
     )
     def test_upload_payload(
         self,
-        source: Union[TestAsset, Callable[..., Any]],
-        entrypoint: Optional[Union[TestAsset, pathlib.Path]],
+        source: TestAsset | Callable[..., Any],
+        entrypoint: TestAsset | pathlib.Path | None,
         expected_entrypoint: str,
         expected_file_count: int,
     ) -> None:
@@ -157,7 +157,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         self,
         upload_files: TestAsset,
         source: str,
-        entrypoint: Optional[str],
+        entrypoint: str | None,
         expected_entrypoint: str,
         expected_file_count: int,
     ) -> None:
@@ -208,9 +208,9 @@ class PayloadUtilsTests(parameterized.TestCase):
     )
     def test_upload_payload_additional_imports_local(
         self,
-        source: Union[TestAsset, Callable[..., Any]],
-        entrypoint: Optional[Union[TestAsset, pathlib.Path]],
-        imports: list[Union[str, tuple[str, str]]],
+        source: TestAsset | Callable[..., Any],
+        entrypoint: TestAsset | pathlib.Path | None,
+        imports: list[str | tuple[str, str]],
         expected_entrypoint: str,
         expected_file_count: int,
     ) -> None:

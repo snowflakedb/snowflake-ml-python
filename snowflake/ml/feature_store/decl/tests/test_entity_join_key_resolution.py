@@ -26,7 +26,7 @@ must keep working (regression guard for the overwhelmingly common shape).
 from __future__ import annotations
 
 import copy
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 from snowflake.ml.feature_store.decl.enums import OpKind
@@ -62,8 +62,8 @@ def _tiled_bfv(
     *,
     entity_name: str,
     join_key: str,
-    cluster_by: Optional[list[str]] = None,
-    secondary_keys: Optional[list[str]] = None,
+    cluster_by: list[str] | None = None,
+    secondary_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """A minimal tiled BatchFV authoring dict referencing *entity_name*.
 

@@ -1,10 +1,9 @@
-from typing import Optional
 from unittest.mock import patch
 
 from absl.testing import absltest
 from common_utils import create_mock_table, create_random_schema
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
@@ -26,7 +25,7 @@ class FeatureSharingTest(FeatureStoreIntegTestBase):
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
         super().tearDown()
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(self, name: str | None = None) -> FeatureStore:
         current_schema = (
             create_random_schema(self._session, "FS_SHARING_TEST", database=self.test_db) if name is None else name
         )

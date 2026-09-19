@@ -90,5 +90,35 @@ class TestApiExportSpecsForwardsEntityRows:
         )
 
 
+class TestApiFormatOpDisplayRow:
+    """Pin the ``decl_api.format_op_display_row`` facade the CLI plan path uses."""
+
+    def test_type_precedes_name_from_payload_kind(self) -> None:
+        from snowflake.ml.feature_store.decl.enums import OpKind
+        from snowflake.ml.feature_store.decl.types import PlanOp
+
+        op = PlanOp(
+            kind=OpKind.CREATE_FV,
+            name="MY_BFV",
+            reason="new",
+            payload={"kind": "BatchFeatureView", "name": "MY_BFV", "version": "V1"},
+        )
+        row = decl_api.format_op_display_row(op)
+        assert list(row.keys()) == ["type", "name", "version", "operation", "reason", "destructive"]
+        assert row["type"] == "BatchFeatureView"
+        assert row["name"] == "MY_BFV"
+        assert row["version"] == "V1"
+        assert row["operation"] == "CREATE_FV"
+
+    def test_status_included_when_supplied(self) -> None:
+        from snowflake.ml.feature_store.decl.enums import OpKind
+        from snowflake.ml.feature_store.decl.types import PlanOp
+
+        op = PlanOp(kind=OpKind.CREATE_ENTITY, name="USER_ID", payload={"kind": "Entity"})
+        row = decl_api.format_op_display_row(op, status="success")
+        assert row["type"] == "Entity"
+        assert row["status"] == "success"
+
+
 if __name__ == "__main__":
     pytest_driver.main()

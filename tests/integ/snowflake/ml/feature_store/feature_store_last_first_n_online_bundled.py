@@ -18,7 +18,7 @@ Service. Requires ``SNOWFLAKE_PAT`` for the Online Service ingest / Query API.
 import datetime
 import json
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 from absl.testing import absltest
@@ -77,7 +77,7 @@ def _page_url_transform(df: pd.DataFrame) -> pd.DataFrame:
 _page_url_transform.__module__ = "__main__"
 
 
-def _as_list(value: Any) -> Optional[list]:
+def _as_list(value: Any) -> list | None:
     """Normalize an array column value (Python list or JSON string) to a list."""
     if value is None:
         return None

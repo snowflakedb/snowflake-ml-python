@@ -172,7 +172,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 },
             )
 
-        asyncio.get_event_loop().run_until_complete(_test(self))
+        asyncio.run(_test(self))
 
     @registry_model_test_base.RegistryModelTestBase.sproc_test(test_owners_rights=False)
     def test_large_input(self) -> None:

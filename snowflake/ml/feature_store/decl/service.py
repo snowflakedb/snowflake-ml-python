@@ -6,7 +6,7 @@ No IO — no SQL execution, no HTTP calls, no file writes.
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 try:
     from snowflake.ml.feature_store.online_service import (
@@ -111,7 +111,7 @@ def parse_service_status(raw_json: str) -> dict[str, Any]:
     return result
 
 
-def get_service_endpoint(status: dict[str, Any], name: str) -> Optional[str]:
+def get_service_endpoint(status: dict[str, Any], name: str) -> str | None:
     """Extract an endpoint URL by name from a parsed status dict.
 
     Args:
@@ -383,9 +383,9 @@ def format_describe_display(
     oft_name: str,
     entities: list[str],
     describe_rows: list[dict[str, Any]],
-    show_row: Optional[dict[str, Any]] = None,
-    spec: Optional[dict[str, Any]] = None,
-    examples: Optional[list[str]] = None,
+    show_row: dict[str, Any] | None = None,
+    spec: dict[str, Any] | None = None,
+    examples: list[str] | None = None,
 ) -> str:
     """Format a rich describe display for a feature view.
 
@@ -573,9 +573,9 @@ def build_describe_examples(
     version: str,
     source_name: str,
     describe_rows: list[dict[str, Any]],
-    ingest_url: Optional[str],
-    query_url: Optional[str],
-    spec: Optional[dict[str, Any]] = None,
+    ingest_url: str | None,
+    query_url: str | None,
+    spec: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build example curl commands for ingest and query.
 

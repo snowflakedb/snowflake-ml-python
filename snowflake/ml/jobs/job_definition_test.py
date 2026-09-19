@@ -1,4 +1,7 @@
 import io
+import json
+import os
+import sys
 from pathlib import PurePath, PurePosixPath
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -75,28 +78,47 @@ class MLJobDefinitionTest(parameterized.TestCase):
 
         return job_def
 
-    def test_register_with_runtime_env_passes_through_value(self) -> None:
-        with patch(
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("flag_on_with_pin", True, "2.9.0", True),
+        ("flag_on_without_pin", True, None, True),
+        ("flag_off_with_pin", False, "2.9.0", False),
+        ("flag_off_without_pin", False, None, False),
+    )
+    def test_register_passes_runtime_selector_to_image_resolution(
+        self,
+        flag_enabled: bool,
+        runtime_environment: str | None,
+        expect_json_selector: bool,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.value: str(flag_enabled).lower()},
+        ), patch(
             "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
             return_value=MagicMock(upload=MagicMock(return_value=self.uploaded_payload)),
-        ), patch("snowflake.ml.jobs.job_definition.payload_utils.get_payload_name", return_value="entry"), patch(
+        ), patch(
+            "snowflake.ml.jobs.job_definition.payload_utils.get_payload_name", return_value="entry"
+        ), patch(
             "snowflake.ml.jobs.job_definition.runtime_env_utils.get_runtime_image",
-            return_value="/snowflake/image/image_repo/test_image:test_flag",
-        ):
-            result: job_definition.MLJobDefinition[[Any], Any] = job_definition.MLJobDefinition.register(
+            return_value="/snowflake/image/image_repo/test_image:resolved",
+        ) as mock_get_runtime_image:
+            job_definition.MLJobDefinition.register(
                 source="entry.py",
                 entrypoint="entry.py",
                 compute_pool="E2E_TEST_POOL",
                 stage_name="payload_stage",
                 session=self.session,
-                runtime_environment="/snowflake/image/image_repo/test_image:test_flag",
+                runtime_environment=runtime_environment,
             )
-            expected = self._expected_definition("/snowflake/image/image_repo/test_image:test_flag")
-            self.assertEqual(result.job_options, expected.job_options)
-            self.assertEqual(result.spec_options, expected.spec_options)
-            self.assertEqual(result.job_definition_id, expected.job_definition_id)
-            self.assertEqual(result.runtime_environment, expected.runtime_environment)
-            self.assertEqual(result.name, expected.name)
+
+        expected_selector = runtime_environment
+        if expect_json_selector:
+            expected_runtime = {"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"}
+            if runtime_environment is not None:
+                expected_runtime["runtimeEnvironment"] = runtime_environment
+            expected_selector = json.dumps(expected_runtime)
+
+        mock_get_runtime_image.assert_called_once_with(self.session, "E2E_TEST_POOL", expected_selector)
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("stage_volume_source", constants.STAGE_VOLUME_NAME, {"source": "@EVIL_DB.EVIL_SCH.EVIL_STAGE/any/path"}),

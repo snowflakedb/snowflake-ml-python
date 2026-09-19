@@ -1,7 +1,7 @@
 """Utility functions for model parameter validation and resolution."""
 
 import datetime
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
@@ -77,8 +77,8 @@ def format_param_value_for_table_function_sql(value: Any) -> str:
 
 
 def validate_params(
-    params: Optional[dict[str, Any]],
-    signature_params: Optional[Sequence[core.BaseParamSpec]],
+    params: dict[str, Any] | None,
+    signature_params: Sequence[core.BaseParamSpec] | None,
 ) -> None:
     """Validate user-provided params against signature params.
 
@@ -101,7 +101,7 @@ def validate_params(
 
 
 def resolve_params(
-    params: Optional[dict[str, Any]],
+    params: dict[str, Any] | None,
     signature_params: Sequence[core.BaseParamSpec],
 ) -> list[tuple[sql_identifier.SqlIdentifier, Any]]:
     """Resolve final method parameters by applying user-provided params over signature defaults.
@@ -118,9 +118,9 @@ def resolve_params(
 
 
 def validate_and_resolve_params(
-    params: Optional[dict[str, Any]],
-    signature_params: Optional[Sequence[core.BaseParamSpec]],
-) -> Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]]:
+    params: dict[str, Any] | None,
+    signature_params: Sequence[core.BaseParamSpec] | None,
+) -> list[tuple[sql_identifier.SqlIdentifier, Any]] | None:
     """Validate user-provided params against signature params and return method parameters.
 
     Args:

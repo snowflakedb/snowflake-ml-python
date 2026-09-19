@@ -1,6 +1,6 @@
 import sys
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -82,7 +82,7 @@ class TestExceptionUtils(parameterized.TestCase):
         exc_type: str,
         exc_msg: str,
         exc_tb: str,
-        exc_repr: Optional[str],
+        exc_repr: str | None,
         expected: BaseException,
     ) -> None:
         exc_value = exception_utils.build_exception(

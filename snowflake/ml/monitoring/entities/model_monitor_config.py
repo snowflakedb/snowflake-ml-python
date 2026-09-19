@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 from snowflake.ml.model._client.model import model_version_impl
 
@@ -17,29 +16,29 @@ class ModelMonitorSourceConfig:
     id_columns: list[str]
     """List of columns in the source containing unique identifiers."""
 
-    prediction_score_columns: Optional[list[str]] = None
+    prediction_score_columns: list[str] | None = None
     """List of columns in the source containing prediction scores.
     Can be regression scores for regression models and probability scores for classification models."""
 
-    prediction_class_columns: Optional[list[str]] = None
+    prediction_class_columns: list[str] | None = None
     """List of columns in the source containing prediction classes for classification models."""
 
-    actual_score_columns: Optional[list[str]] = None
+    actual_score_columns: list[str] | None = None
     """List of columns in the source containing actual scores."""
 
-    actual_class_columns: Optional[list[str]] = None
+    actual_class_columns: list[str] | None = None
     """List of columns in the source containing actual classes for classification models."""
 
-    baseline: Optional[str] = None
+    baseline: str | None = None
     """Name of table containing the baseline data."""
 
-    segment_columns: Optional[list[str]] = None
+    segment_columns: list[str] | None = None
     """List of columns in the source containing segment information for grouped monitoring."""
 
-    custom_metric_columns: Optional[list[str]] = None
+    custom_metric_columns: list[str] | None = None
     """List of columns in the source containing custom metrics."""
 
-    timestamp_custom_metric_table: Optional[str] = None
+    timestamp_custom_metric_table: str | None = None
     """Optional name of a table containing timestamp-based custom metrics.
     Can be specified unqualified or fully qualified as database.schema.table.
     """

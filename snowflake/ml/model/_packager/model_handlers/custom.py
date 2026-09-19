@@ -2,7 +2,7 @@ import inspect
 import os
 import pathlib
 import sys
-from typing import Optional, cast, final
+from typing import cast, final
 
 import anyio
 import cloudpickle
@@ -46,8 +46,8 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         model: "custom_model.CustomModel",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.CustomModelSaveOption],
     ) -> None:
         assert isinstance(model, custom_model.CustomModel)
@@ -255,7 +255,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
         cls,
         raw_model: custom_model.CustomModel,
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.CustomModelLoadOption],
     ) -> custom_model.CustomModel:
         return raw_model

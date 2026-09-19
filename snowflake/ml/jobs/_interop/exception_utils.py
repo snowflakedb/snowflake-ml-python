@@ -6,7 +6,7 @@ import sys
 import traceback
 from collections import namedtuple
 from types import TracebackType
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, cast
 
 _TRACEBACK_ENTRY_PATTERN = re.compile(
     r'File "(?P<filename>[^"]+)", line (?P<lineno>\d+), in (?P<name>[^\n]+)(?:\n(?!^\s*File)^\s*(?P<line>[^\n]+))?\n',
@@ -21,7 +21,7 @@ class RemoteError(RuntimeError):
     """Base exception for errors from remote execution environment which could not be reconstructed locally."""
 
 
-def build_exception(type_str: str, message: str, traceback: str, original_repr: Optional[str] = None) -> BaseException:
+def build_exception(type_str: str, message: str, traceback: str, original_repr: str | None = None) -> BaseException:
     """Build an exception from metadata, attaching remote error info."""
     if not original_repr:
         original_repr = f"{type_str}('{message}')"
@@ -75,7 +75,7 @@ def attach_remote_error_info(ex: BaseException, exc_type: str, exc_msg: str, tra
     return ex
 
 
-def retrieve_remote_error_info(ex: Optional[BaseException]) -> Optional[RemoteErrorInfo]:
+def retrieve_remote_error_info(ex: BaseException | None) -> RemoteErrorInfo | None:
     """
     Retrieve the string-formatted traceback from an exception if it exists.
 
@@ -167,9 +167,9 @@ def _install_sys_excepthook() -> None:
         def custom_excepthook(
             exc_type: type[BaseException],
             exc_value: BaseException,
-            exc_tb: Optional[TracebackType],
+            exc_tb: TracebackType | None,
             *,
-            seen_exc_ids: Optional[set[int]] = None,
+            seen_exc_ids: set[int] | None = None,
         ) -> None:
             if seen_exc_ids is None:
                 seen_exc_ids = set()
@@ -266,10 +266,10 @@ def _install_ipython_hook() -> bool:
         def custom_format_exception_as_a_whole(
             self: VerboseTB,
             etype: type[BaseException],
-            evalue: Optional[BaseException],
-            etb: Optional[TracebackType],
+            evalue: BaseException | None,
+            etb: TracebackType | None,
             number_of_lines_of_context: int,
-            tb_offset: Optional[int],
+            tb_offset: int | None,
             **kwargs: Any,
         ) -> list[list[str]]:
             if (remote_err := retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteErrorInfo):
@@ -307,9 +307,9 @@ def _install_ipython_hook() -> bool:
         def structured_traceback(
             self: ListTB,
             etype: type,
-            evalue: Optional[BaseException],
-            etb: Optional[TracebackType],
-            tb_offset: Optional[int] = None,
+            evalue: BaseException | None,
+            etb: TracebackType | None,
+            tb_offset: int | None = None,
             **kwargs: Any,
         ) -> list[str]:
             if (remote_err := retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteErrorInfo):

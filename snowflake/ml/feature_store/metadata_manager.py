@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec
 
@@ -100,10 +100,10 @@ class AggregationMetadata:
     ``feature_granularity`` marks the row as passthrough on read.
     """
 
-    feature_granularity: Optional[str] = None
-    features: Optional[list[AggregationSpec]] = None
-    feature_aggregation_method: Optional[str] = None
-    aggregation_secondary_keys: Optional[list[str]] = None
+    feature_granularity: str | None = None
+    features: list[AggregationSpec] | None = None
+    feature_aggregation_method: str | None = None
+    aggregation_secondary_keys: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -149,24 +149,24 @@ class StreamingMetadata:
 
     stream_source_name: str
     transformation_fn_name: str
-    transformation_fn_source: Optional[str] = None  # Full source code of the UDF
-    backfill_start_time: Optional[str] = None  # ISO format, or None if no filter
-    backfill_root_task_name: Optional[str] = None  # Root task of the backfill task graph
-    backfill_finalize_task_name: Optional[str] = None  # Finalizer task of the backfill task graph
-    backfill_proc_name: Optional[str] = None  # Stored procedure that the root task CALLs
-    backfill_udtf_name: Optional[str] = None  # Per-FV permanent UDTF the proc invokes
-    backfill_udtf_signature: Optional[str] = None  # Argument-type signature for DROP FUNCTION
+    transformation_fn_source: str | None = None  # Full source code of the UDF
+    backfill_start_time: str | None = None  # ISO format, or None if no filter
+    backfill_root_task_name: str | None = None  # Root task of the backfill task graph
+    backfill_finalize_task_name: str | None = None  # Finalizer task of the backfill task graph
+    backfill_proc_name: str | None = None  # Stored procedure that the root task CALLs
+    backfill_udtf_name: str | None = None  # Per-FV permanent UDTF the proc invokes
+    backfill_udtf_signature: str | None = None  # Argument-type signature for DROP FUNCTION
     # ``RUNNING`` while the backfill task graph is in flight, ``COMPLETED`` /
     # ``FAILED`` once the finalizer has observed terminal state. ``None`` for
     # streaming FVs registered before this field existed.
-    backfill_state: Optional[str] = None
+    backfill_state: str | None = None
     # Pre-expansion FQN of the operator-supplied backfill table (e.g.
     # ``MY_DB.MY_SCH.HISTORICAL_TXNS``). Captured at register time so the
     # round-trip can restore ``StreamConfig.backfill_table`` losslessly
     # (Plan section A3). ``None`` for streaming FVs registered before
     # this field existed and for callers that supplied an inline
     # ``backfill_df`` rather than a table reference.
-    backfill_table: Optional[str] = None
+    backfill_table: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -233,7 +233,7 @@ class AppendOnlyMetadata:
     Stored in the metadata table (not the tag) to avoid the 256-char tag limit.
     """
 
-    backup_source: Optional[str] = None
+    backup_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -272,8 +272,8 @@ class FvSourceRef:
 
     fv_name: str
     fv_version: str
-    slice_columns: Optional[list[str]] = None
-    alias: Optional[str] = None
+    slice_columns: list[str] | None = None
+    alias: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
@@ -340,7 +340,7 @@ class RealtimeConfigMetadata:
     compute_fn_name: str
     compute_fn_source: str
     sources: list[FvSourceRef]
-    request_schema_json: Optional[str]
+    request_schema_json: str | None
     output_schema_json: str
     output_columns: list[str]
     entity_names: list[str] = field(default_factory=list)
@@ -418,7 +418,7 @@ class FeatureGroupMetadata:
     desc: str
     auto_prefix: bool
     sources: list[FeatureGroupSourceRef]
-    output_columns: Optional[list[str]] = None
+    output_columns: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
@@ -483,7 +483,7 @@ class FeatureStoreMetadataManager:
         self._fs_object_tag_path = fs_object_tag_path
         self._table_path = f"{schema_path}.{_METADATA_TABLE_NAME}"
         self._telemetry_stmp = telemetry_stmp
-        self._table_exists: Optional[bool] = None
+        self._table_exists: bool | None = None
 
     def ensure_table_exists(self) -> None:
         """Create the metadata table if it doesn't exist.
@@ -560,7 +560,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[AggregationMetadata]:
+    ) -> AggregationMetadata | None:
         """Get feature specifications for a tiled feature view.
 
         Args:
@@ -614,8 +614,8 @@ class FeatureStoreMetadataManager:
         fv_name: str,
         version: str,
         specs: AggregationMetadata,
-        descs: Optional[dict[str, str]] = None,
-        fv_metadata_config: Optional[FeatureViewMetadataConfig] = None,
+        descs: dict[str, str] | None = None,
+        fv_metadata_config: FeatureViewMetadataConfig | None = None,
     ) -> None:
         """Save all metadata for a tiled feature view atomically.
 
@@ -668,7 +668,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[dict[str, str]]:
+    ) -> dict[str, str] | None:
         """Get feature descriptions for a tiled feature view.
 
         Args:
@@ -694,7 +694,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[FeatureViewMetadataConfig]:
+    ) -> FeatureViewMetadataConfig | None:
         """Get general-purpose metadata for a feature view.
 
         Args:
@@ -748,7 +748,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get rollup configuration metadata for a feature view.
 
         Args:
@@ -795,7 +795,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get append-only configuration for an append-only feature view.
 
         Args:
@@ -873,7 +873,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[FvSourceRefsMetadata]:
+    ) -> FvSourceRefsMetadata | None:
         """Read the authored source-ref list for a FeatureView.
 
         Args:
@@ -924,7 +924,7 @@ class FeatureStoreMetadataManager:
         self,
         fv_name: str,
         version: str,
-    ) -> Optional[StreamingMetadata]:
+    ) -> StreamingMetadata | None:
         """Get streaming metadata for a streaming feature view.
 
         Args:
@@ -963,7 +963,7 @@ class FeatureStoreMetadataManager:
             metadata=metadata.to_dict(),
         )
 
-    def get_feature_group_metadata(self, name: str, version: str) -> Optional[FeatureGroupMetadata]:
+    def get_feature_group_metadata(self, name: str, version: str) -> FeatureGroupMetadata | None:
         """Read :class:`FeatureGroupMetadata` for a registered FeatureGroup.
 
         Args:
@@ -1059,7 +1059,7 @@ class FeatureStoreMetadataManager:
             metadata=metadata.to_dict(),
         )
 
-    def get_realtime_config(self, name: str, version: str) -> Optional[RealtimeConfigMetadata]:
+    def get_realtime_config(self, name: str, version: str) -> RealtimeConfigMetadata | None:
         """Read :class:`RealtimeConfigMetadata` for an RTFV ``(name, version)``.
 
         Args:
@@ -1156,7 +1156,7 @@ class FeatureStoreMetadataManager:
             metadata=metadata,
         )
 
-    def get_stream_source_metadata(self, name: str) -> Optional[dict[str, Any]]:
+    def get_stream_source_metadata(self, name: str) -> dict[str, Any] | None:
         """Get a stream source configuration by name.
 
         Args:
@@ -1383,7 +1383,7 @@ class FeatureStoreMetadataManager:
         object_name: str,
         version: str,
         metadata_type: MetadataType,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a metadata entry."""
         # Check if table exists before querying
         if not self._check_table_exists():

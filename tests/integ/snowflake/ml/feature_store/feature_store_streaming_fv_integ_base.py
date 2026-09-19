@@ -12,11 +12,12 @@ from that dict and skips independent provisioning.  ``tearDownClass`` is a no-op
 handles cleanup).
 """
 
+import json
 import logging
 import os
 import time
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -29,6 +30,8 @@ from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewVersion,
+    StorageConfig,
+    StorageFormat,
     StoreType,
 )
 from snowflake.ml.feature_store.online_service import (
@@ -74,9 +77,13 @@ def identity_transform(df: pd.DataFrame) -> pd.DataFrame:
     return df[["USER_ID", "EVENT_TIME", "AMOUNT"]]
 
 
+# VARCHAR feature value shared by native and Iceberg all-types round-trip tests.
+ALL_TYPES_CATEGORY = "electronics"
+
+
 def all_types_identity_transform(df: pd.DataFrame) -> pd.DataFrame:
     """Identity transform that passes through all 6 supported column types."""
-    return df[["USER_ID", "EVENT_TIME", "SCORE", "RANK", "PRICE", "IS_ACTIVE"]]
+    return df[["USER_ID", "EVENT_TIME", "LAST_SEEN_TIME", "SCORE", "RANK", "PRICE", "IS_ACTIVE", "CATEGORY"]]
 
 
 def identity_transform_with_sk(df: pd.DataFrame) -> pd.DataFrame:
@@ -122,7 +129,7 @@ def _env_truthy(name: str) -> bool:
 FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV = "FEATURE_STORE_IMAGE_TAG_OVERRIDE"
 
 
-def get_feature_store_image_tag_override() -> Optional[str]:
+def get_feature_store_image_tag_override() -> str | None:
     """Return the Feature Store runtime image tag override, or ``None`` when unset."""
     image_tag = os.environ.get(FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV, "").strip()
     return image_tag or None
@@ -156,7 +163,7 @@ def wait_online_service_running_with_query_endpoint(
     attempt_timeout_s: float = 1800.0,
     poll_interval_s: float = 30.0,
     reuse_if_running: bool = True,
-    on_recreate: Optional[Callable[[], None]] = None,
+    on_recreate: Callable[[], None] | None = None,
 ) -> None:
     """Bring up (or reuse) the spec-OFT Online Service and poll until RUNNING with a query endpoint.
 
@@ -389,6 +396,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                     dbm.drop_warehouse(cls._alt_warehouse_name_value, if_exists=True)
                 except Exception:
                     pass
+            evm = getattr(cls, "_evm", None)
+            if evm is not None:
+                evm.try_drop_shared_iceberg_volumes()
             if session is not None:
                 try:
                     session.close()
@@ -448,7 +458,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         self._orig_register_stream_source = self.fs.register_stream_source
 
         def _register_feature_view_tracked(*args: Any, **kwargs: Any) -> Any:
-            last_err: Optional[Exception] = None
+            last_err: Exception | None = None
             for attempt in range(self._REGISTER_RETRIES):
                 try:
                     registered = self._orig_register_feature_view(*args, **kwargs)
@@ -526,6 +536,174 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         finally:
             self._restore_fs_registration_hooks()
 
+    def _create_iceberg_storage_config(self, *, provider: str = "AWS") -> StorageConfig:
+        """Return Iceberg storage on the process-wide shared external volume.
+
+        Isolation is a unique ``base_location`` prefix, not a new account-level
+        volume. Override ``SNOWML_ICEBERG_*`` env vars to point at a different backend.
+
+        Args:
+            provider: Cloud provider, ``AWS`` or ``AZURE``.
+
+        Returns:
+            StorageConfig pointing at the shared volume and a unique prefix.
+        """
+        volume_name = self._evm.get_or_create_shared_iceberg_volume(provider=provider)
+        return StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume=volume_name,
+            base_location=self._evm.new_iceberg_base_location(),
+        )
+
+    def _assert_iceberg_storage_config_round_trip(
+        self,
+        fs: FeatureStore,
+        *,
+        fv_name: str,
+        version: str,
+        storage_config: StorageConfig,
+    ) -> None:
+        """Assert ``get_feature_view`` / ``list_feature_views`` report a SHOW physical path.
+
+        ``SHOW ICEBERG TABLES`` appends ``.<randomId>`` to the registered ``BASE_LOCATION``.
+        A View-backed streaming FV reports the landing-table path
+        (``{registered}_UDF_TRANSFORMED.{randomId}``). Both still start with the
+        registered folder, matching ``test_get_feature_view_preserves_storage_config``.
+
+        All three ``list_feature_views`` forms are checked because the ``entity_name``
+        form reaches the shared row builder by a separate query path.
+
+        Args:
+            fs: Feature store that registered the feature view.
+            fv_name: Feature view name.
+            version: Feature view version.
+            storage_config: Config passed to ``register_feature_view``.
+        """
+        assert storage_config.base_location is not None
+        prefix = storage_config.base_location.rstrip("/")
+
+        loaded = fs.get_feature_view(fv_name, version)
+        assert loaded.storage_config is not None
+        self.assertEqual(loaded.storage_config.format, StorageFormat.ICEBERG)
+        self.assertEqual(loaded.storage_config.external_volume, storage_config.external_volume)
+        self.assertStartsWith(
+            loaded.storage_config.base_location,
+            prefix,
+            f"get_feature_view base_location should start with {prefix!r}, "
+            f"got {loaded.storage_config.base_location!r}",
+        )
+
+        def _assert_listed_base_location(listed, source: str) -> None:
+            self.assertEqual(len(listed), 1, f"{source} did not return exactly one row for {fv_name}")
+            listed_storage_config = json.loads(listed.iloc[0]["STORAGE_CONFIG"])
+            self.assertEqual(listed_storage_config["format"], "iceberg", source)
+            self.assertEqual(listed_storage_config["external_volume"], storage_config.external_volume, source)
+            self.assertStartsWith(
+                listed_storage_config["base_location"],
+                prefix,
+                f"{source} base_location should start with {prefix!r}, "
+                f"got {listed_storage_config['base_location']!r}",
+            )
+
+        unfiltered = fs.list_feature_views().to_pandas()
+        _assert_listed_base_location(unfiltered[unfiltered["NAME"] == fv_name.upper()], "list_feature_views()")
+        _assert_listed_base_location(
+            fs.list_feature_views(feature_view_name=fv_name).to_pandas(),
+            "list_feature_views(feature_view_name=...)",
+        )
+        _assert_listed_base_location(
+            fs.list_feature_views(entity_name=str(self.user_entity.name), feature_view_name=fv_name).to_pandas(),
+            "list_feature_views(entity_name=...)",
+        )
+
+    def _maybe_iceberg_storage_config(self, iceberg: bool) -> StorageConfig | None:
+        """Return an Iceberg storage config when ``iceberg`` is True.
+
+        Args:
+            iceberg: When True, return a config on the shared external volume.
+
+        Returns:
+            An Iceberg ``StorageConfig``, or None for native storage.
+        """
+        return self._create_iceberg_storage_config() if iceberg else None
+
+    def _assert_storage_format(self, fs: FeatureStore, table_name: str, *, expect_iceberg: bool) -> None:
+        """Assert whether ``table_name`` (schema-local identifier) is a managed Iceberg table.
+
+        Uses ``SHOW ICEBERG TABLES IN SCHEMA`` without ``LIKE`` so ``$`` / ``_`` in generated
+        names are matched in Python. ``INFORMATION_SCHEMA.TABLES`` can omit Snowflake-managed
+        Iceberg base tables that ``SHOW`` still lists, so the native case is confirmed against
+        ``SHOW TABLES`` instead.
+
+        Args:
+            fs: Feature store whose schema is searched.
+            table_name: Unqualified table identifier as stored in Snowflake.
+            expect_iceberg: Whether the table must be a managed Iceberg table.
+        """
+        schema_path = fs._config.full_schema_path
+        iceberg_rows = self._session.sql(f"SHOW ICEBERG TABLES IN SCHEMA {schema_path}").collect()
+        iceberg_names = {str(row["name"]) for row in iceberg_rows}
+        if expect_iceberg:
+            self.assertIn(
+                table_name,
+                iceberg_names,
+                f"{table_name} not in SHOW ICEBERG TABLES {schema_path}; iceberg={sorted(iceberg_names)}",
+            )
+            return
+
+        self.assertNotIn(
+            table_name,
+            iceberg_names,
+            f"{table_name} unexpectedly listed as Iceberg; iceberg={sorted(iceberg_names)}",
+        )
+        table_rows = self._session.sql(f"SHOW TABLES IN SCHEMA {schema_path}").collect()
+        table_formats = {str(row["name"]): row["is_iceberg"] for row in table_rows}
+        actual = table_formats.get(table_name)
+        self.assertIsNotNone(
+            actual,
+            f"{table_name} not found in SHOW TABLES {schema_path}; tables={sorted(table_formats)}",
+        )
+        self.assertIn(
+            str(actual).upper(),
+            ("N", "NO"),
+            f"{table_name} is_iceberg={actual}, expected native.",
+        )
+
+    def _assert_created_as_iceberg_table(self, table_name: str, *, timeout_s: float = 60.0) -> None:
+        """Assert a table was created as a managed Iceberg table, from the session's query history.
+
+        Use this for tables that do not outlive the test's assertions. The ``$BACKFILL`` staging
+        table is drained by the Online Feature Table refresh and then dropped on a schedule the
+        test does not control, so neither ``SHOW ICEBERG TABLES`` nor a clone of it is reliable
+        by the time registration returns. The registering session's query history retains the
+        DDL, which records the format the table was actually created with.
+
+        Snowflake reports ``CREATE ICEBERG TABLE`` as ``query_type = 'CREATE_ICEBERG_TABLE'``,
+        which is what separates it from a native ``CREATE_TABLE``. That also excludes this
+        poll's own ``SELECT``, whose text would otherwise match on the table name. The name is
+        matched in its quoted form so ``$BACKFILL`` does not match a longer suffix.
+
+        Args:
+            table_name: Unqualified table name that must appear in Iceberg table DDL.
+            timeout_s: Max seconds to wait for the statement to surface in query history.
+        """
+        like_table = table_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("'", "''")
+        deadline = time.time() + timeout_s
+        while True:
+            rows = self._session.sql(
+                "SELECT query_text FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION(RESULT_LIMIT => 10000)) "
+                "WHERE query_type = 'CREATE_ICEBERG_TABLE' AND execution_status = 'SUCCESS' "
+                f"AND query_text ILIKE '%\"{like_table}\"%' ESCAPE '\\\\'"
+            ).collect()
+            if rows:
+                return
+            if time.time() >= deadline:
+                self.fail(
+                    f"No successful CREATE ICEBERG TABLE statement for {table_name} in this "
+                    f"session's query history; it was created in some other format."
+                )
+            time.sleep(5.0)
+
     def _create_feature_store(self) -> FeatureStore:
         return self.fs
 
@@ -573,9 +751,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         """
         # get_feature_view is fetched inside the loop: right after registration it can race the
         # multi-replica OFS catalog (SHOW/DESC on a lagging replica), so tolerate that skew here too.
-        fv_live: Optional[FeatureView] = None
+        fv_live: FeatureView | None = None
         deadline = time.time() + timeout
-        last_err: Optional[str] = None
+        last_err: str | None = None
         while time.time() < deadline:
             try:
                 if fv_live is None:
@@ -602,7 +780,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         retries: int = 6,
         backoff_sec: float = 5.0,
         as_pandas: bool = True,
-        require_non_null_cols: Optional[list[str]] = None,
+        require_non_null_cols: list[str] | None = None,
     ) -> Any:
         """Read ONLINE with bounded retry against transient online-serving skew.
 
@@ -636,7 +814,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         Raises:
             last_err: The last exception observed if every attempt fails.
         """
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for _ in range(retries):
             try:
                 result = fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=as_pandas)
@@ -684,7 +862,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             None when ingest succeeds.
         """
         deadline = time.time() + timeout_s
-        last_err: Optional[str] = None
+        last_err: str | None = None
         while time.time() < deadline:
             try:
                 fs.stream_ingest(stream_name, records)
@@ -693,6 +871,11 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                 last_err = str(e)
             time.sleep(5)
         self.fail(f"stream_ingest not accepted within {timeout_s}s; last_err={last_err!r}")
+
+    def _oft_pg_etl_microsecond_timestamps_enabled(self) -> bool:
+        """Return whether OFT PG-ETL timestamps are stored at microsecond precision."""
+        rows = self._session.sql("SHOW PARAMETERS LIKE 'ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS' IN ACCOUNT").collect()
+        return bool(rows) and str(rows[0]["value"]).lower() == "true"
 
     def _make_stream_source(self, fs: FeatureStore, stream_name: str) -> None:
         fs.register_stream_source(
@@ -782,7 +965,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         return table_name
 
     def _make_all_types_stream_source(self, fs: FeatureStore, stream_name: str) -> None:
-        """Register a stream source with all 6 supported column types."""
+        """Register a stream source with all 6 supported column types plus a VARCHAR feature."""
         fs.register_stream_source(
             StreamSource(
                 name=stream_name,
@@ -790,10 +973,12 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                     [
                         StructField("USER_ID", StringType()),
                         StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+                        StructField("LAST_SEEN_TIME", TimestampType(TimestampTimeZone.NTZ)),
                         StructField("SCORE", DoubleType()),
                         StructField("RANK", LongType()),
                         StructField("PRICE", DecimalType(10, 2)),
                         StructField("IS_ACTIVE", BooleanType()),
+                        StructField("CATEGORY", StringType()),
                     ]
                 ),
                 desc="All-types stream for type coverage testing",
@@ -801,29 +986,66 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         )
 
     def _create_all_types_backfill_table(self, fs: FeatureStore, suffix: str) -> str:
-        """Create a backfill table with all 6 supported column types."""
+        """Create a backfill table with all 6 supported column types. ``u1`` uses TIMESTAMP_NTZ(9)."""
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BACKFILL_ALL_TYPES_{suffix}"
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
                 USER_ID VARCHAR,
-                EVENT_TIME TIMESTAMP_NTZ,
+                EVENT_TIME TIMESTAMP_NTZ(9),
+                LAST_SEEN_TIME TIMESTAMP_NTZ(9),
                 SCORE FLOAT,
                 RANK INT,
                 PRICE NUMBER(10,2),
-                IS_ACTIVE BOOLEAN
+                IS_ACTIVE BOOLEAN,
+                CATEGORY VARCHAR
             )
         """
         ).collect()
         self._session.sql(
             f"""
             INSERT INTO {table_name} VALUES
-            ('u1', '2024-01-01 00:00:00', 3.14, 42, 99.95, TRUE),
-            ('u2', '2024-01-01 01:00:00', 2.72, 7, 49.99, FALSE),
-            ('u3', '2024-01-01 02:00:00', 1.41, 1, 9.99, TRUE)
+            ('u1', '2024-06-01 12:34:56.123456789'::TIMESTAMP_NTZ(9),
+                  '2024-06-01 12:34:57.987654321'::TIMESTAMP_NTZ(9), 3.14, 42, 99.95, TRUE, {ALL_TYPES_CATEGORY!r}),
+            ('u2', '2024-01-01 01:00:00'::TIMESTAMP_NTZ(9),
+                  '2024-01-01 01:00:01.111111111'::TIMESTAMP_NTZ(9), 2.72, 7, 49.99, FALSE, 'books'),
+            ('u3', '2024-01-01 02:00:00'::TIMESTAMP_NTZ(9),
+                  '2024-01-01 02:00:02.222222222'::TIMESTAMP_NTZ(9), 1.41, 1, 9.99, TRUE, 'home')
         """
         ).collect()
         return table_name
+
+    def _all_types_comparable_values(self, row) -> dict[str, object]:
+        """Normalize an all-types row so offline Snowflake and Postgres OFT can be compared.
+
+        Args:
+            row: A pandas Series from an offline or online read.
+
+        Returns:
+            Canonical feature values, excluding ``EVENT_TIME`` (dropped on online reads).
+        """
+        return {
+            "USER_ID": str(row["USER_ID"]),
+            "CATEGORY": str(row["CATEGORY"]),
+            "SCORE": round(float(row["SCORE"]), 2),
+            "RANK": int(row["RANK"]),
+            "PRICE": round(float(row["PRICE"]), 2),
+            "IS_ACTIVE": str(row["IS_ACTIVE"]).lower() in ("true", "1"),
+        }
+
+    def _assert_all_types_offline_matches_postgres(self, offline_pdf, online_pdf) -> None:
+        """Assert Iceberg/native offline and Postgres online served the same feature values.
+
+        Args:
+            offline_pdf: Single-row pandas frame from ``StoreType.OFFLINE``.
+            online_pdf: Single-row pandas frame from Postgres OFT.
+        """
+        self.assertGreater(len(offline_pdf), 0, "offline read returned no rows")
+        self.assertGreater(len(online_pdf), 0, "online read returned no rows")
+        self.assertEqual(
+            self._all_types_comparable_values(offline_pdf.iloc[0]),
+            self._all_types_comparable_values(online_pdf.iloc[0]),
+        )
 
     def _stream_source_ref_key(self, stream_name: str) -> str:
         return SqlIdentifier(stream_name).resolved()
@@ -837,7 +1059,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         database: str,
         schema: str,
         physical_fv_name: str,
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None, str | None]:
         """``(STATE, ERROR_MESSAGE, QUERY_ID)`` of the latest root task run.
 
         Reads ``TASK_HISTORY`` for ``<fv>$<ver>$BACKFILL_ROOT``. The root row
@@ -872,9 +1094,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         if not rows:
             return None, None, None
         row = rows[0].as_dict()
-        state: Optional[str] = None
-        err: Optional[str] = None
-        qid: Optional[str] = None
+        state: str | None = None
+        err: str | None = None
+        qid: str | None = None
         for k, v in row.items():
             ku = k.upper()
             if ku == "STATE" and v is not None:
@@ -890,9 +1112,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         fq_udf: str,
         timeout_s: float = 240.0,
         *,
-        feature_store: Optional[FeatureStore] = None,
-        streaming_fv_metadata_name: Optional[str] = None,
-        streaming_fv_version: Optional[str] = None,
+        feature_store: FeatureStore | None = None,
+        streaming_fv_metadata_name: str | None = None,
+        streaming_fv_version: str | None = None,
         wait_backfill_dropped: bool = False,
     ) -> None:
         """Wait until the backfill task graph reports terminal state and the DT has rows.
@@ -935,7 +1157,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                 the backfill table still present after that budget.
         """
         deadline = time.time() + timeout_s
-        meta_name_resolved: Optional[str] = None
+        meta_name_resolved: str | None = None
         if feature_store is not None and streaming_fv_metadata_name and streaming_fv_version:
             meta = feature_store._metadata_manager.get_streaming_metadata(
                 streaming_fv_metadata_name,
@@ -962,8 +1184,8 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             meta_name_resolved = f"{physical_fv_name}$BACKFILL_ROOT"
 
             try:
-                last_state: Optional[str] = None
-                last_qid: Optional[str] = None
+                last_state: str | None = None
+                last_qid: str | None = None
                 while time.time() < deadline:
                     state, err_msg, qid = self._streaming_backfill_root_task_status(
                         database=database,

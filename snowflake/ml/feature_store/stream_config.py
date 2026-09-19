@@ -16,7 +16,7 @@ import datetime
 import inspect
 import textwrap
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -181,12 +181,12 @@ class StreamConfig:
         ... )
     """
 
-    stream_source: Union[str, Any]  # Union[StreamSource, str] — Any avoids circular import
+    stream_source: str | Any  # Union[StreamSource, str] — Any avoids circular import
     transformation_fn: Callable[[pd.DataFrame], pd.DataFrame]
     backfill_df: Any  # DataFrame — Any avoids circular import
-    backfill_start_time: Optional[datetime.datetime] = None
+    backfill_start_time: datetime.datetime | None = None
     # FQN of the backfill table; persisted so get_feature_view can restore it.
-    backfill_table: Optional[str] = None
+    backfill_table: str | None = None
 
     def __post_init__(self) -> None:
         fn = self.transformation_fn
@@ -251,9 +251,9 @@ class StreamConfig:
     @classmethod
     def _for_reconstruction(
         cls,
-        stream_source: Union[str, Any],
-        backfill_table: Optional[str] = None,
-        backfill_start_time: Optional[datetime.datetime] = None,
+        stream_source: str | Any,
+        backfill_table: str | None = None,
+        backfill_start_time: datetime.datetime | None = None,
     ) -> StreamConfig:
         """Build a metadata-only ``StreamConfig`` for round-trip reconstruction.
 

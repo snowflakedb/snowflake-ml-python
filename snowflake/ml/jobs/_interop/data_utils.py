@@ -1,6 +1,6 @@
 import io
 import json
-from typing import Any, Literal, Optional, Protocol, Union, cast, overload
+from typing import Any, Literal, Protocol, cast, overload
 
 from snowflake import snowpark
 from snowflake.ml.jobs._interop import dto_schema
@@ -19,7 +19,7 @@ class StageFileWriter(io.IOBase):
         self._closed = False
         self._exception_occurred = False
 
-    def write(self, data: Union[bytes, bytearray]) -> int:
+    def write(self, data: bytes | bytearray) -> int:
         """Write data to the internal buffer."""
         if self._closed:
             raise ValueError("I/O operation on closed file")
@@ -60,7 +60,7 @@ def _is_stage_path(path: str) -> bool:
     return path.startswith("@") or path.startswith("snow://")
 
 
-def open_stream(path: str, mode: str = "rb", session: Optional[snowpark.Session] = None) -> io.IOBase:
+def open_stream(path: str, mode: str = "rb", session: snowpark.Session | None = None) -> io.IOBase:
     if _is_stage_path(path):
         if session is None:
             raise ValueError("Session is required when opening a stage path")
@@ -88,7 +88,7 @@ class DtoCodec(Protocol):
         ...
 
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.PayloadDTO, dict[str, Any]]:
+    def decode(stream: io.IOBase, as_dict: bool = False) -> dto_schema.PayloadDTO | dict[str, Any]:
         pass
 
     @staticmethod
@@ -108,7 +108,7 @@ class JsonDtoCodec(DtoCodec):
         ...
 
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.PayloadDTO, dict[str, Any]]:
+    def decode(stream: io.IOBase, as_dict: bool = False) -> dto_schema.PayloadDTO | dict[str, Any]:
         data = cast(dict[str, Any], json.load(stream))
         if as_dict:
             return data

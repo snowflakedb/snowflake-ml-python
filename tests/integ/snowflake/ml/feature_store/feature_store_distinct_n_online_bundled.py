@@ -5,7 +5,9 @@ Covers both ingestion paths that feed an Online Feature Table:
 - **Streaming**: ``stream_ingest`` raw events -> Online Service builds online tiles -> Query API returns the
   per-key distinct-N arrays.
 - **Batch (tiled)**: source table -> tiled Dynamic Table -> reverse-ETL into Postgres -> Query API. The batch
-  test also asserts the offline merge result so the snowml-side SQL is validated end-to-end.
+  test also asserts the offline merge result so the snowml-side SQL is validated end-to-end. It is
+  parameterized by storage format: native Snowflake runs the full round trip, while Iceberg is refused by
+  ``register_feature_view`` because distinct-N tiles into ARRAY columns that Iceberg tables cannot store.
 
 ``Feature.last_distinct_n`` / ``Feature.first_distinct_n`` dedupe and
 truncate to ``n`` at tile-build time and write the Quake-contract partial columns
@@ -19,10 +21,10 @@ Service. Requires ``SNOWFLAKE_PAT`` for the Online Service ingest / Query API, e
 import datetime
 import json
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from feature_store_streaming_fv_integ_base import StreamingFeatureViewIntegTestBase
 
 from snowflake.ml.feature_store.feature import Feature
@@ -31,6 +33,8 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     OnlineConfig,
     OnlineStoreType,
+    StorageConfig,
+    StorageFormat,
     StoreType,
 )
 from snowflake.ml.feature_store.stream_config import StreamConfig
@@ -49,6 +53,10 @@ _PAGE_B = "P_B"  # only in the recent tile (day -1)
 _PAGE_C = "P_C"  # only in the older in-window tile (day -2)
 _PAGE_D = "P_D"  # only in the older in-window tile (day -2)
 _PAGE_Z = "P_Z"  # only in the out-of-window tile (day -6); must never surface
+
+# Registration refuses the Iceberg case before running any DDL, so this volume is never
+# dereferenced and does not need to exist.
+_UNUSED_EXTERNAL_VOLUME = "ICEBERG_VOLUME_NEVER_CREATED"
 
 # Events span three daily tiles within a 4d window / 1d granularity. Each in-window tile has only 2
 # distinct values, so n=3 forces every result to combine distinct values from BOTH in-window tiles:
@@ -72,7 +80,7 @@ def _page_url_transform(df: pd.DataFrame) -> pd.DataFrame:
 _page_url_transform.__module__ = "__main__"
 
 
-def _as_list(value: Any) -> Optional[list]:
+def _as_list(value: Any) -> list | None:
     """Normalize an array column value (Python list or JSON string) to a list."""
     if value is None:
         return None
@@ -190,7 +198,7 @@ class FeatureStoreDistinctNStreamingIntegTest(StreamingFeatureViewIntegTestBase,
         )
 
 
-class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
+class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, parameterized.TestCase):
     """Batch tiled distinct-N: source table -> tiled DT -> Postgres OFT; asserts offline merge + online read."""
 
     def _create_page_url_source_table(self, fs: FeatureStore, suffix: str, entity_key: str) -> str:
@@ -223,11 +231,26 @@ class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, abs
         ).collect()
         return table_name
 
-    def test_batch_tiled_distinct_n_offline_and_online_read(self) -> None:
-        """Tiled batch FV with first/last distinct-N: validate offline merge + Postgres online read."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_tiled_distinct_n_offline_and_online_read(self, iceberg: bool) -> None:
+        """Tiled batch FV with first/last distinct-N: validate offline merge + Postgres online read.
+
+        Distinct-N keeps its per-tile state in ARRAY columns, which an Iceberg table cannot
+        store, so the two storage formats have deliberately different outcomes: the native
+        case runs the full offline + online round trip, while the Iceberg case is refused by
+        ``register_feature_view``. Both cases start from the same source table and the same
+        feature list, so storage format is the only difference between them.
+
+        Args:
+            iceberg: When True, request Iceberg storage and assert registration is refused.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_DISTINCT_N_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_DISTINCT_N_{label}_{s}"
         batch_key = f"U_BATCH_DISTINCT_{s}"
 
         src_table = self._create_page_url_source_table(fs, s, batch_key)
@@ -235,17 +258,39 @@ class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, abs
             Feature.last_distinct_n("PAGE_URL", "4d", n=3).alias("RECENT_DISTINCT_PAGES"),
             Feature.first_distinct_n("PAGE_URL", "4d", n=3).alias("FIRST_DISTINCT_PAGES"),
         ]
-        fv = FeatureView(
-            name=fv_name,
-            entities=[self.user_entity],
-            feature_df=self._session.table(src_table),
-            timestamp_col="EVENT_TIME",
-            refresh_mode="FULL",
-            refresh_freq="1 minute",
-            feature_granularity="1d",
-            features=features,
-            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
-        )
+
+        def _build_feature_view(storage_config: StorageConfig | None) -> FeatureView:
+            return FeatureView(
+                name=fv_name,
+                entities=[self.user_entity],
+                feature_df=self._session.table(src_table),
+                timestamp_col="EVENT_TIME",
+                refresh_mode="FULL",
+                refresh_freq="1 minute",
+                feature_granularity="1d",
+                features=features,
+                storage_config=storage_config,
+                online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+            )
+
+        if iceberg:
+            # The definition itself is accepted; registration is what refuses it, before any
+            # Dynamic Table, online feature table, or external volume is created.
+            iceberg_fv = _build_feature_view(
+                StorageConfig(format=StorageFormat.ICEBERG, external_volume=_UNUSED_EXTERNAL_VOLUME)
+            )
+            with self.assertRaisesRegex(
+                Exception,
+                "Iceberg storage is not supported for the first_distinct_n, last_distinct_n aggregation",
+            ):
+                fs.register_feature_view(iceberg_fv, "v1")
+            # Nothing was created, so the feature view is absent and re-registering it on the
+            # default storage format still works.
+            self.assertEqual(len(fs.list_feature_views().filter(f"NAME = '{fv_name.upper()}'").collect()), 0)
+            self.assertTrue(fs.register_feature_view(_build_feature_view(None), "v1").online)
+            return
+
+        fv = _build_feature_view(None)
         registered = fs.register_feature_view(fv, "v1")
         self.assertFalse(registered.is_streaming)
         self.assertTrue(registered.is_tiled)
@@ -272,7 +317,12 @@ class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, abs
             self.assertEqual(first, _EXPECTED_FIRST_DISTINCT_3)
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_online, desc="batch tiled distinct-N"
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=_validate_online,
+            desc=f"batch tiled distinct-N {label}",
         )
 
 

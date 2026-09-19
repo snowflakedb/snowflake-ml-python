@@ -1,6 +1,5 @@
 """Unit tests for resolve_prefer_pip_for_automatic_dependencies (core-only target)."""
 
-from typing import Optional
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -119,8 +118,8 @@ class ResolvePreferPipForAutomaticDependenciesTest(parameterized.TestCase):
     def test_resolve_prefer_pip_for_automatic_dependencies(
         self,
         *,
-        target_platforms: Optional[list[model_types.TargetPlatform]],
-        conda_dependencies: Optional[list[str]],
+        target_platforms: list[model_types.TargetPlatform] | None,
+        conda_dependencies: list[str] | None,
         pip_flag: bool,
         is_local_conda: bool,
         force_conda_defaults: bool,

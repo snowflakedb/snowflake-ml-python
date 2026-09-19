@@ -9,7 +9,7 @@ small when individual responsibilities are migrated to Global Services.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from snowflake.ml.feature_store.decl.errors import FeatureStoreNotInitializedError
 from snowflake.ml.feature_store.decl.imperative_executor import (
@@ -48,6 +48,7 @@ __all__ = [
     "assert_feature_store_initialized",
     "build_datasources_by_table",
     "discover_project",
+    "format_op_display_row",
     "load_manifest",
     "load_project",
     "resolve_datasource_columns",
@@ -116,6 +117,32 @@ def format_status_display(
     from snowflake.ml.feature_store.decl.service import format_status_display as _fmt
 
     return _fmt(status, user, database, schema, verbose=verbose)
+
+
+def format_op_display_row(op: Any, *, status: str | None = None) -> dict[str, Any]:
+    """Build an ordered plan/apply display row for a single :class:`PlanOp`.
+
+    The returned dict's key order is the CLI column order — ``type`` first,
+    then ``name``, ``version``, ``operation``, ``reason``, ``destructive``
+    (and ``status`` when supplied).  ``type`` is the object kind
+    (``BatchFeatureView``, ``StreamingFeatureView``, ``Entity``,
+    ``FeatureGroup``, ``BatchSource`` / ``StreamingSource``), matching the
+    ``type`` column of ``snow feature list``.
+
+    This is the single facade the CLI manager uses to render read-only
+    ``snow feature plan`` rows, so the type-derivation logic (and its
+    ``OpKind`` fallback) lives in one place shared with apply-time rows.
+
+    Args:
+        op: A :class:`PlanOp`.
+        status: Optional per-op status; omitted for read-only plan rows.
+
+    Returns:
+        An ordered dict for the ops table / JSON payload.
+    """
+    from snowflake.ml.feature_store.decl.imperative_executor import _op_result_row
+
+    return _op_result_row(op, status=status)
 
 
 def format_describe_display(
@@ -666,6 +693,8 @@ def fetch_entity_rows(
     database: str,
     schema: str,
     warehouse: str = "",
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch entity tag rows via the imperative ``FeatureStore.list_entities()``.
 
@@ -681,6 +710,10 @@ def fetch_entity_rows(
         schema: Snowflake schema name to scope the listing to.
         warehouse: Default warehouse forwarded to the imperative
             ``FeatureStore`` constructor; an empty string is accepted.
+        on_progress: Optional per-row progress callback
+            ``(completed, total, label)`` forwarded to the executor.
+            The library never prints — the CLI supplies this to render a
+            stderr progress bar.  ``None`` (the default) is a no-op.
 
     Returns:
         A list of row dicts in the legacy ``SHOW TAGS`` shape (keys
@@ -692,7 +725,7 @@ def fetch_entity_rows(
         fetch_entity_rows as _fetch,
     )
 
-    return _fetch(session, database, schema, warehouse)
+    return _fetch(session, database, schema, warehouse, on_progress=on_progress)
 
 
 def fetch_feature_group_rows(
@@ -700,6 +733,8 @@ def fetch_feature_group_rows(
     database: str,
     schema: str,
     warehouse: str = "",
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch FG rows via the imperative ``FeatureStore.list_feature_groups()``.
 
@@ -713,6 +748,10 @@ def fetch_feature_group_rows(
         schema: Snowflake schema name to scope the listing to.
         warehouse: Default warehouse forwarded to the imperative
             ``FeatureStore`` constructor; an empty string is accepted.
+        on_progress: Optional per-row progress callback
+            ``(completed, total, label)`` forwarded to the executor.
+            The library never prints — the CLI supplies this to render a
+            stderr progress bar.  ``None`` (the default) is a no-op.
 
     Returns:
         A list of FG row dicts (see
@@ -723,7 +762,7 @@ def fetch_feature_group_rows(
         fetch_feature_group_rows as _fetch,
     )
 
-    return _fetch(session, database, schema, warehouse)
+    return _fetch(session, database, schema, warehouse, on_progress=on_progress)
 
 
 def fetch_feature_view_rows(
@@ -731,6 +770,8 @@ def fetch_feature_view_rows(
     database: str,
     schema: str,
     warehouse: str = "",
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch FV rows via the imperative ``FeatureStore.list_feature_views()``.
 
@@ -750,6 +791,10 @@ def fetch_feature_view_rows(
         schema: Snowflake schema name to scope the listing to.
         warehouse: Default warehouse forwarded to the imperative
             ``FeatureStore`` constructor; an empty string is accepted.
+        on_progress: Optional per-row progress callback
+            ``(completed, total, label)`` forwarded to the executor.
+            The library never prints — the CLI supplies this to render a
+            stderr progress bar.  ``None`` (the default) is a no-op.
 
     Returns:
         A list of FV row dicts in the Phase-1 contract shape (Section 7
@@ -760,7 +805,7 @@ def fetch_feature_view_rows(
         fetch_feature_view_rows as _fetch,
     )
 
-    return _fetch(session, database, schema, warehouse)
+    return _fetch(session, database, schema, warehouse, on_progress=on_progress)
 
 
 def fetch_stream_source_rows(
@@ -768,6 +813,8 @@ def fetch_stream_source_rows(
     database: str,
     schema: str,
     warehouse: str = "",
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch stream-source rows via the imperative ``FeatureStore.list_stream_sources()``.
 
@@ -791,6 +838,10 @@ def fetch_stream_source_rows(
         schema: Snowflake schema name to scope the listing to.
         warehouse: Default warehouse forwarded to the imperative
             ``FeatureStore`` constructor; an empty string is accepted.
+        on_progress: Optional per-row progress callback
+            ``(completed, total, label)`` forwarded to the executor.
+            The library never prints — the CLI supplies this to render a
+            stderr progress bar.  ``None`` (the default) is a no-op.
 
     Returns:
         A list of stream-source row dicts in the contract §3 shape
@@ -801,7 +852,7 @@ def fetch_stream_source_rows(
         fetch_stream_source_rows as _fetch,
     )
 
-    return _fetch(session, database, schema, warehouse)
+    return _fetch(session, database, schema, warehouse, on_progress=on_progress)
 
 
 def list_state_queries(database: str, schema: str) -> dict[str, str]:
@@ -833,6 +884,7 @@ def enrich_list_results(
     entity_rows: list[dict[str, Any]] | None = None,
     specification_map: dict[str, dict[str, Any]] | None = None,
     feature_group_rows: list[dict[str, Any]] | None = None,
+    feature_view_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Enrich raw SHOW/DESCRIBE/TAG rows into a multi-kind list output.
 
@@ -862,6 +914,19 @@ def enrich_list_results(
             FG support accepts the kwarg so the CLI can already wire
             it through, but does not yet emit FG rows into the list
             output (Phase 5b extends this function to surface them).
+        feature_view_rows: Optional rows produced by
+            :func:`fetch_feature_view_rows` (the imperative
+            ``list_feature_views()`` discovery set).  Surfaces
+            OFT-less FeatureViews — offline-only ``BatchFeatureView``s
+            (``online: false``) and FVs whose OFT was dropped but whose
+            backing Dynamic Table is still listable — that
+            ``SHOW ONLINE FEATURE TABLES`` (``show_rows``) never
+            returns.  Purely additive: a FV already surfaced via an OFT
+            ``show_row`` (matched on ``(name, version)``) is not
+            duplicated, and each OFT-less FV's exclusive datasources are
+            unioned into the Datasource section.  ``None`` preserves the
+            legacy OFT-only behaviour
+            (``plans/bug_offline_bfv_invisible_in_list.md``).
 
     Returns:
         Ordered list of enriched row dicts.  Each dict carries a
@@ -965,6 +1030,88 @@ def enrich_list_results(
         r["details"] = {"scheduling_state": r.get("scheduling_state", "")}
         enriched.append(r)
 
+    # 1b. OFT-less FeatureViews from the ``list_feature_views()`` discovery
+    # set (``feature_view_rows``).  ``SHOW ONLINE FEATURE TABLES`` only
+    # surfaces FVs that have an Online Feature Table, so offline-only
+    # ``BatchFeatureView``s (``online: false``) and FVs whose OFT was
+    # dropped are invisible without this pass
+    # (``plans/bug_offline_bfv_invisible_in_list.md``).  The merge is
+    # purely additive: a FV already emitted from an OFT ``show_row`` (same
+    # ``(name, version)``) is skipped so the authoritative OFT/spec row
+    # wins.  Names are kept in the canonical form the imperative row
+    # carries, matching the OFT path's no-case-folding rule.
+    _FV_KIND_DISPLAY = {
+        "BATCH": "BatchFeatureView",
+        "STREAMING": "StreamingFeatureView",
+        "REALTIME": "RealtimeFeatureView",
+    }
+    _covered_fv_keys = {(str(row.get("name", "")).upper(), str(row.get("version", "")).upper()) for row in enriched}
+    offline_fv_specs: list[dict[str, Any]] = []
+    if feature_view_rows:
+        for fv_row in feature_view_rows:
+            fv_name = str(fv_row.get("name", "") or "")
+            fv_version = str(fv_row.get("version", "") or "")
+            if not fv_name or not fv_version:
+                continue
+            if (fv_name.upper(), fv_version.upper()) in _covered_fv_keys:
+                continue
+            _covered_fv_keys.add((fv_name.upper(), fv_version.upper()))
+
+            kind_raw = str(fv_row.get("kind", "") or "").upper()
+            fv_type = _FV_KIND_DISPLAY.get(kind_raw, ObjectKind.FEATURE_VIEW)
+
+            entities_raw = fv_row.get("entities")
+            entity_names: list[str] = []
+            if isinstance(entities_raw, list):
+                entity_names = [str(e) for e in entities_raw if e is not None]
+            elif isinstance(entities_raw, str) and entities_raw:
+                try:
+                    parsed = _json.loads(entities_raw)
+                    if isinstance(parsed, list):
+                        entity_names = [str(e) for e in parsed if e is not None]
+                except (ValueError, TypeError):
+                    entity_names = [e.strip() for e in entities_raw.strip("[]").split(",") if e.strip()]
+
+            enriched.append(
+                {
+                    "type": fv_type,
+                    "name": fv_name,
+                    "feature_view": fv_name,
+                    "oft_name": "",
+                    "version": fv_version,
+                    "entities": ", ".join(entity_names),
+                    "database_name": str(fv_row.get("database_name", "") or ""),
+                    "schema_name": str(fv_row.get("schema_name", "") or ""),
+                    "details": {
+                        "scheduling_state": "",
+                        "online_enabled": bool(fv_row.get("online_enabled")),
+                    },
+                }
+            )
+
+            # Collect this FV's sources so the Datasource section (step 4)
+            # surfaces the exclusive ``BatchSource`` an offline BFV feeds
+            # from — otherwise ``EVENTS_ADV_DECL`` is silently missing.
+            spec_text = fv_row.get("spec_text")
+            source_refs = fv_row.get("source_refs")
+            db = str(fv_row.get("database_name", "") or "")
+            schema_val = str(fv_row.get("schema_name", "") or "")
+            fv_sources: list[dict[str, Any]] = []
+            if isinstance(source_refs, list) and source_refs:
+                fv_sources = [s for s in source_refs if isinstance(s, dict)]
+            elif isinstance(spec_text, dict):
+                inner_st = spec_text.get("spec") if isinstance(spec_text.get("spec"), dict) else spec_text
+                st_sources = inner_st.get("sources") if isinstance(inner_st, dict) else None
+                if isinstance(st_sources, list):
+                    fv_sources = [s for s in st_sources if isinstance(s, dict)]
+            if fv_sources:
+                offline_fv_specs.append(
+                    {
+                        "metadata": {"database": db, "schema": schema_val},
+                        "spec": {"sources": fv_sources},
+                    }
+                )
+
     # 2. Entity rows derived from ``SHOW TAGS``.  These are authoritative;
     # the previous "inferred from PK columns" fallback has been removed,
     # so every Entity row in the output corresponds to a registered tag.
@@ -1066,8 +1213,15 @@ def enrich_list_results(
     # displayed ``name`` preserves the case as stored in the recovered
     # spec JSON; only the dedup key is case-folded.
     ds_by_key: dict[str, dict[str, Any]] = {}
+    _ds_spec_sources: list[dict[str, Any]] = []
     if specification_map:
-        for spec in specification_map.values():
+        _ds_spec_sources.extend(specification_map.values())
+    # OFT-less FV sources reconstructed in step 1b feed the same union so
+    # the Datasource section surfaces the exclusive BatchSource an
+    # offline BFV consumes.
+    _ds_spec_sources.extend(offline_fv_specs)
+    if _ds_spec_sources:
+        for spec in _ds_spec_sources:
             if not isinstance(spec, dict):
                 continue
             inner = spec.get("spec") if isinstance(spec.get("spec"), dict) else spec

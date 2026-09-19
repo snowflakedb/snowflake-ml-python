@@ -1,7 +1,7 @@
 import json
 import os
 import tempfile
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -434,7 +434,7 @@ class SampleInputDataTest(parameterized.TestCase):
             file_exists = os.path.exists(os.path.join(tmpdir, model_sample_input_data.SAMPLE_INPUT_DATA_FILENAME))
             with open(os.path.join(tmpdir, "model.yaml")) as f:
                 raw = yaml.safe_load(f)
-            field: Optional[str] = raw["signatures"]["predict"].get("sample_input_file_path")
+            field: str | None = raw["signatures"]["predict"].get("sample_input_file_path")
 
             self.assertEqual(file_exists, should_capture)
             if should_capture:

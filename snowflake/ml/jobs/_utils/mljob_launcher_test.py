@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Optional, cast
+from typing import Any, cast
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -60,7 +60,7 @@ class MLJobLauncherTests(parameterized.TestCase):
         (0, {"status": "success from another function", "value": 0}),
         (None, {"status": "success from another function", "value": 0}),
     )
-    def test_run_script_with_function_and_args(self, arg_value: Optional[int], expected: dict[str, Any]) -> None:
+    def test_run_script_with_function_and_args(self, arg_value: int | None, expected: dict[str, Any]) -> None:
         # Test running a script with a function that takes arguments
         args = () if arg_value is None else (arg_value,)
         result = mljob_launcher.main(

@@ -1,7 +1,7 @@
 from __future__ import annotations  # for return self methods
 
 from functools import partial
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting
@@ -13,7 +13,7 @@ def _query_log(sql: str | None) -> str:
 
 
 def result_dimension_matcher(
-    expected_rows: Optional[int], expected_cols: Optional[int], result: list[snowpark.Row], sql: str | None = None
+    expected_rows: int | None, expected_cols: int | None, result: list[snowpark.Row], sql: str | None = None
 ) -> bool:
     """Check result dimensions of the collected result dataframe of a Snowflake SQL operation.
 
@@ -123,7 +123,7 @@ def cell_value_by_column_matcher(
     return True
 
 
-_DEFAULT_MATCHERS: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = [
+_DEFAULT_MATCHERS: list[Callable[[list[snowpark.Row], str | None], bool]] = [
     partial(result_dimension_matcher, 1, 1),
     partial(column_name_matcher, "status"),
 ]
@@ -147,7 +147,7 @@ class ResultValidator:
     def __init__(self, result: list[snowpark.Row], query: str | None = None) -> None:
         self._result: list[snowpark.Row] = result
         self._query: str | None = query
-        self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
+        self._success_matchers: list[Callable[[list[snowpark.Row], str | None], bool]] = []
 
     def has_dimensions(self, expected_rows: int | None = None, expected_cols: int | None = None) -> ResultValidator:
         """Validate that the result of the operation has the right shape of `expected_rows` rows and `expected_cols`
@@ -258,15 +258,15 @@ class SqlResultValidator(ResultValidator):
         self,
         session: snowpark.Session,
         query: str,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
         *,
-        params: Optional[list[Any]] = None,
+        params: list[Any] | None = None,
     ) -> None:
         self._session: snowpark.Session = session
         self._query: str = query
-        self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
-        self._statement_params: Optional[dict[str, Any]] = statement_params
-        self._params: Optional[list[Any]] = params
+        self._success_matchers: list[Callable[[list[snowpark.Row], str | None], bool]] = []
+        self._statement_params: dict[str, Any] | None = statement_params
+        self._params: list[Any] | None = params
 
     def _get_result(self) -> list[snowpark.Row]:
         """Collect the result of the given SQL query."""

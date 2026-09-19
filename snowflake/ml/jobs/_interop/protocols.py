@@ -3,7 +3,7 @@ import logging
 import pickle
 import posixpath
 import sys
-from typing import Any, Callable, Optional, Protocol, Union, cast, runtime_checkable
+from typing import Any, Callable, Protocol, Union, cast, runtime_checkable
 
 from snowflake import snowpark
 from snowflake.ml.jobs._interop import data_utils
@@ -60,14 +60,14 @@ class SerializationProtocol(Protocol):
     def protocol_info(self) -> ProtocolInfo:
         """The information about the protocol."""
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
 
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
 
@@ -85,7 +85,7 @@ class CloudPickleProtocol(SerializationProtocol):
 
         self._backend = cp
 
-    def _get_compatibility_error(self, payload_info: ProtocolInfo) -> Optional[Exception]:
+    def _get_compatibility_error(self, payload_info: ProtocolInfo) -> Exception | None:
         """Check compatibility and attempt load, raising helpful errors on failure."""
         version_error = python_error = None
 
@@ -136,7 +136,7 @@ class CloudPickleProtocol(SerializationProtocol):
             },
         )
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
         replaced_obj = self._pack_obj(obj)
         result_path = posixpath.join(dest_dir, self.DEFAULT_PATH)
@@ -148,8 +148,8 @@ class CloudPickleProtocol(SerializationProtocol):
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
         if payload_info.name != self.protocol_info.name:
@@ -227,7 +227,7 @@ class CloudPickleProtocol(SerializationProtocol):
         else:
             return obj
 
-    def _unpack_obj(self, obj: Any, session: Optional[snowpark.Session] = None) -> Any:
+    def _unpack_obj(self, obj: Any, session: snowpark.Session | None = None) -> Any:
         """Unpack dict markers back into containers and Session references.
 
         Markers:
@@ -317,7 +317,7 @@ class ArrowTableProtocol(SerializationProtocol):
             version=self._pa.__version__,
         )
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
         if not isinstance(obj, self._pa.Table):
             raise SerializationError(f"Expected {self._pa.Table.__name__} object, got {type(obj).__name__}")
@@ -333,8 +333,8 @@ class ArrowTableProtocol(SerializationProtocol):
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
         if payload_info.name != self.protocol_info.name:
@@ -376,7 +376,7 @@ class PandasDataFrameProtocol(SerializationProtocol):
             version=self._pd.__version__,
         )
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
         if not isinstance(obj, self._pd.DataFrame):
             raise SerializationError(f"Expected {self._pd.DataFrame.__name__} object, got {type(obj).__name__}")
@@ -395,8 +395,8 @@ class PandasDataFrameProtocol(SerializationProtocol):
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
         if payload_info.name != self.protocol_info.name:
@@ -438,7 +438,7 @@ class NumpyArrayProtocol(SerializationProtocol):
             version=self._np.__version__,
         )
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
         if not isinstance(obj, self._np.ndarray):
             raise SerializationError(f"Expected {self._np.ndarray.__name__} object, got {type(obj).__name__}")
@@ -452,8 +452,8 @@ class NumpyArrayProtocol(SerializationProtocol):
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
         if payload_info.name != self.protocol_info.name:
@@ -537,7 +537,7 @@ class AutoProtocol(SerializationProtocol):
         else:
             self._protocols.insert(index, protocol)
 
-    def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
+    def save(self, obj: Any, dest_dir: str, session: snowpark.Session | None = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
         last_protocol_error = None
         for protocol in self._protocols:
@@ -561,8 +561,8 @@ class AutoProtocol(SerializationProtocol):
     def load(
         self,
         payload_info: ProtocolInfo,
-        session: Optional[snowpark.Session] = None,
-        path_transform: Optional[Callable[[str], str]] = None,
+        session: snowpark.Session | None = None,
+        path_transform: Callable[[str], str] | None = None,
     ) -> Any:
         """Load the object from the source directory."""
         last_error = None

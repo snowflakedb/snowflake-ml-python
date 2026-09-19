@@ -107,12 +107,17 @@ class KBinsDiscretizerTest(TestCase):
         pandas_df, snowpark_df = utils.get_df(self._session, utils.DATA, utils.SCHEMA, np.nan)
 
         for strategy in self._strategies:
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
-            sklearn_discretizer.fit(pandas_df[INPUT_COLS])
-            target_n_bins = sklearn_discretizer.n_bins_.tolist()
-            target_bin_edges = sklearn_discretizer.bin_edges_.tolist()
-
             for df in [pandas_df, snowpark_df]:
+                sklearn_discretizer = SklearnKBinsDiscretizer(
+                    n_bins=N_BINS,
+                    encode=ENCODE,
+                    strategy=strategy,
+                    **({"quantile_method": "linear"} if strategy == "quantile" and df is snowpark_df else {}),
+                )
+                sklearn_discretizer.fit(pandas_df[INPUT_COLS])
+                target_n_bins = sklearn_discretizer.n_bins_.tolist()
+                target_bin_edges = sklearn_discretizer.bin_edges_.tolist()
+
                 discretizer = KBinsDiscretizer(
                     n_bins=N_BINS,
                     encode=ENCODE,
@@ -130,6 +135,7 @@ class KBinsDiscretizerTest(TestCase):
         N_BINS = [10, 7]
         ENCODE = "ordinal"
 
+        np.random.seed(0)
         data, sf_schema = utils.gen_fuzz_data(
             rows=1000,
             types=[utils.DataType.INTEGER, utils.DataType.FLOAT],
@@ -137,12 +143,17 @@ class KBinsDiscretizerTest(TestCase):
         pandas_df, snowpark_df = utils.get_df(self._session, data, sf_schema)
 
         for strategy in self._strategies:
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
-            sklearn_discretizer.fit(pandas_df[sf_schema[1:]])
-            target_n_bins = sklearn_discretizer.n_bins_.tolist()
-            target_bin_edges = sklearn_discretizer.bin_edges_.tolist()
-
             for df in [pandas_df, snowpark_df]:
+                sklearn_discretizer = SklearnKBinsDiscretizer(
+                    n_bins=N_BINS,
+                    encode=ENCODE,
+                    strategy=strategy,
+                    **({"quantile_method": "linear"} if strategy == "quantile" and df is snowpark_df else {}),
+                )
+                sklearn_discretizer.fit(pandas_df[sf_schema[1:]])
+                target_n_bins = sklearn_discretizer.n_bins_.tolist()
+                target_bin_edges = sklearn_discretizer.bin_edges_.tolist()
+
                 discretizer = KBinsDiscretizer(
                     n_bins=N_BINS,
                     encode=ENCODE,
@@ -169,7 +180,12 @@ class KBinsDiscretizerTest(TestCase):
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer = SklearnKBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                **({"quantile_method": "linear"} if strategy == "quantile" else {}),
+            )
             sklearn_discretizer.fit(pandas_df[INPUT_COLS])
             target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
 
@@ -211,7 +227,12 @@ class KBinsDiscretizerTest(TestCase):
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer = SklearnKBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                **({"quantile_method": "linear"} if strategy == "quantile" else {}),
+            )
             sklearn_discretizer.fit(pandas_df[sf_schema[1:]])
             target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[sf_schema[0]])[sf_schema[1:]])
 
@@ -248,7 +269,12 @@ class KBinsDiscretizerTest(TestCase):
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer = SklearnKBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                **({"quantile_method": "linear"} if strategy == "quantile" else {}),
+            )
             sklearn_discretizer.fit(pandas_df[INPUT_COLS])
             target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
 
@@ -290,7 +316,12 @@ class KBinsDiscretizerTest(TestCase):
 
         for strategy in self._strategies:
             # 1. Create OSS SKLearn discretizer
-            sklearn_discretizer = SklearnKBinsDiscretizer(n_bins=N_BINS, encode=ENCODE, strategy=strategy)
+            sklearn_discretizer = SklearnKBinsDiscretizer(
+                n_bins=N_BINS,
+                encode=ENCODE,
+                strategy=strategy,
+                **({"quantile_method": "linear"} if strategy == "quantile" else {}),
+            )
             sklearn_discretizer.fit(pandas_df[INPUT_COLS])
             target_output = sklearn_discretizer.transform(pandas_df.sort_values(by=[ID_COL])[INPUT_COLS])
 

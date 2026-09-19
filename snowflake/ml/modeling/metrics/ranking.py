@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 import cloudpickle
 import numpy as np
 import numpy.typing as npt
@@ -24,8 +22,8 @@ def precision_recall_curve(
     df: snowpark.DataFrame,
     y_true_col_name: str,
     probas_pred_col_name: str,
-    pos_label: Optional[Union[str, int]] = None,
-    sample_weight_col_name: Optional[str] = None,
+    pos_label: str | int | None = None,
+    sample_weight_col_name: str | None = None,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
     Compute precision-recall pairs for different probability thresholds.
@@ -133,14 +131,14 @@ def precision_recall_curve(
 def roc_auc_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_score_col_names: Union[str, list[str]],
-    average: Optional[str] = "macro",
-    sample_weight_col_name: Optional[str] = None,
-    max_fpr: Optional[float] = None,
+    y_true_col_names: str | list[str],
+    y_score_col_names: str | list[str],
+    average: str | None = "macro",
+    sample_weight_col_name: str | None = None,
+    max_fpr: float | None = None,
     multi_class: str = "raise",
-    labels: Optional[npt.ArrayLike] = None,
-) -> Union[float, npt.NDArray[np.float64]]:
+    labels: npt.ArrayLike | None = None,
+) -> float | npt.NDArray[np.float64]:
     """
     Compute Area Under the Receiver Operating Characteristic Curve (ROC AUC)
     from prediction scores.
@@ -276,7 +274,7 @@ def roc_auc_score(
 
     kwargs = telemetry.get_sproc_statement_params_kwargs(roc_auc_score_anon_sproc, statement_params)
     result_object = result.deserialize(session, roc_auc_score_anon_sproc(session, **kwargs))
-    auc: Union[float, npt.NDArray[np.float64]] = result_object
+    auc: float | npt.NDArray[np.float64] = result_object
     return auc
 
 
@@ -286,8 +284,8 @@ def roc_curve(
     df: snowpark.DataFrame,
     y_true_col_name: str,
     y_score_col_name: str,
-    pos_label: Optional[Union[str, int]] = None,
-    sample_weight_col_name: Optional[str] = None,
+    pos_label: str | int | None = None,
+    sample_weight_col_name: str | None = None,
     drop_intermediate: bool = True,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """

@@ -15,6 +15,7 @@ from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._client.ops import deployment_step, service_ops
+from snowflake.ml.model._client.service import model_deployment_spec_schema
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.model._signatures import core
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -247,6 +248,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=False,
                 feature_sources_per_function=None,
+                adapters=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -413,6 +415,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -580,6 +583,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -952,6 +956,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
             # This is the key assertion - verify add_inference_engine_spec was called
@@ -1124,6 +1129,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
             # key assertions -- image build is not called and inference engine model is called
@@ -1291,6 +1297,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1024,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
             # Key assertion: verify add_inference_engine_spec was called with PYTHON_GENERIC
@@ -1585,6 +1592,83 @@ class ServiceOpsTest(parameterized.TestCase):
         _, kwargs = mock_add_service_spec.call_args
         self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
 
+    def test_create_service_forwards_adapters(self) -> None:
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        current_version = version.Version(snowml_version.VERSION)
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            features={platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: current_version}
+        ):
+            self.m_ops = service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            )
+        sentinel_adapters = [
+            model_deployment_spec_schema.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support")
+        ]
+        with (
+            mock.patch.object(self.m_ops._model_deployment_spec, "save"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=[
+                    service_sql.ServiceStatusInfo(
+                        service_status=service_sql.ServiceStatus.PENDING,
+                        instance_id=0,
+                        instance_status="PENDING",
+                        container_status="PENDING",
+                        message=None,
+                    )
+                ],
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],
+            ),
+            mock.patch.object(self.m_ops._service_client, "get_service_logs", return_value=""),
+            mock.patch.object(self.m_ops, "_wait_for_service_status", return_value=None),
+        ):
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                min_instances=0,
+                max_instances=1,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                num_workers=None,
+                max_batch_rows=None,
+                force_rebuild=False,
+                build_external_access_integrations=None,
+                block=True,
+                statement_params=self.m_statement_params,
+                progress_status=create_mock_progress_status(),
+                adapters=sentinel_adapters,
+            )
+        _, kwargs = mock_add_service_spec.call_args
+        self.assertIs(kwargs["adapters"], sentinel_adapters)
+
     def test_show_service_returns_match(self) -> None:
         Outcome = row.Row("name", "status", "database_name", "schema_name")
         rows = [Outcome("MYSERVICE", "RUNNING", "DB", "SCHEMA")]
@@ -1760,6 +1844,215 @@ class ServiceOpsTest(parameterized.TestCase):
         self.assertFalse(call_kwargs["async_"])
         self.assertEqual(call_kwargs["from_stage_path"], expected_input_stage)
         self.assertEqual(result.id, 'TEMP."test".JOB')
+
+    def _service_ops_with_capabilities(self, **features: Any) -> None:
+        with platform_capabilities.PlatformCapabilities.mock_features(features=features):
+            self.m_ops = service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            )
+
+    def test_build_batch_inference_partition_expression(self) -> None:
+        self.assertEqual(
+            service_ops._build_batch_inference_partition_expression("partition_col"),
+            "TO_VARCHAR(PARTITION_COL)",
+        )
+        self.assertEqual(
+            service_ops._build_batch_inference_partition_expression('"Region/Name"'),
+            'TO_VARCHAR("Region/Name")',
+        )
+        self.assertNotIn("SHA2", service_ops._build_batch_inference_partition_expression("COL"))
+
+    def test_execute_inference_job_service_partitions_managed_input_when_capability_on(self) -> None:
+        self._service_ops_with_capabilities(**{platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: True})
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                return_value=("query_id", m_async_job),
+            ) as mock_execute,
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+        ):
+            self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column='"Region/Name"'),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+
+        expected_input_stage = f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/"
+        input_df.write.copy_into_location.assert_called_once_with(
+            location=expected_input_stage,
+            file_format_type="parquet",
+            header=True,
+            partition_by='TO_VARCHAR("Region/Name")',
+        )
+        yaml_body = mock_execute.call_args.kwargs["yaml_body"]
+        self.assertIn("layout: partitioned", yaml_body)
+        self.assertIn("partition_column:", yaml_body)
+        self.assertNotIn("overwrite", str(input_df.write.copy_into_location.call_args))
+
+    def test_execute_inference_job_service_dataframe_stays_flat_without_partition_column(self) -> None:
+        self._service_ops_with_capabilities(**{platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: True})
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                return_value=("query_id", m_async_job),
+            ) as mock_execute,
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+        ):
+            self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_job_specs.InputSpec(),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+
+        input_df.write.copy_into_location.assert_called_once_with(
+            location=f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/",
+            file_format_type="parquet",
+            header=True,
+            overwrite=True,
+        )
+        self.assertNotIn("layout:", mock_execute.call_args.kwargs["yaml_body"])
+
+    def test_execute_inference_job_service_dataframe_stays_flat_when_capability_off(self) -> None:
+        self._service_ops_with_capabilities(**{platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: False})
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                return_value=("query_id", m_async_job),
+            ) as mock_execute,
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+        ):
+            self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+
+        input_df.write.copy_into_location.assert_called_once_with(
+            location=f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/",
+            file_format_type="parquet",
+            header=True,
+            overwrite=True,
+        )
+        self.assertNotIn("layout:", mock_execute.call_args.kwargs["yaml_body"])
+
+    def test_execute_inference_job_service_dataframe_stays_flat_when_capability_absent(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                return_value=("query_id", m_async_job),
+            ) as mock_execute,
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+        ):
+            self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+
+        input_df.write.copy_into_location.assert_called_once_with(
+            location=f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/",
+            file_format_type="parquet",
+            header=True,
+            overwrite=True,
+        )
+        yaml_body = mock_execute.call_args.kwargs["yaml_body"]
+        self.assertIn("partition_column: PARTITION_COL", yaml_body)
+        self.assertNotIn("layout:", yaml_body)
+
+    def test_execute_inference_job_service_staged_input_omits_layout(self) -> None:
+        self._service_ops_with_capabilities(**{platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: True})
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+            return_value=("query_id", m_async_job),
+        ) as mock_execute:
+            self.m_ops.execute_inference_job_service(
+                input_stage_location="@DB.SCHEMA.STAGE/input/",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_job_specs.InputSpec(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+        yaml_body = mock_execute.call_args.kwargs["yaml_body"]
+        self.assertIn("partition_column: PARTITION_COL", yaml_body)
+        self.assertNotIn("layout:", yaml_body)
 
     def test_execute_inference_job_service_input_stage_location_skips_materialization(self) -> None:
         m_async_job = self._create_mock_async_job()

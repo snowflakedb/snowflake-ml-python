@@ -1,5 +1,4 @@
 import posixpath
-from typing import Optional
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from snowflake.ml._internal.utils import identifier
@@ -24,7 +23,7 @@ def is_snowflake_stage_uri(uri: str) -> bool:
     return urlparse(uri).scheme in _SNOWFLAKE_STAGE_URI_SCHEMES
 
 
-def get_snowflake_stage_path_from_uri(uri: str) -> Optional[str]:
+def get_snowflake_stage_path_from_uri(uri: str) -> str | None:
     """Returns the stage path pointed by the URI.
 
     Args:

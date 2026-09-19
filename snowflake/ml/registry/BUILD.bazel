@@ -15,6 +15,7 @@ py_library(
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/model:telemetry_params",
         "//snowflake/ml/monitoring:model_monitor",
         "//snowflake/ml/monitoring/_manager:model_monitor_manager",
         "//snowflake/ml/monitoring/entities:entities_lib",

@@ -1,5 +1,5 @@
 from collections import abc
-from typing import TYPE_CHECKING, Literal, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Literal, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -54,7 +54,7 @@ class TensorflowTensorHandler(base_handler.BaseDataHandler[Union["tensorflow.Ten
 
     @staticmethod
     def convert_from_df(
-        df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None
+        df: pd.DataFrame, features: Sequence[core.BaseFeatureSpec] | None = None
     ) -> Union["tensorflow.Tensor", "tensorflow.Variable"]:
         import tensorflow as tf
 
@@ -112,7 +112,7 @@ class SeqOfTensorflowTensorHandler(
 
     @staticmethod
     def convert_from_df(
-        df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None
+        df: pd.DataFrame, features: Sequence[core.BaseFeatureSpec] | None = None
     ) -> Sequence[Union["tensorflow.Tensor", "tensorflow.Variable"]]:
         import tensorflow as tf
 

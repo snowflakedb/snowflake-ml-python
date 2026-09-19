@@ -148,6 +148,7 @@ class ModelDeploymentSpec:
         max_batch_rows: int | None = None,
         autocapture: bool | None = None,
         feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        adapters: list[model_deployment_spec_schema.AdapterSpec] | None = None,
     ) -> "ModelDeploymentSpec":
         """Add service specification to the deployment spec.
 
@@ -170,6 +171,8 @@ class ModelDeploymentSpec:
                 the deploy spec's ``service.feature_retrieval.lookups`` block; today the server requires exactly one
                 FeatureView per function, but the list shape is preserved so a future relaxation does not require a
                 client change. Pass ``None`` (default) to omit the block entirely.
+            adapters: Optional list of adapter identities (``name``, ``version``, optional ``alias``).
+                Omit, ``None``, or ``[]`` leaves the ``adapters`` key off the service block.
 
         Returns:
             Self for chaining.
@@ -198,6 +201,8 @@ class ModelDeploymentSpec:
         # a service spec without the feature_retrieval block.
         if feature_sources_per_function is not None:
             self._service.feature_retrieval = _build_feature_retrieval_config(feature_sources_per_function)
+        if adapters:
+            self._service.adapters = adapters
         return self
 
     def add_hf_logger_spec(
@@ -314,6 +319,7 @@ class ModelDeploymentSpec:
                 "--allowed-headers",
                 "--api-key",
                 "--lora-modules",
+                "--enable-lora",
                 "--prompt-adapter",
                 "--ssl-keyfile",
                 "--ssl-certfile",

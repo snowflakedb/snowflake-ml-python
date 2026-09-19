@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import Union, cast
 
 from typing_extensions import deprecated
 
@@ -11,10 +11,10 @@ from snowflake.ml._internal import telemetry
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def classify_text(
-    str_input: Union[str, snowpark.Column],
-    categories: Union[list[str], snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    str_input: str | snowpark.Column,
+    categories: list[str] | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     """Use the LLM inference service to classify the INPUT text into one of the target CATEGORIES.
 
     Args:
@@ -31,10 +31,10 @@ def classify_text(
 
 def _classify_text_impl(
     function: str,
-    str_input: Union[str, snowpark.Column],
-    categories: Union[list[str], snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    str_input: str | snowpark.Column,
+    categories: list[str] | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, str_input, categories))
 
 

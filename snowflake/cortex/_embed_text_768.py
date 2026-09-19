@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import Union, cast
 
 from typing_extensions import deprecated
 
@@ -11,10 +11,10 @@ from snowflake.ml._internal import telemetry
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def embed_text_768(
-    model: Union[str, snowpark.Column],
-    text: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[list[float], snowpark.Column]:
+    model: str | snowpark.Column,
+    text: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> list[float] | snowpark.Column:
     """Calls into the LLM inference service to embed the text.
 
     Args:
@@ -32,10 +32,10 @@ def embed_text_768(
 
 def _embed_text_768_impl(
     function: str,
-    model: Union[str, snowpark.Column],
-    text: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[list[float], snowpark.Column]:
+    model: str | snowpark.Column,
+    text: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> list[float] | snowpark.Column:
     return cast(Union[list[float], snowpark.Column], call_sql_function(function, session, model, text))
 
 

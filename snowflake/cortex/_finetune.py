@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import (
@@ -17,7 +17,7 @@ CORTEX_FINETUNE_DOCUMENTATION_URL = "https://docs.snowflake.com/en/user-guide/sn
 
 
 class FinetuneError(Exception):
-    def __init__(self, message: str, original_exception: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, original_exception: Exception | None = None) -> None:
         """Finetuning Exception Class.
 
         Args:
@@ -41,46 +41,46 @@ class FinetuneError(Exception):
 class FinetuneStatus:
     """Fine-tuning job status."""
 
-    id: Optional[str] = None
+    id: str | None = None
     """Workflow ID for the fine-tuning run."""
 
-    status: Optional[str] = None
+    status: str | None = None
     """Status string, e.g. PENDING, RUNNING, SUCCESS, ERROR, CANCELLED."""
 
-    base_model: Optional[str] = None
+    base_model: str | None = None
     """Name of the base model that is being fine-tuned."""
 
-    created_on: Optional[int] = None
+    created_on: int | None = None
     """Creation timestamp of the Fine-tuning job in milliseconds."""
 
-    error: Optional[dict[str, Any]] = None
+    error: dict[str, Any] | None = None
     """Error message propagated from the job."""
 
-    finished_on: Optional[int] = None
+    finished_on: int | None = None
     """Completion timestamp of the Fine-tuning job in milliseconds."""
 
-    progress: Optional[float] = None
+    progress: float | None = None
     """Progress made as a fraction of total [0.0,1.0]."""
 
-    training_result: Optional[list[dict[str, Any]]] = None
+    training_result: list[dict[str, Any]] | None = None
     """Detailed metrics report for a completed training."""
 
-    trained_tokens: Optional[int] = None
+    trained_tokens: int | None = None
     """Number of tokens trained on. If multiple epochs are run, this can be larger than number of tokens in the
     training data."""
 
-    training_data: Optional[str] = None
+    training_data: str | None = None
     """Training data query."""
 
-    validation_data: Optional[str] = None
+    validation_data: str | None = None
     """Validation data query."""
 
-    model: Optional[str] = None
+    model: str | None = None
     """Location of the fine-tuned model."""
 
 
 class FinetuneJob:
-    def __init__(self, session: Optional[snowpark.Session], status: FinetuneStatus) -> None:
+    def __init__(self, session: snowpark.Session | None, status: FinetuneStatus) -> None:
         """Fine-tuning Job.
 
         Args:
@@ -145,7 +145,7 @@ class Finetune:
         project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
         subproject=CORTEX_FINETUNE_TELEMETRY_SUBPROJECT,
     )
-    def __init__(self, session: Optional[snowpark.Session] = None) -> None:
+    def __init__(self, session: snowpark.Session | None = None) -> None:
         """Cortex Fine-Tuning API.
 
         [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-finetuning)
@@ -165,9 +165,9 @@ class Finetune:
         self,
         name: str,
         base_model: str,
-        training_data: Union[str, snowpark.DataFrame],
-        validation_data: Optional[Union[str, snowpark.DataFrame]] = None,
-        options: Optional[dict[str, Any]] = None,
+        training_data: str | snowpark.DataFrame,
+        validation_data: str | snowpark.DataFrame | None = None,
+        options: dict[str, Any] | None = None,
     ) -> FinetuneJob:
         """Create a new fine-tuning runs.
 
@@ -212,7 +212,7 @@ class Finetune:
         else:
             training_string = training_data
 
-        validation_string: Optional[str] = None
+        validation_string: str | None = None
         if isinstance(validation_data, snowpark.DataFrame):
             if snowpark_dataframe_utils.is_single_query_snowpark_dataframe(validation_data):
                 validation_string = str(validation_data.queries["queries"][0])
@@ -253,7 +253,7 @@ class Finetune:
         return [FinetuneJob(session=self._session, status=FinetuneStatus(**run_status)) for run_status in result]
 
 
-def _try_load_json(json_string: str) -> Union[dict[Any, Any], list[Any]]:
+def _try_load_json(json_string: str) -> dict[Any, Any] | list[Any]:
     try:
         result = json.loads(str(json_string))
     except json.JSONDecodeError as e:
@@ -269,5 +269,5 @@ def _try_load_json(json_string: str) -> Union[dict[Any, Any], list[Any]]:
     return result
 
 
-def _finetune_impl(operation: str, session: Optional[snowpark.Session], function_args: list[Any]) -> str:
+def _finetune_impl(operation: str, session: snowpark.Session | None, function_args: list[Any]) -> str:
     return call_sql_function_literals(_CORTEX_FINETUNE_SYSTEM_FUNCTION_NAME, session, operation, *function_args)

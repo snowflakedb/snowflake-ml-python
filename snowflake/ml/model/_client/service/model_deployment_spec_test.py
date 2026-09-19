@@ -1,6 +1,6 @@
 import pathlib
 import tempfile
-from typing import cast
+from typing import Any, cast
 
 import yaml
 from absl.testing import absltest, parameterized
@@ -8,7 +8,10 @@ from absl.testing import absltest, parameterized
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.feature_store import feature_view
 from snowflake.ml.model import inference_engine
-from snowflake.ml.model._client.service import model_deployment_spec
+from snowflake.ml.model._client.service import (
+    model_deployment_spec,
+    model_deployment_spec_schema,
+)
 
 
 class ModelDeploymentSpecTest(parameterized.TestCase):
@@ -98,6 +101,99 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 },
             },
         )
+
+    def _minimal_service_mds(
+        self,
+        adapters: list[model_deployment_spec_schema.AdapterSpec] | None = None,
+        *,
+        pass_adapters: bool = False,
+    ) -> model_deployment_spec.ModelDeploymentSpec:
+        mds = model_deployment_spec.ModelDeploymentSpec()
+        mds.add_model_spec(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+        )
+        mds.add_image_build_spec(
+            image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+            fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+        )
+        service_kwargs: dict[str, Any] = {
+            "service_name": sql_identifier.SqlIdentifier("service"),
+            "inference_compute_pool_name": sql_identifier.SqlIdentifier("service_compute_pool"),
+            "ingress_enabled": True,
+            "min_instances": 1,
+            "max_instances": 5,
+        }
+        if pass_adapters:
+            service_kwargs["adapters"] = adapters
+        mds.add_service_spec(**service_kwargs)
+        return mds
+
+    def test_omit_adapters_matches_minimal_golden(self) -> None:
+        mds = self._minimal_service_mds()
+        result = yaml.safe_load(mds.save())
+        self.assertDictEqual(
+            result,
+            {
+                "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                "image_build": {
+                    "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
+                    "image_repo": "DB.SCHEMA.IMAGE_REPO",
+                    "force_rebuild": False,
+                },
+                "service": {
+                    "name": "DB.SCHEMA.SERVICE",
+                    "compute_pool": "SERVICE_COMPUTE_POOL",
+                    "ingress_enabled": True,
+                    "min_instances": 1,
+                    "max_instances": 5,
+                },
+            },
+        )
+        self.assertNotIn("adapters", result["service"])
+
+    def test_none_and_empty_adapters_omitted_from_yaml(self) -> None:
+        omit = self._minimal_service_mds().save()
+        none_dump = self._minimal_service_mds(adapters=None, pass_adapters=True).save()
+        empty_list_dump = self._minimal_service_mds(adapters=[], pass_adapters=True).save()
+        self.assertEqual(none_dump, omit)
+        self.assertEqual(empty_list_dump, omit)
+        self.assertNotIn("adapters", yaml.safe_load(omit)["service"])
+
+    def test_adapters_emitted_when_nonempty(self) -> None:
+        adapters = [
+            model_deployment_spec_schema.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support"),
+            model_deployment_spec_schema.AdapterSpec(name="DB.SCHEMA.SQL_GEN", version="V2", alias="sql_gen"),
+        ]
+        mds = self._minimal_service_mds(adapters=adapters, pass_adapters=True)
+        result = yaml.safe_load(mds.save())
+        self.assertEqual(
+            result["service"]["adapters"],
+            [
+                {"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1", "alias": "support"},
+                {"name": "DB.SCHEMA.SQL_GEN", "version": "V2", "alias": "sql_gen"},
+            ],
+        )
+        self.assertEqual(len(result["models"]), 1)
+
+    def test_adapters_list_omits_unset_alias(self) -> None:
+        adapters = [
+            model_deployment_spec_schema.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1"),
+        ]
+        mds = self._minimal_service_mds(adapters=adapters, pass_adapters=True)
+        result = yaml.safe_load(mds.save())
+        self.assertEqual(
+            result["service"]["adapters"],
+            [{"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1"}],
+        )
+        self.assertNotIn("alias", result["service"]["adapters"][0])
+
+    def test_adapter_spec_rejects_unknown_fields(self) -> None:
+        spec_kwargs: Any = {"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1", "definitely_not_a_field": 1}
+        with self.assertRaises(ValueError):
+            model_deployment_spec_schema.AdapterSpec(**spec_kwargs)
 
     def test_minimal_case_sensitive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -604,6 +700,57 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
         mds.clear()
+
+    def test_enable_lora_blocklisted_with_warning(self) -> None:
+        mds = model_deployment_spec.ModelDeploymentSpec()
+        mds.add_model_spec(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+        )
+        mds.add_service_spec(
+            service_name=sql_identifier.SqlIdentifier("service"),
+            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+        )
+        with self.assertWarns(UserWarning):
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=[
+                    "--enable-lora",
+                    "--enable-lora=true",
+                    "--max-loras=8",
+                ],
+            )
+        result = yaml.safe_load(mds.save())
+        engine_args = result["service"]["inference_engine_spec"]["inference_engine_args"]
+        self.assertEqual(engine_args, ["--max-loras=8"])
+        self.assertFalse(any(arg.split("=")[0] == "--enable-lora" for arg in engine_args))
+
+    def test_lora_modules_still_blocklisted(self) -> None:
+        mds = model_deployment_spec.ModelDeploymentSpec()
+        mds.add_model_spec(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+        )
+        mds.add_service_spec(
+            service_name=sql_identifier.SqlIdentifier("service"),
+            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+        )
+        with self.assertWarns(UserWarning):
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=[
+                    "--lora-modules=support=/tmp/x",
+                    "--max-loras=8",
+                ],
+            )
+        result = yaml.safe_load(mds.save())
+        engine_args = result["service"]["inference_engine_spec"]["inference_engine_args"]
+        self.assertEqual(engine_args, ["--max-loras=8"])
+        self.assertFalse(any(arg.split("=")[0] == "--lora-modules" for arg in engine_args))
 
     def test_inference_engine_spec_with_service_skip_image_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

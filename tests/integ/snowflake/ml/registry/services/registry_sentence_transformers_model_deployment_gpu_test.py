@@ -1,7 +1,6 @@
 import os
 import random
 import tempfile
-from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -39,7 +38,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
 
     def _test_sentence_transformers(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
         use_default_repo: bool,
     ) -> None:
         if pip_requirements is None:
@@ -94,11 +93,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         )
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers"]],
+        pip_requirements=[None, ["sentence-transformers", "transformers"]],
     )
     def test_sentence_transformers(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
         self._test_sentence_transformers(pip_requirements, use_default_repo=False)
 
@@ -108,11 +107,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self._test_sentence_transformers(None, use_default_repo=True)
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers"]],
+        pip_requirements=[None, ["sentence-transformers", "transformers"]],
     )
     def test_sentence_transformer_wrapper(
         self,
-        pip_requirements: Optional[list[str]],
+        pip_requirements: list[str] | None,
     ) -> None:
         if not pip_requirements:
             self.skipTest(

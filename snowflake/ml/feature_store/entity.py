@@ -1,5 +1,3 @@
-from typing import Optional
-
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
@@ -52,7 +50,7 @@ class Entity:
 
         self.name: SqlIdentifier = SqlIdentifier(name)
         self.join_keys: list[SqlIdentifier] = to_sql_identifiers(join_keys)
-        self.owner: Optional[str] = None
+        self.owner: str | None = None
         self.desc: str = desc
 
     def _validate(self, name: str, join_keys: list[str]) -> None:

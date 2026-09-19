@@ -1,7 +1,6 @@
 import configparser
 import os
 import tempfile
-from typing import Optional
 
 from absl.testing import absltest
 from cryptography.hazmat.primitives import serialization
@@ -111,7 +110,7 @@ class SnowflakeLoginOptionsTest(absltest.TestCase):
         self._token_file.flush()
 
     @staticmethod
-    def genPrivateRsaKey(key_password: Optional[bytes] = None) -> bytes:
+    def genPrivateRsaKey(key_password: bytes | None = None) -> bytes:
         "Generate a new RSA private key and return."
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         encryption_algorithm: serialization.KeySerializationEncryption = serialization.NoEncryption()

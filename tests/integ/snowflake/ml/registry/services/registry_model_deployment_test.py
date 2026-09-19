@@ -1,5 +1,3 @@
-from typing import Optional
-
 import inflection
 import pandas as pd
 import xgboost
@@ -22,9 +20,9 @@ class TestRegistryModelDeploymentInteg(registry_model_deployment_test_base.Regis
     )
     def test_end_to_end_pipeline(
         self,
-        gpu_requests: Optional[str],
-        cpu_requests: Optional[str],
-        memory_requests: Optional[str],
+        gpu_requests: str | None,
+        cpu_requests: str | None,
+        memory_requests: str | None,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data

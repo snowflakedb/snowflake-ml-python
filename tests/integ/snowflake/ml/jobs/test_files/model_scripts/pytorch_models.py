@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -22,7 +22,7 @@ class IrisNet(nn.Module):
         return x
 
 
-def train_model(model_name: Optional[str] = None) -> Any:
+def train_model(model_name: str | None = None) -> Any:
     # load data
     dataset = load_iris()
     X_train, _, y_train, _ = train_test_split(

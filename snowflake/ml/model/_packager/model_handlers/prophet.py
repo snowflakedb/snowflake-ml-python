@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 def _normalize_column_names(
     data: pd.DataFrame,
-    date_column: Optional[str] = None,
-    target_column: Optional[str] = None,
+    date_column: str | None = None,
+    target_column: str | None = None,
 ) -> pd.DataFrame:
     """Normalize user column names to Prophet's required 'ds' and 'y' format.
 
@@ -255,8 +255,8 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
         model: "prophet.Prophet",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.ProphetSaveOptions],
     ) -> None:
         """Save Prophet model and metadata.
@@ -428,7 +428,7 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
         cls,
         raw_model: "prophet.Prophet",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.ProphetLoadOptions],
     ) -> custom_model.CustomModel:
         """Convert Prophet model to CustomModel for unified inference interface.
@@ -445,14 +445,14 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
         from snowflake.ml.model import custom_model
 
         model_blob_meta = next(iter(model_meta.models.values()))
-        date_column: Optional[str] = cast(Optional[str], model_blob_meta.options.get("date_column", None))
-        target_column: Optional[str] = cast(Optional[str], model_blob_meta.options.get("target_column", None))
+        date_column: str | None = cast(Optional[str], model_blob_meta.options.get("date_column", None))
+        target_column: str | None = cast(Optional[str], model_blob_meta.options.get("target_column", None))
 
         def _create_custom_model(
             raw_model: "prophet.Prophet",
             model_meta: model_meta_api.ModelMetadata,
-            date_column: Optional[str],
-            target_column: Optional[str],
+            date_column: str | None,
+            target_column: str | None,
         ) -> type[custom_model.CustomModel]:
             """Create custom model class for Prophet."""
 

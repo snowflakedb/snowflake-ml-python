@@ -3,7 +3,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -30,9 +30,9 @@ class RegistryGenAIAutocaptureTest(registry_model_deployment_test_base.RegistryM
     to INFERENCE_TABLE when autocapture is enabled.
     """
 
-    _endpoint: Optional[str] = None
-    _model_version: Optional[ModelVersion] = None
-    _service_name: Optional[str] = None
+    _endpoint: str | None = None
+    _model_version: ModelVersion | None = None
+    _service_name: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:

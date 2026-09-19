@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union, cast
+from typing import Any, Union, cast
 
 from snowflake import snowpark
 from snowflake.ml._internal.exceptions import error_codes, exceptions
@@ -20,9 +20,9 @@ class SnowflakeConfigurationException(Exception):
 # (e.g. snowpark column and literal type modes).
 def call_sql_function(
     function: str,
-    session: Optional[snowpark.Session],
-    *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]],
-) -> Union[str, list[float], snowpark.Column]:
+    session: snowpark.Session | None,
+    *args: str | list[str] | snowpark.Column | dict[str, int | float],
+) -> str | list[float] | snowpark.Column:
     handle_as_column = False
 
     for arg in args:
@@ -38,16 +38,16 @@ def call_sql_function(
 
 
 def _call_sql_function_column(
-    function: str, *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]]
+    function: str, *args: str | list[str] | snowpark.Column | dict[str, int | float]
 ) -> snowpark.Column:
     return cast(snowpark.Column, functions.builtin(function)(*args))
 
 
 def _call_sql_function_immediate(
     function: str,
-    session: Optional[snowpark.Session],
-    *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]],
-) -> Union[str, list[float]]:
+    session: snowpark.Session | None,
+    *args: str | list[str] | snowpark.Column | dict[str, int | float],
+) -> str | list[float]:
     session = session or context.get_active_session()
     if session is None:
         raise SnowflakeAuthenticationException(
@@ -64,7 +64,7 @@ def _call_sql_function_immediate(
     return cast(str, df.collect()[0][0])
 
 
-def call_sql_function_literals(function: str, session: Optional[snowpark.Session], *args: Any) -> str:
+def call_sql_function_literals(function: str, session: snowpark.Session | None, *args: Any) -> str:
     r"""Call a SQL function with only literal arguments.
 
     This is useful for calling system functions.

@@ -1,4 +1,4 @@
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 from snowflake import snowpark
 from snowflake.snowpark import Row
@@ -17,8 +17,8 @@ def result_set_to_rows(session: snowpark.Session, result: dict[str, Any]) -> lis
 def run_query(
     session: snowpark.Session,
     query_text: str,
-    params: Optional[Sequence[Any]] = None,
-    statement_params: Optional[dict[str, Any]] = None,
+    params: Sequence[Any] | None = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> list[Row]:
     kwargs: dict[str, Any] = {"query": query_text, "params": params}
     if not is_in_stored_procedure():  # type: ignore[no-untyped-call]

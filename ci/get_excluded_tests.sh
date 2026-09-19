@@ -75,7 +75,35 @@ done
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
-all_test_targets=$("${bazel}" query 'kind("py_test rule", //tests/...)')
+# Test group assignment is derived entirely from build graph queries. An empty result is a
+# meaningful answer ("nothing is incompatible"), so a query that fails must abort rather than
+# fall through with an empty variable: that would route every test into the core group and
+# leave the optional dependency groups with nothing to run.
+abort_on_query_failure() {
+    local description=$1
+
+    echo "${PROG}: could not determine ${description}." >&2
+    echo "${PROG}: the build graph query failed, so test group assignment cannot be trusted. See the errors above." >&2
+    exit 1
+}
+
+# Writes the targets that are incompatible with a dependency group's conda platform to a file.
+incompatible_targets_for_group() {
+    local group_name=$1
+    local destination=$2
+    local raw_output="${destination}.raw"
+
+    if ! "${bazel}" cquery --config="${group_name}" \
+        --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
+        'set('"${all_test_targets}"')' >"${raw_output}"; then
+        abort_on_query_failure "which tests are incompatible with the '${group_name}' dependency group"
+    fi
+
+    awk NF "${raw_output}" >"${destination}"
+}
+
+all_test_targets=$("${bazel}" query 'kind("py_test rule", //tests/...)') ||
+    abort_on_query_failure "the set of test targets under //tests/..."
 all_test_targets_file="${working_dir}/all_test_targets"
 echo "${all_test_targets}" >"${all_test_targets_file}"
 
@@ -182,20 +210,17 @@ incompatible_targets=""
 
 if [[ $group != "all" ]]; then
     incompatible_targets_file="${working_dir}/incompatible_targets"
-    incompatible_targets=$("${bazel}" cquery --config="${group}" \
-        --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
-        'set('"${all_test_targets}"')' | \
-        awk NF)
+    group_incompatible_targets_file="${working_dir}/group_incompatible_targets"
+    incompatible_targets_for_group "${group}" "${group_incompatible_targets_file}"
+    incompatible_targets=$(<"${group_incompatible_targets_file}")
     if [[ $group != "core" ]]; then
-        "${bazel}" cquery --config="core" \
-            --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
-            'set('"${all_test_targets}"')' | \
-            awk NF>"${working_dir}/core_incompatible_targets"
+        incompatible_targets_for_group "core" "${working_dir}/core_incompatible_targets"
 
         core_compatible_targets=$(comm -23 <(sort "${all_test_targets_file}") <(sort "${working_dir}/core_incompatible_targets"))
-        incompatible_targets=$(printf "%s\n%s\n" "${incompatible_targets}" "${core_compatible_targets}" | sort | uniq)
+        incompatible_targets=$(printf "%s\n%s\n" "${incompatible_targets}" "${core_compatible_targets}" | awk NF | sort | uniq)
     fi
-    "${bazel}" query "labels(srcs, set(${incompatible_targets}))" >"${incompatible_targets_file}"
+    "${bazel}" query "labels(srcs, set(${incompatible_targets}))" >"${incompatible_targets_file}" ||
+        abort_on_query_failure "the source files of the tests excluded from the '${group}' dependency group"
     mv "${targets_to_exclude_file}" "${targets_to_exclude_file}.tmp"
     sort -u "${targets_to_exclude_file}.tmp" "${incompatible_targets_file}" | uniq -u >"${targets_to_exclude_file}"
 fi

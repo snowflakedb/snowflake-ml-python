@@ -1,15 +1,5 @@
 import os
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generator,
-    Literal,
-    Optional,
-    Sequence,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, Generator, Literal, Sequence, TypeVar, overload
 
 import numpy.typing as npt
 from typing_extensions import deprecated
@@ -53,7 +43,7 @@ class DataConnector:
     def from_dataframe(
         cls: type[DataConnectorType],
         df: snowpark.DataFrame,
-        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: type[data_ingestor.DataIngestor] | None = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         if len(df.queries["queries"]) != 1 or len(df.queries["post_actions"]) != 0:
@@ -64,8 +54,8 @@ class DataConnector:
     def from_sql(
         cls: type[DataConnectorType],
         query: str,
-        session: Optional[snowpark.Session] = None,
-        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        session: snowpark.Session | None = None,
+        ingestor_class: type[data_ingestor.DataIngestor] | None = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         session = session or sp_context.get_active_session()
@@ -76,7 +66,7 @@ class DataConnector:
     def from_dataset(
         cls: type[DataConnectorType],
         ds: "dataset.Dataset",
-        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: type[data_ingestor.DataIngestor] | None = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         dsv = ds.selected_version
@@ -90,7 +80,7 @@ class DataConnector:
     def from_ray_dataset(
         cls: type[DataConnectorType],
         ray_ds: "ray.data.Dataset",
-        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: type[data_ingestor.DataIngestor] | None = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
@@ -107,7 +97,7 @@ class DataConnector:
         cls: type[DataConnectorType],
         session: snowpark.Session,
         sources: Sequence[data_source.DataSource],
-        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: type[data_ingestor.DataIngestor] | None = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
@@ -199,7 +189,7 @@ class DataConnector:
         func_params_to_log=["batch_size", "shuffle", "drop_last_batch"],
     )
     def to_torch_dataset(
-        self, *, batch_size: Optional[int] = None, shuffle: bool = False, drop_last_batch: bool = True
+        self, *, batch_size: int | None = None, shuffle: bool = False, drop_last_batch: bool = True
     ) -> "torch_data.IterableDataset":  # type: ignore[type-arg]
         """Transform the Snowflake data into a PyTorch Iterable Dataset to be used with a DataLoader.
 
@@ -233,7 +223,7 @@ class DataConnector:
         subproject_extractor=lambda self: type(self).__name__,
         func_params_to_log=["limit"],
     )
-    def to_pandas(self, limit: Optional[int] = None) -> "pd.DataFrame":
+    def to_pandas(self, limit: int | None = None) -> "pd.DataFrame":
         """Retrieve the Snowflake data as a Pandas DataFrame.
 
         Args:
@@ -273,7 +263,7 @@ class DataConnector:
         self,
         *,
         streaming: Literal[False] = ...,
-        limit: Optional[int] = ...,
+        limit: int | None = ...,
     ) -> "hf_datasets.Dataset":
         ...
 
@@ -282,7 +272,7 @@ class DataConnector:
         self,
         *,
         streaming: Literal[True],
-        limit: Optional[int] = ...,
+        limit: int | None = ...,
         batch_size: int = ...,
         shuffle: bool = ...,
         drop_last_batch: bool = ...,
@@ -298,11 +288,11 @@ class DataConnector:
         self,
         *,
         streaming: bool = False,
-        limit: Optional[int] = None,
+        limit: int | None = None,
         batch_size: int = 1024,
         shuffle: bool = False,
         drop_last_batch: bool = False,
-    ) -> "Union[hf_datasets.Dataset, hf_datasets.IterableDataset]":
+    ) -> "hf_datasets.Dataset | hf_datasets.IterableDataset":
         """Retrieve the Snowflake data as a HuggingFace Dataset.
 
         Args:
@@ -332,7 +322,7 @@ class DataConnector:
     def _to_huggingface_iterable_dataset(
         self,
         *,
-        limit: Optional[int],
+        limit: int | None,
         batch_size: int,
         shuffle: bool,
         drop_last_batch: bool,

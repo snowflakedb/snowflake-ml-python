@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Any, Optional, Union, overload
+from typing import Any, overload
 
 import pandas as pd
 
@@ -15,7 +15,7 @@ from snowflake.ml.model import (
     task,
     type_hints,
 )
-from snowflake.ml.model._client.model import model_version_impl
+from snowflake.ml.model._client.model import model_version_impl, telemetry_params
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring._manager import model_monitor_manager
 from snowflake.ml.monitoring.entities import model_monitor_config
@@ -32,14 +32,18 @@ _MODEL_MONITORING_DISABLED_ERROR = (
 
 
 class Registry:
-    @telemetry.send_api_usage_telemetry(project=_TELEMETRY_PROJECT, subproject=_MODEL_TELEMETRY_SUBPROJECT)
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_MODEL_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["options"],
+    )
     def __init__(
         self,
         session: session.Session,
         *,
-        database_name: Optional[str] = None,
-        schema_name: Optional[str] = None,
-        options: Optional[dict[str, Any]] = None,
+        database_name: str | None = None,
+        schema_name: str | None = None,
+        options: dict[str, Any] | None = None,
     ) -> None:
         """Opens a registry within a pre-created Snowflake schema.
 
@@ -134,22 +138,22 @@ class Registry:
         model: type_hints.SupportedModelType,
         *,
         model_name: str,
-        version_name: Optional[str] = None,
-        comment: Optional[str] = None,
-        metrics: Optional[dict[str, Any]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[Union[target_platform.TargetPlatform, str]]] = None,
-        python_version: Optional[str] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[type_hints.SupportedDataType] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[type_hints.CodePathLike]] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
+        version_name: str | None = None,
+        comment: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[target_platform.TargetPlatform | str] | None = None,
+        python_version: str | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: type_hints.SupportedDataType | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        code_paths: list[type_hints.CodePathLike] | None = None,
+        ext_modules: list[ModuleType] | None = None,
         task: task.Task = task.Task.UNKNOWN,
-        options: Optional[type_hints.ModelSaveOption] = None,
+        options: type_hints.ModelSaveOption | None = None,
     ) -> ModelVersion:
         """
         Log a model with various parameters and metadata, or a ModelVersion object.
@@ -270,7 +274,7 @@ class Registry:
         model: ModelVersion,
         *,
         model_name: str,
-        version_name: Optional[str] = None,
+        version_name: str | None = None,
     ) -> ModelVersion:
         """
         Log a model with a ModelVersion object.
@@ -286,41 +290,29 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_MODEL_TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "model_name",
-            "version_name",
-            "comment",
-            "metrics",
-            "conda_dependencies",
-            "pip_requirements",
-            "artifact_repository_map",
-            "resource_constraint",
-            "target_platforms",
-            "python_version",
-            "signatures",
-        ],
+        func_params_to_log=telemetry_params.LOG_MODEL_FUNC_PARAMS_TO_LOG,
     )
     def log_model(
         self,
-        model: Union[type_hints.SupportedModelType, ModelVersion],
+        model: type_hints.SupportedModelType | ModelVersion,
         *,
         model_name: str,
-        version_name: Optional[str] = None,
-        comment: Optional[str] = None,
-        metrics: Optional[dict[str, Any]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[Union[target_platform.TargetPlatform, str]]] = None,
-        python_version: Optional[str] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[type_hints.SupportedDataType] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[type_hints.CodePathLike]] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
+        version_name: str | None = None,
+        comment: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[target_platform.TargetPlatform | str] | None = None,
+        python_version: str | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: type_hints.SupportedDataType | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        code_paths: list[type_hints.CodePathLike] | None = None,
+        ext_modules: list[ModuleType] | None = None,
         task: task.Task = task.Task.UNKNOWN,
-        options: Optional[type_hints.ModelSaveOption] = None,
+        options: type_hints.ModelSaveOption | None = None,
     ) -> ModelVersion:
         """
         Log a model with various parameters and metadata, or a ModelVersion object.
@@ -533,6 +525,7 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_MODEL_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["model_name"],
     )
     def get_model(self, model_name: str) -> Model:
         """Get the model object by its name.
@@ -584,6 +577,7 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_MODEL_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["model_name"],
     )
     def delete_model(self, model_name: str) -> None:
         """
@@ -602,6 +596,7 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
+        func_params_to_log=["name", "source_config", "model_monitor_config"],
     )
     def add_monitor(
         self,
@@ -647,9 +642,10 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
+        func_params_to_log=["name", "model_version"],
     )
     def get_monitor(
-        self, *, name: Optional[str] = None, model_version: Optional[model_version_impl.ModelVersion] = None
+        self, *, name: str | None = None, model_version: model_version_impl.ModelVersion | None = None
     ) -> model_monitor.ModelMonitor:
         """Get a Model Monitor from the Registry.
 
@@ -692,6 +688,7 @@ class Registry:
     @telemetry.send_api_usage_telemetry(
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
+        func_params_to_log=["name"],
     )
     def delete_monitor(self, name: str) -> None:
         """Delete a Model Monitor by name from the Registry.

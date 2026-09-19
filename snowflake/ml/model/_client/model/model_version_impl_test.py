@@ -1,3 +1,4 @@
+import functools
 import os
 import pathlib
 import tempfile
@@ -11,6 +12,7 @@ from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.exceptions import error_codes
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
+from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import (
     inference_engine,
     model_signature,
@@ -28,6 +30,7 @@ from snowflake.ml.model._client.model_spec import (
     model_extension_spec,
 )
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
+from snowflake.ml.model._client.service import model_deployment_spec_schema
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import huggingface
@@ -140,6 +143,20 @@ def _legacy_model_spec(**overrides: Any) -> legacy_model_spec.LegacyModelSpec:
     return legacy_model_spec.LegacyModelSpec(cast(model_meta_schema.ModelMetadataDict, metadata))
 
 
+def _enable_lora_adapters(fn: Any) -> Any:
+    @mock.patch.object(
+        pc.PlatformCapabilities,
+        "is_lora_adapters_enabled",
+        return_value=True,
+        autospec=True,
+    )
+    @functools.wraps(fn)
+    def wrapped(self: Any, mock_enabled: mock.MagicMock, *args: Any, **kwargs: Any) -> Any:
+        return fn(self, mock_enabled, *args, **kwargs)
+
+    return wrapped
+
+
 class ModelVersionImplTest(parameterized.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -162,6 +179,53 @@ class ModelVersionImplTest(parameterized.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
             )
+        peft_check = mock.patch.object(self.m_mv, "_is_peft_adapter_version", return_value=False, autospec=True)
+        peft_check.start()
+        self.addCleanup(peft_check.stop)
+
+    def _make_mv(self, model_name: str, version_name: str) -> model_version_impl.ModelVersion:
+        with (
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
+        ):
+            return model_version_impl.ModelVersion._ref(
+                model_ops.ModelOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                service_ops=service_ops.ServiceOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                model_name=sql_identifier.SqlIdentifier(model_name),
+                version_name=sql_identifier.SqlIdentifier(version_name),
+            )
+
+    def _adapter_mv(self) -> model_version_impl.ModelVersion:
+        return self._make_mv("SUPPORT_TONE", "V1")
+
+    @staticmethod
+    def _default_adapter_alias(mv: model_version_impl.ModelVersion) -> str:
+        return f"{mv.fully_qualified_model_name}/VERSIONS/{mv.version_name}"
+
+    def _base_mv(self) -> model_version_impl.ModelVersion:
+        return self._make_mv("LLAMA3_8B", "BASE")
+
+    def _predict_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
+        return [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                    "is_object_output": True,
+                }
+            ),
+        ]
 
     def test_ref(self) -> None:
         with (
@@ -1081,6 +1145,11 @@ class ModelVersionImplTest(parameterized.TestCase):
                 ]
             )
 
+    def _patch_current_role_sql(self, executing_role: str | None) -> Any:
+        mock_df = mock.MagicMock()
+        mock_df.collect.return_value = [] if executing_role is None else [(executing_role,)]
+        return mock.patch.object(self.m_mv._model_ops._session, "sql", return_value=mock_df)
+
     def test_load_blocked_for_non_owner(self) -> None:
         with (
             mock.patch.object(
@@ -1089,6 +1158,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 return_value=sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False),
             ),
             mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"CONSUMER"'),
+            self._patch_current_role_sql("CONSUMER"),
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
         ):
             with self.assertRaisesRegex(
@@ -1110,6 +1180,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 return_value=sql_identifier.SqlIdentifier("prod_owner", case_sensitive=False),
             ),
             mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"PROD_OWNER"'),
+            self._patch_current_role_sql("PROD_OWNER"),
             mock.patch.object(self.m_mv._model_ops, "download_files"),
             mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
         ):
@@ -1134,6 +1205,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 return_value=sql_identifier.SqlIdentifier(stored_role, case_sensitive=True),
             ),
             mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value=quoted_role),
+            self._patch_current_role_sql(stored_role),
             mock.patch.object(self.m_mv._model_ops, "download_files"),
             mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
         ):
@@ -1147,6 +1219,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 return_value=sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False),
             ),
             mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value=None),
+            self._patch_current_role_sql(None),
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
         ):
             with self.assertRaisesRegex(
@@ -1154,6 +1227,25 @@ class ModelVersionImplTest(parameterized.TestCase):
             ):
                 self.m_mv.load()
             mock_download_files.assert_not_called()
+
+    def test_load_uses_executing_role_not_session_primary_role(self) -> None:
+        m_model = mock.MagicMock()
+        m_pk = mock.MagicMock()
+        m_pk.meta = mock.MagicMock()
+        m_pk.model = m_model
+
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier("OWNER_RL", case_sensitive=False),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"CALLER_RL"'),
+            self._patch_current_role_sql("OWNER_RL"),
+            mock.patch.object(self.m_mv._model_ops, "download_files"),
+            mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
+        ):
+            self.assertEqual(self.m_mv.load(force=True), m_model)
 
     def test_set_alias(self) -> None:
         with mock.patch.object(self.m_mv._model_ops, "set_alias") as mock_set_alias:
@@ -1231,6 +1323,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine_args=None,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -1285,6 +1378,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine_args=None,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -1339,6 +1433,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine_args=None,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -1394,6 +1489,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 inference_engine_args=None,
                 autocapture=None,
                 feature_sources_per_function=None,
+                adapters=None,
             )
 
     def test_list_services(self) -> None:
@@ -2517,6 +2613,446 @@ class ModelVersionImplTest(parameterized.TestCase):
                     output_spec=output_spec,
                     input_spec=input_spec,
                 )
+
+    def test_is_peft_adapter_version(self) -> None:
+        mv = self._make_mv("MODEL", "v1")
+        with mock.patch.object(
+            mv, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+        ):
+            self.assertTrue(mv._is_peft_adapter_version())
+        with mock.patch.object(
+            mv, "_get_model_spec", return_value=_legacy_model_spec(model_type="huggingface_pipeline"), autospec=True
+        ):
+            self.assertFalse(mv._is_peft_adapter_version())
+        with mock.patch.object(mv, "_get_model_spec", return_value=_legacy_model_spec(), autospec=True):
+            self.assertFalse(mv._is_peft_adapter_version())
+        with mock.patch.object(
+            mv,
+            "_get_model_spec",
+            side_effect=ValueError("Unable to get the version of the metadata file."),
+            autospec=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "Unable to get the version of the metadata file."):
+                mv._is_peft_adapter_version()
+
+    @_enable_lora_adapters
+    def test_adapter_create_service_forwards_one_item_list(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(pin, "create_service", autospec=True) as mock_pin_create,
+        ):
+            adapter.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+            )
+        _, kwargs = mock_pin_create.call_args
+        self.assertEqual(kwargs["adapters"], [adapter])
+        self.assertEqual(kwargs["service_name"], "SERVICE")
+        self.assertEqual(kwargs["service_compute_pool"], "SERVICE_COMPUTE_POOL")
+
+    @_enable_lora_adapters
+    def test_create_service_list_adapters_omits_alias(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        other_mv = self._make_mv("SQL_GEN", "V2")
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters=[adapter_mv, other_mv],
+            )
+        _, kwargs = mock_create_service.call_args
+        expected = [
+            model_deployment_spec_schema.AdapterSpec(
+                name=adapter_mv.fully_qualified_model_name,
+                version=adapter_mv.version_name,
+            ),
+            model_deployment_spec_schema.AdapterSpec(
+                name=other_mv.fully_qualified_model_name,
+                version=other_mv.version_name,
+            ),
+        ]
+        self.assertEqual(kwargs["adapters"], expected)
+        for spec in kwargs["adapters"]:
+            self.assertIsNone(spec.alias)
+
+    @_enable_lora_adapters
+    def test_adapter_alias_charset_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        fqn_alias = self._default_adapter_alias(adapter_mv)
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            for alias in ("support", "a/b", "db.schema.model", fqn_alias, "support-tone", "__snowflake_base__"):
+                with self.subTest(alias=alias):
+                    mock_create_service.reset_mock()
+                    self.m_mv.create_service(
+                        service_name="SERVICE",
+                        service_compute_pool="SERVICE_COMPUTE_POOL",
+                        adapters={alias: adapter_mv},
+                    )
+                    _, kwargs = mock_create_service.call_args
+                    self.assertEqual(kwargs["adapters"][0].alias, alias)
+
+    @_enable_lora_adapters
+    def test_adapter_alias_equal_to_parent_model_name_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+        other_mv = self._adapter_mv()
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters={self.m_mv._model_name.resolved(): other_mv},
+            )
+        _, kwargs = mock_create_service.call_args
+        self.assertEqual(
+            kwargs["adapters"],
+            [
+                model_deployment_spec_schema.AdapterSpec(
+                    name=other_mv.fully_qualified_model_name,
+                    version=other_mv.version_name,
+                    alias="MODEL",
+                )
+            ],
+        )
+
+    @_enable_lora_adapters
+    def test_two_aliases_same_model_version_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters={"support": adapter_mv, "sql_gen": adapter_mv},
+            )
+        _, kwargs = mock_create_service.call_args
+        expected = model_deployment_spec_schema.AdapterSpec(
+            name=adapter_mv.fully_qualified_model_name,
+            version=adapter_mv.version_name,
+        )
+        self.assertEqual(len(kwargs["adapters"]), 2)
+        self.assertEqual(kwargs["adapters"][0].alias, "support")
+        self.assertEqual(kwargs["adapters"][1].alias, "sql_gen")
+        self.assertEqual(kwargs["adapters"][0].name, expected.name)
+        self.assertEqual(kwargs["adapters"][1].name, expected.name)
+        self.assertEqual(kwargs["adapters"][0].version, expected.version)
+        self.assertEqual(kwargs["adapters"][1].version, expected.version)
+
+    def test_flag_off_refuses_nonempty_adapters(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
+                self.m_mv.create_service(
+                    service_name="SERVICE",
+                    service_compute_pool="POOL",
+                    adapters={"support": self._adapter_mv()},
+                )
+            mock_create_service.assert_not_called()
+
+    def test_flag_off_omit_and_empty_adapters_unchanged(self) -> None:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+            )
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters={},
+            )
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters=[],
+            )
+        self.assertEqual(mock_create_service.call_count, 3)
+        for call in mock_create_service.call_args_list:
+            self.assertIsNone(call.kwargs["adapters"])
+
+    def test_flag_off_refuses_adapter_create_service(self) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True) as mock_lineage,
+            mock.patch.object(pin, "create_service", autospec=True) as mock_pin_create,
+            mock.patch.object(adapter._service_ops, "create_service") as mock_create_service,
+        ):
+            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
+                adapter.create_service(
+                    service_name="SERVICE",
+                    service_compute_pool="POOL",
+                )
+            mock_create_service.assert_not_called()
+            mock_pin_create.assert_not_called()
+            mock_lineage.assert_not_called()
+
+    @_enable_lora_adapters
+    def test_adapter_forward_alias_may_equal_base_parent_name(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._make_mv("MODEL", "ADAPTER")
+        pin = self._make_mv("MODEL", "BASE")
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(pin, "create_service", autospec=True) as mock_pin_create,
+        ):
+            adapter.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+            )
+        _, kwargs = mock_pin_create.call_args
+        self.assertEqual(kwargs["adapters"], [adapter])
+
+    @_enable_lora_adapters
+    def test_adapter_create_service_rejects_extra_adapters(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        extra = self._make_mv("OTHER", "V1")
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True) as mock_lineage,
+            mock.patch.object(pin, "create_service", autospec=True) as mock_pin_create,
+        ):
+            with self.assertRaisesRegex(ValueError, r"does not accept the adapters argument"):
+                adapter.create_service(
+                    service_name="SERVICE",
+                    service_compute_pool="POOL",
+                    adapters={"other": extra},
+                )
+        mock_pin_create.assert_not_called()
+        mock_lineage.assert_not_called()
+
+    @_enable_lora_adapters
+    def test_create_service_serializes_adapters_to_ops(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True, autospec=True),
+        ):
+            mock_event_handler_cls.return_value.status.return_value.__enter__.return_value = mock_progress_status
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                adapters={"support": adapter_mv},
+            )
+        _, kwargs = mock_create_service.call_args
+        self.assertEqual(
+            kwargs["adapters"],
+            [
+                model_deployment_spec_schema.AdapterSpec(
+                    name=adapter_mv.fully_qualified_model_name,
+                    version=adapter_mv.version_name,
+                    alias="support",
+                )
+            ],
+        )
+
+    def test_adapter_warehouse_run_delegates_to_server(self) -> None:
+        adapter = self._adapter_mv()
+        adapter._functions = self._predict_functions()
+        m_df = mock_data_frame.MockDataFrame()
+        with (
+            mock.patch.object(
+                adapter._model_ops,
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(_legacy_model_spec(model_type="peft_adapter"), ["WAREHOUSE"]),
+                autospec=True,
+            ),
+            mock.patch.object(adapter._model_ops, "invoke_method", return_value=m_df, autospec=True) as mock_invoke,
+        ):
+            result = adapter.run(m_df, function_name='"predict"')
+        self.assertIs(result, m_df)
+        mock_invoke.assert_called_once()
+
+    def test_adapter_load_rejected_before_download(self) -> None:
+        adapter = self._adapter_mv()
+        with (
+            mock.patch.object(
+                adapter,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="peft_adapter"),
+                autospec=True,
+            ),
+            mock.patch.object(adapter._model_ops, "download_files", autospec=True) as mock_download,
+            mock.patch.object(adapter, "_enforce_owner_only", autospec=True) as mock_owner,
+        ):
+            with self.assertRaisesRegex(AttributeError, r"cannot be loaded"):
+                adapter.load()
+            with self.assertRaisesRegex(AttributeError, r"cannot be loaded"):
+                adapter.load(force=True)
+            mock_download.assert_not_called()
+            mock_owner.assert_not_called()
+
+    def test_adapter_run_service_preserves_explicit_model_param(self) -> None:
+        adapter = self._adapter_mv()
+        adapter._functions = self._predict_functions()
+        m_df = mock_data_frame.MockDataFrame()
+        params = {"model": "support", "temperature": 0.7}
+        with (
+            mock.patch.object(adapter._model_ops, "invoke_method", return_value=m_df, autospec=True) as mock_invoke,
+            mock.patch.object(adapter, "_get_model_spec", autospec=True) as mock_get_model_spec,
+        ):
+            result = adapter.run(m_df, service_name="SERVICE", function_name='"predict"', params=params)
+        self.assertIs(result, m_df)
+        _, kwargs = mock_invoke.call_args
+        self.assertIs(kwargs["params"], params)
+        mock_get_model_spec.assert_not_called()
+
+    def test_get_adapters_returns_visible_model_versions(self) -> None:
+        base = self._base_mv()
+        adapter_a = self._make_mv("ADAPTER_A", "V1")
+        adapter_b = self._make_mv("ADAPTER_B", "V1")
+        adapter_c = self._make_mv("ADAPTER_C", "V1")
+        full_weight = self._make_mv("FULL_WEIGHT", "V1")
+        masked_node = lineage_node.LineageNode(
+            session=self.c_session,
+            name="TEMP.TEST.HIDDEN",
+            domain="model",
+            version="V1",
+            status="MASKED",
+        )
+        deleted_node = lineage_node.LineageNode(
+            session=self.c_session,
+            name="TEMP.TEST.GONE",
+            domain="model",
+            version="V1",
+            status="DELETED",
+        )
+        peft_spec = _legacy_model_spec(model_type="peft_adapter")
+        full_weight_spec = _legacy_model_spec(model_type="huggingface_pipeline")
+        with (
+            mock.patch.object(adapter_a, "_get_model_spec", return_value=peft_spec, autospec=True),
+            mock.patch.object(adapter_b, "_get_model_spec", return_value=peft_spec, autospec=True),
+            mock.patch.object(adapter_c, "_get_model_spec", return_value=peft_spec, autospec=True),
+            mock.patch.object(full_weight, "_get_model_spec", return_value=full_weight_spec, autospec=True),
+            mock.patch.object(
+                base,
+                "lineage",
+                return_value=[adapter_a, masked_node, adapter_b, deleted_node, full_weight, adapter_c],
+                autospec=True,
+            ) as mock_lineage,
+        ):
+            result = base.get_adapters()
+        self.assertEqual(result, [adapter_a, adapter_b, adapter_c])
+        mock_lineage.assert_called_once_with(direction="downstream", domain_filter={"model"})
+
+    def test_get_adapters_on_adapter_uses_same_lineage_wrapper(self) -> None:
+        adapter = self._adapter_mv()
+        with mock.patch.object(adapter, "lineage", return_value=[], autospec=True) as mock_lineage:
+            self.assertEqual(adapter.get_adapters(), [])
+        mock_lineage.assert_called_once_with(direction="downstream", domain_filter={"model"})
+
+    def test_adapter_list_services_uses_generic_path(self) -> None:
+        adapter = self._adapter_mv()
+        services = [
+            {
+                "name": "TEMP.test.SVC",
+                "status": "RUNNING",
+                "inference_endpoint": None,
+                "internal_endpoint": None,
+            }
+        ]
+        with (
+            mock.patch.object(adapter._model_ops, "show_services", return_value=services, autospec=True) as mock_show,
+            mock.patch.object(adapter, "_get_model_spec", autospec=True) as mock_get_model_spec,
+        ):
+            result = adapter.list_services()
+        pd.testing.assert_frame_equal(result, pd.DataFrame(services))
+        mock_show.assert_called_once_with(
+            database_name=None,
+            schema_name=None,
+            model_name=adapter._model_name,
+            version_name=adapter._version_name,
+            statement_params=mock.ANY,
+        )
+        mock_get_model_spec.assert_not_called()
+
+    def test_adapter_delete_service_uses_generic_path(self) -> None:
+        adapter = self._adapter_mv()
+        with (
+            mock.patch.object(adapter._model_ops, "delete_service", autospec=True) as mock_delete,
+            mock.patch.object(adapter, "_get_model_spec", autospec=True) as mock_get_model_spec,
+        ):
+            adapter.delete_service("SVC")
+        mock_delete.assert_called_once_with(
+            database_name=None,
+            schema_name=None,
+            model_name=adapter._model_name,
+            version_name=adapter._version_name,
+            service_database_name=None,
+            service_schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("SVC"),
+            statement_params=mock.ANY,
+        )
+        mock_get_model_spec.assert_not_called()
 
 
 if __name__ == "__main__":

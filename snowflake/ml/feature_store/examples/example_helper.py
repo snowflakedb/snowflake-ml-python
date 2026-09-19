@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -36,12 +36,12 @@ class ExampleHelper:
         self._source_dfs: list[DataFrame] = []
         self._excluded_columns: list[sql_identifier.SqlIdentifier] = []
         self._label_columns: list[sql_identifier.SqlIdentifier] = []
-        self._timestamp_column: Optional[sql_identifier.SqlIdentifier] = None
+        self._timestamp_column: sql_identifier.SqlIdentifier | None = None
         self._epoch_to_timestamp_cols: list[str] = []
-        self._add_id_column: Optional[sql_identifier.SqlIdentifier] = None
+        self._add_id_column: sql_identifier.SqlIdentifier | None = None
         self._training_spine_table: str = ""
 
-    def list_examples(self) -> Optional[DataFrame]:
+    def list_examples(self) -> DataFrame | None:
         """Return a dataframe object about descriptions of all examples."""
         root_dir = Path(__file__).parent
         rows = []
@@ -275,7 +275,7 @@ class ExampleHelper:
     def get_excluded_cols(self) -> list[str]:
         return [item.resolved() for item in self._excluded_columns]
 
-    def get_training_data_timestamp_col(self) -> Optional[str]:
+    def get_training_data_timestamp_col(self) -> str | None:
         return self._timestamp_column.resolved() if self._timestamp_column is not None else None
 
     def get_training_spine_table(self) -> str:

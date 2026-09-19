@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 import sqlparse
 
@@ -167,7 +167,7 @@ def inline_udf_source(
     data: dict[str, Any],
     spec_file_dir: str | None,
     *,
-    template_vars: Optional[dict[str, Any]] = None,
+    template_vars: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read an external UDF file and inline its source as ``function_definition``.
 
@@ -365,7 +365,7 @@ def inline_query_source(
     data: dict[str, Any],
     spec_file_dir: str | None,
     *,
-    template_vars: Optional[dict[str, Any]] = None,
+    template_vars: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inline a ``BatchSource.query_file`` sidecar and normalize ``query``.
 
@@ -454,7 +454,7 @@ def compile_spec(
     data: dict[str, Any],
     spec_file_dir: str | None = None,
     *,
-    template_vars: Optional[dict[str, Any]] = None,
+    template_vars: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile an authoring-format spec dict into normalized output.
 

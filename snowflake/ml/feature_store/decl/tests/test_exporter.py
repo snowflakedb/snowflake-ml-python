@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 import yaml
@@ -1452,8 +1452,8 @@ class TestExportSpecsDatasourceEmission:
 def _entity_row(
     name: str,
     *,
-    join_keys: Optional[list[str]] = None,
-    comment: Optional[str] = None,
+    join_keys: list[str] | None = None,
+    comment: str | None = None,
     database: str = "MYDB",
     schema: str = "PUBLIC",
 ) -> dict[str, Any]:
@@ -2042,9 +2042,9 @@ class TestBackfillRoundTrip:
     @staticmethod
     def _streaming_backfill_spec(
         *,
-        backfill_table: Optional[str] = None,
-        backfill_start_time: Optional[str] = None,
-        backfill_overwrite: Optional[bool] = None,
+        backfill_table: str | None = None,
+        backfill_start_time: str | None = None,
+        backfill_overwrite: bool | None = None,
     ) -> dict[str, Any]:
         """Build a StreamingFeatureView spec_payload optionally carrying
         the recovered backfill metadata.
@@ -2447,7 +2447,7 @@ def _applied_object_dict(
     schema: str,
     kind: str,
     sources: list[dict[str, Any]],
-    extra_inner: Optional[dict[str, Any]] = None,
+    extra_inner: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the ``spec_payload`` shape an :class:`AppliedObject` carries
     for a BatchFV after :func:`fetch_applied_state` has run.

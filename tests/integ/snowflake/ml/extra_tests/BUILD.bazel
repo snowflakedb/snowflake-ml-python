@@ -18,6 +18,7 @@ py_test(
 
 py_test(
     name = "batch_inference_with_nan_data_test",
+    timeout = "long",
     srcs = ["batch_inference_with_nan_data_test.py"],
     optional_dependencies = ["scikit-learn"],
     tags = [
@@ -46,6 +47,7 @@ py_test(
 
 py_test(
     name = "grid_search_test",
+    timeout = "long",
     srcs = ["grid_search_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 2,

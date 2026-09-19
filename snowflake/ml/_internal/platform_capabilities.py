@@ -1,7 +1,7 @@
 import json
 import logging
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator
 
 from packaging import version
 
@@ -23,6 +23,7 @@ ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = "ENABLE_MODEL_METHOD_SIGNATURE_PARAME
 ENABLE_PIP_ONLY_PACKAGING = "ENABLE_PIP_ONLY_PACKAGING"
 ENABLE_LORA_ADAPTERS = "ENABLE_LORA_ADAPTERS"
 ENABLE_SINGLE_OUTPUT_NATIVE_TYPE = "ENABLE_SINGLE_OUTPUT_NATIVE_TYPE"
+ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE = "ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE"
 
 
 class PlatformCapabilities:
@@ -37,15 +38,17 @@ class PlatformCapabilities:
     else:
         # Inline deployment spec is disabled.
         print("Inline deployment spec is disabled or not supported.")
+    if pc.is_batch_inference_partition_on_write_enabled():
+        print("Partition-on-write COPY is enabled.")
     ```
     """
 
-    _instance: Optional["PlatformCapabilities"] = None
+    _instance: "PlatformCapabilities | None" = None
     # Used for unittesting only. This is to avoid the need to mock the session object or reaching out to Snowflake
-    _mock_features: Optional[dict[str, Any]] = None
+    _mock_features: dict[str, Any] | None = None
 
     @classmethod
-    def get_instance(cls, session: Optional[snowpark_session.Session] = None) -> "PlatformCapabilities":
+    def get_instance(cls, session: snowpark_session.Session | None = None) -> "PlatformCapabilities":
         # Used for unittesting only. In this situation, _instance is not initialized.
         if cls._mock_features is not None:
             return cls(features=cls._mock_features)
@@ -54,7 +57,7 @@ class PlatformCapabilities:
         return cls._instance
 
     @classmethod
-    def set_mock_features(cls, features: Optional[dict[str, Any]] = None) -> None:
+    def set_mock_features(cls, features: dict[str, Any] | None = None) -> None:
         cls._mock_features = features
 
     @classmethod
@@ -116,6 +119,19 @@ class PlatformCapabilities:
         """
         return self._get_bool_feature(ENABLE_PIP_ONLY_PACKAGING, default_value=True)
 
+    def is_batch_inference_partition_on_write_enabled(self) -> bool:
+        """Whether partition-on-write COPY is on.
+
+        Defaults to disabled when the capability is absent (older servers). Gates
+        managed DataFrame / GS query ``COPY PARTITION BY``. After a successful
+        client partitioned COPY, YAML includes ``input.layout: partitioned``.
+        Old GS that omits the capability key also rejects unknown YAML fields.
+
+        Returns:
+            True if partition-on-write is enabled for this account.
+        """
+        return self._get_bool_feature(ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE, default_value=False)
+
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> dict[str, Any]:
         try:
@@ -145,7 +161,7 @@ class PlatformCapabilities:
         return {}
 
     def __init__(
-        self, *, session: Optional[snowpark_session.Session] = None, features: Optional[dict[str, Any]] = None
+        self, *, session: snowpark_session.Session | None = None, features: dict[str, Any] | None = None
     ) -> None:
         # This is for testing purposes only.
         if features is not None:

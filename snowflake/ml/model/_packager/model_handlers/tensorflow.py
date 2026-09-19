@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Callable, cast, final
 
 import pandas as pd
 from packaging import version
@@ -77,8 +77,8 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model: "tensorflow.Module",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.TensorflowSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -223,7 +223,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         cls,
         raw_model: "tensorflow.Module",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.TensorflowLoadOptions],
     ) -> custom_model.CustomModel:
         import tensorflow

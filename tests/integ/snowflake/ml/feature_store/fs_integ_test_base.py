@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import decimal
 import uuid
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from absl.testing import absltest
@@ -232,7 +232,7 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
     # an integer Snowpark type (the analogue of the server-side
     # ``assert_long_feature`` / ``assert_metadata_data_type`` helpers).
 
-    def assert_long_feature(self, value: Any, *, expected: Optional[int] = None, msg: str = "") -> None:
+    def assert_long_feature(self, value: Any, *, expected: int | None = None, msg: str = "") -> None:
         """Assert a served feature value is an integer, optionally equal to ``expected``.
 
         Args:
@@ -262,9 +262,7 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
         if expected is not None:
             self.assertEqual(int(value), int(expected), f"feature value mismatch{context}")
 
-    def assert_long_array_feature(
-        self, values: Any, *, expected: Optional[Sequence[int]] = None, msg: str = ""
-    ) -> None:
+    def assert_long_array_feature(self, values: Any, *, expected: Sequence[int] | None = None, msg: str = "") -> None:
         """Assert every element of an array feature value is an integer.
 
         Args:

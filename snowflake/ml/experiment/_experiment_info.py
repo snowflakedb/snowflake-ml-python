@@ -1,7 +1,7 @@
 import dataclasses
 import functools
 import types
-from typing import Callable, Optional
+from typing import Callable
 
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.registry._manager import model_manager
@@ -50,9 +50,9 @@ class ExperimentInfoPatcher:
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_value: Optional[BaseException],
-        traceback: Optional[types.TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: types.TracebackType | None,
     ) -> None:
         ExperimentInfoPatcher._experiment_info_stack.pop()
 

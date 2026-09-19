@@ -1,7 +1,7 @@
 import copy
 import os
 import pathlib
-from typing import Optional, cast
+from typing import cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -1190,7 +1190,7 @@ class ModelVersionSQLTest(absltest.TestCase):
         def fake_retry(**kwargs):  # type: ignore[no-untyped-def]
             def decorator(fn):  # type: ignore[no-untyped-def]
                 def wrapped(*args, **inner_kwargs):  # type: ignore[no-untyped-def]
-                    last_exc: Optional[BaseException] = None
+                    last_exc: BaseException | None = None
                     for _ in range(int(kwargs.get("stop_max_attempt_number", 5))):
                         try:
                             return fn(*args, **inner_kwargs)

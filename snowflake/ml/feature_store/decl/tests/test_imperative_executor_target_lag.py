@@ -268,16 +268,21 @@ def test_online_streaming_fv_without_target_lag_still_uses_zero_seconds_default(
 # ---------------------------------------------------------------------------
 #
 # Pins the UPDATE_FV path's parity with the CREATE_FV kind-aware default
-# (BFV → ``_BATCH_OFT_TARGET_LAG`` "10 seconds", everything else →
-# ``"0 seconds"``).  Pre-fix the UPDATE path unconditionally fell back
-# to ``_BATCH_OFT_TARGET_LAG`` even for ``StreamingFeatureView`` /
-# ``RealtimeFeatureView`` payloads, which Snowflake then rejected with
-# ``Invalid TARGET_LAG value '10 seconds' specified for online feature
-# table … StreamingFeatureView, RealtimeFeatureView, and FeatureGroup
-# only support TARGET_LAG = '0 seconds'``.  The spec validator
-# ``_reject_target_lag_on_stream_or_realtime`` forbids authoring
-# ``target_lag`` on these kinds entirely, so the default must come
-# from the executor.
+# for the kinds that still route online through UPDATE_FV
+# (BFV → ``_BATCH_OFT_TARGET_LAG`` "10 seconds", RealtimeFV →
+# ``"0 seconds"``).  ``StreamingFeatureView`` never builds an
+# ``online_config`` on the UPDATE path: a streaming FV is always online by
+# design, so ``online: true`` in the full authoring payload is the default
+# authored value, not an in-place toggle.  Forwarding it would run
+# ``_create_online_feature_table``, whose streaming branch asserts
+# ``feature_view.stream_config is not None`` — ``None`` for a STATIC
+# streaming FV recovered from applied state — surfacing as the
+# empty-message ``(1300) Update feature view <NAME>/V1 failed:`` (see
+# ``plans/done.bug_update_fv_error_1300.md``).  Toggling a streaming FV's
+# online routing therefore requires a destructive ``RECREATE_FV``.  The
+# ``"0 seconds"`` default the streaming test below used to pin is now
+# unreachable for streaming, so the test asserts the kwarg is dropped
+# while the op itself still applies any other operational edits.
 
 
 def _make_update_fv_op(payload: dict[str, Any]) -> Any:
@@ -302,21 +307,30 @@ def _make_update_fv_op(payload: dict[str, Any]) -> Any:
     return op
 
 
-def test_update_streaming_fv_without_target_lag_defaults_to_zero_seconds() -> None:
-    """UPDATE_FV on a StreamingFeatureView must default ``target_lag`` to ``"0 seconds"``.
+def test_update_streaming_fv_does_not_build_online_config() -> None:
+    """UPDATE_FV on a StreamingFeatureView must NOT construct an
+    ``OnlineConfig`` — and must not refuse the op for carrying ``online``.
 
-    Live regression: applying ``USER_CLICK_BACKFILL_DECL`` (a
-    StreamingFeatureView) failed with ``Invalid TARGET_LAG value
-    '10 seconds'`` because the UPDATE path's fallback used
-    ``_BATCH_OFT_TARGET_LAG``.  The fix mirrors the kind-aware default
-    already used by the CREATE path.
+    Live regression ``bug_update_fv_error_1300``: applying an
+    ``UPDATE_FV`` for a StreamingFeatureView whose full authoring payload
+    carries ``online: true`` forwarded ``online_config=OnlineConfig(enable=
+    True, ...)``, which drove ``FeatureStore.update_feature_view`` into
+    ``_create_online_feature_table``.  For a StreamingFV recovered from
+    applied state as a zero-lag VIEW (``FeatureViewStatus.STATIC``) that
+    path asserts ``feature_view.stream_config is not None`` — ``None`` for
+    the recovered FV — surfacing as the empty-message ``(1300) Update
+    feature view <NAME>/V1 failed:``.  A StreamingFV is always online by
+    design, so ``online: true`` is the default authored value, not a
+    toggle; the executor omits ``online_config`` entirely.  With online as
+    the only payload signal, no ``OnlineConfig`` is built and (kwargs being
+    empty) ``update_feature_view`` is not called.  Online routing changes
+    remain recreate-only.
     """
     payload = {
         "kind": "StreamingFeatureView",
-        "name": "USER_CLICK_BACKFILL_DECL",
+        "name": "USER_CLICK_STATS_CONTINUOUS_DECL",
         "version": "V1",
         "online": True,
-        "refresh_freq": "5 minutes",
         # Intentionally no target_lag / target_lag_sec — the spec
         # validator forbids authoring this field on streaming kinds.
     }
@@ -327,14 +341,16 @@ def test_update_streaming_fv_without_target_lag_defaults_to_zero_seconds() -> No
         "snowflake.ml.feature_store.feature_view.OnlineStoreType",
         MagicMock(),
     ):
+        # Must not raise: ``online: true`` is the always-online authored
+        # value on a StreamingFV, not an in-place toggle request.
         _execute_update_feature_view(fs, _make_update_fv_op(payload), "WH_CONNECTION_DEFAULT")
 
-    assert captured.get("target_lag") == "0 seconds", (
-        "UPDATE_FV on a StreamingFeatureView must default to '0 seconds' "
-        "(Snowflake rejects any non-zero TARGET_LAG on streaming OFTs)"
+    assert captured == {}, (
+        "UPDATE_FV on a StreamingFeatureView must NOT construct an OnlineConfig "
+        "— online routing is recreate-only for streaming FVs (error 1300).  "
+        f"Got OnlineConfig kwargs={captured!r}"
     )
-    assert captured.get("enable") is True
-    fs.update_feature_view.assert_called_once()
+    fs.update_feature_view.assert_not_called()
 
 
 def test_update_realtime_fv_without_target_lag_defaults_to_zero_seconds() -> None:

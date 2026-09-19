@@ -45,7 +45,7 @@ class TestFetchStreamSourceRowsFacade:
         ) as mock_fetch:
             result = decl_api.fetch_stream_source_rows(session, "DB", "SCH", "WH")
 
-        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH")
+        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH", on_progress=None)
         assert result is expected_rows
 
     def test_decl_api_facade_accepts_default_warehouse(self) -> None:
@@ -56,7 +56,7 @@ class TestFetchStreamSourceRowsFacade:
         ) as mock_fetch:
             result = decl_api.fetch_stream_source_rows(session, "DB", "SCH")
 
-        mock_fetch.assert_called_once_with(session, "DB", "SCH", "")
+        mock_fetch.assert_called_once_with(session, "DB", "SCH", "", on_progress=None)
         assert result == []
 
     def test_decl_api_facade_is_callable(self) -> None:

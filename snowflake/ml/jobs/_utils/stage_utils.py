@@ -2,7 +2,7 @@ import os
 import re
 from os import PathLike
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from snowflake.ml._internal.utils import identifier
 
@@ -69,7 +69,7 @@ class StagePath:
         else:
             return f"{self.root}/{path.as_posix()}"
 
-    def is_relative_to(self, *other: Union[str, os.PathLike[str]]) -> bool:
+    def is_relative_to(self, *other: str | os.PathLike[str]) -> bool:
         if not other:
             raise TypeError("is_relative_to() requires at least one argument")
         # For now, we only support a single argument, like pathlib.Path in Python < 3.12
@@ -80,7 +80,7 @@ class StagePath:
         else:
             return False
 
-    def relative_to(self, *other: Union[str, os.PathLike[str]]) -> PurePath:
+    def relative_to(self, *other: str | os.PathLike[str]) -> PurePath:
         if not other:
             raise TypeError("relative_to() requires at least one argument")
         if not self.is_relative_to(*other):
@@ -127,7 +127,7 @@ class StagePath:
     def __fspath__(self) -> str:
         return self._compose_path(self._path)
 
-    def joinpath(self, *args: Union[str, PathLike[str]]) -> "StagePath":
+    def joinpath(self, *args: str | PathLike[str]) -> "StagePath":
         """
         Joins the given path arguments to the current path,
         mimicking the behavior of pathlib.Path.joinpath.
@@ -155,7 +155,7 @@ class StagePath:
         return path
 
 
-def resolve_path(path: Union[str, Path]) -> "type_utils.PayloadPath":
+def resolve_path(path: str | Path) -> "type_utils.PayloadPath":
     """
     Resolve a path to either a StagePath or a local Path.
 
@@ -174,7 +174,7 @@ def resolve_path(path: Union[str, Path]) -> "type_utils.PayloadPath":
     return stage_path
 
 
-def try_resolve_stage_path(path: str) -> Optional[str]:
+def try_resolve_stage_path(path: str) -> str | None:
     """Return the canonical stage path if ``path`` is a well-formed stage path, else ``None``."""
     try:
         return StagePath(path).as_posix()

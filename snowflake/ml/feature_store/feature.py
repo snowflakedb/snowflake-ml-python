@@ -7,7 +7,7 @@ fields (for standard feature views).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml.feature_store.aggregation import (
     AggregationSpec,
@@ -61,7 +61,7 @@ class Feature:
         self._window = window
         self._offset = offset
         self._params = params
-        self._alias: Optional[str] = None
+        self._alias: str | None = None
 
     def alias(self, name: str, case_sensitive: bool = False) -> Feature:
         """Set the output column name for this feature.

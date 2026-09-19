@@ -18,7 +18,7 @@ import logging
 import os
 import urllib.parse
 import urllib.request
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -66,7 +66,7 @@ def online_service_pat_from_env() -> str:
     )
 
 
-def _pat_token_from_session(session: Session) -> Optional[str]:
+def _pat_token_from_session(session: Session) -> str | None:
     """Pull a PAT from the session when ``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``.
 
     Args:
@@ -98,7 +98,7 @@ _NO_AUTH_MESSAGE = (
 )
 
 
-def auth_headers(session: Optional[Session] = None) -> dict[str, str]:
+def auth_headers(session: Session | None = None) -> dict[str, str]:
     """Build HTTP headers via a one-shot auth resolution; per-request and not cached.
 
     Prefer :class:`OnlineServiceHttpClient` for the hot path — it captures the session
@@ -117,7 +117,7 @@ def auth_headers(session: Optional[Session] = None) -> dict[str, str]:
     Raises:
         SnowflakeMLException: When no auth path resolves a token.
     """
-    token: Optional[str] = None
+    token: str | None = None
     if session is not None:
         token = _pat_token_from_session(session)
     if not token:
@@ -134,7 +134,7 @@ def auth_headers(session: Optional[Session] = None) -> dict[str, str]:
     }
 
 
-def _proxy_for_url(url: str) -> Optional[str]:
+def _proxy_for_url(url: str) -> str | None:
     """Proxy URL for ``url`` per ``NO_PROXY`` and the env-derived proxy table; ``None`` for direct."""
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname or ""
@@ -162,17 +162,17 @@ class OnlineServiceHttpClient:
     def __init__(
         self,
         *,
-        session: Optional[Session] = None,
+        session: Session | None = None,
         max_connections: int = 8,
-        _transport_factory: Optional[Callable[..., Any]] = None,
+        _transport_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._max_connections = max_connections
-        self._clients_by_key: dict[tuple[str, Optional[str]], Any] = {}
+        self._clients_by_key: dict[tuple[str, str | None], Any] = {}
         self._http2_logged_for_origin: set[str] = set()
         self._transport_factory = _transport_factory
         self._closed = False
-        self._session: Optional[Session] = session
-        self._session_pat: Optional[str] = _pat_token_from_session(session) if session is not None else None
+        self._session: Session | None = session
+        self._session_pat: str | None = _pat_token_from_session(session) if session is not None else None
 
     def _resolve_token(self, url: str) -> str:
         """Resolve the bearer token: in-session PAT → ``SNOWFLAKE_PAT`` env var.

@@ -1,5 +1,4 @@
 import inspect
-from typing import Optional
 
 import pandas as pd
 
@@ -19,8 +18,8 @@ class PandasModelTrainer:
         estimator: object,
         dataset: pd.DataFrame,
         input_cols: list[str],
-        label_cols: Optional[list[str]],
-        sample_weight_col: Optional[str],
+        label_cols: list[str] | None,
+        sample_weight_col: str | None,
     ) -> None:
         """
         Initializes the PandasModelTrainer with a model, a Pandas DataFrame, feature, and label column names.
@@ -65,8 +64,8 @@ class PandasModelTrainer:
     def train_fit_predict(
         self,
         expected_output_cols_list: list[str],
-        drop_input_cols: Optional[bool] = False,
-        example_output_pd_df: Optional[pd.DataFrame] = None,
+        drop_input_cols: bool | None = False,
+        example_output_pd_df: pd.DataFrame | None = None,
     ) -> tuple[pd.DataFrame, object]:
         """Trains the model using specified features and target columns from the dataset.
         This API is different from fit itself because it would also provide the predict
@@ -100,7 +99,7 @@ class PandasModelTrainer:
     def train_fit_transform(
         self,
         expected_output_cols_list: list[str],
-        drop_input_cols: Optional[bool] = False,
+        drop_input_cols: bool | None = False,
     ) -> tuple[pd.DataFrame, object]:
         """Trains the model using specified features and target columns from the dataset.
         This API is different from fit itself because it would also provide the transform

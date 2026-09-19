@@ -32,8 +32,10 @@ import json
 import time
 import uuid
 
+import pandas as pd
 from absl.testing import absltest, parameterized
 from feature_store_streaming_fv_integ_base import (
+    ALL_TYPES_CATEGORY,
     StreamingFeatureViewIntegTestBase,
     all_types_identity_transform,
     identity_transform,
@@ -43,11 +45,13 @@ from feature_store_streaming_fv_integ_base import (
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_group import FeatureGroup
+from snowflake.ml.feature_store.feature_store import FeatureStore
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewStatus,
     OnlineConfig,
     OnlineStoreType,
+    StoreType,
 )
 from snowflake.ml.feature_store.stream_config import StreamConfig
 
@@ -352,8 +356,18 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     # Delete tests
     # =========================================================================
 
-    def test_delete_streaming_fv_cleans_up(self) -> None:
-        """Test that deleting a streaming FV cleans up udf_transformed + backfill tables and ref count."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_delete_streaming_fv_cleans_up(self, iceberg: bool) -> None:
+        """Test that deleting a streaming FV cleans up udf_transformed + backfill tables and ref count.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table and both landing tables with
+                Iceberg storage. A landing table that survives delete keeps its
+                external-volume files and pins the external volume for the life of the schema.
+        """
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
         fs = self._create_feature_store()
@@ -367,22 +381,30 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             backfill_df=backfill_df,
         )
 
+        fv_name = f"STREAM_FV_{'ICEBERG' if iceberg else 'NATIVE'}_{s}"
         fv = FeatureView(
-            name=f"STREAM_FV_{s}",
+            name=fv_name,
             entities=[self.user_entity],
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
         )
 
         registered_fv = fs.register_feature_view(fv, "v1")
 
         schema_path = f"{self.test_db}.{fs._config.schema.identifier()}"
+        physical = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
 
         self.assertEqual(
             fs._metadata_manager.get_stream_source_ref_count(self._stream_source_ref_key(stream)),
             1,
         )
+
+        # The drop assertion below passes whatever format the landing tables landed in, so the
+        # format has to be confirmed while they still exist.
+        udf_table = FeatureView._get_udf_transformed_table_name(physical)
+        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=iceberg)
 
         fs.delete_feature_view(registered_fv)
 
@@ -391,10 +413,9 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         fv_list = fs.list_feature_views().collect(statement_params=fs._telemetry_stmp)
         names = {row["NAME"] for row in fv_list}
-        self.assertNotIn(SqlIdentifier(f"STREAM_FV_{s}").resolved(), names)
+        self.assertNotIn(SqlIdentifier(fv_name).resolved(), names)
 
         # Scope to this FV's tables only; the schema is shared with sibling tests under pytest-xdist.
-        physical = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
         like = f"{physical.resolved()}$UDF_TRANSFORMED%"
         remaining = self._session.sql(f"SHOW TABLES LIKE '{like}' IN SCHEMA {schema_path}").collect()
         self.assertEqual(len(remaining), 0, "udf_transformed and backfill tables should be dropped")
@@ -925,6 +946,132 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertFalse(registered_fv.is_tiled)
         self.assertEqual(registered_fv.status, FeatureViewStatus.STATIC)
 
+    def _iceberg_table_names(self, fs: FeatureStore) -> set[str]:
+        """Return the resolved names of every Iceberg table in the feature store schema.
+
+        Args:
+            fs: Feature store whose schema is listed.
+
+        Returns:
+            Set of Iceberg table names.
+        """
+        rows = self._session.sql(f"SHOW ICEBERG TABLES IN SCHEMA {fs._config.full_schema_path}").collect()
+        return {r["name"] for r in rows}
+
+    def test_streaming_non_aggregated_iceberg_view(self) -> None:
+        """A non-aggregated streaming FV takes Iceberg storage with no refresh_freq.
+
+        Its offline object stays a VIEW — a View has no Iceberg form — while ``$UDF_TRANSFORMED``
+        and ``$BACKFILL`` become Snowflake-managed Iceberg tables. That makes this the only
+        streaming shape where Iceberg buys anything without also materializing a redundant
+        Dynamic Iceberg Table, so it covers the whole path: landing-table DDL, the storage-config
+        round trip through a View-backed offline object, the spec-backed online read off an
+        Iceberg landing table, and cleanup.
+        """
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_ICE_VIEW_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table(fs, s)
+
+        storage_config = self._create_iceberg_storage_config()
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=self._session.table(backfill_table),
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            storage_config=storage_config,
+        )
+
+        registered = fs.register_feature_view(fv, "v1")
+
+        self.assertTrue(registered.is_streaming)
+        self.assertFalse(registered.is_tiled)
+        self.assertIsNone(registered.refresh_freq)
+        # STATIC is the status the register path assigns a View-backed feature view.
+        self.assertEqual(registered.status, FeatureViewStatus.STATIC)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+
+        # The offline object is a VIEW, so it is absent from SHOW ICEBERG TABLES.
+        views = self._session.sql(
+            f"SHOW VIEWS LIKE '{physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertLen(views, 1)
+
+        iceberg_names = self._iceberg_table_names(fs)
+        self.assertIn(udf_table.resolved(), iceberg_names)
+        self.assertIn(f"{udf_table.resolved()}$BACKFILL", iceberg_names)
+        self.assertNotIn(physical_name.resolved(), iceberg_names)
+
+        # Iceberg narrows timestamps to TIMESTAMP_NTZ(6), and the offline VIEW selects straight
+        # from the landing table, so the scale surfaces on the VIEW too.
+        # The physical name is a case-sensitive identifier (``...$v1``), so it has to be quoted
+        # here; ``SHOW ... LIKE`` above matches case-insensitively and does not need it.
+        view_columns = self._session.sql(
+            f'DESC VIEW {fs._config.full_schema_path}."{physical_name.resolved()}"'
+        ).collect()
+        event_time_type = next(r["type"] for r in view_columns if r["name"] == "EVENT_TIME")
+        self.assertEqual(event_time_type, "TIMESTAMP_NTZ(6)")
+
+        # SHOW ICEBERG TABLES reports the landing-table physical path
+        # (``{registered}_UDF_TRANSFORMED.{randomId}``). Prefix-match both get and list.
+        self._assert_iceberg_storage_config_round_trip(fs, fv_name=fv_name, version="v1", storage_config=storage_config)
+
+        # Interpolate the identifier, not ``resolved()``: the physical name is case-sensitive
+        # (``...$v1``), so it has to reach SQL quoted.
+        fq_udf = f"{fs._config.full_schema_path}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), 100.0)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=240.0, desc="iceberg view-backed SFV"
+        )
+
+        # A streaming feature view defaults to a Postgres online store, so the listing row that
+        # recovered its Iceberg config off the landing table also has to describe that store.
+        # Listed after the online read so the Postgres OFT is known to exist.
+        listed_row = fs.list_feature_views(feature_view_name=fv_name).to_pandas().iloc[0]
+        listed_online_config = json.loads(listed_row["ONLINE_CONFIG"])
+        self.assertTrue(listed_online_config["enable"])
+        self.assertEqual(listed_online_config["store_type"], "postgres")
+
+        # The offline object is a View, so STORAGE_CONFIG.base_location must be the
+        # $UDF_TRANSFORMED SHOW path, not a miss that falls back to the registered folder.
+        listed_storage_config = json.loads(listed_row["STORAGE_CONFIG"])
+        udf_show = self._session.sql(
+            f"SHOW ICEBERG TABLES LIKE '{udf_table.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertLen(udf_show, 1)
+        self.assertEqual(listed_storage_config["format"], "iceberg")
+        self.assertEqual(listed_storage_config["base_location"], udf_show[0]["base_location"].rstrip("/"))
+
+        fs.delete_feature_view(fv_name, "v1")
+
+        self.assertEmpty(
+            self._session.sql(
+                f"SHOW VIEWS LIKE '{physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+            ).collect()
+        )
+        remaining_iceberg = self._iceberg_table_names(fs)
+        self.assertNotIn(udf_table.resolved(), remaining_iceberg)
+        self.assertNotIn(f"{udf_table.resolved()}$BACKFILL", remaining_iceberg)
+
     # =========================================================================
     # Non-aggregated streaming FV as DT (with refresh_freq + warning)
     # =========================================================================
@@ -1314,15 +1461,26 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             time.sleep(5)
         self.assertGreater(len(result), 0, "OFT should exist after streaming FV registration")
 
-    def test_streaming_fv_spec_oft_online_read_e2e(self) -> None:
-        """After backfill, online read via Query API returns rows for a registered entity key."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_streaming_fv_spec_oft_online_read_e2e(self, iceberg: bool) -> None:
+        """After backfill, online read via Query API returns rows for a registered entity key.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table and both landing tables with
+                Iceberg storage.
+        """
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
-        fv_name = f"STREAM_ONLY_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"STREAM_ONLY_{label}_{s}"
         fs = self._create_feature_store()
         self._make_stream_source(fs, stream)
         backfill_table = self._create_backfill_table(fs, s)
         backfill_df = self._session.table(backfill_table)
+        storage_config = self._maybe_iceberg_storage_config(iceberg)
         stream_config = StreamConfig(
             stream_source=stream,
             transformation_fn=identity_transform,
@@ -1334,12 +1492,22 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
+            storage_config=storage_config,
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
         physical_name = FeatureView._get_physical_name(registered.name, registered.version)
         udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
         fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+
+        # A refresh_freq materializes the offline object, so this is the shape where Iceberg
+        # yields a Dynamic Iceberg Table alongside Iceberg landing tables. The native run holds
+        # the same objects to native, so a format leak in either direction fails here.
+        self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=iceberg)
+        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=iceberg)
+        if iceberg:
+            self._assert_created_as_iceberg_table(f"{udf_table.resolved()}$BACKFILL")
+
         self._wait_udf_and_backfill(
             fq_udf,
             feature_store=fs,
@@ -1349,7 +1517,7 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         def _validate(pdf):
             self.assertIn("AMOUNT", pdf.columns)
-            self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), 100.0, places=3)
+            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), 100.0)
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=240.0, desc="streaming e2e"
@@ -1431,11 +1599,46 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     # E2E: streaming FV — all supported column types
     # =========================================================================
 
-    def test_streaming_fv_spec_oft_all_supported_types(self) -> None:
-        """Verify all 6 supported types (String, Long, Double, Decimal, Boolean, TimestampNTZ) round-trip."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_streaming_fv_spec_oft_all_supported_types(self, iceberg: bool) -> None:
+        """DT-backed SFV: all 6 types including TIMESTAMP_NTZ survive UDF, offline, and online.
+
+        ``EVENT_TIME`` is the feature view ``timestamp_col`` (UDF / offline only).
+        ``LAST_SEEN_TIME`` is the TimestampNTZ feature that can be checked online.
+
+        Source values are TIMESTAMP_NTZ(9), and two different writers reduce them:
+
+        - Backfill rows pass through a vectorized Python UDTF whose timestamp transport is
+          microsecond-resolution, so ``$UDF_TRANSFORMED`` and the offline dynamic table that
+          selects from it hold microseconds however the account is configured.
+        - Ingested rows pass through the Online Service ingest UDF, and every online value
+          passes through the OFT ETL. Both keep microseconds when
+          ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and fall back to milliseconds when
+          it is off.
+
+        An ingest is acknowledged before its row is queryable in the warehouse, so the
+        ingested-row assertions poll.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table and both landing tables with
+                Iceberg storage. The expected values are unchanged: Iceberg caps
+                ``TIMESTAMP_NTZ`` at scale 6, which the UDTF transport already reduces to.
+        """
+        event_time_src = "2024-06-01 12:34:56.123456789"
+        last_seen_src = "2024-06-01 12:34:57.987654321"
+        event_time_backfill = "2024-06-01 12:34:56.123456000"
+        last_seen_backfill = "2024-06-01 12:34:57.987654000"
+        micros_enabled = self._oft_pg_etl_microsecond_timestamps_enabled()
+        event_time_ingested = event_time_backfill if micros_enabled else "2024-06-01 12:34:56.123000000"
+        last_seen_ingested = last_seen_backfill if micros_enabled else "2024-06-01 12:34:57.987000000"
+        last_seen_online = last_seen_ingested
         s = uuid.uuid4().hex[:8]
+        label = "ICEBERG" if iceberg else "NATIVE"
         stream = f"ALL_TYPES_{s}"
-        fv_name = f"STREAM_ALL_TYPES_{s}"
+        fv_name = f"STREAM_ALL_TYPES_{label}_{s}"
         fs = self._create_feature_store()
         self._make_all_types_stream_source(fs, stream)
         backfill_table = self._create_all_types_backfill_table(fs, s)
@@ -1451,14 +1654,174 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
         self.assertTrue(registered.online)
+        self.assertEqual(registered.status, FeatureViewStatus.ACTIVE)
 
         physical_name = FeatureView._get_physical_name(registered.name, registered.version)
         udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
         fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        fq_offline = registered.fully_qualified_name()
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        backfill_udf = self._session.sql(
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_udf} WHERE USER_ID = 'u1'"
+        ).collect()[0]
+        self.assertEqual(backfill_udf["EVENT_TIME"], event_time_backfill)
+        self.assertEqual(backfill_udf["LAST_SEEN_TIME"], last_seen_backfill)
+
+        backfill_offline = self._session.sql(
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_offline} WHERE USER_ID = 'u1'"
+        ).collect()[0]
+        self.assertEqual(backfill_offline["EVENT_TIME"], event_time_backfill)
+        self.assertEqual(backfill_offline["LAST_SEEN_TIME"], last_seen_backfill)
+
+        def _validate(pdf):
+            row = pdf.iloc[0]
+            # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
+            # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
+            # not exact binary values on either path.
+            self.assertAlmostEqual(float(row["SCORE"]), 3.14, places=5)
+            self.assertAlmostEqual(float(row["PRICE"]), 99.95, places=2)
+            self.assertEqual(int(row["RANK"]), 42)
+            self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
+            self.assertEqual(str(row["CATEGORY"]), ALL_TYPES_CATEGORY)
+            self.assertNotIn("EVENT_TIME", pdf.columns)
+            actual = pd.Timestamp(row["LAST_SEEN_TIME"])
+            if actual.tz is not None:
+                actual = actual.tz_localize(None)
+            self.assertEqual(actual, pd.Timestamp(last_seen_online))
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types SFV"
+        )
+
+        ingested_key = f"U_ALL_INGEST_{s}"
+        self._stream_ingest_with_retry(
+            fs,
+            stream,
+            {
+                "USER_ID": ingested_key,
+                "EVENT_TIME": pd.Timestamp(event_time_src),
+                "LAST_SEEN_TIME": pd.Timestamp(last_seen_src),
+                "SCORE": 3.14,
+                "RANK": 42,
+                "PRICE": 99.95,
+                "IS_ACTIVE": True,
+                "CATEGORY": ALL_TYPES_CATEGORY,
+            },
+        )
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[ingested_key]],
+            validate_fn=_validate,
+            timeout=300.0,
+            desc="all types SFV ingest",
+        )
+
+        ingested_udf_query = (
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_udf} WHERE USER_ID = '{ingested_key}'"
+        )
+        deadline = time.time() + 600.0
+        ingested_udf = self._session.sql(ingested_udf_query).collect()
+        while not ingested_udf and time.time() < deadline:
+            time.sleep(5)
+            ingested_udf = self._session.sql(ingested_udf_query).collect()
+        self.assertTrue(ingested_udf, f"{ingested_key} never landed in {fq_udf}")
+        self.assertEqual(ingested_udf[0]["EVENT_TIME"], event_time_ingested)
+        self.assertEqual(ingested_udf[0]["LAST_SEEN_TIME"], last_seen_ingested)
+
+        ingested_offline_query = (
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_offline} WHERE USER_ID = '{ingested_key}'"
+        )
+        deadline = time.time() + 600.0
+        ingested_offline = self._session.sql(ingested_offline_query).collect()
+        while not ingested_offline and time.time() < deadline:
+            time.sleep(5)
+            ingested_offline = self._session.sql(ingested_offline_query).collect()
+        self.assertTrue(ingested_offline, f"{ingested_key} never landed in {fq_offline}")
+        self.assertEqual(ingested_offline[0]["EVENT_TIME"], event_time_ingested)
+        self.assertEqual(ingested_offline[0]["LAST_SEEN_TIME"], last_seen_ingested)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_streaming_fv_view_spec_oft_all_supported_types(self, iceberg: bool) -> None:
+        """View-based SFV (no refresh_freq): all 6 types including TIMESTAMP_NTZ survive UDF and online.
+
+        Non-aggregated streaming FVs without refresh_freq materialize the offline object as a
+        VIEW over ``$UDF_TRANSFORMED`` rather than a dynamic table, so the offline assertions
+        here read a view and see no refresh lag. The OFT hydrates from the same table.
+
+        Timestamp precision follows the same two writers as the DT-backed case: backfill rows are
+        microseconds unconditionally, because the vectorized Python UDTF truncates there, while
+        ingested rows and every online value keep microseconds only when
+        ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and fall back to milliseconds when it
+        is off. An ingest is acknowledged before its row is queryable, so those assertions poll.
+
+        Args:
+            iceberg: When True, back both landing tables with Iceberg storage. A View has no
+                Iceberg form, so the offline object stays a VIEW either way, and the expected
+                values are unchanged: Iceberg caps ``TIMESTAMP_NTZ`` at scale 6, which the UDTF
+                transport already reduces to.
+        """
+        event_time_src = "2024-06-01 12:34:56.123456789"
+        last_seen_src = "2024-06-01 12:34:57.987654321"
+        event_time_backfill = "2024-06-01 12:34:56.123456000"
+        last_seen_backfill = "2024-06-01 12:34:57.987654000"
+        micros_enabled = self._oft_pg_etl_microsecond_timestamps_enabled()
+        event_time_ingested = event_time_backfill if micros_enabled else "2024-06-01 12:34:56.123000000"
+        last_seen_ingested = last_seen_backfill if micros_enabled else "2024-06-01 12:34:57.987000000"
+        last_seen_online = last_seen_ingested
+        s = uuid.uuid4().hex[:8]
+        label = "ICEBERG" if iceberg else "NATIVE"
+        stream = f"ALL_TYPES_VIEW_{s}"
+        fv_name = f"STREAM_ALL_TYPES_VIEW_{label}_{s}"
+        fs = self._create_feature_store()
+        self._make_all_types_stream_source(fs, stream)
+        backfill_table = self._create_all_types_backfill_table(fs, s)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=StreamConfig(
+                stream_source=stream,
+                transformation_fn=all_types_identity_transform,
+                backfill_df=self._session.table(backfill_table),
+            ),
+            timestamp_col="EVENT_TIME",
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self.assertTrue(registered.is_streaming)
+        self.assertFalse(registered.is_tiled)
+        self.assertEqual(registered.status, FeatureViewStatus.STATIC)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        fq_offline = registered.fully_qualified_name()
         self._wait_udf_and_backfill(
             fq_udf,
             feature_store=fs,
@@ -1466,16 +1829,112 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             streaming_fv_version=str(registered.version),
         )
 
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        fv_live = fs.get_feature_view(fv_name, "v1")
+        offline_pdf = fs.read_feature_view(fv_live, keys=[["u1"]], store_type=StoreType.OFFLINE).to_pandas()
+        self.assertEqual(len(offline_pdf), 1, "offline read returned no row for 'u1'")
+        offline_row = offline_pdf.iloc[0]
+        # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
+        # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
+        # not exact binary values on either path.
+        self.assertAlmostEqual(float(offline_row["SCORE"]), 3.14, places=5)
+        self.assertAlmostEqual(float(offline_row["PRICE"]), 99.95, places=2)
+        self.assertEqual(int(offline_row["RANK"]), 42)
+        self.assertIn(offline_row["IS_ACTIVE"], (True, "true", 1))
+        self.assertEqual(str(offline_row["CATEGORY"]), ALL_TYPES_CATEGORY)
+
+        online_holder: dict[str, object] = {}
+
+        backfill_udf = self._session.sql(
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_udf} WHERE USER_ID = 'u1'"
+        ).collect()[0]
+        self.assertEqual(backfill_udf["EVENT_TIME"], event_time_backfill)
+        self.assertEqual(backfill_udf["LAST_SEEN_TIME"], last_seen_backfill)
+
+        backfill_offline = self._session.sql(
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_offline} WHERE USER_ID = 'u1'"
+        ).collect()[0]
+        self.assertEqual(backfill_offline["EVENT_TIME"], event_time_backfill)
+        self.assertEqual(backfill_offline["LAST_SEEN_TIME"], last_seen_backfill)
+
         def _validate(pdf):
             row = pdf.iloc[0]
-            self.assertAlmostEqual(float(row["SCORE"]), 3.14, places=1)
-            self.assertEqual(int(row["RANK"]), 42)
+            # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
+            # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
+            # not exact binary values on either path.
+            self.assertAlmostEqual(float(row["SCORE"]), 3.14, places=5)
             self.assertAlmostEqual(float(row["PRICE"]), 99.95, places=2)
+            self.assertEqual(int(row["RANK"]), 42)
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
+            self.assertEqual(str(row["CATEGORY"]), ALL_TYPES_CATEGORY)
+            online_holder["pdf"] = pdf
+            self.assertNotIn("EVENT_TIME", pdf.columns)
+            actual = pd.Timestamp(row["LAST_SEEN_TIME"])
+            if actual.tz is not None:
+                actual = actual.tz_localize(None)
+            self.assertEqual(actual, pd.Timestamp(last_seen_online))
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types SFV"
+            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types view SFV"
         )
+        self._assert_all_types_offline_matches_postgres(offline_pdf, online_holder["pdf"])
+
+        ingested_key = f"U_ALL_VIEW_INGEST_{s}"
+        self._stream_ingest_with_retry(
+            fs,
+            stream,
+            {
+                "USER_ID": ingested_key,
+                "EVENT_TIME": pd.Timestamp(event_time_src),
+                "LAST_SEEN_TIME": pd.Timestamp(last_seen_src),
+                "SCORE": 3.14,
+                "RANK": 42,
+                "PRICE": 99.95,
+                "IS_ACTIVE": True,
+                "CATEGORY": ALL_TYPES_CATEGORY,
+            },
+        )
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[ingested_key]],
+            validate_fn=_validate,
+            timeout=300.0,
+            desc="all types view SFV ingest",
+        )
+
+        ingested_udf_query = (
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_udf} WHERE USER_ID = '{ingested_key}'"
+        )
+        deadline = time.time() + 600.0
+        ingested_udf = self._session.sql(ingested_udf_query).collect()
+        while not ingested_udf and time.time() < deadline:
+            time.sleep(5)
+            ingested_udf = self._session.sql(ingested_udf_query).collect()
+        self.assertTrue(ingested_udf, f"{ingested_key} never landed in {fq_udf}")
+        self.assertEqual(ingested_udf[0]["EVENT_TIME"], event_time_ingested)
+        self.assertEqual(ingested_udf[0]["LAST_SEEN_TIME"], last_seen_ingested)
+
+        ingested_offline_query = (
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {fq_offline} WHERE USER_ID = '{ingested_key}'"
+        )
+        deadline = time.time() + 600.0
+        ingested_offline = self._session.sql(ingested_offline_query).collect()
+        while not ingested_offline and time.time() < deadline:
+            time.sleep(5)
+            ingested_offline = self._session.sql(ingested_offline_query).collect()
+        self.assertTrue(ingested_offline, f"{ingested_key} never landed in {fq_offline}")
+        self.assertEqual(ingested_offline[0]["EVENT_TIME"], event_time_ingested)
+        self.assertEqual(ingested_offline[0]["LAST_SEEN_TIME"], last_seen_ingested)
 
     # =========================================================================
     # Rollback on registration failure

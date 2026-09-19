@@ -1,6 +1,5 @@
 import sys
 import warnings
-from typing import Optional, Union
 
 from packaging.version import Version
 
@@ -8,7 +7,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.snowpark import AsyncJob, Row, Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
-cache: dict[str, Optional[str]] = {}
+cache: dict[str, str | None] = {}
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "utils"
@@ -23,7 +22,7 @@ def is_relaxed() -> bool:
 
 
 def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-    pkg_versions: list[str], session: Session, subproject: Optional[str] = None
+    pkg_versions: list[str], session: Session, subproject: str | None = None
 ) -> list[str]:
     if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
         return pkg_versions
@@ -32,7 +31,7 @@ def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
 
 
 def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
-    pkg_versions: list[str], session: Session, subproject: Optional[str] = None
+    pkg_versions: list[str], session: Session, subproject: str | None = None
 ) -> list[str]:
     pkg_version_async_job_list: list[tuple[str, AsyncJob]] = []
     for pkg_version in pkg_versions:
@@ -63,8 +62,8 @@ def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
 
 
 def _query_pkg_version_supported_in_snowflake_conda_channel(
-    pkg_version: str, session: Session, block: bool, subproject: Optional[str] = None
-) -> Union[AsyncJob, list[Row]]:
+    pkg_version: str, session: Session, block: bool, subproject: str | None = None
+) -> AsyncJob | list[Row]:
     tokens = pkg_version.split("==")
     if len(tokens) != 2:
         raise RuntimeError(

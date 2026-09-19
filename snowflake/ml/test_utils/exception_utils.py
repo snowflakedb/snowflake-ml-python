@@ -1,5 +1,5 @@
 import contextlib
-from typing import Generator, Optional
+from typing import Generator
 
 from absl.testing import absltest
 
@@ -10,8 +10,8 @@ from snowflake.ml._internal.exceptions import exceptions
 def assert_snowml_exceptions(
     test_case: absltest.TestCase,
     *,
-    expected_error_code: Optional[str] = None,
-    expected_original_error_type: Optional[type[Exception]] = None,
+    expected_error_code: str | None = None,
+    expected_original_error_type: type[Exception] | None = None,
     expected_regex: str = "",
 ) -> Generator[None, None, None]:
     with test_case.assertRaisesRegex(exceptions.SnowflakeMLException, expected_regex) as exc:

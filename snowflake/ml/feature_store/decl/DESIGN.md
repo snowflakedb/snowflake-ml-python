@@ -62,6 +62,16 @@ All `FeatureStore` / `FeatureView` / `Entity` imports are lazy (inside functions
 - **Entity ops:** `fs.register_entity` / `fs.delete_entity` / `fs.update_entity(name, desc=...)` —
   no raw `CREATE TAG` / `ALTER TAG` DDL. Locked by `tests/test_no_entity_tag_sql_in_decl.py`.
 - **FV ops:** routed through `_build_feature_view`, which resolves entity names via `fs.get_entity(name)`.
+- **Streaming `UPDATE_FV` omits `online_config`; online routing is recreate-only.** A
+  `StreamingFeatureView` is always online by design, so the full authoring payload always
+  carries `online: true` — the default authored value, not an in-place toggle.
+  `_execute_update_feature_view` therefore never forwards `online_config` for streaming
+  (the enable path's `_create_online_feature_table` asserts `stream_config is not None`,
+  `None` for a StreamingFV recovered as a zero-lag `STATIC` VIEW — error 1300). It still
+  applies the other operational edits (`desc`, tiled `refresh_freq`/`warehouse`); an
+  `online: true`-only payload is a no-op (empty kwargs). It does **not** refuse the op just
+  because `online` is present. Genuinely changing a streaming FV's online routing requires
+  a destructive `RECREATE_FV`.
 - **Source ops:** dispatch by `payload["kind"]`. `BatchSource` ops are virtual no-ops (no API).
 - **`--allow-recreate` gate:** `execute_plan` short-circuits before any DDL when destructive ops
   are present but `PlanOptions.allow_recreate=False`. Returns `status="refused"` for the whole
@@ -190,7 +200,16 @@ Same five touchpoints every time:
 
 1. **`spec_models.py`** — `Optional[...]` field; use `Literal[...]` for enum-valued fields
 2. **`spec_compiler.py`** — structural fields flow into the compiled `spec` dict
-   (contribute to hash); operational fields (e.g. `warehouse`) do not
+   (contribute to hash); operational fields (e.g. `warehouse`) do not. A CRON
+   `refresh_freq` (e.g. `"0 0 * * * UTC"`, required by append-only BFVs) drives a
+   companion Task via `TARGET_LAG = 'DOWNSTREAM'`, so it never populates the wire
+   `target_lag_sec` — gate the duration parse with
+   `_is_interval_duration_refresh_freq(...)` (True only for values the
+   `interval_utils` grammar can consume) or `parse_duration_to_seconds` raises
+   `Invalid interval format`. Do not gate it with `_is_cron_refresh_freq`: that
+   helper now delegates to the core `pytimeparse` classifier for append-only
+   parity and accepts durations (`"2 weeks"` / `"1.5h"`) the narrower
+   `interval_utils` parser cannot handle
 3. **`invariants.py`** — structural → `_BATCH_FV_STRUCTURAL_INNER_KEYS`; operational → `_OPERATIONAL_FV_KEYS`
 4. **`imperative_executor.py`** — translate payload value to `FeatureView(**kwargs)`;
    mirror operational changes in `_execute_update_feature_view`

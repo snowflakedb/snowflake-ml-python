@@ -27,9 +27,9 @@ import math
 import os
 import time
 import uuid
-from typing import Optional
 
-from absl.testing import absltest
+import pandas as pd
+from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA
 from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
@@ -51,7 +51,7 @@ from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.snowpark import functions as snowpark_functions
 
 
-class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
+class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, parameterized.TestCase):
     """Batch FV + spec-based OFT: e2e tests covering registration through online read and offline dataset."""
 
     @classmethod
@@ -65,6 +65,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         cls._session.sql(f"CREATE SCHEMA IF NOT EXISTS {cls.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}").collect()
         cls._events_table = cls._create_events_table_class()
+        cls._iceberg_events_table = cls._create_iceberg_events_table_class()
 
         cls._sample_table_name = f"TEST_SPEC_OFT_DATA_{uuid.uuid4().hex.upper()[:8]}"
         cls._session.sql(
@@ -92,29 +93,42 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.product_entity = type(self).product_entity
         self.sample_data = type(self).sample_data
         self._events_table = type(self)._events_table
-        self._iceberg_external_volumes: list[str] = []
+        self._iceberg_events_table = type(self)._iceberg_events_table
         self._iceberg_tables: list[str] = []
         self._test_tables: list[str] = []
         self._udf_functions: list[str] = []
         self._udf_stages: list[str] = []
 
     def tearDown(self) -> None:
-        # Delete tracked FVs first so Dynamic Iceberg Tables release the external
-        # volume (same order as FeatureStoreTest.tearDown). The bundle schema is
-        # shared and must not be dropped.
-        super().tearDown()
         if os.environ.get("SKIP_FV_TEARDOWN"):
+            super().tearDown()
             return
-        for table in getattr(self, "_test_tables", []):
-            self._session.sql(f"DROP TABLE IF EXISTS {table}").collect()
-        for table in getattr(self, "_iceberg_tables", []):
-            self._session.sql(f"DROP ICEBERG TABLE IF EXISTS {table}").collect()
-        for volume in getattr(self, "_iceberg_external_volumes", []):
-            self._evm.drop_external_volume(volume, if_exists=True)
-        for function_sig in getattr(self, "_udf_functions", []):
-            self._session.sql(f"DROP FUNCTION IF EXISTS {function_sig}").collect()
-        for stage in getattr(self, "_udf_stages", []):
-            self._session.sql(f"DROP STAGE IF EXISTS {stage}").collect()
+        try:
+            # Feature views own Iceberg tables, so they have to be deleted before any
+            # leftover Iceberg source tables. The bundle schema is shared and must not
+            # be dropped. The process-wide Iceberg external volume is dropped in
+            # class/module teardown after every test has released it.
+            super().tearDown()
+        finally:
+            for table in getattr(self, "_test_tables", []):
+                self._drop_object(f"DROP TABLE IF EXISTS {table}")
+            for table in getattr(self, "_iceberg_tables", []):
+                self._drop_object(f"DROP ICEBERG TABLE IF EXISTS {table}")
+            for function_sig in getattr(self, "_udf_functions", []):
+                self._drop_object(f"DROP FUNCTION IF EXISTS {function_sig}")
+            for stage in getattr(self, "_udf_stages", []):
+                self._drop_object(f"DROP STAGE IF EXISTS {stage}")
+
+    def _drop_object(self, drop_sql: str) -> None:
+        """Run a DROP statement, logging instead of failing the test on error.
+
+        Args:
+            drop_sql: The DROP statement to run.
+        """
+        try:
+            self._session.sql(drop_sql).collect()
+        except Exception:
+            logging.warning("tearDown: %r failed; leaking to next-run cleanup.", drop_sql, exc_info=True)
 
     @classmethod
     def _create_events_table_class(cls) -> str:
@@ -134,8 +148,36 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         ).collect()
         return table_full_path
 
+    @classmethod
+    def _create_iceberg_events_table_class(cls) -> str:
+        """Create a class-scoped events table with Iceberg-compatible timestamp scale.
+
+        Iceberg rejects Snowflake's default ``TIMESTAMP_NTZ`` scale of 9.
+
+        Returns:
+            Fully qualified table name.
+        """
+        table_full_path = f"{cls.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.iceberg_events_{uuid.uuid4().hex.upper()}"
+        cls._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {table_full_path}
+                (USER_ID INT, EVENT_TS TIMESTAMP_NTZ(6), AMOUNT FLOAT)
+            """
+        ).collect()
+        cls._session.sql(
+            f"""INSERT INTO {table_full_path} (USER_ID, EVENT_TS, AMOUNT) VALUES
+                (1, DATEADD('hour', -48, CURRENT_TIMESTAMP())::TIMESTAMP_NTZ(6), 10.0),
+                (1, DATEADD('hour', -47, CURRENT_TIMESTAMP())::TIMESTAMP_NTZ(6), 20.0),
+                (2, DATEADD('hour', -47, CURRENT_TIMESTAMP())::TIMESTAMP_NTZ(6), 30.0),
+                (2, DATEADD('hour', -46, CURRENT_TIMESTAMP())::TIMESTAMP_NTZ(6), 40.0)
+            """
+        ).collect()
+        return table_full_path
+
     def _get_events_df(self):
         return self._session.table(self._events_table)
+
+    def _get_iceberg_events_df(self):
+        return self._session.table(self._iceberg_events_table)
 
     # =========================================================================
     # Helpers
@@ -238,63 +280,192 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled")
 
-    def _create_iceberg_storage_config(self) -> StorageConfig:
-        """Create a unique AWS Iceberg external volume + StorageConfig for this test."""
-        volume_name = f"MLPLATFORMTEST_ICEBERG_AWS_S3_{uuid.uuid4().hex[:8].upper()}"
-        storage_location_sql = """
-                (
-                    NAME                 = 'prod-iceberg-s3'
-                    STORAGE_PROVIDER     = 'S3'
-                    STORAGE_BASE_URL     = 's3://mlplatform-iceberg-test/ml-platform/'
-                    STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::736112632310:role/MLPlatformTestIcebergRole'
-                    STORAGE_AWS_EXTERNAL_ID = 'MLPLATFORMTEST_SFCRole=MLPlatformExternalVolume='
-                )
-            """
-        self._evm.create_external_volume(volume_name, storage_location_sql)
-        self._iceberg_external_volumes.append(volume_name)
-        return StorageConfig(
-            format=StorageFormat.ICEBERG,
-            external_volume=volume_name,
-            base_location=f"test_{uuid.uuid4().hex}/",
-        )
+    def _create_iceberg_source_table(self, fs: FeatureStore, suffix: str, entity_key: str, amount: float) -> str:
+        """Create a Snowflake-managed Iceberg source table seeded with one row.
 
-    def _assert_storage_format(self, fs: FeatureStore, table_name: str, *, expect_iceberg: bool) -> None:
-        """Assert whether ``table_name`` (schema-local identifier) is an Iceberg table.
+        Uses ``TIMESTAMP_NTZ(6)`` because Iceberg rejects Snowflake's default scale of 9.
 
         Args:
-            fs: Feature store whose schema is searched.
-            table_name: Unqualified table identifier as stored in Snowflake.
-            expect_iceberg: Whether the table must appear in ``SHOW ICEBERG TABLES``.
+            fs: Feature store whose schema hosts the table.
+            suffix: Unique suffix for the table name.
+            entity_key: ``USER_ID`` of the seed row.
+            amount: ``AMOUNT`` of the seed row.
+
+        Returns:
+            Fully qualified Iceberg table name.
         """
-        rows = self._session.sql(f"SHOW ICEBERG TABLES IN SCHEMA {fs._config.full_schema_path}").collect()
-        iceberg_names = {str(row["name"]) for row in rows}
-        is_iceberg = table_name in iceberg_names
-        self.assertEqual(
-            is_iceberg,
-            expect_iceberg,
-            f"{table_name} iceberg={is_iceberg}, expected={expect_iceberg}; iceberg tables={sorted(iceberg_names)}",
+        storage_config = self._create_iceberg_storage_config()
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.ICEBERG_SRC_{suffix}"
+        assert storage_config.base_location is not None
+        escaped_location = storage_config.base_location.replace("'", "''")
+        self._session.sql(
+            f"""
+            CREATE ICEBERG TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ(6),
+                AMOUNT FLOAT
+            )
+                CATALOG = 'SNOWFLAKE'
+                EXTERNAL_VOLUME = {storage_config.external_volume}
+                BASE_LOCATION = '{escaped_location}'
+            """
+        ).collect()
+        self._iceberg_tables.append(table_name)
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} VALUES
+            ({entity_key!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(6)), {amount})
+            """
+        ).collect()
+        return table_name
+
+    def _wide_feature_values(self, column_count: int) -> dict[str, float]:
+        """Deterministic ``F<i> -> value`` mapping for a wide feature view.
+
+        Args:
+            column_count: How many feature columns to generate.
+
+        Returns:
+            Column name to expected value, in column order.
+        """
+        return {f"F{index}": float(index) + 0.5 for index in range(column_count)}
+
+    def _create_wide_source_table(
+        self,
+        fs: FeatureStore,
+        suffix: str,
+        entity_key: str,
+        *,
+        column_count: int,
+        iceberg: bool,
+    ) -> tuple[str, dict[str, float]]:
+        """Create a source table with ``column_count`` FLOAT features and one seeded row.
+
+        Args:
+            fs: Feature store whose schema hosts the table.
+            suffix: Unique suffix for the table name.
+            entity_key: ``USER_ID`` of the seed row.
+            column_count: How many ``F<i>`` feature columns to create.
+            iceberg: When True, create a Snowflake-managed Iceberg table. Iceberg caps
+                ``TIMESTAMP_NTZ`` scale at 6, so the event time column narrows to match.
+
+        Returns:
+            The fully qualified table name and the expected ``F<i> -> value`` mapping.
+        """
+        expected_values = self._wide_feature_values(column_count)
+        feature_col_defs = ", ".join(f"{name} FLOAT" for name in expected_values)
+        event_time_type = "TIMESTAMP_NTZ(6)" if iceberg else "TIMESTAMP_NTZ"
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.WIDE_SRC_{suffix}"
+
+        if iceberg:
+            storage_config = self._create_iceberg_storage_config()
+            assert storage_config.base_location is not None
+            escaped_location = storage_config.base_location.replace("'", "''")
+            self._session.sql(
+                f"""
+                CREATE ICEBERG TABLE {table_name} (
+                    USER_ID VARCHAR, EVENT_TIME {event_time_type}, {feature_col_defs}
+                )
+                    CATALOG = 'SNOWFLAKE'
+                    EXTERNAL_VOLUME = {storage_config.external_volume}
+                    BASE_LOCATION = '{escaped_location}'
+                """
+            ).collect()
+            self._iceberg_tables.append(table_name)
+        else:
+            self._session.sql(
+                f"""
+                CREATE OR REPLACE TABLE {table_name} (
+                    USER_ID VARCHAR, EVENT_TIME {event_time_type}, {feature_col_defs}
+                )
+                """
+            ).collect()
+            self._test_tables.append(table_name)
+
+        feature_literals = ", ".join(str(value) for value in expected_values.values())
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} VALUES
+            ({entity_key!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::{event_time_type}), {feature_literals})
+            """
+        ).collect()
+        return table_name, expected_values
+
+    def _assert_wide_columns(self, pdf, expected_values: dict[str, float]) -> None:
+        """Assert every generated feature column round-tripped with its exact value.
+
+        Args:
+            pdf: Single-row pandas frame from an online or offline read.
+            expected_values: Column name to expected value.
+        """
+        missing = [name for name in expected_values if name not in pdf.columns]
+        self.assertEqual(missing, [], f"{len(missing)} of {len(expected_values)} feature columns missing")
+        row = pdf.iloc[0]
+        mismatched = {name: row[name] for name, expected in expected_values.items() if float(row[name]) != expected}
+        self.assertEqual(mismatched, {}, f"{len(mismatched)} feature columns returned unexpected values")
+
+    def _poll_offline_amount(
+        self,
+        fs: FeatureStore,
+        fv_name: str,
+        version: str,
+        entity_key: str,
+        expected_amount: float,
+        *,
+        timeout_s: float = 600.0,
+        desc: str = "",
+    ) -> None:
+        """Poll ``read_feature_view(store_type=OFFLINE)`` until ``entity_key`` carries the amount.
+
+        Args:
+            fs: Feature store client.
+            fv_name: Feature view name.
+            version: Feature view version.
+            entity_key: ``USER_ID`` to look for.
+            expected_amount: Expected ``AMOUNT`` for that key.
+            timeout_s: Seconds to poll before failing.
+            desc: Label for the failure message.
+        """
+        deadline = time.time() + timeout_s
+        last_err: str | None = None
+        while time.time() < deadline:
+            try:
+                fv_live = fs.get_feature_view(fv_name, version)
+                offline_pdf = fs.read_feature_view(fv_live, keys=[[entity_key]], store_type=StoreType.OFFLINE)
+                pdf = offline_pdf.to_pandas()
+                if len(pdf) > 0:
+                    self.assertIn("AMOUNT", pdf.columns)
+                    self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
+                    return
+            except Exception as e:
+                last_err = str(e)
+            time.sleep(5)
+        label = f" ({desc})" if desc else ""
+        self.fail(
+            f"Offline read for {entity_key!r} on {fv_name}/{version}{label} timed out "
+            f"after {timeout_s}s; last_err={last_err!r}"
         )
 
-    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_batch_fv_spec_oft_online_read_by_key(self) -> None:
-        """Dynamic Iceberg Table batch FV with Postgres OFT: register, wait, online read."""
+        """DIT batch FV over a managed Iceberg source table, with Postgres OFT.
+
+        After registration, inserts a new row into that Iceberg source and waits for
+        ``read_feature_view`` (offline) and the Postgres OFT to pick it up on lag. Nothing is
+        refreshed by hand, so this exercises Iceberg source -> DIT -> OFT.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         fv_name = f"ICEBERG_BATCH_OFT_{s}"
         batch_key = f"U_ICEBERG_{s}"
         expected_amount = 777.0
 
-        # Iceberg TIMESTAMP_NTZ max scale is 6; Snowflake default TIMESTAMP_NTZ is (9).
-        src_table = self._create_batch_source_table(
-            fs, s, batch_key, expected_amount, event_time_type="TIMESTAMP_NTZ(6)"
-        )
-        feature_df = self._session.table(src_table)
+        src_table = self._create_iceberg_source_table(fs, s, batch_key, expected_amount)
         iceberg_storage_config = self._create_iceberg_storage_config()
 
         fv = FeatureView(
             name=fv_name,
             entities=[self.user_entity],
-            feature_df=feature_df,
+            feature_df=self._session.table(src_table),
             timestamp_col="EVENT_TIME",
             refresh_freq="1 minute",
             storage_config=iceberg_storage_config,
@@ -307,6 +478,9 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.assertEqual(registered.online_config.store_type, OnlineStoreType.POSTGRES)
         assert registered.storage_config is not None
         self.assertEqual(registered.storage_config.format, StorageFormat.ICEBERG)
+        self._assert_iceberg_storage_config_round_trip(
+            fs, fv_name=fv_name, version="v1", storage_config=iceberg_storage_config
+        )
 
         online_name = registered.fully_qualified_online_table_name()
         self.assertIsNotNone(online_name)
@@ -323,9 +497,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="iceberg batch postgres oft"
         )
 
-        # Reverse-ETL: insert into the source and let the pipeline propagate on its own lag
-        # (Dynamic Iceberg Table at refresh_freq, then Postgres OFT at target_lag). Nothing is
-        # refreshed by hand, so this exercises the automatic source -> DIT -> Postgres path.
         new_key = f"U_ICEBERG_NEW_{s}"
         new_amount = 888.0
         self._session.sql(
@@ -334,6 +505,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             ({new_key!r}, DATEADD('minute', -1, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ(6)), {new_amount})
             """
         ).collect()
+
+        self._poll_offline_amount(fs, fv_name, "v1", new_key, new_amount, desc="iceberg source reverse-etl offline")
 
         def _validate_new(pdf):
             self.assertIn("AMOUNT", pdf.columns)
@@ -497,16 +670,17 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         suffix: str,
         source_table: str,
         *,
-        storage_config: Optional[StorageConfig] = None,
+        storage_config: StorageConfig | None = None,
     ) -> FeatureView:
-        """Register a passthrough SFV whose backfill is ``source_table`` and wait for UDF backfill.
+        """Register a passthrough SFV whose backfill is ``source_table`` and wait for backfill.
 
         Args:
             fs: Feature store client.
             fv_name: Feature view name.
             suffix: Unique suffix for the stream source name.
             source_table: Fully qualified backfill table (Iceberg or Snowflake).
-            storage_config: Optional Iceberg (or other) storage config for the registered FV.
+            storage_config: Optional storage for ``$UDF_TRANSFORMED``, ``$BACKFILL``, and the
+                offline DT. Iceberg stores both landing tables as managed Iceberg tables.
 
         Returns:
             The registered streaming feature view.
@@ -532,6 +706,20 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         assert registered.online_config is not None
         self.assertEqual(registered.online_config.store_type, OnlineStoreType.POSTGRES)
 
+        self._wait_udf_backfill(fs, registered)
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        return registered
+
+    def _wait_udf_backfill(self, fs: FeatureStore, registered: FeatureView) -> None:
+        """Wait for the backfill task graph to land rows in ``$UDF_TRANSFORMED``.
+
+        Split out from registration so a caller can snapshot ``$BACKFILL`` as soon as the
+        backfill lands, before the Online Feature Table refresh drains and drops it.
+
+        Args:
+            fs: Feature store client.
+            registered: Registered streaming feature view.
+        """
         physical_name = FeatureView._get_physical_name(registered.name, registered.version)
         udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
         fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
@@ -541,8 +729,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             streaming_fv_metadata_name=str(registered.name),
             streaming_fv_version=str(registered.version),
         )
-        self._wait_offline_dt_rows(fs, fv_name, "v1")
-        return registered
 
     def test_iceberg_table_from_snowflake_streaming_fv_spec_oft_online_read_by_key(self) -> None:
         """SFV backfill from a Snowflake-managed Iceberg table (CTAS, not DIT); Postgres OFT."""
@@ -599,13 +785,11 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             desc="udf write snowflake table streaming postgres oft",
         )
 
-    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_backfill_streaming_fv_spec_oft_online_read_by_key(self) -> None:
         """SFV whose offline object is a Dynamic Iceberg Table, through to an online read.
 
-        ``$UDF_TRANSFORMED`` / ``$BACKFILL`` stay regular Snowflake tables with
-        Iceberg-compatible timestamp scale (6). Postgres OFT hydrates from
-        ``$UDF_TRANSFORMED``.
+        ``$UDF_TRANSFORMED`` and ``$BACKFILL`` are managed Iceberg tables too, so the
+        feature view has no mixed-format staging pair.
         """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
@@ -623,12 +807,16 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         )
         assert registered.storage_config is not None
         self.assertEqual(registered.storage_config.format, StorageFormat.ICEBERG)
+        self._assert_iceberg_storage_config_round_trip(
+            fs, fv_name=fv_name, version="v1", storage_config=iceberg_storage_config
+        )
 
         physical_name = FeatureView._get_physical_name(registered.name, registered.version)
         udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
 
         self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=True)
-        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=False)
+        self._assert_storage_format(fs, udf_table.resolved(), expect_iceberg=True)
+        self._assert_created_as_iceberg_table(f"{udf_table.resolved()}$BACKFILL")
 
         self._assert_amount_round_trip(fs, fv_name, "v1", src_table, batch_key, expected_amount)
 
@@ -670,6 +858,68 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             validate_fn=_validate_ingested,
             desc="iceberg streaming ingest postgres oft",
         )
+
+    # =========================================================================
+    # E2E: Wide feature views (1000 feature columns), native and Iceberg
+    # =========================================================================
+
+    _WIDE_COLUMN_COUNT = 1000
+
+    def _run_wide_fv_online_read(self, *, iceberg: bool) -> None:
+        """Register a wide batch FV and assert every column survives the round trip.
+
+        Args:
+            iceberg: When True, back both the source table and the offline Dynamic Table
+                with Iceberg storage.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"WIDE_{label}_OFT_{s}"
+        batch_key = f"U_WIDE_{label}_{s}"
+
+        src_table, expected_values = self._create_wide_source_table(
+            fs, s, batch_key, column_count=self._WIDE_COLUMN_COUNT, iceberg=iceberg
+        )
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self._session.table(src_table),
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            storage_config=self._create_iceberg_storage_config() if iceberg else None,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self.assertEqual(len(registered.feature_names), self._WIDE_COLUMN_COUNT)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=iceberg)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        fv_live = fs.get_feature_view(fv_name, "v1")
+        offline_pdf = fs.read_feature_view(fv_live, keys=[[batch_key]], store_type=StoreType.OFFLINE).to_pandas()
+        self.assertEqual(len(offline_pdf), 1, f"offline read returned no row for {batch_key!r}")
+        self._assert_wide_columns(offline_pdf, expected_values)
+
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=lambda pdf: self._assert_wide_columns(pdf, expected_values),
+            desc=f"wide {label.lower()} batch postgres oft",
+        )
+
+    def test_batch_wide_fv_spec_oft_online_read_by_key(self) -> None:
+        """A 1000-column native batch FV serves every feature column through Postgres OFT."""
+        self._run_wide_fv_online_read(iceberg=False)
+
+    def test_iceberg_batch_wide_fv_spec_oft_online_read_by_key(self) -> None:
+        """A 1000-column Iceberg batch FV serves every feature column through Postgres OFT."""
+        self._run_wide_fv_online_read(iceberg=True)
 
     def test_batch_fv_online_read_negotiates_http2(self) -> None:
         """Soft assertion: confirm the Online Service negotiates HTTP/2.
@@ -745,11 +995,20 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled (timeseries) — registration -> online read
     # =========================================================================
 
-    def test_batch_tiled_fv_spec_oft_full_online_read_by_key(self) -> None:
-        """Tiled batch FV: multiple source rows per key; online read returns tile aggregates."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_tiled_fv_spec_oft_full_online_read_by_key(self, iceberg: bool) -> None:
+        """Tiled batch FV: multiple source rows per key; online read returns tile aggregates.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_TILED_ONLINE_FV_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_TILED_ONLINE_FV_{label}_{s}"
         batch_key = f"U_BATCH_TILED_{s}"
 
         src_table, expected_sum, expected_count = self._create_batch_tiled_source_table(fs, s, batch_key)
@@ -767,6 +1026,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -818,11 +1078,20 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
 
-    def test_batch_tiled_fv_spec_oft_incremental_online_read_by_key(self) -> None:
-        """Tiled batch FV: multiple source rows per key; online read returns tile aggregates."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_tiled_fv_spec_oft_incremental_online_read_by_key(self, iceberg: bool) -> None:
+        """Tiled batch FV: multiple source rows per key; online read returns tile aggregates.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_TILED_ONLINE_FV_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_TILED_ONLINE_FV_{label}_{s}"
         batch_key = f"U_BATCH_TILED_{s}"
 
         src_table, expected_sum, expected_count = self._create_batch_tiled_source_table(fs, s, batch_key)
@@ -840,6 +1109,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -895,11 +1165,20 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled approx_count_distinct — registration -> online read
     # =========================================================================
 
-    def test_batch_tiled_approx_count_distinct_online_read(self) -> None:
-        """Tiled batch FV with approx_count_distinct on a STRING column: online read returns HLL estimate."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_tiled_approx_count_distinct_online_read(self, iceberg: bool) -> None:
+        """Tiled batch FV with approx_count_distinct on a STRING column: online read returns HLL estimate.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_HLL_FV_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_HLL_FV_{label}_{s}"
         key_a = f"U_HLL_A_{s}"
         key_b = f"U_HLL_B_{s}"
 
@@ -936,6 +1215,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -1382,9 +1662,23 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled NULL-handling parity — online read of all-NULL data
     # =========================================================================
 
-    def _build_all_aggregation_features(self, *, numeric_col: str, category_col: str, window: str, n: int = 3) -> list:
-        """Build one feature per aggregation the Postgres online store supports (aliases uppercase to match columns)."""
-        return [
+    def _build_all_aggregation_features(
+        self, *, numeric_col: str, category_col: str, window: str, n: int = 3, include_list_aggregations: bool = True
+    ) -> list:
+        """Build one feature per aggregation the Postgres online store supports (aliases uppercase to match columns).
+
+        Args:
+            numeric_col: Column for scalar aggregations.
+            category_col: Column for HLL and ordered-N list aggregations.
+            window: Lookback window.
+            n: Ordered-N list size.
+            include_list_aggregations: When False, omit ``last_n`` / ``first_n`` / distinct-N.
+                Iceberg cannot store those ARRAY tile columns.
+
+        Returns:
+            Feature definitions for the online-read round trip.
+        """
+        features = [
             Feature.sum(numeric_col, window).alias("F_SUM"),
             Feature.count(numeric_col, window).alias("F_COUNT"),
             Feature.avg(numeric_col, window).alias("F_AVG"),
@@ -1393,11 +1687,17 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             Feature.stddev(numeric_col, window).alias("F_STDDEV"),
             Feature.var(numeric_col, window).alias("F_VAR"),
             Feature.approx_count_distinct(category_col, window).alias("F_ACD"),
-            Feature.last_n(category_col, window, n=n).alias("F_LAST_N"),
-            Feature.first_n(category_col, window, n=n).alias("F_FIRST_N"),
-            Feature.last_distinct_n(category_col, window, n=n).alias("F_LAST_DISTINCT_N"),
-            Feature.first_distinct_n(category_col, window, n=n).alias("F_FIRST_DISTINCT_N"),
         ]
+        if include_list_aggregations:
+            features.extend(
+                [
+                    Feature.last_n(category_col, window, n=n).alias("F_LAST_N"),
+                    Feature.first_n(category_col, window, n=n).alias("F_FIRST_N"),
+                    Feature.last_distinct_n(category_col, window, n=n).alias("F_LAST_DISTINCT_N"),
+                    Feature.first_distinct_n(category_col, window, n=n).alias("F_FIRST_DISTINCT_N"),
+                ]
+            )
+        return features
 
     @staticmethod
     def _online_list(value) -> list:
@@ -1406,14 +1706,24 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             return json.loads(value)
         return list(value)
 
-    def test_batch_tiled_null_handling_online_read(self) -> None:
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_tiled_null_handling_online_read(self, iceberg: bool) -> None:
         """Tiled online read of NULL data: an all-NULL key follows the NULL/zero contract while a key whose
-        only value lives in one tile has that value drive every aggregation. One FV serves both keys."""
-        import pandas as pd
+        only value lives in one tile has that value drive every aggregation. One FV serves both keys.
 
+        List aggregations are omitted on Iceberg because they tile into ARRAY columns that Iceberg
+        cannot store.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_TILED_NULL_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_TILED_NULL_{label}_{s}"
         key_all_null = f"U_NULL_ALL_{s}"
         key_one_value = f"U_NULL_ONE_{s}"
 
@@ -1448,7 +1758,12 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         """
         ).collect()
 
-        features = self._build_all_aggregation_features(numeric_col="AMOUNT", category_col="CATEGORY", window="4d")
+        features = self._build_all_aggregation_features(
+            numeric_col="AMOUNT",
+            category_col="CATEGORY",
+            window="4d",
+            include_list_aggregations=not iceberg,
+        )
         fv = FeatureView(
             name=fv_name,
             entities=[self.user_entity],
@@ -1458,6 +1773,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             refresh_freq="1 minute",
             feature_granularity="1d",
             features=features,
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -1478,8 +1794,9 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             # Offline is the source of truth: for an all-NULL key it returns 0 for approx_count_distinct and
             # NULL for the list aggregations, and online serving matches.
             self.assert_long_feature(row["F_ACD"], expected=0, msg="approx_count_distinct")
-            for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
-                self.assertTrue(pd.isna(row[col]), f"{col}={row[col]!r}")
+            if not iceberg:
+                for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+                    self.assertTrue(pd.isna(row[col]), f"{col}={row[col]!r}")
 
         def _validate_one_value(pdf):
             row = pdf.iloc[0]
@@ -1492,8 +1809,9 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertAlmostEqual(float(row["F_STDDEV"]), 0.0, places=2)  # single value -> population std 0
             self.assertAlmostEqual(float(row["F_VAR"]), 0.0, places=2)  # single value -> population variance 0
             self.assert_long_feature(row["F_ACD"], expected=1, msg="approx_count_distinct")
-            for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
-                self.assertEqual(self._online_list(row[col]), ["cat1"], f"{col}={row[col]!r}")
+            if not iceberg:
+                for col in ("F_LAST_N", "F_FIRST_N", "F_LAST_DISTINCT_N", "F_FIRST_DISTINCT_N"):
+                    self.assertEqual(self._online_list(row[col]), ["cat1"], f"{col}={row[col]!r}")
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[[key_one_value]], validate_fn=_validate_one_value, desc="tiled null all-but-one"
@@ -1905,23 +2223,114 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         online_config = json.loads(fv_rows[0]["ONLINE_CONFIG"])
         self.assertTrue(online_config["enable"])
 
+    def test_list_feature_views_iceberg_spec_oft_configs(self) -> None:
+        """An Iceberg FV with a Postgres OFT lists both its storage config and its online config.
+
+        Neither column is echoed back from what the caller passed to ``register_feature_view``:
+        ``external_volume`` / ``base_location`` are recovered from ``SHOW ICEBERG TABLES`` (the
+        metadata tag persists only an ``is_iceberg`` flag) and ``store_type`` comes from
+        ``SHOW ONLINE FEATURE TABLES``. Asserting both on one row is what ties the listing to
+        the Dynamic Iceberg Table and the Postgres OFT that registration actually created.
+
+        All three ``list_feature_views`` forms are checked because the ``entity_name`` form
+        reaches the shared row builder by a separate query path.
+        """
+        fs = self._create_feature_store()
+        fv_name = f"ICEBERG_OFT_LIST_{uuid.uuid4().hex[:8]}"
+        storage_config = self._create_iceberg_storage_config()
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self._get_iceberg_events_df().select("USER_ID", "EVENT_TS", "AMOUNT"),
+            timestamp_col="EVENT_TS",
+            refresh_freq="1 minute",
+            storage_config=storage_config,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self._assert_iceberg_storage_config_round_trip(fs, fv_name=fv_name, version="v1", storage_config=storage_config)
+
+        # Confirm the objects the listing is meant to describe before trusting what it reports.
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        self._assert_storage_format(fs, physical_name.resolved(), expect_iceberg=True)
+
+        def _assert_listing_row(listed, source: str) -> None:
+            self.assertLen(listed, 1, f"{source} did not return exactly one row for {fv_name}")
+            row = listed.iloc[0]
+
+            listed_storage_config = json.loads(row["STORAGE_CONFIG"])
+            self.assertEqual(listed_storage_config["format"], "iceberg", source)
+            self.assertEqual(listed_storage_config["external_volume"], storage_config.external_volume, source)
+            # The listing reports the physical path Snowflake wrote to, which appends a
+            # generated component to the requested BASE_LOCATION, so this is a prefix rather
+            # than an equality. Recovering the registered value for a Dynamic Iceberg Table
+            # needs it persisted at registration; tracked separately.
+            assert storage_config.base_location is not None
+            self.assertStartsWith(listed_storage_config["base_location"], storage_config.base_location, source)
+
+            listed_online_config = json.loads(row["ONLINE_CONFIG"])
+            self.assertTrue(listed_online_config["enable"], source)
+            self.assertEqual(listed_online_config["store_type"], "postgres", source)
+
+        unfiltered = fs.list_feature_views().to_pandas()
+        _assert_listing_row(unfiltered[unfiltered["NAME"] == fv_name.upper()], "list_feature_views()")
+        _assert_listing_row(
+            fs.list_feature_views(feature_view_name=fv_name).to_pandas(),
+            "list_feature_views(feature_view_name=...)",
+        )
+        _assert_listing_row(
+            fs.list_feature_views(entity_name=str(self.user_entity.name), feature_view_name=fv_name).to_pandas(),
+            "list_feature_views(entity_name=...)",
+        )
+
     # =========================================================================
     # Schema validation: all supported column types
     # =========================================================================
 
-    def test_batch_fv_spec_oft_all_supported_types(self) -> None:
-        """Verify all 6 supported types (String, Long, Double, Decimal, Boolean, TimestampNTZ) round-trip."""
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("native", False),
+        ("iceberg", True),
+    )
+    def test_batch_fv_spec_oft_all_supported_types(self, iceberg: bool) -> None:
+        """Verify all 6 supported types (String, Long, Double, Decimal, Boolean, TimestampNTZ) round-trip.
+
+        ``EVENT_TIME`` is the feature view ``timestamp_col`` and is excluded from the online schema.
+        ``LAST_SEEN_TIME`` is the TimestampNTZ feature that can be checked online.
+
+        Source values are TIMESTAMP_NTZ(9). On native storage the offline dynamic table keeps
+        all nine digits, since the batch path never leaves the SQL engine. Iceberg caps
+        ``TIMESTAMP_NTZ`` at scale 6, so the Iceberg offline table holds microseconds.
+        Only the online value is reduced further, and how much depends on
+        ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS``: the ETL truncates to microseconds when
+        it is on and to milliseconds when it is off.
+
+        Args:
+            iceberg: When True, back the offline Dynamic Table with Iceberg storage.
+        """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"BATCH_ALL_TYPES_{s}"
+        label = "ICEBERG" if iceberg else "NATIVE"
+        fv_name = f"BATCH_ALL_TYPES_{label}_{s}"
         entity_key = f"U_ALL_{s}"
+        event_time_src = "2024-06-01 12:34:56.123456789"
+        last_seen_src = "2024-06-01 12:34:57.987654321"
+        event_time_offline = "2024-06-01 12:34:56.123456000" if iceberg else event_time_src
+        last_seen_offline = "2024-06-01 12:34:57.987654000" if iceberg else last_seen_src
+        last_seen_online = (
+            "2024-06-01 12:34:57.987654000"
+            if self._oft_pg_etl_microsecond_timestamps_enabled()
+            else "2024-06-01 12:34:57.987000000"
+        )
 
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.ALL_TYPES_SRC_{s}"
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
                 USER_ID VARCHAR,
-                EVENT_TIME TIMESTAMP_NTZ,
+                EVENT_TIME TIMESTAMP_NTZ(9),
+                LAST_SEEN_TIME TIMESTAMP_NTZ(9),
                 SCORE FLOAT,
                 RANK INT,
                 PRICE NUMBER(10,2),
@@ -1932,7 +2341,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self._session.sql(
             f"""
             INSERT INTO {table_name} VALUES
-            ({entity_key!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), 3.14, 42, 99.95, TRUE)
+            ({entity_key!r}, '{event_time_src}'::TIMESTAMP_NTZ(9), '{last_seen_src}'::TIMESTAMP_NTZ(9),
+             3.14, 42, 99.95, TRUE)
         """
         ).collect()
 
@@ -1943,6 +2353,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             feature_df=feature_df,
             timestamp_col="EVENT_TIME",
             refresh_freq="10 minutes",
+            storage_config=self._maybe_iceberg_storage_config(iceberg),
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
         registered = fs.register_feature_view(fv, "v1")
@@ -1950,12 +2361,28 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._wait_offline_dt_rows(fs, fv_name, "v1")
 
+        offline_row = self._session.sql(
+            f"SELECT TO_VARCHAR(EVENT_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS EVENT_TIME, "
+            f"TO_VARCHAR(LAST_SEEN_TIME, 'YYYY-MM-DD HH24:MI:SS.FF9') AS LAST_SEEN_TIME "
+            f"FROM {registered.fully_qualified_name()} WHERE USER_ID = {entity_key!r}"
+        ).collect()[0]
+        self.assertEqual(offline_row["EVENT_TIME"], event_time_offline)
+        self.assertEqual(offline_row["LAST_SEEN_TIME"], last_seen_offline)
+
         def _validate(pdf):
             row = pdf.iloc[0]
-            self.assertAlmostEqual(float(row["SCORE"]), 3.14, places=1)
-            self.assertEqual(int(row["RANK"]), 42)
+            # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
+            # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
+            # not exact binary values on either path.
+            self.assertAlmostEqual(float(row["SCORE"]), 3.14, places=5)
             self.assertAlmostEqual(float(row["PRICE"]), 99.95, places=2)
+            self.assertEqual(int(row["RANK"]), 42)
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
+            self.assertNotIn("EVENT_TIME", pdf.columns)
+            actual = pd.Timestamp(row["LAST_SEEN_TIME"])
+            if actual.tz is not None:
+                actual = actual.tz_localize(None)
+            self.assertEqual(actual, pd.Timestamp(last_seen_online))
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate, desc="all types BFV")
 
@@ -2078,14 +2505,10 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         # Retry a transient 404; it's a response through the existing client, so reuse holds.
         pdf2 = self._read_online_with_retry(fs, fv_live, keys=[[batch_key]])
         self.assertIs(fs._online_http_client, first_client, "Second read must reuse the same HTTP client.")
-        import pandas as pd
-
         self.assertIsInstance(pdf2, pd.DataFrame)
 
     def test_as_pandas_parity_all_supported_types(self) -> None:
         """``as_pandas=True`` must match ``.to_pandas()`` on the Snowpark path (column order + dtypes)."""
-        import pandas as pd
-
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
         fv_name = f"AS_PANDAS_PARITY_{s}"

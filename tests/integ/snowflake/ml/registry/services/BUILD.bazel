@@ -255,6 +255,18 @@ py_test(
     srcs = ["registry_custom_model_deployment_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_deployment_smoke_test",
+    timeout = "eternal",
+    srcs = ["registry_custom_model_deployment_smoke_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 1,
     tags = [
         "feature:model_serving",
         "smoke_test",

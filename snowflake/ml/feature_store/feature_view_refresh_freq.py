@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pytimeparse.timeparse import timeparse
 
 
-def _is_cron_refresh_freq(refresh_freq: Optional[str]) -> bool:
+def _is_cron_refresh_freq(refresh_freq: str | None) -> bool:
     """Return True iff ``refresh_freq`` is a CRON expression.
 
     A CRON expression is anything that is neither ``None`` / ``"DOWNSTREAM"``

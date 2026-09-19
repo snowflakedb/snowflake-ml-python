@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 import fsspec
 from fsspec.implementations import http as httpfs
@@ -94,8 +94,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         db: str,
         schema: str,
         stage: str,
-        snowpark_session: Optional[snowpark.Session] = None,
-        sf_connection: Optional[connection.SnowflakeConnection] = None,
+        snowpark_session: snowpark.Session | None = None,
+        sf_connection: connection.SnowflakeConnection | None = None,
         **kwargs: Any,
     ) -> None:
         """Initiate the file system with stage information and a snowflake connection.
@@ -148,7 +148,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         func_params_to_log=["detail"],
     )
-    def ls(self, path: str, detail: bool = False) -> Union[list[str], list[dict[str, Any]]]:
+    def ls(self, path: str, detail: bool = False) -> list[str] | list[dict[str, Any]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
         Args:
@@ -195,7 +195,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
-    def optimize_read(self, files: Optional[list[str]] = None) -> None:
+    def optimize_read(self, files: list[str] | None = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the read performance.
 
         All the files introduced here will have their urls cached. Further open() on any of cached urls will lead to a
@@ -375,8 +375,8 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         object_path: str,
         file_size: int,
         file_type: str,
-        md5: Optional[str],
-        last_modified: Optional[str],
+        md5: str | None,
+        last_modified: str | None,
     ) -> None:
         files.setdefault(
             object_path,

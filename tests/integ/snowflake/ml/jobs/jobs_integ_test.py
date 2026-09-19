@@ -1366,6 +1366,60 @@ class JobManagerTest(JobTestBase):
         self.assertIn(runtime_environment, job._container_spec["image"])
         self.assertEqual("1.7.1", job.get_logs(verbose=False).strip(), job_logs)
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("patch_version", "2.9.0"),
+        ("unpublished_patch_version", "2.9.3"),
+    )
+    def test_job_with_runtime_version_pin_uses_local_python_image(self, runtime_environment: str) -> None:
+        # A pin that names no Python variant leaves the client's Python version to pick one, so the job
+        # runs whichever variant of that runtime the deployment holds for the interpreter that submitted
+        # it. The expected image is read back from the deployment rather than spelled out here: a pipeline
+        # on a different Python gets a different variant, and the variant suffix is absent altogether on
+        # the runtime line's default Python. Resolution keys off major.minor, so the unpublished 2.9.3 is
+        # expected to land on the same image as 2.9.0.
+        def report_python_version() -> None:
+            import sys
+
+            print(f"python={sys.version_info.major}.{sys.version_info.minor}")
+
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.value: "true"}):
+            expected_image = self._resolve_for_local_python("2.9.0")
+            job = self._submit_func_as_file(report_python_version, runtime_environment=runtime_environment)
+            self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
+            # The container spec names the image through the account's registry, while resolution returns
+            # the repository path, so compare on the path and tag the two forms share.
+            job_image = job._container_spec["image"]
+            self.assertTrue(
+                job_image.endswith(expected_image),
+                f"job image {job_image} is not the runtime {expected_image} registered for this interpreter",
+            )
+            # The image names the Python it carries, e.g. "...:2.9.0-py312" runs Python 3.12, so that is
+            # what the container must report. An image with no variant suffix is the one built for the
+            # runtime line's default Python, which is the local interpreter whenever no other variant was
+            # selected for it.
+            python_variant = expected_image.rpartition(":")[2].partition("-py")[2]
+            expected_python_version = (
+                f"{python_variant[0]}.{python_variant[1:]}" if python_variant else self._local_python_version()
+            )
+            self.assertIn(f"python={expected_python_version}", job.get_logs(), job_logs)
+
+    def test_job_with_python_suffixed_runtime_pin_ignores_local_python(self) -> None:
+        # A pin that names its own Python variant keeps exactly that image, whichever interpreter
+        # submitted the job, so the client's Python version must not replace or extend the suffix.
+        runtime_environment = "2.9.0-py311"
+
+        def report_python_version() -> None:
+            import sys
+
+            print(f"python={sys.version_info.major}.{sys.version_info.minor}")
+
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.value: "true"}):
+            job = self._submit_func_as_file(report_python_version, runtime_environment=runtime_environment)
+            self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
+            image = job._container_spec["image"]
+            self.assertEqual(runtime_environment, image.rpartition(":")[2], image)
+            self.assertIn("python=3.11", job.get_logs(), job_logs)
+
     def test_get_job_after_job_deleted(self) -> None:
         job = self._submit_func_as_file(dummy_function)
         job.wait()

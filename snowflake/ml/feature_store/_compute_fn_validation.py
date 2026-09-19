@@ -28,7 +28,7 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 # Top-level packages permitted in import statements inside compute_fn.
 ALLOWED_MODULES: frozenset[str] = frozenset({"numpy", "pandas", "re", "copy", "dataclasses"})
@@ -116,7 +116,7 @@ def validate_compute_fn_source(source: str, *, kind: str) -> None:
             )
         if isinstance(node, ast.Call):
             func = node.func
-            fname: Optional[str]
+            fname: str | None
             if isinstance(func, ast.Name):
                 fname = func.id
             elif isinstance(func, ast.Attribute):

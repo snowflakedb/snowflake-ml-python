@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any
 
 import dataset_metadata
 from absl.testing import absltest, parameterized
@@ -156,7 +156,7 @@ class DatasetMetadataTest(parameterized.TestCase):
         # '{"source_query": "test_source", "owner": "test", "label_cols": "col1"}',
         # '{"source_query": "test_source", "owner": "test", "properties": "value"}',
     )
-    def test_deserialize_negative(self, json_str: Optional[str]) -> None:
+    def test_deserialize_negative(self, json_str: str | None) -> None:
         with self.assertRaises(ValueError):
             dataset_metadata.DatasetMetadata.from_json(json_str)
 

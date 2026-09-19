@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,7 @@ _LAZY_UPLOAD_SECRET_ERROR = (
 )
 
 
-def download_token_for_lazy_upload(model: object) -> Optional[str]:
+def download_token_for_lazy_upload(model: object) -> str | None:
     """Return the HuggingFace token to use for lazy upload from a wrapper model.
 
     Args:

@@ -172,6 +172,7 @@ def setUpModule() -> None:
     cleanup_spec_oft_e2e_databases(dbm)
     dbm.cleanup_warehouses(expire_hours=6)
     dbm.cleanup_roles(expire_hours=6)
+    evm.cleanup_external_volumes(external_volume_manager.ICEBERG_VOLUME_NAME_PREFIX, expire_days=1)
 
     run_id = _run_id()
     test_db = f"{SPEC_OFT_E2E_DB_PREFIX}{run_id}"
@@ -271,6 +272,10 @@ def tearDownModule() -> None:
         # Reuse mode: caller owns the DB / schema / Online Service. Don't
         # drop anything; just close the session.
         logger.info("Bundle reuse mode: leaving DB / schema / Online Service intact.")
+
+    evm = _module_state.get("evm")
+    if evm is not None and not _module_state.get("_reuse_mode"):
+        evm.try_drop_shared_iceberg_volumes()
 
     session = _module_state.get("session")
     if session is not None:

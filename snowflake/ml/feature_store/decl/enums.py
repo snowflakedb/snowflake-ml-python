@@ -28,6 +28,13 @@ class OpKind(str, Enum):
     UPDATE_SOURCE = "UPDATE_SOURCE"
     UPDATE_ENTITY = "UPDATE_ENTITY"
     UPDATE_FV = "UPDATE_FV"
+    # Non-destructive in-place schema evolution of an append-only
+    # BatchFeatureView: reinitialises the offline Dynamic Table from the new
+    # transformation while preserving the accumulated ``$SNAPSHOTS`` history,
+    # the ``SNOWML_SNAPSHOT_STATUS`` table, and the snapshot-append Task.
+    # Routed by the planner only for schema-preserving / extend-only edits;
+    # schema-breaking edits still emit the destructive ``RECREATE_FV``.
+    EVOLVE_FV = "EVOLVE_FV"
     RECREATE_FV = "RECREATE_FV"
     RECREATE_SOURCE = "RECREATE_SOURCE"
     DROP_ENTITY = "DROP_ENTITY"

@@ -364,7 +364,7 @@ class MLFlowLoadOptions(BaseModelLoadOption):
 class HuggingFaceLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
     device_map: NotRequired[str]
-    device: NotRequired[Union[str, int]]
+    device: NotRequired[str | int]
 
 
 class SentenceTransformersLoadOptions(BaseModelLoadOption):

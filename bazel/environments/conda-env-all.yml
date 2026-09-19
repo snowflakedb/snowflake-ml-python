@@ -15,7 +15,7 @@ dependencies:
   - catboost==1.2.10
   - cloudpickle==3.1.1
   - cmdstanpy==1.1.0
-  - coverage==7.6.9
+  - coverage==7.11.0
   - flask-cors==3.0.10
   - flask==3.1.2
   - fsspec==2025.10.0
@@ -49,17 +49,16 @@ dependencies:
   - python-build==1.3.0
   - pytimeparse==1.1.8
   - pytorch==2.9.1
-  - pyyaml==6.0.2
+  - pyyaml==6.0.3
   - requests==2.32.5
   - retrying==1.3.3
   - ruamel.yaml==0.18.16
   - scikit-learn==1.7.2
-  - scipy==1.16.2
   - sentence-transformers==5.6.0
   - sentencepiece==0.2.1
   - setuptools==80.10.2
   - shap==0.51.0
-  - snowflake-connector-python==4.2.0
+  - snowflake-connector-python==4.7.2
   - snowflake-snowpark-python==1.54.0
   - snowflake.core==1.12.0
   - sphinx==7.3.7

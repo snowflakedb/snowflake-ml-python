@@ -1,6 +1,6 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
@@ -32,13 +32,13 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def __init__(
         self,
-        collect_result: Union[list[snowpark.Row], MockAsyncJob, Exception] | None = None,
+        collect_result: list[snowpark.Row] | MockAsyncJob | Exception | None = None,
         count_result: int | None = None,
         collect_statement_params: dict[str, str] | None = None,
         count_statement_params: dict[str, str] | None = None,
         check_call_sequence_completion: bool = True,
         columns: list[str] | None = None,
-        collect_block: Optional[bool] = None,
+        collect_block: bool | None = None,
     ) -> None:
         """Initializes MockDataFrame.
 
@@ -98,13 +98,13 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def add_collect_result(
         self,
-        result: Union[list[snowpark.Row], MockAsyncJob, Exception],
-        statement_params: Optional[dict[str, Any]] = None,
-        block: Optional[bool] = None,
+        result: list[snowpark.Row] | MockAsyncJob | Exception,
+        statement_params: dict[str, Any] | None = None,
+        block: bool | None = None,
     ) -> mock_snowml_base.MockSnowMLBase:
         """Convenience helper to set the expected result of a `collect()` operation."""
         check_statement_params = False
-        kwargs: Optional[dict[str, Any]] = None
+        kwargs: dict[str, Any] | None = None
         if statement_params:
             kwargs = {}
             kwargs["statement_params"] = statement_params
@@ -144,7 +144,7 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
     def add_mock_sort(
         self,
         *cols: type_utils.ColumnOrName,
-        ascending: Optional[Union[bool, int, list[Union[bool, int]]]] = None,
+        ascending: bool | int | list[bool | int] | None = None,
         result: MockDataFrame | None = None,
     ) -> MockDataFrame:
         if ascending:

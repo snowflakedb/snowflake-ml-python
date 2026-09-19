@@ -5,7 +5,7 @@ import pathlib
 import tempfile
 import warnings
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import numpy as np
 import pandas as pd
@@ -267,8 +267,8 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         model: "mlflow.pyfunc.PyFuncModel",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.MLFlowSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -432,7 +432,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         cls,
         raw_model: "mlflow.pyfunc.PyFuncModel",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.MLFlowLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model

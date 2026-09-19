@@ -6,7 +6,6 @@ import json
 import re
 import sys
 import urllib.request
-from typing import Optional
 
 SNOWML_PYTHON_PIN_PLACEHOLDER = "__SNOWML_PYTHON_PIN__"
 
@@ -16,7 +15,7 @@ def _parse_version(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
 
-def get_latest_pypi_version(package_name: str) -> Optional[str]:
+def get_latest_pypi_version(package_name: str) -> str | None:
     """Get the latest non-yanked version of a package from PyPI."""
     url = f"https://pypi.org/pypi/{package_name}/json"
     with urllib.request.urlopen(url, timeout=10) as resp:

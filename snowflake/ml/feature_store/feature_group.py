@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal
 
 import snowflake.ml.feature_store.feature_view as fv_mod
 from snowflake.ml._internal.exceptions import (
@@ -100,7 +100,7 @@ def _validate_feature_group_name(name: str) -> None:
         raise ValueError(f"FeatureGroup name `{name}` contains invalid character `{_FEATURE_VIEW_NAME_DELIMITER}`.")
 
 
-def unwrap_fv(item: Union[FeatureView, FeatureViewSlice]) -> FeatureView:
+def unwrap_fv(item: FeatureView | FeatureViewSlice) -> FeatureView:
     """Return the underlying :class:`FeatureView` for an FG/training-set source item.
 
     Args:
@@ -112,7 +112,7 @@ def unwrap_fv(item: Union[FeatureView, FeatureViewSlice]) -> FeatureView:
     return item.feature_view_ref if isinstance(item, FeatureViewSlice) else item
 
 
-def _ref_key(feature: Union[FeatureView, FeatureViewSlice]) -> tuple[str, Optional[str]]:
+def _ref_key(feature: FeatureView | FeatureViewSlice) -> tuple[str, str | None]:
     """Return the ``(name, version)`` identity tuple for a feature item.
 
     Args:
@@ -140,7 +140,7 @@ class FeatureGroup:
     def __init__(
         self,
         name: str,
-        features: list[Union[FeatureView, FeatureViewSlice]],
+        features: list[FeatureView | FeatureViewSlice],
         *,
         desc: str = "",
         auto_prefix: bool = True,
@@ -167,7 +167,7 @@ class FeatureGroup:
         if not features:
             raise ValueError("FeatureGroup requires at least one feature view.")
 
-        seen: dict[tuple[str, Optional[str]], int] = {}
+        seen: dict[tuple[str, str | None], int] = {}
         duplicates: list[str] = []
         for idx, item in enumerate(features):
             if not isinstance(item, (FeatureView, FeatureViewSlice)):
@@ -188,13 +188,13 @@ class FeatureGroup:
             )
 
         self._name: str = name
-        self._features: list[Union[FeatureView, FeatureViewSlice]] = list(features)
+        self._features: list[FeatureView | FeatureViewSlice] = list(features)
         self._desc: str = desc
         self._auto_prefix: bool = auto_prefix
         # Set on register/get_feature_group; ``None`` for drafts (mirrors :attr:`FeatureView._version`).
-        self._version: Optional[FeatureGroupVersion] = None
+        self._version: FeatureGroupVersion | None = None
         # Hydrated on ``get_feature_group``; ``read_feature_group`` raises if still ``None``.
-        self._postgres_online_query_url: Optional[str] = None
+        self._postgres_online_query_url: str | None = None
 
     # -----------------------------------------------------------------------
     # Public surface
@@ -206,7 +206,7 @@ class FeatureGroup:
         return self._name
 
     @property
-    def version(self) -> Optional[FeatureGroupVersion]:
+    def version(self) -> FeatureGroupVersion | None:
         """User-facing FeatureGroup version.
 
         Set by :meth:`FeatureStore.register_feature_group` and
@@ -220,7 +220,7 @@ class FeatureGroup:
         return self._version
 
     @property
-    def features(self) -> list[Union[FeatureView, FeatureViewSlice]]:
+    def features(self) -> list[FeatureView | FeatureViewSlice]:
         """Defensive copy of the source FV references."""
         return list(self._features)
 
@@ -256,9 +256,7 @@ class FeatureGroup:
     # Spec construction
     # -----------------------------------------------------------------------
 
-    def _to_spec(
-        self, *, database: str, schema: str, version: str, session: Optional[Session] = None
-    ) -> FeatureViewSpec:
+    def _to_spec(self, *, database: str, schema: str, version: str, session: Session | None = None) -> FeatureViewSpec:
         """Translate this draft FeatureGroup into a validated spec payload.
 
         Builds an internal ``(name, version)``-keyed prefix map and delegates
@@ -280,7 +278,7 @@ class FeatureGroup:
             FeatureViewSpec: validated spec for this FeatureGroup, ready for
             ``CREATE ONLINE FEATURE TABLE ... FROM SPECIFICATION``.
         """
-        prefix_map: dict[tuple[str, Optional[str]], str] = {}
+        prefix_map: dict[tuple[str, str | None], str] = {}
         for item in self._features:
             prefix = get_feature_prefix(item, self._auto_prefix)
             if not prefix:
@@ -305,7 +303,7 @@ class FeatureGroup:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _feature_column_names(item: Union[FeatureView, FeatureViewSlice]) -> list[str]:
+    def _feature_column_names(item: FeatureView | FeatureViewSlice) -> list[str]:
         """Return the upstream feature column names contributed by *item*.
 
         For a :class:`FeatureViewSlice`, preserves the caller-requested
@@ -360,7 +358,7 @@ _LIST_FEATURE_GROUP_SCHEMA = StructType(
 )
 
 
-def feature_group_oft_name(name: Union[SqlIdentifier, str], version: Union[FeatureGroupVersion, str]) -> SqlIdentifier:
+def feature_group_oft_name(name: SqlIdentifier | str, version: FeatureGroupVersion | str) -> SqlIdentifier:
     """Return the SqlIdentifier ``<name>$<version>$ONLINE`` for the OFT backing a FeatureGroup.
 
     Inputs are canonicalized so any caller-supplied casing yields the same
@@ -388,7 +386,7 @@ def feature_group_oft_name(name: Union[SqlIdentifier, str], version: Union[Featu
 
 
 def validate_sources_online_postgres(
-    features: list[Union[FeatureView, FeatureViewSlice]],
+    features: list[FeatureView | FeatureViewSlice],
     *,
     consumer_label: str,
 ) -> None:
@@ -434,7 +432,7 @@ def reject_name_collision(
     fg_version: str,
     *,
     consumer_label: str = "FeatureGroup",
-    oft_name: Optional[SqlIdentifier] = None,
+    oft_name: SqlIdentifier | None = None,
 ) -> None:
     """Reject ``(name, version)`` if it collides with an existing FV or OFT.
 
@@ -479,7 +477,7 @@ def reject_name_collision(
 
 
 def build_source_refs(
-    features: list[Union[FeatureView, FeatureViewSlice]],
+    features: list[FeatureView | FeatureViewSlice],
 ) -> list[FeatureGroupSourceRef]:
     """Translate FG features into ``FeatureGroupSourceRef`` for persistence.
 
@@ -499,7 +497,7 @@ def build_source_refs(
     for f in features:
         if isinstance(f, FeatureViewSlice):
             fv = f.feature_view_ref
-            slice_columns: Optional[list[str]] = [n.resolved() for n in f.names]
+            slice_columns: list[str] | None = [n.resolved() for n in f.names]
         else:
             fv = f
             slice_columns = None
@@ -518,7 +516,7 @@ def build_source_refs(
 def hydrate_source_refs(
     feature_store: FeatureStore,
     sources: list[FeatureGroupSourceRef],
-) -> list[Union[FeatureView, FeatureViewSlice]]:
+) -> list[FeatureView | FeatureViewSlice]:
     """Inverse of :func:`build_source_refs`: re-fetch + re-project each source FV.
 
     Args:
@@ -530,12 +528,10 @@ def hydrate_source_refs(
         Live FeatureView / FeatureViewSlice objects in the original order,
         with slice / alias projection reapplied.
     """
-    features: list[Union[FeatureView, FeatureViewSlice]] = []
+    features: list[FeatureView | FeatureViewSlice] = []
     for src in sources:
         fv = feature_store.get_feature_view(src.fv_name, src.fv_version)
-        item: Union[FeatureView, FeatureViewSlice] = (
-            fv.slice(src.slice_columns) if src.slice_columns is not None else fv
-        )
+        item: FeatureView | FeatureViewSlice = fv.slice(src.slice_columns) if src.slice_columns is not None else fv
         if src.alias is not None:
             item = item.with_name(src.alias)
         features.append(item)
@@ -879,10 +875,10 @@ def _fg_has_request_source_rtfv(fg: FeatureGroup) -> bool:
 def _resolve_fg_request_context(
     fg: FeatureGroup,
     *,
-    request_context: Optional[pd.DataFrame],
+    request_context: pd.DataFrame | None,
     keys: list[list[Any]],
     pandas_mod: Any,
-) -> Optional[list[dict[str, Any]]]:
+) -> list[dict[str, Any]] | None:
     """Validate ``request_context`` for the FG read and return the per-row payload.
 
     Required iff at least one RTFV source declares a ``RequestSource``;
@@ -1205,12 +1201,12 @@ def register_feature_group(fs: FeatureStore, feature_group: FeatureGroup, versio
 
 def read_feature_group(
     fs: FeatureStore,
-    feature_group: Union[FeatureGroup, str],
-    version: Optional[str],
+    feature_group: FeatureGroup | str,
+    version: str | None,
     *,
     keys: list[list[Any]],
-    store_type: Union[fv_mod.StoreType, str],
-    request_context: Optional[pd.DataFrame] = None,
+    store_type: fv_mod.StoreType | str,
+    request_context: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Read FG values via the Online Service Query API. See :meth:`FeatureStore.read_feature_group`.
 
@@ -1331,12 +1327,12 @@ def read_feature_group(
 def prepare_training_set_args(
     fs: FeatureStore,
     *,
-    feature_group: Union[FeatureGroup, tuple[str, str]],
-    exclude_columns: Optional[list[str]],
+    feature_group: FeatureGroup | tuple[str, str],
+    exclude_columns: list[str] | None,
     include_feature_view_timestamp_col: bool,
     auto_prefix: bool,
     join_method: Literal["sequential", "cte"],
-) -> tuple[list[Union[FeatureView, FeatureViewSlice]], bool, Literal["sequential", "cte"]]:
+) -> tuple[list[FeatureView | FeatureViewSlice], bool, Literal["sequential", "cte"]]:
     """Validate FG-incompatible ``generate_training_set`` params and return ``(features, auto_prefix, join_method)``.
 
     The FG owns its features, prefixing, and join strategy, so this helper

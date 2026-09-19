@@ -1,5 +1,5 @@
 from collections import abc
-from typing import TYPE_CHECKING, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -45,7 +45,7 @@ class PyTorchTensorHandler(base_handler.BaseDataHandler["torch.Tensor"]):
         )
 
     @staticmethod
-    def convert_from_df(df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None) -> "torch.Tensor":
+    def convert_from_df(df: pd.DataFrame, features: Sequence[core.BaseFeatureSpec] | None = None) -> "torch.Tensor":
         import torch
 
         if features is None:
@@ -100,7 +100,7 @@ class SeqOfPyTorchTensorHandler(base_handler.BaseDataHandler[Sequence["torch.Ten
 
     @staticmethod
     def convert_from_df(
-        df: pd.DataFrame, features: Optional[Sequence[core.BaseFeatureSpec]] = None
+        df: pd.DataFrame, features: Sequence[core.BaseFeatureSpec] | None = None
     ) -> Sequence["torch.Tensor"]:
         import torch
 

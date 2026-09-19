@@ -1,4 +1,5 @@
 import inspect
+import logging
 import os
 import tempfile
 
@@ -9,11 +10,15 @@ from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
 from snowflake import snowpark
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import custom_model, model_signature, openai_signatures
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
+
+logger = logging.getLogger(__name__)
 
 _NUM_PARTITIONS = 2
 _NUM_ROWS_PER_PARTITION = 10
@@ -293,6 +298,9 @@ _GPU_XGBOOST_MODEL_SIGNATURES = {
 
 
 class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    _PARTITION_ON_WRITE_PARAM = platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE
+    _partition_on_write_param_set: bool = False
+
     @classmethod
     def setUpClass(cls) -> None:
         # HF_HOME, not TRANSFORMERS_CACHE: the latter is ignored by current huggingface_hub, which
@@ -308,6 +316,26 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         else:
             os.environ.pop("HF_HOME", None)
         cls.cache_dir.cleanup()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._partition_on_write_param_set = False
+        try:
+            self.session.sql(f"ALTER SESSION SET {self._PARTITION_ON_WRITE_PARAM} = false").collect()
+        except Exception as e:
+            logger.warning("Could not disable %s: %s", self._PARTITION_ON_WRITE_PARAM, e)
+            return
+        self._partition_on_write_param_set = True
+        platform_capabilities.PlatformCapabilities._instance = None
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        if self._partition_on_write_param_set:
+            try:
+                self.session.sql(f"ALTER SESSION UNSET {self._PARTITION_ON_WRITE_PARAM}").collect()
+            except Exception as e:
+                logger.warning("Could not unset %s: %s", self._PARTITION_ON_WRITE_PARAM, e)
+        super().tearDown()
 
     def _compare_with_warehouse(
         self,

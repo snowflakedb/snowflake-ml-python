@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 2.1.0
+  version: 2.2.0
 requirements:
   build:
     - python
@@ -42,7 +42,6 @@ requirements:
     - pyyaml>=6.0,<7
     - requests
     - retrying>=1.3.3,<2
-    - scipy>=1.9,<2
     - snowflake-connector-python>=3.17.3,<5
     - snowflake-snowpark-python>=1.37.0,<2
     - sqlparse>=0.4,<1
@@ -59,7 +58,7 @@ requirements:
     - mlflow>=2.16.0, <4
     - prophet>=1.1.0, <2
     - pytorch>=2.0.1,<3
-    - scikit-learn<1.9
+    - scikit-learn<2
     - sentence-transformers>=2.7.0,<6
     - sentencepiece>=0.1.95,<0.3
     - shap>=0.46.0,<1
