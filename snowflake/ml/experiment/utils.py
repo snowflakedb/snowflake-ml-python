@@ -1,8 +1,8 @@
 import numbers
-from typing import Any, Union
+from typing import Any
 
 
-def flatten_nested_params(params: Union[list[Any], dict[str, Any]], prefix: str = "") -> dict[str, Any]:
+def flatten_nested_params(params: list[Any] | dict[str, Any], prefix: str = "") -> dict[str, Any]:
     flat_params = {}
     items = params.items() if isinstance(params, dict) else enumerate(params)
     for key, value in items:

@@ -5,7 +5,7 @@ They carry no connection handles, cursors, or runtime state — this makes
 them suitable as REST request/response bodies when GS capabilities are added.
 """
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -55,7 +55,7 @@ class AppliedObject(BaseModel):
     key: str
     kind: str
     name: str
-    version: Optional[str] = None
+    version: str | None = None
     content_hash: str = ""
     spec_payload: dict[str, Any] = {}
     columns: list[FSColumn] = []

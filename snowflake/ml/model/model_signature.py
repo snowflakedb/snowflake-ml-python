@@ -1,7 +1,7 @@
 import enum
 import json
 import warnings
-from typing import Any, Literal, Optional, Sequence, Union, cast
+from typing import Any, Literal, Sequence, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -59,7 +59,7 @@ _MODEL_TELEMETRY_SUBPROJECT = "ModelSignature"
 
 def _truncate_data(
     data: type_hints.SupportedDataType,
-    length: Optional[int] = 100,
+    length: int | None = 100,
 ) -> type_hints.SupportedDataType:
     for handler in _ALL_DATA_HANDLERS:
         if handler.can_handle(data):
@@ -157,7 +157,7 @@ def _has_fixed_dimensions(shape: tuple[int, ...]) -> bool:
 
 
 def _validate_array_or_series_type(
-    arr: Union[type_hints._SupportedNumpyArray, pd.Series], feature_type: core.DataType, strict: bool = False
+    arr: type_hints._SupportedNumpyArray | pd.Series, feature_type: core.DataType, strict: bool = False
 ) -> bool:
     original_dtype = arr.dtype
     dtype = arr.dtype
@@ -421,7 +421,7 @@ class SnowparkIdentifierRule(enum.Enum):
 
 def _get_dataframe_values_range(
     df: snowflake.snowpark.DataFrame,
-) -> dict[str, Union[tuple[int, int], tuple[float, float]]]:
+) -> dict[str, tuple[int, int] | tuple[float, float]]:
     columns = [
         F.array_construct(F.min(field.name), F.max(field.name)).as_(field.name)
         for field in df.schema.fields
@@ -556,7 +556,7 @@ def _validate_snowpark_type_feature(
     field: spt.StructField,
     ft_type: DataType,
     ft_name: str,
-    value_range: Optional[Union[tuple[int, int], tuple[float, float]]],
+    value_range: tuple[int, int] | tuple[float, float] | None,
     strict: bool = False,
 ) -> None:
     field_data_type = field.datatype
@@ -735,11 +735,11 @@ def _params_from_dict(params_dict: dict[str, Any]) -> list[core.ParamSpec]:
 def infer_signature(
     input_data: type_hints.SupportedLocalDataType,
     output_data: type_hints.SupportedLocalDataType,
-    input_feature_names: Optional[list[str]] = None,
-    output_feature_names: Optional[list[str]] = None,
-    input_data_limit: Optional[int] = 100,
-    output_data_limit: Optional[int] = 100,
-    params: Optional[Union[Sequence[core.BaseParamSpec], dict[str, Any]]] = None,
+    input_feature_names: list[str] | None = None,
+    output_feature_names: list[str] | None = None,
+    input_data_limit: int | None = 100,
+    output_data_limit: int | None = 100,
+    params: Sequence[core.BaseParamSpec] | dict[str, Any] | None = None,
 ) -> core.ModelSignature:
     """
     Infer model signature from given input and output sample data.

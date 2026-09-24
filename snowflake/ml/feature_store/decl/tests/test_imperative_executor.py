@@ -7,12 +7,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.ml.feature_store.decl import imperative_executor as _ie
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.errors import DependencyError
 from snowflake.ml.feature_store.decl.imperative_executor import (
     _build_feature_df,
     _build_feature_view,
     _build_features,
+    _build_streaming_backfill_df,
+    _serialize_batch_fv_spec,
+    _spec_columns_to_struct_type,
     execute_plan,
     fetch_entity_rows,
 )
@@ -213,6 +217,78 @@ class TestFetchEntityRows:
         assert applied.kind == "Entity"
         assert applied.name == "USER"
         assert applied.details["join_keys"] == ["USER_ID"]
+
+
+class TestFetchEntityRowsRetry:
+    """``fetch_entity_rows`` must survive a single transient
+    ``list_entities().collect()`` failure (the warehouse
+    auto-suspend race documented in
+    ``plans/bug_cleanup_sweep_list_entities_warehouse_suspend_race.md``).
+
+    ``FeatureStore.list_entities()`` is ``SHOW TAGS … .select(…)``, so
+    Snowpark appends a warehouse-bound ``RESULT_SCAN`` SELECT to the
+    ``.collect()``; that SELECT loses a race against an idle warehouse
+    suspending mid-queue and raises
+    ``"Warehouse … was suspended while SQL was waiting to be
+    scheduled"``.  The read path must retry (the retry itself triggers
+    warehouse auto-resume) and, only if it still fails, re-raise — it
+    must NEVER convert the failure into an empty entity list, because
+    an empty applied-state entity set spuriously produces
+    ``MISSING_ENTITY`` for every FV referencing that entity.
+    """
+
+    _SUSPEND_ERR = (
+        "090109 (22000): Warehouse 'JKEW_WH' was suspended while SQL was "
+        "waiting to be scheduled. SQL execution canceled."
+    )
+
+    def test_retries_transient_collect_failure_then_succeeds(self) -> None:
+        session = MagicMock(name="session")
+        listed_rows = [
+            {
+                "NAME": "USER",
+                "JOIN_KEYS": '["USER_ID"]',
+                "DESC": "User entity.",
+                "OWNER": "ROLE_X",
+            }
+        ]
+        df = MagicMock(name="DataFrame")
+        # First collect loses the race; the retry succeeds.
+        df.collect.side_effect = [RuntimeError(self._SUSPEND_ERR), listed_rows]
+        fs = MagicMock(name="FeatureStore")
+        fs.list_entities.return_value = df
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs,
+        ):
+            rows = fetch_entity_rows(session, "DB", "SCH", "WH")
+
+        assert len(rows) == 1
+        assert rows[0]["name"] == "SNOWML_FEATURE_STORE_ENTITY_USER"
+        # The retry must have re-collected exactly once after the first loss.
+        assert df.collect.call_count == 2
+        # The retry path must NOT reach for raw session.sql (the
+        # zero-session.sql read-path contract must hold on retry too).
+        session.sql.assert_not_called()
+
+    def test_reraises_after_retries_exhausted_never_returns_empty(self) -> None:
+        session = MagicMock(name="session")
+        df = MagicMock(name="DataFrame")
+        # Every attempt loses the race.
+        df.collect.side_effect = RuntimeError(self._SUSPEND_ERR)
+        fs = MagicMock(name="FeatureStore")
+        fs.list_entities.return_value = df
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs,
+        ), pytest.raises(RuntimeError, match="suspended while SQL"):
+            fetch_entity_rows(session, "DB", "SCH", "WH")
+
+        # Retry actually happened (more than one collect attempt) — a
+        # single un-retried loss is exactly the bug we are closing.
+        assert df.collect.call_count >= 2
 
 
 class TestExecuteEntityOps:
@@ -419,10 +495,13 @@ class TestExecuteEntityOps:
         ), pytest.raises(snowml_exceptions.SnowflakeMLException):
             execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions(allow_recreate=True))
 
-    def test_update_entity_calls_fs_update_entity_with_desc(self) -> None:
-        """``UPDATE_ENTITY`` dispatches to
-        ``FeatureStore.update_entity(name, desc=...)``. Join keys are
-        not forwarded; the public API does not accept them.
+    def test_update_entity_forwards_desc_only_not_join_keys(self) -> None:
+        """``UPDATE_ENTITY`` dispatches to ``FeatureStore.update_entity``
+        forwarding **only** ``desc``.  Entity join keys are immutable after
+        creation (2026-07-31 design decision) and the desc-only imperative
+        ``update_entity`` accepts no ``join_keys=`` keyword — join-key edits
+        are rejected at plan time by ``ENTITY_JOIN_KEY_IMMUTABLE`` before
+        this path is reached.
         """
         session = MagicMock(name="session")
         fs = MagicMock(name="FeatureStore")
@@ -444,15 +523,9 @@ class TestExecuteEntityOps:
         ):
             execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions())
 
-        fs.update_entity.assert_called_once()
-        call = fs.update_entity.call_args
-        # Positional or keyword — accept either, but the name must be present.
-        if call.args:
-            assert call.args[0] == "USER"
-        else:
-            assert call.kwargs.get("name") == "USER"
-        assert call.kwargs.get("desc") == "Updated desc"
-        assert "join_keys" not in call.kwargs
+        fs.update_entity.assert_called_once_with("USER", desc="Updated desc")
+        _, kwargs = fs.update_entity.call_args
+        assert "join_keys" not in kwargs
         for sql_call in session.sql.call_args_list:
             assert "ALTER TAG" not in sql_call.args[0].upper()
 
@@ -1153,6 +1226,104 @@ class TestBuildFeatureViewStreaming:
         assert sc_calls == [], "StreamConfig must NOT be constructed for non-streaming FVs"
 
 
+class TestBuildStreamingBackfillDf:
+    """``_build_streaming_backfill_df`` must resolve an unqualified
+    ``backfill.table`` against the FeatureStore's *target* database/schema,
+    not the Snowpark session's connection-profile default schema.
+
+    Regression coverage for the P2 correctness bug where
+    ``session.table("RAW_CLICK_HISTORY_DECL")`` resolved in the connection
+    profile schema (e.g. ``JKEW_SCHEMA``) instead of the apply target schema
+    (e.g. ``SNOWCLI_FS_ONLINE``) — either failing with "Object ... does not
+    exist" or, worse, silently reading a same-named table in the wrong schema.
+    """
+
+    _STREAM_SOURCE_SPEC: dict[str, Any] = {
+        "name": "CLICKSTREAM_EVENTS",
+        "source_type": "Stream",
+        "columns": [
+            {"name": "USER_ID", "type": "StringType"},
+            {"name": "TIMESTAMP", "type": "TimestampType"},
+        ],
+    }
+
+    def test_unqualified_backfill_table_is_qualified_with_target_schema(self) -> None:
+        """An unqualified table name is prefixed with ``<database>.<schema>``."""
+        session = _mock_fv_session()
+        sentinel = MagicMock(name="backfill_df")
+        session.table.return_value = sentinel
+
+        result = _build_streaming_backfill_df(
+            {"table": "MY_TABLE"},
+            self._STREAM_SOURCE_SPEC,
+            session,
+            "DB",
+            "SCH",
+        )
+
+        session.table.assert_called_once_with("DB.SCH.MY_TABLE")
+        assert result is sentinel
+        session.create_dataframe.assert_not_called()
+
+    def test_fully_qualified_backfill_table_passes_through_unchanged(self) -> None:
+        """A name already carrying a ``.`` is a cross-schema reference and
+        MUST be resolved verbatim so operators can point at other schemas."""
+        session = _mock_fv_session()
+        sentinel = MagicMock(name="backfill_df")
+        session.table.return_value = sentinel
+
+        result = _build_streaming_backfill_df(
+            {"table": "OTHER_DB.OTHER_SCH.HIST"},
+            self._STREAM_SOURCE_SPEC,
+            session,
+            "DB",
+            "SCH",
+        )
+
+        session.table.assert_called_once_with("OTHER_DB.OTHER_SCH.HIST")
+        assert result is sentinel
+
+    def test_unqualified_backfill_table_without_target_context_passes_through(self) -> None:
+        """Defensive: with empty ``database``/``schema`` the name is left
+        unqualified (the pre-fix behaviour) rather than emitting a malformed
+        ``..MY_TABLE`` reference."""
+        session = _mock_fv_session()
+        sentinel = MagicMock(name="backfill_df")
+        session.table.return_value = sentinel
+
+        result = _build_streaming_backfill_df(
+            {"table": "MY_TABLE"},
+            self._STREAM_SOURCE_SPEC,
+            session,
+            "",
+            "",
+        )
+
+        session.table.assert_called_once_with("MY_TABLE")
+        assert result is sentinel
+
+    def test_no_backfill_table_synthesizes_one_row_dataframe(self) -> None:
+        """Without ``backfill.table`` the helper synthesizes a typed one-row
+        DataFrame and never touches ``session.table``."""
+        session = _mock_fv_session()
+        synthetic = MagicMock(name="synthetic_backfill_df")
+        session.create_dataframe.return_value = synthetic
+
+        result = _build_streaming_backfill_df(
+            {},
+            self._STREAM_SOURCE_SPEC,
+            session,
+            "DB",
+            "SCH",
+        )
+
+        session.create_dataframe.assert_called_once()
+        rows_arg = session.create_dataframe.call_args.args[0]
+        assert isinstance(rows_arg, list) and len(rows_arg) == 1
+        assert result is synthetic
+        session.table.assert_not_called()
+
+
 class TestPhaseESourceRefsWritePath:
     """Phase E (A-bis) — ``_build_feature_view`` MUST stamp ``_source_refs``
     onto the ``FeatureView`` kwargs so ``register_feature_view``'s metadata
@@ -1691,6 +1862,31 @@ class TestBuildFeatureViewStreamingAggregation:
         assert features[0]._function is AggregationType.SUM
         assert features[1]._function is AggregationType.MAX
 
+    def test_streaming_fv_stddev_function_string_to_aggregation_type(self) -> None:
+        """function="stddev" (the SQL / SPECIFICATION spelling Snowflake
+        returns for standard deviation) must resolve to
+        AggregationType.STD.  The enum value stays the imperative wire token
+        ``"std"``; ``AggregationType._missing_`` maps the SPECIFICATION
+        spelling ``"stddev"`` back to ``STD`` so the
+        ``AggregationType(str(fn_name).lower())`` lookup in
+        ``_build_features`` succeeds instead of raising ``ValueError:
+        'stddev' is not a valid AggregationType``.
+        """
+        from snowflake.ml.feature_store.aggregation import AggregationType
+
+        stddev_features = [
+            {
+                "function": "stddev",
+                "window_sec": 3600,
+                "source_column": {"name": "ENGAGEMENT_SCORE", "type": "DoubleType"},
+                "output_column": {"name": "ENGAGEMENT_STD_1H", "type": "DoubleType"},
+            },
+        ]
+        fv_calls, _ = self._run_build(_streaming_fv_payload(features=stddev_features))
+        features = fv_calls[0].get("features", [])
+        assert len(features) == 1
+        assert features[0]._function is AggregationType.STD
+
     def test_streaming_fv_alias_set_from_output_column(self) -> None:
         """The payload's output_column.name must surface as the imperative
         Feature._alias so the deployed FV's _feature_desc is keyed off
@@ -1841,6 +2037,7 @@ class TestBuildFeatureViewStreamingAggregation:
         payload["refresh_freq"] = "1 minute"
         fv_calls, _ = self._run_build(payload)
         assert fv_calls[0].get("refresh_freq") == "1 minute"
+        assert "target_lag" not in fv_calls[0]
         assert "target_lag_sec" not in fv_calls[0]
 
     def test_non_tiled_streaming_fv_keeps_no_refresh_freq_default(self) -> None:
@@ -2743,6 +2940,7 @@ class TestAssertFeatureStoreInitialized:
 
     def test_returns_fs_when_tags_present(self) -> None:
         from snowflake.ml.feature_store.decl import imperative_executor
+        from snowflake.ml.feature_store.online_service import OnlineServiceAccess
 
         fs_instance = MagicMock(name="FeatureStore")
         session = MagicMock(name="session")
@@ -2754,6 +2952,10 @@ class TestAssertFeatureStoreInitialized:
 
         assert result is fs_instance
         mock_fs_cls.assert_called_once()
+        # The declarative client pins the public Online Service URL so
+        # CLI ingest/query never auto-route to an unresolvable PrivateLink
+        # host from networks without PrivateLink DNS.
+        assert mock_fs_cls.call_args.kwargs["online_service_access"] is OnlineServiceAccess.PUBLIC
 
     def test_raises_feature_store_not_initialized_when_internal_tags_missing(self) -> None:
         from snowflake.ml._internal.exceptions import (
@@ -3748,13 +3950,24 @@ class TestUpdateFvStreaming:
 
     Before B7 the executor rejected non-BatchFV kinds with a hard
     ``ValueError``.  A5 extended ``FeatureStore.update_feature_view``
-    to accept the streaming-compatible kwargs (``refresh_freq``,
-    ``warehouse``, ``desc``, ``online_config``), so the executor must
-    now forward them instead of raising.
+    to accept the streaming-compatible kwargs (``desc``, ``online_config``,
+    and — only for a DT-backed tiled streaming FV — ``refresh_freq`` /
+    ``warehouse``), so the executor must now forward them instead of
+    raising.  A VIEW-backed (STATIC) streaming FV must NOT receive
+    ``warehouse``: ``FeatureStore.update_feature_view`` rejects it with
+    error 2110 ("Static feature view '<NAME>' does not support
+    refresh_freq, warehouse, and initialization_warehouse.").
     """
 
     def test_routes_to_extended_fs_update(self) -> None:
-        """StreamingFV UPDATE_FV must reach ``fs.update_feature_view`` (no ValueError)."""
+        """StreamingFV UPDATE_FV must reach ``fs.update_feature_view`` (no ValueError).
+
+        This payload is a *non-tiled* streaming FV (no ``features`` /
+        ``feature_granularity`` and no ``refresh_freq``), so it
+        materialises as a zero-lag VIEW — ``FeatureViewStatus.STATIC``.
+        A STATIC FV rejects ``warehouse`` (and ``refresh_freq``) at the
+        imperative layer, so the executor must forward ``desc`` only.
+        """
         from snowflake.ml.feature_store.decl.imperative_executor import (
             _execute_update_feature_view,
         )
@@ -3796,9 +4009,293 @@ class TestUpdateFvStreaming:
         assert "refresh_freq" not in kwargs, (
             "StreamingFV update must not forward refresh_freq; " f"got kwargs={kwargs!r}"
         )
-        assert kwargs.get("warehouse") == "WH_NEW", (
-            "StreamingFV update must forward ``warehouse``; " f"got kwargs={kwargs!r}"
+        # ``warehouse`` is the managed Dynamic Table refresh warehouse.
+        # This non-tiled streaming FV compiles to a zero-lag VIEW
+        # (FeatureViewStatus.STATIC) which rejects ``warehouse`` with
+        # error 2110 — so the executor must NOT forward it, even when a
+        # hand-built payload carries an explicit ``warehouse`` value.
+        assert "warehouse" not in kwargs, (
+            "Non-tiled (STATIC) StreamingFV update must not forward warehouse "
+            "— FeatureStore.update_feature_view rejects it with error 2110.  "
+            f"Got kwargs={kwargs!r}"
         )
+
+    def test_continuous_streaming_update_omits_warehouse(self) -> None:
+        """A *continuous* (non-tiled) streaming FV with description drift and
+        no authored ``warehouse`` must NOT receive the connection-default
+        ``warehouse``.
+
+        Mirrors ``USER_CLICK_STATS_CONTINUOUS_DECL``: the payload carries
+        ``features`` (aggregations) but no ``feature_granularity`` and no
+        ``refresh_freq``, so Snowflake materialises it as a zero-lag VIEW
+        (``FeatureViewStatus.STATIC``).  The historical bug forwarded
+        ``default_warehouse`` for every non-realtime FV, tripping error
+        2110 on this shape.
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="USER_CLICK_STATS_CONTINUOUS_DECL",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "USER_CLICK_STATS_CONTINUOUS_DECL",
+                "version": "V1",
+                "feature_aggregation_method": "continuous",
+                "features": [{"output_column": {"name": "TOTAL_ENGAGEMENT_1H"}}],
+                "description": "updated continuous desc",
+            },
+        )
+        _execute_update_feature_view(fs, op, "JKEW_WH")
+
+        fs.update_feature_view.assert_called_once()
+        _, kwargs = fs.update_feature_view.call_args
+        assert kwargs.get("desc") == "updated continuous desc", (
+            "Continuous StreamingFV update must forward the description drift " f"as ``desc``; got kwargs={kwargs!r}"
+        )
+        assert "warehouse" not in kwargs, (
+            "Continuous (STATIC) StreamingFV update must NOT forward the "
+            "connection-default warehouse — FeatureStore.update_feature_view "
+            f"rejects it with error 2110.  Got kwargs={kwargs!r}"
+        )
+
+    def test_tiled_streaming_without_refresh_freq_omits_warehouse(self) -> None:
+        """A *tiled* streaming FV that carries ``feature_granularity`` +
+        ``features`` but NO ``refresh_freq`` still materialises as a
+        zero-lag VIEW (``FeatureViewStatus.STATIC``) — so ``warehouse``
+        must NOT be forwarded.
+
+        This is the case the naive ``is_batch or is_tiled_streaming`` gate
+        would miss: ``is_tiled_streaming`` is ``True`` here (``features`` +
+        ``feature_granularity_sec`` are present), yet the FV is still a
+        VIEW because it never became a managed Dynamic Table.  Mirrors
+        ``USER_CLICK_STATS_DECL``.
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="USER_CLICK_STATS_DECL",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "USER_CLICK_STATS_DECL",
+                "version": "V1",
+                "feature_granularity_sec": 300,
+                "feature_aggregation_method": "tiles",
+                "features": [
+                    {
+                        "function": "sum",
+                        "window_sec": 3600,
+                        "source_column": {"name": "ENGAGEMENT"},
+                        "output_column": {"name": "TOTAL_ENGAGEMENT_1H"},
+                    }
+                ],
+                "description": "updated tiled desc",
+            },
+        )
+        _execute_update_feature_view(fs, op, "JKEW_WH")
+
+        fs.update_feature_view.assert_called_once()
+        _, kwargs = fs.update_feature_view.call_args
+        assert "warehouse" not in kwargs, (
+            "Tiled-but-refresh_freq-less StreamingFV materialises as a VIEW "
+            "(STATIC) and must NOT forward warehouse.  Got kwargs="
+            f"{kwargs!r}"
+        )
+
+    def test_tiled_streaming_with_refresh_freq_forwards_warehouse(self) -> None:
+        """A *tiled* streaming FV that carries ``refresh_freq`` materialises
+        its aggregate as a managed Dynamic Table, so ``warehouse`` (and
+        ``refresh_freq``) ARE valid and must be forwarded.
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="SFV_TILED_DT",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "SFV_TILED_DT",
+                "version": "V1",
+                "feature_granularity_sec": 300,
+                "feature_aggregation_method": "tiles",
+                "features": [
+                    {
+                        "function": "sum",
+                        "window_sec": 3600,
+                        "source_column": {"name": "ENGAGEMENT"},
+                        "output_column": {"name": "TOTAL_ENGAGEMENT_1H"},
+                    }
+                ],
+                "refresh_freq": "5 minutes",
+                "warehouse": "WH_NEW",
+                "description": "updated dt desc",
+            },
+        )
+        _execute_update_feature_view(fs, op, "WH0")
+
+        fs.update_feature_view.assert_called_once()
+        _, kwargs = fs.update_feature_view.call_args
+        assert kwargs.get("warehouse") == "WH_NEW", (
+            "Tiled StreamingFV with refresh_freq is a managed Dynamic Table; "
+            f"warehouse must be forwarded.  Got kwargs={kwargs!r}"
+        )
+        assert kwargs.get("refresh_freq") == "5 minutes", (
+            "Tiled StreamingFV with refresh_freq must forward the offline DT " f"cadence.  Got kwargs={kwargs!r}"
+        )
+
+    def test_streaming_update_omits_online_config_enable(self) -> None:
+        """A StreamingFV UPDATE_FV must NOT forward ``online_config`` and
+        must NOT refuse the op just because the payload carries ``online``.
+
+        A ``StreamingFeatureView`` is always online by design (the spec
+        model defaults ``online=True`` and rejects ``online=False``), so
+        the full authoring payload the planner attaches always carries
+        ``online: true``.  That value is not an in-place online *toggle* —
+        the OFT was already materialised at ``CREATE_FV`` time.  Forwarding
+        ``online_config=OnlineConfig(enable=True, ...)`` would drive
+        ``FeatureStore.update_feature_view`` into
+        ``_create_online_feature_table``, whose streaming branch asserts
+        ``feature_view.stream_config is not None`` — ``None`` for a
+        StreamingFV recovered as a zero-lag VIEW
+        (``FeatureViewStatus.STATIC``) — surfacing as the empty-message
+        ``(1300) Update feature view <NAME>/V1 failed:`` (see
+        ``plans/done.bug_update_fv_error_1300.md``).  The executor
+        therefore omits ``online_config`` for streaming.  With online as
+        the sole "drift" and no other operational edit, ``kwargs`` is empty
+        and the executor returns without calling ``update_feature_view`` —
+        no false-1300, no spurious ALTER.
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="USER_CLICK_STATS_CONTINUOUS_DECL",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "USER_CLICK_STATS_CONTINUOUS_DECL",
+                "version": "V1",
+                "online": True,
+            },
+        )
+        # Must not raise: ``online: true`` on a StreamingFV is the
+        # always-online authored value, not an in-place toggle request.
+        _execute_update_feature_view(fs, op, "JKEW_WH")
+
+        # No other operational drift → empty kwargs → no imperative call.
+        fs.update_feature_view.assert_not_called()
+
+    def test_streaming_update_with_online_true_forwards_desc(self) -> None:
+        """A StreamingFV UPDATE_FV carrying ``online: true`` plus a real
+        ``description`` edit must apply the ``desc`` via
+        ``update_feature_view`` and must NOT forward ``online_config``.
+
+        Regression for the reviewer finding: refusing every StreamingFV
+        ``UPDATE_FV`` whose payload contains ``online`` blocked supported
+        operational edits (``desc`` / tiled ``refresh_freq`` / warehouse)
+        that never touch online routing.  Because a StreamingFV is always
+        online, ``online: true`` in the full authoring payload is the
+        default authored value — the executor must still apply the other
+        operational knobs and leave ``online_config`` out (streaming OFT
+        create is recreate-only; see
+        ``test_streaming_update_omits_online_config_enable``).
+        """
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _execute_update_feature_view,
+        )
+
+        fs = MagicMock()
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="USER_CLICK_STATS_DECL",
+            depends_on=[],
+            destructive=False,
+            reason="test",
+            payload={
+                "kind": "StreamingFeatureView",
+                "name": "USER_CLICK_STATS_DECL",
+                "version": "V1",
+                "online": True,
+                "description": "new streaming desc",
+            },
+        )
+        _execute_update_feature_view(fs, op, "JKEW_WH")
+
+        fs.update_feature_view.assert_called_once()
+        _, kwargs = fs.update_feature_view.call_args
+        assert kwargs.get("desc") == "new streaming desc", (
+            "A StreamingFV UPDATE_FV with a description edit must forward " f"``desc``.  Got kwargs={kwargs!r}"
+        )
+        assert "online_config" not in kwargs, (
+            "A StreamingFV UPDATE_FV must NOT forward ``online_config`` "
+            "(online routing is recreate-only for streaming FVs; error "
+            f"1300).  Got kwargs={kwargs!r}"
+        )
+
+    def test_streaming_online_only_drift_does_not_report_success(self) -> None:
+        """An online-only StreamingFV ``UPDATE_FV`` must run through
+        ``execute_plan`` without raising and without calling
+        ``update_feature_view``.
+
+        ``online: true`` on a StreamingFV is the always-online authored
+        value, not an in-place toggle.  With no other operational drift the
+        executor builds empty kwargs and returns, so ``execute_plan`` does
+        not raise (the op is a no-op at the imperative layer) and never
+        drives the ``_create_online_feature_table`` error-1300 path.
+        """
+        plan = Plan(
+            ops=[
+                PlanOp(
+                    kind=OpKind.UPDATE_FV,
+                    name="SFV",
+                    depends_on=[],
+                    destructive=False,
+                    reason="test",
+                    payload={
+                        "kind": "StreamingFeatureView",
+                        "name": "SFV",
+                        "version": "V1",
+                        "online": True,
+                    },
+                )
+            ],
+            warnings=[],
+        )
+        session = MagicMock(name="session")
+        fs_instance = MagicMock(name="FeatureStore")
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs_instance,
+        ):
+            # Must not raise: no online toggle is being requested.
+            execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions())
+
+        fs_instance.update_feature_view.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -3808,8 +4305,7 @@ class TestUpdateFvStreaming:
 
 class TestRefreshFreqForwarding:
     """``_build_feature_view`` and ``_execute_update_feature_view`` must
-    read the renamed authoring key ``refresh_freq`` (not the legacy
-    ``refresh_freq``) from the plan payload.
+    read the authoring key ``refresh_freq`` from the plan payload.
 
     The forwarding is tiling-and-kind aware: BatchFeatureView and
     **tiled** StreamingFeatureView (which schedule an offline Dynamic
@@ -3889,9 +4385,10 @@ class TestRefreshFreqForwarding:
         )
 
     def test_build_non_tiled_streaming_fv_does_not_forward_refresh_freq(self) -> None:
-        """A non-tiled streaming payload (no aggregation windows) has no
-        offline Dynamic Table to schedule, so even a smuggled
-        ``refresh_freq`` must not reach the constructor.
+        """A *non-tiled* streaming payload (no features / granularity)
+        compiles to a zero-lag VIEW and carries no DT cadence, so the
+        executor must NOT forward ``refresh_freq`` even when a hand-built
+        payload smuggles it past the validator (defence-in-depth).
         """
         fv_calls, fake_fv = self._patch_fv_constructor()
         sc_calls, fake_sc = self._patch_stream_config()
@@ -4023,8 +4520,537 @@ class TestRefreshFreqForwarding:
         )
 
 
+class TestSerializeBatchFvSpec:
+    """Direct coverage of ``_serialize_batch_fv_spec`` — the tiled offline
+    BFV state-recovery serialization path (Bug B2).
+
+    This surface had no direct unit test before.  The tiled path swaps the
+    raw-source schema onto ``fv._feature_df`` so
+    ``_build_batch_feature_view_spec`` can resolve aggregation source
+    columns (e.g. ``AMOUNT``) that no longer exist on the post-aggregation
+    materialized Dynamic Table.  When that substitution is skipped the
+    builder raises ``Column '…' not found in resolution pool`` and the
+    caller returns ``None`` — invisible to the planner and the root cause
+    of the spurious ``RECREATE_FV`` loop on ``MY_ADV_BFV_DECL``.
+
+    ``_build_batch_feature_view_spec`` itself is snowml-core owned and
+    exhaustively tested there; here it is mocked so the assertions isolate
+    the decl-side schema-recovery contract (Fix A/B/C).
+    """
+
+    _ADV_SOURCE_COLUMNS = [
+        {"name": "USER_ID", "type": "StringType"},
+        {"name": "SESSION_ID", "type": "StringType"},
+        {"name": "EVENT_TS", "type": "TimestampType"},
+        # ``FloatType`` is the exact type the ``EVENTS_ADV_DECL`` datasource
+        # stamps for ``AMOUNT`` — the recovery helper must accept it.
+        {"name": "AMOUNT", "type": "FloatType"},
+    ]
+
+    _DB = "JKEW_DB"
+    _SCHEMA = "JKEW_SCHEMA"
+    _PHYS_DT = "MY_ADV_BFV_DECL_DT"
+
+    def _row_dict(self) -> dict[str, Any]:
+        return {
+            "name": "MY_ADV_BFV_DECL",
+            "version": "V1",
+            "database_name": self._DB,
+            "schema_name": self._SCHEMA,
+            "physical_dt_name": self._PHYS_DT,
+            "refresh_freq": "5 minutes",
+            "online_enabled": False,
+            "warehouse": "JKEW_WH",
+        }
+
+    @property
+    def _dt_fq(self) -> str:
+        return f"{self._DB}.{self._SCHEMA}.{self._PHYS_DT}"
+
+    @property
+    def _raw_fq(self) -> str:
+        return f"{self._DB}.{self._SCHEMA}.RAW_EVENTS_ADV_DECL"
+
+    def _spec_dict(self) -> dict[str, Any]:
+        """A representative ``FeatureViewSpec.to_dict()`` payload for a
+        tiled BFV, as ``_build_batch_feature_view_spec`` would return once
+        the raw-source schema substitution has succeeded.
+
+        Returns:
+            A SPECIFICATION-shaped dict with a populated ``spec.features``
+            aggregation list.
+        """
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": self._DB,
+                "schema": self._SCHEMA,
+                "name": "MY_ADV_BFV_DECL",
+                "version": "V1",
+            },
+            "offline_configs": [{"store_type": "snowflake", "table": self._PHYS_DT}],
+            "spec": {
+                "ordered_entity_column_names": ["USER_ID"],
+                "sources": [{"name": "EVENTS_ADV_DECL", "columns": list(self._ADV_SOURCE_COLUMNS)}],
+                "features": [
+                    {
+                        "source_column": {"name": "AMOUNT", "type": "FloatType"},
+                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "FloatType"},
+                        "function": "sum",
+                        "window_sec": 3600,
+                    }
+                ],
+                "target_lag_sec": 300,
+            },
+        }
+
+    def _make_fv(self, *, source_refs: Any, output_schema: Any = None) -> MagicMock:
+        fv = MagicMock(name="feature_view")
+        fv.is_tiled = True
+        fv.is_rollup = False
+        fv.source_refs = source_refs
+        fv.output_schema = output_schema
+        # Sentinel standing in for the post-aggregation DT dataframe snowml
+        # rehydrates; the recovery path must replace it with a raw-source df.
+        fv._feature_df = object()
+        return fv
+
+    def _make_fs(self, fv: MagicMock) -> MagicMock:
+        fs = MagicMock(name="FeatureStore")
+        fs.get_feature_view.return_value = fv
+        spec = MagicMock(name="feature_view_spec")
+        spec.to_dict.return_value = self._spec_dict()
+        fs._build_batch_feature_view_spec.return_value = spec
+        return fs
+
+    def _make_session(self, *, dt_schema: Any = None, dt_raises: bool = False) -> MagicMock:
+        session = MagicMock(name="session")
+        empty_df = MagicMock(name="empty_raw_df")
+        session.create_dataframe.return_value = empty_df
+        session._empty_df = empty_df  # test handle
+        calls: list[str] = []
+
+        def _table(fq: str) -> Any:
+            calls.append(fq)
+            if dt_raises:
+                raise RuntimeError("DT not materialized yet (initialize: ON_CREATE)")
+            m = MagicMock(name=f"table({fq})")
+            m.schema = dt_schema
+            return m
+
+        session.table.side_effect = _table
+        session._table_calls = calls  # test handle
+        return session
+
+    def test_tiled_bfv_serializes_from_stamped_columns(self) -> None:
+        """Happy path: stamped ``source_refs`` carry both ``table`` and
+        ``columns``.  The raw-source schema is rebuilt from the stamped
+        ``columns`` (no live raw-table read) and swapped onto
+        ``fv._feature_df``; the builder receives the live DT schema as
+        ``offline_materialized_schema`` and serialization succeeds with a
+        populated ``features`` list.
+        """
+        fv = self._make_fv(
+            source_refs=[
+                {
+                    "name": "EVENTS_ADV_DECL",
+                    "source_type": "Batch",
+                    "table": "RAW_EVENTS_ADV_DECL",
+                    "columns": list(self._ADV_SOURCE_COLUMNS),
+                }
+            ]
+        )
+        dt_schema = MagicMock(name="dt_schema")
+        session = self._make_session(dt_schema=dt_schema)
+        fs = self._make_fs(fv)
+
+        result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is not None
+        assert result["spec"]["features"], "aggregation features must survive serialization"
+        # Fix A: schema recovered from stamped columns → live raw table never read.
+        assert self._dt_fq in session._table_calls
+        assert self._raw_fq not in session._table_calls
+        # Substitution happened: the raw-source empty df replaced the DT df.
+        assert fv._feature_df is session._empty_df
+        _, kwargs = fs._build_batch_feature_view_spec.call_args
+        assert kwargs["offline_materialized_schema"] is dt_schema
+
+    def test_tiled_bfv_serializes_from_columns_without_table(self) -> None:
+        """``source_refs`` carry ``columns`` but no ``table`` (the old code
+        keyed exclusively off ``table`` and skipped substitution here).
+        The schema must still be rebuilt from ``columns`` and no raw-table
+        read is attempted.
+        """
+        fv = self._make_fv(source_refs=[{"name": "EVENTS_ADV_DECL", "columns": list(self._ADV_SOURCE_COLUMNS)}])
+        dt_schema = MagicMock(name="dt_schema")
+        session = self._make_session(dt_schema=dt_schema)
+        fs = self._make_fs(fv)
+
+        result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is not None
+        assert fv._feature_df is session._empty_df
+        # Only the DT schema read occurred; there is no raw table to read.
+        assert session._table_calls == [self._dt_fq]
+
+    def test_tiled_bfv_uses_output_schema_when_dt_schema_unavailable(self) -> None:
+        """``initialize: ON_CREATE`` can leave the materialized DT schema
+        temporarily unreadable.  When ``session.table(<dt>).schema`` raises,
+        the builder must fall back to ``fv.output_schema`` rather than
+        passing ``None`` (which makes the tiled builder raise) — otherwise
+        serialization fails even though ``source_refs`` are stamped.
+        """
+        fv = self._make_fv(
+            source_refs=[{"name": "EVENTS_ADV_DECL", "columns": list(self._ADV_SOURCE_COLUMNS)}],
+            output_schema=MagicMock(name="output_schema"),
+        )
+        session = self._make_session(dt_raises=True)
+        fs = self._make_fs(fv)
+
+        with patch.object(_ie.logger, "debug") as mock_debug:
+            result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is not None
+        _, kwargs = fs._build_batch_feature_view_spec.call_args
+        assert kwargs["offline_materialized_schema"] is fv.output_schema
+        # The swallowed DT-schema read must leave a debug breadcrumb naming the FV.
+        mock_debug.assert_called()
+        logged = " ".join(str(arg) for call in mock_debug.call_args_list for arg in call.args)
+        assert "MY_ADV_BFV_DECL" in logged
+
+    def test_tiled_bfv_without_source_refs_returns_none_and_warns(self) -> None:
+        """Pin the intentional legacy contract: with no ``source_refs``
+        stamped, the raw-source schema cannot be recovered, the builder
+        raises the resolution-pool error, and the function returns ``None``
+        (so the caller falls back to the minimal spec → one-time
+        ``RECREATE_FV`` stamps the metadata).  This path must NOT be
+        "fixed" to succeed, but it MUST log an actionable warning naming
+        the feature view instead of swallowing the failure silently.
+        """
+        fv = self._make_fv(source_refs=None, output_schema=None)
+        original_df = fv._feature_df
+        dt_schema = MagicMock(name="dt_schema")
+        session = self._make_session(dt_schema=dt_schema)
+        fs = self._make_fs(fv)
+        fs._build_batch_feature_view_spec.side_effect = ValueError(
+            "Column 'AMOUNT' not found in resolution pool. Available columns: ['AMOUNT_SUM_1H', 'TILE_START']"
+        )
+
+        with patch.object(_ie.logger, "warning") as mock_warning:
+            result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is None
+        # No substitution occurred — the DT dataframe was left untouched.
+        assert fv._feature_df is original_df
+        session.create_dataframe.assert_not_called()
+        mock_warning.assert_called()
+        warned = " ".join(str(arg) for call in mock_warning.call_args_list for arg in call.args)
+        assert "MY_ADV_BFV_DECL" in warned
+
+    def test_get_feature_view_failure_returns_none_and_debug_logs(self) -> None:
+        """When ``FeatureStore.get_feature_view`` itself raises, recovery is
+        over immediately: the function returns ``None`` and never reaches the
+        spec builder.  This is the true silent-``None`` abort (the caller then
+        falls back to the minimal spec), so it MUST leave a debug breadcrumb
+        naming the FV — but NOT a warning (that is reserved for the
+        spec-builder failure).
+        """
+        fv = self._make_fv(source_refs=None)
+        fs = self._make_fs(fv)
+        fs.get_feature_view.side_effect = RuntimeError("insufficient privileges on schema")
+        session = self._make_session(dt_schema=MagicMock(name="dt_schema"))
+
+        with patch.object(_ie.logger, "debug") as mock_debug, patch.object(_ie.logger, "warning") as mock_warning:
+            result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is None
+        fs._build_batch_feature_view_spec.assert_not_called()
+        mock_warning.assert_not_called()
+        mock_debug.assert_called()
+        logged = " ".join(str(arg) for call in mock_debug.call_args_list for arg in call.args)
+        assert "MY_ADV_BFV_DECL" in logged
+
+    def test_tiled_bfv_raw_source_read_failure_debug_logs(self) -> None:
+        """``source_refs`` carry a ``table`` binding but no ``columns``, so the
+        raw-source schema must be read live — and that read raises (the DT
+        schema read still succeeds).  The substitution is best-effort: the
+        spec build below is still attempted (and succeeds here via the builder
+        mock), but the swallowed substitution error MUST leave a debug
+        breadcrumb naming the FV instead of a bare ``pass``.
+        """
+        fv = self._make_fv(source_refs=[{"name": "EVENTS_ADV_DECL", "table": "RAW_EVENTS_ADV_DECL"}])
+        original_df = fv._feature_df
+        dt_schema = MagicMock(name="dt_schema")
+
+        session = MagicMock(name="session")
+        session.create_dataframe.return_value = MagicMock(name="empty_raw_df")
+        calls: list[str] = []
+
+        def _table(fq: str) -> Any:
+            calls.append(fq)
+            if fq == self._raw_fq:
+                raise RuntimeError("raw source table not readable")
+            m = MagicMock(name=f"table({fq})")
+            m.schema = dt_schema
+            return m
+
+        session.table.side_effect = _table
+        fs = self._make_fs(fv)
+
+        with patch.object(_ie.logger, "debug") as mock_debug:
+            result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        # Spec build still succeeds via the builder mock.
+        assert result is not None
+        # The raw read raised before substitution, so the DT df is untouched.
+        assert fv._feature_df is original_df
+        assert self._raw_fq in calls
+        mock_debug.assert_called()
+        logged = " ".join(str(arg) for call in mock_debug.call_args_list for arg in call.args)
+        assert "MY_ADV_BFV_DECL" in logged
+
+    def test_tiled_bfv_result_preserves_features_and_secondary_keys(self) -> None:
+        """The serialized ``spec_text`` for the live tiled offline BFV must
+        carry BOTH the windowed aggregation ``features`` and the
+        ``aggregation_secondary_keys``.  Dropping either is what made the
+        applied hash drift from the local compile and reopened
+        ``bug_offline_bfv_invisible_after_apply`` for the tiled shape.
+        """
+        fv = self._make_fv(
+            source_refs=[
+                {
+                    "name": "EVENTS_ADV_DECL",
+                    "source_type": "Batch",
+                    "table": "RAW_EVENTS_ADV_DECL",
+                    "columns": list(self._ADV_SOURCE_COLUMNS),
+                }
+            ]
+        )
+        dt_schema = MagicMock(name="dt_schema")
+        session = self._make_session(dt_schema=dt_schema)
+        fs = self._make_fs(fv)
+        # Mirror the tiled ``_build_batch_feature_view_spec(...).to_dict()``
+        # output: windowed feature + secondary keys present.
+        tiled_spec = self._spec_dict()
+        tiled_spec["spec"]["aggregation_secondary_keys"] = ["SESSION_ID"]
+        fs._build_batch_feature_view_spec.return_value.to_dict.return_value = tiled_spec
+
+        result = _serialize_batch_fv_spec(fs, session, self._row_dict())
+
+        assert result is not None
+        inner = result["spec"]
+        assert inner["features"], "windowed aggregation features must survive serialization"
+        assert inner.get("aggregation_secondary_keys") == ["SESSION_ID"]
+
+
+class TestOpResultRowType:
+    """The plan/apply display rows carry an object ``type`` before ``name``.
+
+    ``snow feature plan`` / ``snow feature apply`` should surface the spec
+    kind (``BatchFeatureView``, ``StreamingFeatureView``, ``Entity``,
+    ``FeatureGroup``, …) as the first column, matching ``snow feature
+    list``.  The row builder is the single source of truth for that order.
+    """
+
+    def test_op_result_row_orders_type_before_name(self) -> None:
+        op = PlanOp(
+            kind=OpKind.CREATE_FV,
+            name="MY_BFV",
+            reason="new",
+            payload={"kind": "BatchFeatureView", "name": "MY_BFV"},
+        )
+        row = _ie._op_result_row(op, status="success")
+        assert list(row.keys())[:2] == ["type", "name"]
+        assert row["type"] == "BatchFeatureView"
+        assert row["name"] == "MY_BFV"
+        assert row["operation"] == "CREATE_FV"
+        assert row["status"] == "success"
+
+    def test_op_result_row_omits_status_when_not_supplied(self) -> None:
+        op = PlanOp(kind=OpKind.NO_CHANGE, name="X", payload={"kind": "Entity"})
+        row = _ie._op_result_row(op)
+        assert "status" not in row
+        assert row["type"] == "Entity"
+
+    def test_op_result_row_surfaces_version_after_name(self) -> None:
+        """The ops table must carry the object version right after the name.
+
+        Object identity is (name, version); the operator needs the version to
+        tell which of two same-named FVs an op targets.  Read from a top-level
+        ``version`` on the payload.
+        """
+        op = PlanOp(
+            kind=OpKind.CREATE_FV,
+            name="MY_BFV",
+            payload={"kind": "BatchFeatureView", "name": "MY_BFV", "version": "V2"},
+        )
+        row = _ie._op_result_row(op)
+        assert list(row.keys())[:3] == ["type", "name", "version"]
+        assert row["version"] == "V2"
+
+    def test_op_result_row_reads_version_from_metadata(self) -> None:
+        """Compiled payloads nest the version under ``metadata``."""
+        op = PlanOp(
+            kind=OpKind.UPDATE_FV,
+            name="MY_BFV",
+            payload={"kind": "BatchFeatureView", "metadata": {"name": "MY_BFV", "version": "V3"}},
+        )
+        row = _ie._op_result_row(op)
+        assert row["version"] == "V3"
+
+    def test_op_result_row_version_blank_for_unversioned(self) -> None:
+        """Entity / Datasource are unversioned, so the version cell is blank."""
+        op = PlanOp(kind=OpKind.CREATE_ENTITY, name="USER", payload={"kind": "Entity", "name": "USER"})
+        row = _ie._op_result_row(op)
+        assert row["version"] == ""
+
+    def test_op_type_label_prefers_payload_kind(self) -> None:
+        op = PlanOp(
+            kind=OpKind.CREATE_FV,
+            name="S",
+            payload={"kind": "StreamingFeatureView"},
+        )
+        assert _ie._op_type_label(op) == "StreamingFeatureView"
+
+    def test_op_type_label_falls_back_to_op_kind(self) -> None:
+        """With no ``payload['kind']`` the coarse ``OpKind`` family is used."""
+        assert _ie._op_type_label(PlanOp(kind=OpKind.CREATE_ENTITY, name="E")) == "Entity"
+        assert _ie._op_type_label(PlanOp(kind=OpKind.CREATE_FG, name="G")) == "FeatureGroup"
+        assert _ie._op_type_label(PlanOp(kind=OpKind.UPDATE_FV, name="V")) == "FeatureView"
+        assert _ie._op_type_label(PlanOp(kind=OpKind.DROP_SOURCE, name="D")) == "Datasource"
+        assert _ie._op_type_label(PlanOp(kind=OpKind.NO_CHANGE, name="N")) == ""
+
+    def test_execute_plan_refused_rows_carry_type(self) -> None:
+        """Refused/skipped rows built before FeatureStore construction
+        still carry the object ``type`` from the payload kind."""
+        plan = Plan(
+            ops=[
+                PlanOp(
+                    kind=OpKind.RECREATE_FV,
+                    name="USER_CLICK_STATS_DECL",
+                    destructive=True,
+                    payload={"kind": "StreamingFeatureView", "name": "USER_CLICK_STATS_DECL"},
+                ),
+                PlanOp(
+                    kind=OpKind.CREATE_ENTITY,
+                    name="USER_ID",
+                    destructive=False,
+                    payload={"kind": "Entity", "name": "USER_ID"},
+                ),
+            ],
+            warnings=[],
+        )
+        session = MagicMock(name="session")
+        result = execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions(allow_recreate=False))
+
+        assert result.status == "refused"
+        by_name = {op["name"]: op for op in result.ops}
+        assert by_name["USER_CLICK_STATS_DECL"]["type"] == "StreamingFeatureView"
+        assert by_name["USER_ID"]["type"] == "Entity"
+        for op in result.ops:
+            assert list(op.keys())[:2] == ["type", "name"]
+
+    def test_execute_plan_no_change_row_carries_type(self) -> None:
+        plan = Plan(
+            ops=[
+                PlanOp(
+                    kind=OpKind.NO_CHANGE,
+                    name="USER_FRAUD_FG_DECL",
+                    payload={"kind": "FeatureGroup", "name": "USER_FRAUD_FG_DECL"},
+                )
+            ],
+            warnings=[],
+        )
+        session = MagicMock(name="session")
+        with patch("snowflake.ml.feature_store.feature_store.FeatureStore"):
+            result = execute_plan(plan, session, "DB", "SCH", "WH", PlanOptions())
+
+        assert result.ops[0]["type"] == "FeatureGroup"
+        assert result.ops[0]["status"] == "skipped"
+
+
+class TestSpecColumnsToStructType:
+    """``_spec_columns_to_struct_type`` must rebuild every type the tiled
+    serializer (``spec.models._columns_from_tiled_struct_type``) can emit.
+
+    Imperative registration auto-stamps ``FV_SOURCE_REFS`` via that tiled
+    serializer, which carries ``BinaryType`` (e.g. HLL-sketch inputs) and
+    ``ArrayType`` (distinct-N / list-aggregation partials, with an
+    ``element_type``). State recovery reconstructs the raw-source schema from
+    those stamped columns through this converter, so it must accept them
+    symmetrically instead of raising and silently forcing a ``RECREATE_FV``.
+    """
+
+    @staticmethod
+    def _type_names(schema: Any) -> list[str]:
+        return [type(f.datatype).__name__ for f in schema.fields]
+
+    def test_binary_column_rebuilds(self) -> None:
+        schema = _spec_columns_to_struct_type(
+            [
+                {"name": "KEY", "type": "StringType"},
+                {"name": "SKETCH", "type": "BinaryType"},
+            ]
+        )
+        assert self._type_names(schema) == ["StringType", "BinaryType"]
+
+    def test_array_column_rebuilds_with_element_type(self) -> None:
+        from snowflake.snowpark.types import ArrayType, DoubleType
+
+        schema = _spec_columns_to_struct_type(
+            [
+                {"name": "USER_ID", "type": "StringType"},
+                {"name": "LAST_5_SCORES", "type": "ArrayType", "element_type": "DoubleType"},
+            ]
+        )
+        assert self._type_names(schema) == ["StringType", "ArrayType"]
+        array_field = schema.fields[1].datatype
+        assert isinstance(array_field, ArrayType)
+        assert isinstance(array_field.element_type, DoubleType)
+
+    def test_array_column_without_element_type_rebuilds(self) -> None:
+        """A physical ``ARRAY_AGG`` tile reports no usable element type
+        (``element_type=None``); it must still rebuild as a bare ``ArrayType``."""
+        from snowflake.snowpark.types import ArrayType
+
+        schema = _spec_columns_to_struct_type([{"name": "VALUES", "type": "ArrayType"}])
+        assert isinstance(schema.fields[0].datatype, ArrayType)
+
+    def test_binary_array_mix_matches_tiled_serializer_round_trip(self) -> None:
+        """The converter must accept exactly what the tiled serializer emits."""
+        from snowflake.ml.feature_store.spec.models import (
+            _columns_from_tiled_struct_type,
+        )
+        from snowflake.snowpark.types import (
+            ArrayType,
+            BinaryType,
+            DoubleType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        raw = StructType(
+            [
+                StructField("PERSONUUID", StringType()),
+                StructField("DEVICEACCESSIP", StringType()),
+                StructField("SKETCH", BinaryType()),
+                StructField("LAST_N", ArrayType(DoubleType())),
+            ]
+        )
+        stamped = [c.model_dump(exclude_none=True) for c in _columns_from_tiled_struct_type(raw)]
+        rebuilt = _spec_columns_to_struct_type(stamped)
+        assert self._type_names(rebuilt) == ["StringType", "StringType", "BinaryType", "ArrayType"]
+
+
+# ---------------------------------------------------------------------------
+# 5d.2 — incomplete aggregation features + unmocked tiled-streaming _validate
+# ---------------------------------------------------------------------------
+
+
 class TestBuildFeaturesIncomplete:
-    """Incomplete aggregation rows must raise instead of being dropped."""
+    """Incomplete aggregation rows are dropped at apply time; ``FEATURE_INCOMPLETE`` fires at plan."""
 
     def test_passthrough_returns_empty(self) -> None:
         features = _build_features(
@@ -4051,6 +5077,20 @@ class TestBuildFeaturesIncomplete:
         assert len(features) == 1
         assert features[0]._window == "3600s"
 
+    def test_bare_numeric_window_is_skipped(self) -> None:
+        """Incomplete rows are dropped here; ``FEATURE_INCOMPLETE`` fires at plan."""
+        features = _build_features(
+            [
+                {
+                    "function": "sum",
+                    "window": "300",
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+                }
+            ]
+        )
+        assert features == []
+
     def test_specification_stddev_spelling_resolves_to_std(self) -> None:
         """Apply consumes Snowflake's SPECIFICATION spelling ``stddev``.
 
@@ -4074,55 +5114,42 @@ class TestBuildFeaturesIncomplete:
         assert len(features) == 1
         assert features[0]._function is AggregationType.STD
 
-    def test_bare_numeric_window_raises(self) -> None:
-        with pytest.raises(ValueError, match="window"):
-            _build_features(
-                [
-                    {
-                        "function": "sum",
-                        "window": "300",
-                        "source_column": {"name": "AMOUNT", "type": "DoubleType"},
-                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
-                    }
-                ]
-            )
+    def test_missing_window_is_skipped(self) -> None:
+        features = _build_features(
+            [
+                {
+                    "function": "sum",
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+                }
+            ]
+        )
+        assert features == []
 
-    def test_missing_window_raises(self) -> None:
-        with pytest.raises(ValueError, match="window"):
-            _build_features(
-                [
-                    {
-                        "function": "sum",
-                        "source_column": {"name": "AMOUNT", "type": "DoubleType"},
-                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
-                    }
-                ]
-            )
+    def test_missing_function_is_skipped(self) -> None:
+        features = _build_features(
+            [
+                {
+                    "window_sec": 3600,
+                    "source_column": {"name": "AMOUNT", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+                }
+            ]
+        )
+        assert features == []
 
-    def test_missing_function_raises(self) -> None:
-        with pytest.raises(ValueError, match="function"):
-            _build_features(
-                [
-                    {
-                        "window_sec": 3600,
-                        "source_column": {"name": "AMOUNT", "type": "DoubleType"},
-                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
-                    }
-                ]
-            )
-
-    def test_missing_source_column_raises(self) -> None:
-        with pytest.raises(ValueError, match="source_column"):
-            _build_features(
-                [
-                    {
-                        "function": "sum",
-                        "window_sec": 3600,
-                        "source_column": {"name": "", "type": "DoubleType"},
-                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
-                    }
-                ]
-            )
+    def test_missing_source_column_is_skipped(self) -> None:
+        features = _build_features(
+            [
+                {
+                    "function": "sum",
+                    "window_sec": 3600,
+                    "source_column": {"name": "", "type": "DoubleType"},
+                    "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+                }
+            ]
+        )
+        assert features == []
 
 
 class TestBuildFeatureViewUnmockedTiledStreamingValidate:

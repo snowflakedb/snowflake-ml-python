@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -142,7 +142,7 @@ class ModelFactory:
         return estimator, df.head(10), df
 
     @staticmethod
-    def prepare_gpt2_model(local_cache_dir: Optional[str] = None) -> tuple[custom_model.CustomModel, pd.DataFrame]:
+    def prepare_gpt2_model(local_cache_dir: str | None = None) -> tuple[custom_model.CustomModel, pd.DataFrame]:
         """
         Pretrained GPT2 model from huggingface.
         """
@@ -267,7 +267,7 @@ class ModelFactory:
         import tensorflow as tf
 
         class SimpleModule(tf.Module):
-            def __init__(self, name: Optional[str] = None) -> None:
+            def __init__(self, name: str | None = None) -> None:
                 super().__init__(name=name)
                 self.a_variable = tf.Variable(5.0, name="train_me")
                 self.non_trainable_variable = tf.Variable(5.0, trainable=False, name="do_not_train_me")

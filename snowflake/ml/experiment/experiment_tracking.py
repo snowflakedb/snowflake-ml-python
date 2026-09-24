@@ -6,7 +6,7 @@ import traceback
 import warnings
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote
 
 from snowflake import snowpark
@@ -38,7 +38,7 @@ class ExperimentTracking:
     Class to manage experiments in Snowflake.
     """
 
-    _instance: Optional["ExperimentTracking"] = None
+    _instance: "ExperimentTracking | None" = None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "ExperimentTracking":
         if cls._instance is None:

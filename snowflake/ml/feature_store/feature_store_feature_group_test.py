@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
@@ -58,8 +58,8 @@ def _make_registered_fv(
     online: bool = True,
     store_type: OnlineStoreType = OnlineStoreType.POSTGRES,
     entity_name: str = "USER",
-    entity_join_keys: Optional[list[str]] = None,
-    schema_key_col: Optional[str] = None,
+    entity_join_keys: list[str] | None = None,
+    schema_key_col: str | None = None,
 ) -> FeatureView:
     """Build a FeatureView that looks registered for FeatureGroup tests."""
     join_keys = entity_join_keys or ["USER_ID"]
@@ -103,9 +103,9 @@ def _make_registered_rtfv(
     name: str,
     version: str,
     output_fields: list[StructField],
-    request_fields: Optional[list[StructField]] = None,
-    upstream: Optional[FeatureView] = None,
-    join_keys: Optional[list[str]] = None,
+    request_fields: list[StructField] | None = None,
+    upstream: FeatureView | None = None,
+    join_keys: list[str] | None = None,
     with_request_source: bool = True,
 ) -> FeatureView:
     """Build a FeatureView that looks like a registered RTFV for FG tests.
@@ -153,8 +153,8 @@ def _make_registered_rtfv(
 
 def _new_fs_with_mocks(
     *,
-    metadata_manager: Optional[MagicMock] = None,
-    session: Optional[MagicMock] = None,
+    metadata_manager: MagicMock | None = None,
+    session: MagicMock | None = None,
 ) -> FeatureStore:
     """Construct a bare-bones FeatureStore with all I/O mocked."""
     fs = object.__new__(FeatureStore)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import http
 import logging
 from datetime import timedelta
-from typing import Optional
 
 import requests
 from cryptography.hazmat.primitives.asymmetric import types
@@ -19,18 +18,18 @@ def get_jwt_token_generator(
     account: str,
     user: str,
     private_key: types.PrivateKeyTypes,
-    lifetime: Optional[timedelta] = None,
-    renewal_delay: Optional[timedelta] = None,
+    lifetime: timedelta | None = None,
+    renewal_delay: timedelta | None = None,
 ) -> jwt_generator.JWTGenerator:
     return jwt_generator.JWTGenerator(account, user, private_key, lifetime=lifetime, renewal_delay=renewal_delay)
 
 
 def _get_snowflake_token_by_jwt(
     jwt_token_generator: jwt_generator.JWTGenerator,
-    account: Optional[str] = None,
-    role: Optional[str] = None,
-    endpoint: Optional[str] = None,
-    snowflake_account_url: Optional[str] = None,
+    account: str | None = None,
+    role: str | None = None,
+    endpoint: str | None = None,
+    snowflake_account_url: str | None = None,
 ) -> str:
     scope_role = f"session:role:{role}" if role is not None else None
     scope = " ".join(filter(None, [scope_role, endpoint]))
@@ -63,10 +62,10 @@ class SnowflakeJWTTokenAuth(auth.AuthBase):
     def __init__(
         self,
         jwt_token_generator: jwt_generator.JWTGenerator,
-        account: Optional[str] = None,
-        role: Optional[str] = None,
-        endpoint: Optional[str] = None,
-        snowflake_account_url: Optional[str] = None,
+        account: str | None = None,
+        role: str | None = None,
+        endpoint: str | None = None,
+        snowflake_account_url: str | None = None,
     ) -> None:
         self.snowflake_token = _get_snowflake_token_by_jwt(
             jwt_token_generator, account, role, endpoint, snowflake_account_url

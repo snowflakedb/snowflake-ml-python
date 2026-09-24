@@ -5,7 +5,7 @@ import os
 import tempfile
 import warnings
 from importlib import metadata as importlib_metadata
-from typing import Any, Mapping, Optional, cast
+from typing import Any, Mapping, cast
 from unittest import mock
 
 import numpy as np
@@ -1657,8 +1657,8 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         local_dir: str,
         filename: str,
         modules: list[dict[str, object]],
-        pooling_config: Optional[Mapping[str, Any]] = None,
-        dense_config: Optional[Mapping[str, Any]] = None,
+        pooling_config: Mapping[str, Any] | None = None,
+        dense_config: Mapping[str, Any] | None = None,
     ) -> str:
         if filename == "modules.json":
             with open(os.path.join(local_dir, "modules.json"), "w") as f:

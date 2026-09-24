@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier
@@ -20,7 +20,7 @@ class ModelMonitorManager:
         database_name: sql_identifier.SqlIdentifier,
         schema_name: sql_identifier.SqlIdentifier,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """
         Opens a ModelMonitorManager for a given database and schema.
@@ -64,7 +64,7 @@ class ModelMonitorManager:
             f"Found: {existing_target_methods}."
         )
 
-    def _build_column_list_from_input(self, columns: Optional[list[str]]) -> list[sql_identifier.SqlIdentifier]:
+    def _build_column_list_from_input(self, columns: list[str] | None) -> list[sql_identifier.SqlIdentifier]:
         return [sql_identifier.SqlIdentifier(column_name) for column_name in columns] if columns else []
 
     def add_monitor(

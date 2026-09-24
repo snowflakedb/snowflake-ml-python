@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import keras
 from absl.testing import absltest, parameterized
@@ -26,7 +26,7 @@ class SnowflakeKerasCallbackTest(SnowflakeCallbackTest, parameterized.TestCase):
         super()._log_metrics(keras.Sequential, log_every_n_epochs=log_every_n_epochs)
 
     @parameterized.product(model_name=[None, "custom_model_name"], version_name=[None, "v1"])  # type: ignore[misc]
-    def test_log_model(self, model_name: Optional[str] = None, version_name: Optional[str] = None) -> None:
+    def test_log_model(self, model_name: str | None = None, version_name: str | None = None) -> None:
         super()._log_model(keras.Sequential, model_name, version_name)
 
     def test_log_param(self) -> None:

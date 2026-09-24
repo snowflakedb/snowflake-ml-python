@@ -308,7 +308,7 @@ class TestFetchFeatureViewRowsApiFacade:
         ) as mock_fetch:
             result = decl_api.fetch_feature_view_rows(session, "DB", "SCH", "WH")
 
-        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH")
+        mock_fetch.assert_called_once_with(session, "DB", "SCH", "WH", on_progress=None)
         assert result == [{"name": "FV", "version": "V1"}]
 
 
@@ -397,6 +397,126 @@ class TestCanonicalizeEnumsInPlace:
                 "entities": ["USER_ID"],
             },
         }
+
+
+class TestFetchFeatureViewRowsVerboseFlag:
+    """Bug C regression: fetch_feature_view_rows must call
+    list_feature_views(verbose=True) so the source_refs column is
+    present in every row.
+
+    Without ``verbose=True`` the ``source_refs`` column is absent,
+    ``_inject_batch_fv_source_from_metadata`` returns ``False``, and
+    the legacy shim leaves ``spec.sources = []`` — producing a
+    permanent hash mismatch that makes the planner emit
+    ``RECREATE_FV`` on every subsequent plan.
+    """
+
+    def test_list_feature_views_called_with_verbose_true(self) -> None:
+        """fetch_feature_view_rows must pass verbose=True so source_refs
+        is always present in the listing rows."""
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            fetch_feature_view_rows,
+        )
+
+        session = MagicMock(name="session")
+        df = MagicMock(name="DataFrame")
+        df.collect.return_value = []
+        fs = MagicMock(name="FeatureStore")
+        fs.list_feature_views.return_value = df
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs,
+        ):
+            fetch_feature_view_rows(session, "DB", "SCH", "WH")
+
+        fs.list_feature_views.assert_called_once_with(verbose=True)
+
+    def test_source_refs_present_in_row_when_verbose_true(self) -> None:
+        """source_refs cell from the row is surfaced in the translated dict
+        so _inject_batch_fv_source_from_metadata can populate spec.sources."""
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            fetch_feature_view_rows,
+        )
+
+        source_refs_payload = [{"name": "EVENTS_DECL", "source_type": "Batch", "table": "RAW_EVENTS_BATCH_DECL"}]
+        session = MagicMock(name="session")
+        df = MagicMock(name="DataFrame")
+        df.collect.return_value = [
+            {
+                "name": "MY_BATCH_FV_BATCH_DECL",
+                "version": "V1",
+                "database_name": "DB",
+                "schema_name": "SCH",
+                "kind": "BATCH",
+                "entities": ["USER_ID"],
+                "online_config": None,
+                "target_lag": "1 minute",
+                "refresh_freq": "1 minute",
+                "warehouse": "WH",
+                "cluster_by": None,
+                "refresh_mode": "INCREMENTAL",
+                "desc": "",
+                "source_refs": source_refs_payload,
+            }
+        ]
+        fs = MagicMock(name="FeatureStore")
+        fs.list_feature_views.return_value = df
+        fs.get_feature_view.side_effect = Exception("not needed")
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs,
+        ):
+            rows = fetch_feature_view_rows(session, "DB", "SCH", "WH")
+
+        assert len(rows) == 1
+        assert rows[0]["source_refs"] == source_refs_payload
+
+    def test_append_only_cell_surfaced_in_row(self) -> None:
+        """``list_feature_views`` always projects an ``append_only`` boolean
+        column (``_LIST_FEATURE_VIEW_SCHEMA``).  The translated row must carry
+        it through raw so ``state._inject_batch_fv_fields_from_list_row`` can
+        recover the snapshot-accumulation flag on applied-state recovery
+        (append-only + ``online: true`` FVs lose it from the SPECIFICATION
+        JSON, so the list-row cell is the source of truth)."""
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            fetch_feature_view_rows,
+        )
+
+        session = MagicMock(name="session")
+        df = MagicMock(name="DataFrame")
+        df.collect.return_value = [
+            {
+                "name": "MY_APPEND_FV_BATCH_DECL",
+                "version": "V1",
+                "database_name": "DB",
+                "schema_name": "SCH",
+                "kind": "BATCH",
+                "entities": ["USER_ID"],
+                "online_config": None,
+                "target_lag": "",
+                "refresh_freq": "0 0 * * * UTC",
+                "warehouse": "WH",
+                "cluster_by": None,
+                "refresh_mode": "FULL",
+                "append_only": True,
+                "desc": "",
+                "source_refs": None,
+            }
+        ]
+        fs = MagicMock(name="FeatureStore")
+        fs.list_feature_views.return_value = df
+        fs.get_feature_view.side_effect = Exception("not needed")
+
+        with patch(
+            "snowflake.ml.feature_store.feature_store.FeatureStore",
+            return_value=fs,
+        ):
+            rows = fetch_feature_view_rows(session, "DB", "SCH", "WH")
+
+        assert len(rows) == 1
+        assert rows[0]["append_only"] is True
 
 
 if __name__ == "__main__":

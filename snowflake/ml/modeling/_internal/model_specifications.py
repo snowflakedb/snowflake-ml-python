@@ -1,5 +1,6 @@
 import cloudpickle as cp
 import numpy as np
+import pandas as pd
 
 from snowflake.ml.modeling._internal.estimator_utils import get_module_name
 
@@ -24,6 +25,7 @@ class SKLearnModelSpecifications(ModelSpecifications):
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
+            f"pandas=={pd.__version__}",
         ]
 
         # A change from previous implementation.
@@ -60,6 +62,7 @@ class XGBoostModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"xgboost=={xgboost.__version__}",
             f"cloudpickle=={cp.__version__}",
+            f"pandas=={pd.__version__}",
         ]
         super().__init__(imports=imports, pkgDependencies=pkgDependencies)
 
@@ -75,6 +78,7 @@ class LightGBMModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"lightgbm=={lightgbm.__version__}",
             f"cloudpickle=={cp.__version__}",
+            f"pandas=={pd.__version__}",
         ]
         super().__init__(imports=imports, pkgDependencies=pkgDependencies)
 
@@ -90,6 +94,7 @@ class SklearnModelSelectionModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
             f"xgboost=={xgboost.__version__}",
+            f"pandas=={pd.__version__}",
         ]
 
         # Only include lightgbm in the dependencies if it is installed.

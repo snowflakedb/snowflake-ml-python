@@ -3,7 +3,7 @@ import logging
 import os
 import traceback
 from pathlib import PurePath
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import pydantic
 
@@ -35,9 +35,9 @@ logger = logging.getLogger(__name__)
 def save(
     value: Any,
     path: str,
-    session: Optional[snowpark.Session] = None,
+    session: snowpark.Session | None = None,
     max_inline_size: int = 0,
-) -> Optional[bytes]:
+) -> bytes | None:
     """
     Serialize a value. Returns inline bytes if small enough, else writes to file.
 
@@ -101,8 +101,8 @@ save_result = save  # Backwards compatibility
 
 def load(
     path_or_data: str,
-    session: Optional[snowpark.Session] = None,
-    path_transform: Optional[Callable[[str], str]] = None,
+    session: snowpark.Session | None = None,
+    path_transform: Callable[[str], str] | None = None,
 ) -> Any:
     """Load data from a file path or inline string."""
 

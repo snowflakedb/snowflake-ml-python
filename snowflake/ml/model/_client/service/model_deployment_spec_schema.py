@@ -10,6 +10,20 @@ class Model(BaseModel):
     version: str
 
 
+class AdapterSpec(BaseModel):
+    """Serialized adapter identity in a deploy spec.
+
+    ``alias`` is optional. Dict keys from the Python API set it; list items and
+    adapter-as-target omit it so GS can default to ``{name}/VERSIONS/{version}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: str
+    alias: str | None = None
+
+
 class InferenceEngineSpec(BaseModel):
     inference_engine_name: str
     inference_engine_args: list[str] | None = None
@@ -62,6 +76,7 @@ class Service(BaseModel):
     autocapture: bool | None = None
     inference_engine_spec: InferenceEngineSpec | None = None
     feature_retrieval: FeatureRetrievalConfig | None = None
+    adapters: list[AdapterSpec] | None = None
 
 
 class LogModelArgs(BaseModel):

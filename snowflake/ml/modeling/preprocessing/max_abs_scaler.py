@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -59,10 +59,10 @@ class MaxAbsScaler(base.BaseTransformer):
     def __init__(
         self,
         *,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Scale each feature by its maximum absolute value.
@@ -110,7 +110,7 @@ class MaxAbsScaler(base.BaseTransformer):
         self.scale_ = {}
         self.max_abs_ = {}
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MaxAbsScaler":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "MaxAbsScaler":
         """
         Compute the maximum absolute value to be used for later scaling.
 
@@ -160,7 +160,7 @@ class MaxAbsScaler(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Scale the data.
 

@@ -4,9 +4,9 @@ import sys
 import tempfile
 import zipfile
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, Generator, Optional, TypedDict
+from typing import Any, Generator, TypedDict
 
 import cloudpickle
 import yaml
@@ -38,19 +38,19 @@ def create_model_metadata(
     model_dir_path: str,
     name: str,
     model_type: model_types.SupportedModelHandlerType,
-    signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-    function_properties: Optional[dict[str, dict[str, Any]]] = None,
-    metadata: Optional[dict[str, str]] = None,
-    code_paths: Optional[list[model_types.CodePathLike]] = None,
-    ext_modules: Optional[list[ModuleType]] = None,
-    conda_dependencies: Optional[list[str]] = None,
-    pip_requirements: Optional[list[str]] = None,
-    artifact_repository_map: Optional[dict[str, str]] = None,
-    resource_constraint: Optional[dict[str, str]] = None,
-    target_platforms: Optional[list[model_types.TargetPlatform]] = None,
-    python_version: Optional[str] = None,
+    signatures: dict[str, model_signature.ModelSignature] | None = None,
+    function_properties: dict[str, dict[str, Any]] | None = None,
+    metadata: dict[str, str] | None = None,
+    code_paths: list[model_types.CodePathLike] | None = None,
+    ext_modules: list[ModuleType] | None = None,
+    conda_dependencies: list[str] | None = None,
+    pip_requirements: list[str] | None = None,
+    artifact_repository_map: dict[str, str] | None = None,
+    resource_constraint: dict[str, str] | None = None,
+    target_platforms: list[model_types.TargetPlatform] | None = None,
+    python_version: str | None = None,
     task: model_types.Task = model_types.Task.UNKNOWN,
-    prefer_pip_for_automatic_dependencies: Optional[bool] = None,
+    prefer_pip_for_automatic_dependencies: bool | None = None,
     **kwargs: Any,
 ) -> Generator["ModelMetadata", None, None]:
     """Create a generator for model metadata object. Use generator to ensure correct register and unregister for
@@ -207,14 +207,14 @@ def create_model_metadata(
 
 def _create_env_for_model_metadata(
     *,
-    conda_dependencies: Optional[list[str]] = None,
-    pip_requirements: Optional[list[str]] = None,
-    artifact_repository_map: Optional[dict[str, str]] = None,
-    resource_constraint: Optional[dict[str, str]] = None,
-    python_version: Optional[str] = None,
+    conda_dependencies: list[str] | None = None,
+    pip_requirements: list[str] | None = None,
+    artifact_repository_map: dict[str, str] | None = None,
+    resource_constraint: dict[str, str] | None = None,
+    python_version: str | None = None,
     embed_local_ml_library: bool = False,
     prefer_pip_for_automatic_dependencies: bool = False,
-    target_platforms: Optional[list[model_types.TargetPlatform]] = None,
+    target_platforms: list[model_types.TargetPlatform] | None = None,
 ) -> model_env.ModelEnv:
     env = model_env.ModelEnv(
         prefer_pip_for_automatic_dependencies=prefer_pip_for_automatic_dependencies,
@@ -304,21 +304,21 @@ class ModelMetadata:
         name: str,
         env: model_env.ModelEnv,
         model_type: model_types.SupportedModelHandlerType,
-        runtimes: Optional[dict[str, model_runtime.ModelRuntime]] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        function_properties: Optional[dict[str, dict[str, Any]]] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        metadata: Optional[dict[str, str]] = None,
-        creation_timestamp: Optional[str] = None,
-        min_snowpark_ml_version: Optional[str] = None,
-        models: Optional[dict[str, model_blob_meta.ModelBlobMeta]] = None,
-        original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
+        runtimes: dict[str, model_runtime.ModelRuntime] | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        function_properties: dict[str, dict[str, Any]] | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        metadata: dict[str, str] | None = None,
+        creation_timestamp: str | None = None,
+        min_snowpark_ml_version: str | None = None,
+        models: dict[str, model_blob_meta.ModelBlobMeta] | None = None,
+        original_metadata_version: str | None = model_meta_schema.MODEL_METADATA_VERSION,
         task: model_types.Task = model_types.Task.UNKNOWN,
-        explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
-        method_options: Optional[dict[str, dict[str, Any]]] = None,
-        case_sensitive: Optional[bool] = None,
-        sample_input_file_paths: Optional[dict[str, str]] = None,
-        packaged_env_dict: Optional[model_meta_schema.ModelEnvDict] = None,
+        explain_algorithm: model_meta_schema.ModelExplainAlgorithm | None = None,
+        method_options: dict[str, dict[str, Any]] | None = None,
+        case_sensitive: bool | None = None,
+        sample_input_file_paths: dict[str, str] | None = None,
+        packaged_env_dict: model_meta_schema.ModelEnvDict | None = None,
     ) -> None:
         self.name = name
         # Distinguish omitted signatures=None from an explicit empty dict. Both become {}.
@@ -329,7 +329,9 @@ class ModelMetadata:
         self.metadata = metadata
         self.model_type = model_type
         self.env = env
-        self.creation_timestamp = creation_timestamp if creation_timestamp else str(datetime.utcnow())
+        self.creation_timestamp = (
+            creation_timestamp if creation_timestamp else str(datetime.now(timezone.utc).replace(tzinfo=None))
+        )
         self._min_snowpark_ml_version = version.parse(
             min_snowpark_ml_version
             if min_snowpark_ml_version
@@ -345,15 +347,15 @@ class ModelMetadata:
         self.original_metadata_version = original_metadata_version
 
         self.task: model_types.Task = task
-        self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
+        self.explain_algorithm: model_meta_schema.ModelExplainAlgorithm | None = explain_algorithm
         self.method_options: dict[str, dict[str, Any]] = method_options or {}
-        self.case_sensitive: Optional[bool] = case_sensitive
+        self.case_sensitive: bool | None = case_sensitive
         # Maps method name -> filename of the captured sample input data row,
         # written into model.yaml as the per-method ``sample_input_file_path`` field.
         self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
         self._packaged_env_dict = packaged_env_dict
 
-        self._lazy_hf_upload: Optional[huggingface_lazy_uploader.LazyHFUpload] = None
+        self._lazy_hf_upload: huggingface_lazy_uploader.LazyHFUpload | None = None
 
     @property
     def min_snowpark_ml_version(self) -> str:
@@ -512,7 +514,7 @@ class ModelMetadata:
         env = model_env.ModelEnv()
         env.load_from_dict(pathlib.Path(model_dir_path), packaged_env_dict)
 
-        runtimes: Optional[dict[str, model_runtime.ModelRuntime]]
+        runtimes: dict[str, model_runtime.ModelRuntime] | None
         if model_dict.get("runtimes", None):
             runtimes = {
                 name: model_runtime.ModelRuntime.load(pathlib.Path(model_dir_path), name, env, runtime_dict)

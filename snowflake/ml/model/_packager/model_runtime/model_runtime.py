@@ -1,7 +1,6 @@
 import copy
 import pathlib
 import warnings
-from typing import Optional
 
 from packaging import requirements
 
@@ -37,7 +36,7 @@ class ModelRuntime:
         self,
         name: str,
         env: model_env.ModelEnv,
-        imports: Optional[list[str]] = None,
+        imports: list[str] | None = None,
         is_warehouse: bool = False,
         is_gpu: bool = False,
         loading_from_file: bool = False,

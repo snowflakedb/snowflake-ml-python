@@ -341,7 +341,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             is_permanent=False,
             name=udf_name,
             replace=True,
-            packages=[f"numpy=={np.__version__}"],
+            packages=[f"numpy=={np.__version__}", "pandas"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
@@ -382,7 +382,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             is_permanent=False,
             name=udf_name,
             replace=True,
-            packages=["numpy"],
+            packages=["numpy", "pandas"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
@@ -429,7 +429,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         @F.pandas_udf(  # type: ignore[arg-type, misc]
             name=udf_name,
             replace=True,
-            packages=["numpy"],
+            packages=["numpy", "pandas"],
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )

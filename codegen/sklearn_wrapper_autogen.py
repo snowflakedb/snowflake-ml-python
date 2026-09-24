@@ -6,7 +6,7 @@ import sys
 import types
 from collections import namedtuple
 from enum import Enum
-from typing import Iterable, Optional
+from typing import Iterable
 
 from absl import logging
 
@@ -38,7 +38,7 @@ class AutogenTool:
         template_path: str,
         output_path: str,
         gen_mode: GenMode = GenMode.SRC,
-        class_list: Optional[list[str]] = None,
+        class_list: list[str] | None = None,
     ) -> None:
         self.gen_mode = gen_mode
         self.template_path = template_path

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import copy
 import warnings
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable
 
 import numpy as np
 import numpy.typing as npt
@@ -138,13 +138,13 @@ class SimpleImputer(base.BaseTransformer):
     def __init__(
         self,
         *,
-        missing_values: Optional[Union[int, float, str, np.float64]] = np.nan,
-        strategy: Optional[str] = "mean",
-        fill_value: Optional[Union[str, float]] = None,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        missing_values: int | float | str | np.float64 | None = np.nan,
+        strategy: str | None = "mean",
+        fill_value: str | float | None = None,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         super().__init__(drop_input_cols=drop_input_cols)
         if strategy in STRATEGY_TO_STATE_DICT:
@@ -246,7 +246,7 @@ class SimpleImputer(base.BaseTransformer):
 
         return input_col_datatypes
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "SimpleImputer":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "SimpleImputer":
         if isinstance(dataset, snowpark.DataFrame):
             return self._fit_snowpark(dataset)
         else:
@@ -333,7 +333,7 @@ class SimpleImputer(base.BaseTransformer):
         return self
 
     @telemetry.send_api_usage_telemetry(project=base.PROJECT, subproject=_SUBPROJECT)
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Transform the input dataset by imputing the computed statistics in the input columns.
 

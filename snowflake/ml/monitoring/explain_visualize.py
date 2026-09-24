@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Union, cast, overload
+from typing import Any, cast, overload
 
 import altair as alt
 import numpy as np
@@ -40,8 +40,8 @@ def plot_force(
 
 
 def plot_force(
-    shap_row: Union[pd.Series, snowpark.Row],
-    features_row: Union[pd.Series, snowpark.Row],
+    shap_row: pd.Series | snowpark.Row,
+    features_row: pd.Series | snowpark.Row,
     base_value: float = 0.0,
     figsize: tuple[float, float] = DEFAULT_FIGSIZE,
     contribution_threshold: float = 0.05,

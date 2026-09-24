@@ -1,5 +1,3 @@
-from typing import Optional
-
 from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.snowpark import session
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -24,8 +22,8 @@ class _BaseSQLClient:
 
     def fully_qualified_object_name(
         self,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
         object_name: sql_identifier.SqlIdentifier,
     ) -> str:
         actual_database_name = database_name or self._database_name

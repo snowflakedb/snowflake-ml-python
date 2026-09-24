@@ -1,6 +1,6 @@
 import os
 from abc import abstractmethod
-from typing import Generic, Optional, Protocol, final
+from typing import Generic, Protocol, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -50,8 +50,8 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         model: model_types._ModelType,
         model_meta: model_meta.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.BaseModelSaveOption],
     ) -> None:
         """Save the model.
@@ -98,7 +98,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
         cls,
         raw_model: model_types._ModelType,
         model_meta: model_meta.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.BaseModelLoadOption],
     ) -> custom_model.CustomModel:
         """Create a custom model class wrap for unified interface when being deployed. The predict method will be
@@ -169,7 +169,7 @@ class BaseModelHandler(Generic[model_types._ModelType], _BaseModelHandlerProtoco
 
     @classmethod
     @final
-    def load_background_data(cls, name: str, model_blobs_dir_path: str) -> Optional[pd.DataFrame]:
+    def load_background_data(cls, name: str, model_blobs_dir_path: str) -> pd.DataFrame | None:
         """Load the model into memory.
 
         Args:

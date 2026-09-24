@@ -1,5 +1,3 @@
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -20,7 +18,7 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
     @parameterized.product(  # type: ignore[misc]
         pip_requirements=[None, ["scikit-learn"]],
     )
-    def test_sklearn(self, pip_requirements: Optional[list[str]]) -> None:
+    def test_sklearn(self, pip_requirements: list[str] | None) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         svc = svm.LinearSVC()
         svc.fit(iris_X, iris_y)

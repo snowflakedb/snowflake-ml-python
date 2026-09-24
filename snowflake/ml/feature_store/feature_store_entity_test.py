@@ -15,7 +15,6 @@ DDL convention for string-literal escaping.
 
 from __future__ import annotations
 
-from typing import Optional
 from unittest.mock import MagicMock
 
 from absl.testing import absltest, parameterized
@@ -37,7 +36,7 @@ from snowflake.ml.feature_store.feature_view import (
 _EXPLOIT_DESC = "x]' ->> create user hackersqli password = 'aaa' --"
 
 
-def _new_fs_with_mocks(*, session: Optional[MagicMock] = None) -> FeatureStore:
+def _new_fs_with_mocks(*, session: MagicMock | None = None) -> FeatureStore:
     """Construct a bare-bones FeatureStore with all I/O mocked.
 
     Mirrors the helper in ``feature_store_feature_group_test.py`` so these
@@ -64,9 +63,9 @@ def _make_feature_view_mock(
     *,
     desc: str,
     is_tiled: bool = False,
-    storage_config: Optional[StorageConfig] = None,
+    storage_config: StorageConfig | None = None,
     status: FeatureViewStatus = FeatureViewStatus.ACTIVE,
-    refresh_freq: Optional[str] = "1 minute",
+    refresh_freq: str | None = "1 minute",
 ) -> MagicMock:
     """Build a ``MagicMock`` standing in for a ``FeatureView`` for string-builder tests.
 
@@ -248,7 +247,7 @@ class BuildOfflineUpdateQueriesDescEscapingTest(absltest.TestCase):
 class CreateDynamicTableQueryDescEscapingTest(absltest.TestCase):
     """``_create_dynamic_table_query`` has two desc interpolations (iceberg and snowflake formats)."""
 
-    def _call(self, *, storage_config: Optional[StorageConfig]) -> str:
+    def _call(self, *, storage_config: StorageConfig | None) -> str:
         fs = _new_fs_with_mocks()
         fv = _make_feature_view_mock(desc=_EXPLOIT_DESC, storage_config=storage_config)
         return fs._create_dynamic_table_query(

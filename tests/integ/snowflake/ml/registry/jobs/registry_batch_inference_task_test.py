@@ -1,7 +1,5 @@
 import json
 import logging
-import os
-import tempfile
 import time
 import uuid
 from datetime import timedelta
@@ -19,13 +17,7 @@ except ModuleNotFoundError:
     _HAS_SNOWFLAKE_CORE = False
 
 from snowflake.ml.model import custom_model, model_signature
-from snowflake.ml.model.batch_inference import (
-    BatchInferenceTask,
-    FileEncoding,
-    InputFormat,
-    InputSpec,
-    OutputSpec,
-)
+from snowflake.ml.model.batch_inference import BatchInferenceTask, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 logger = logging.getLogger(__name__)
@@ -38,21 +30,6 @@ class TestModel(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["C1"]})
-
-    @custom_model.inference_api
-    def predict_with_params(self, input: pd.DataFrame, *, float_param: float = 0.5) -> pd.DataFrame:
-        return pd.DataFrame({"output": input["C1"], "received_float_param": [float_param] * len(input)})
-
-    @custom_model.inference_api
-    def predict_file(self, input: pd.DataFrame) -> pd.DataFrame:
-        import base64
-
-        decoded = [base64.b64decode(v).decode("utf-8") for v in input["FILE_CONTENT"]]
-        return pd.DataFrame({"output": decoded})
-
-    @custom_model.inference_api
-    def predict_quoted(self, input: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame({"output": input["col_a"]})
 
 
 class FailureModel(custom_model.CustomModel):
@@ -74,38 +51,18 @@ _TEST_MODEL_SIGNATURES = {
             model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="output"),
         ],
     ),
-    "predict_with_params": model_signature.ModelSignature(
-        inputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="C1"),
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="C2"),
-        ],
-        outputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="output"),
-            model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="received_float_param"),
-        ],
-    ),
-    "predict_file": model_signature.ModelSignature(
-        inputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="FILE_CONTENT"),
-        ],
-        outputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="output"),
-        ],
-    ),
-    "predict_quoted": model_signature.ModelSignature(
-        inputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name='"col_a"'),
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name='"col_b"'),
-        ],
-        outputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="output"),
-        ],
-    ),
 }
 
 
 class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    """Integration tests for BatchInferenceTask, which runs EXECUTE INFERENCE JOB SERVICE."""
+    """Integration tests for BatchInferenceTask, which runs EXECUTE INFERENCE JOB SERVICE.
+
+    Scoped to what only a task exercises: the return-value handoff to a successor, repeated
+    firings, failure propagation, and EXECUTE AS USER. Batch inference behavior that does not
+    depend on being driven by a task -- input sources, params, column handling -- is covered by
+    the non-task tests in this package, and the rendered command text by the unit tests for
+    BatchInferenceTask.
+    """
 
     _DAG_POLL_INTERVAL_SEC = 15
     _DAG_POLL_MAX_ATTEMPTS = 120  # 30 min total
@@ -123,7 +80,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
         self._model = TestModel(custom_model.ModelContext())
         self._mv = self._log_model(self._model, signatures=_TEST_MODEL_SIGNATURES)
 
-    def _log_model(self, model: Any, sample_df: Any = None, *, signatures: Any = None) -> Any:
+    def _log_model(self, model: Any, *, signatures: Any = None) -> Any:
         name = f"model_{uuid.uuid4().hex[:8]}"
         version = f"ver_{self._run_id}"
         from tests.integ.snowflake.ml.test_utils import test_env_utils
@@ -135,7 +92,6 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
             model=model,
             model_name=name,
             version_name=version,
-            sample_input_data=sample_df,
             signatures=signatures,
             conda_dependencies=conda_deps,
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
@@ -283,18 +239,6 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
     def _input_query(self) -> str:
         return "SELECT 0::INT AS C1, 0::INT AS C2 UNION ALL SELECT 1::INT AS C1, 1::INT AS C2"
 
-    def _stage_input(self) -> str:
-        """Write the input rows to a stage and return the location.
-
-        Returns:
-            The input stage location.
-        """
-        _, _, input_stage_location = self._prepare_job_name_and_stage_for_batch_inference()
-        self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"]).write.copy_into_location(
-            location=input_stage_location, file_format_type="parquet", header=True, overwrite=True
-        )
-        return input_stage_location
-
     def _new_dag(self) -> "DAG":
         """Build an empty graph with this test's name, warehouse and stage.
 
@@ -351,20 +295,6 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
 
         # Results land in <stage_location>/<job_name>/, so the segment before _SUCCESS is the job name.
         return sorted({name.rsplit("/", 2)[-2] for name in success_files})
-
-    def test_query_input(self) -> None:
-        dag, output_stage_location = self._build_dag(query=self._input_query())
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
-    def test_stage_input(self) -> None:
-        dag, output_stage_location = self._build_dag(input_stage_location=self._stage_input())
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
 
     def test_successor_reads_output_location(self) -> None:
         """A successor loads the results using the location from the task return value.
@@ -494,91 +424,6 @@ END;
 
         marker_rows = self.session.sql(f"SELECT * FROM {marker_table}").collect()
         self.assertEmpty(marker_rows, "Successor task should not have run after batch inference failure")
-
-    def test_params(self) -> None:
-        """``InputSpec.params`` reaches the model function."""
-        dag, output_stage_location = self._build_dag(
-            query=self._input_query(),
-            input_spec=InputSpec(params={"float_param": 0.9}),
-            function_name="predict_with_params",
-        )
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
-    def test_column_handling(self) -> None:
-        """``InputSpec.column_handling`` converts a staged file path to base64 for the model."""
-        input_files_stage = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/v2_column_handling_input_files/"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
-            tmp.write("hello from column handling test")
-            tmp_path = tmp.name
-        try:
-            self.session.sql(
-                f"PUT 'file://{tmp_path}' {input_files_stage} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
-            ).collect()
-        finally:
-            os.unlink(tmp_path)
-
-        stage_file_path = f"{input_files_stage}{os.path.basename(tmp_path)}"
-        dag, output_stage_location = self._build_dag(
-            query=f"SELECT '{stage_file_path}' AS FILE_CONTENT",
-            input_spec=InputSpec(
-                column_handling={
-                    "FILE_CONTENT": {
-                        "input_format": InputFormat.FULL_STAGE_PATH,
-                        "convert_to": FileEncoding.BASE64,
-                    }
-                }
-            ),
-            function_name="predict_file",
-        )
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
-
-    @absltest.skip("TODO(SNOW-3516871): handle quoted identifiers in batch inference")
-    def test_quoted_identifiers(self) -> None:
-        """Batch inference works with a quoted (lowercase) model name and column names."""
-        quoted_model_name = f'"batch_quoted_{uuid.uuid4().hex[:8]}"'
-        from tests.integ.snowflake.ml.test_utils import test_env_utils
-
-        conda_deps = [
-            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
-        ]
-        mv = self.registry.log_model(
-            model=TestModel(custom_model.ModelContext()),
-            model_name=quoted_model_name,
-            version_name=f"ver_{self._run_id}",
-            signatures=_TEST_MODEL_SIGNATURES,
-            conda_dependencies=conda_deps,
-            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
-            options={"embed_local_ml_library": True},
-        )
-
-        input_table = f"{self._test_db}.{self._test_schema}.v2_quoted_input_{uuid.uuid4().hex[:8]}"
-        self.session.create_dataframe([[0, 0], [1, 1]], schema=['"col_a"', '"col_b"']).write.save_as_table(
-            input_table, mode="overwrite"
-        )
-
-        _, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
-        dag = self._new_dag()
-        with dag:
-            prep = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
-            score = BatchInferenceTask(
-                "batch_inference",
-                model_version=mv,
-                compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                query=f'SELECT "col_a", "col_b" FROM {input_table}',
-                output_spec=OutputSpec(stage_location=output_stage_location),
-                function_name="predict_quoted",
-            )
-            prep >> score
-
-        self._deploy_and_run_dag(dag)
-        self._assert_run_succeeded(self._poll_dag_run_completion(dag))
-        self._assert_success_file_written(output_stage_location)
 
     def test_user_privileges(self) -> None:
         """Batch inference works when the root DAG task uses EXECUTE AS USER."""

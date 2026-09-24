@@ -1,5 +1,3 @@
-from typing import Optional
-
 import fsspec
 import pyarrow as pa
 
@@ -43,12 +41,12 @@ def get_dataframe_result_batches(
 def get_dataframe_arrow_table(session: snowpark.Session, df_info: data_source.DataFrameInfo) -> pa.Table:
     """Retrieve the full in-memory result for a given query"""
     cursor = _get_dataframe_cursor(session, df_info)
-    table = cursor.fetch_arrow_all()  # type: ignore[call-overload]
+    table = cursor.fetch_arrow_all()
     return table
 
 
 def get_dataset_filesystem(
-    session: snowpark.Session, ds_info: Optional[data_source.DatasetInfo] = None
+    session: snowpark.Session, ds_info: data_source.DatasetInfo | None = None
 ) -> fsspec.AbstractFileSystem:
     """Get the fsspec filesystem for a given Dataset"""
     # We can't directly load the Dataset to avoid a circular dependency
@@ -62,7 +60,7 @@ def get_dataset_filesystem(
 
 
 def get_dataset_files(
-    session: snowpark.Session, ds_info: data_source.DatasetInfo, filesystem: Optional[fsspec.AbstractFileSystem] = None
+    session: snowpark.Session, ds_info: data_source.DatasetInfo, filesystem: fsspec.AbstractFileSystem | None = None
 ) -> list[str]:
     """Get the list of files in a given Dataset"""
     if filesystem is None:

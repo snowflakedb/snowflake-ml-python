@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.snowpark import session as snowpark_session
@@ -12,7 +12,7 @@ _SESSION_SCHEMA_KEY = "session$schema"
 _SESSION_STATE_ATTR = "_session_state"
 
 
-def _identifiers_match(saved: Optional[str], current: Optional[str]) -> bool:
+def _identifiers_match(saved: str | None, current: str | None) -> bool:
     saved_resolved = identifier.resolve_identifier(saved) if saved is not None else saved
     current_resolved = identifier.resolve_identifier(current) if current is not None else current
     return saved_resolved == current_resolved
@@ -20,10 +20,10 @@ def _identifiers_match(saved: Optional[str], current: Optional[str]) -> bool:
 
 @dataclass(frozen=True)
 class _SessionState:
-    account: Optional[str]
-    role: Optional[str]
-    database: Optional[str]
-    schema: Optional[str]
+    account: str | None
+    role: str | None
+    database: str | None
+    schema: str | None
 
 
 class SerializableSessionMixin:
@@ -94,7 +94,7 @@ class SerializableSessionMixin:
             )
 
     @property
-    def session(self) -> Optional[snowpark_session.Session]:
+    def session(self) -> snowpark_session.Session | None:
         if _SESSION_KEY not in self.__dict__:
             session_state = getattr(self, _SESSION_STATE_ATTR, None)
             if session_state is not None:
@@ -102,7 +102,7 @@ class SerializableSessionMixin:
         return self.__dict__.get(_SESSION_KEY)
 
     @session.setter
-    def session(self, value: Optional[snowpark_session.Session]) -> None:
+    def session(self, value: snowpark_session.Session | None) -> None:
         self.__dict__[_SESSION_KEY] = value
 
     # _getattr__ is only called when an attribute is NOT found through normal lookup.

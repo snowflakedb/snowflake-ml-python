@@ -1,5 +1,5 @@
 import io
-from typing import Any, Iterable, Iterator, Optional, TextIO
+from typing import Any, Iterable, Iterator, TextIO
 
 
 class OutputTee(TextIO):
@@ -51,7 +51,7 @@ class OutputTee(TextIO):
     def tell(self) -> int:
         raise io.UnsupportedOperation("OutputTee does not support tell")
 
-    def truncate(self, size: Optional[int] = None) -> int:
+    def truncate(self, size: int | None = None) -> int:
         raise io.UnsupportedOperation("OutputTee does not support truncate")
 
     def writable(self) -> bool:

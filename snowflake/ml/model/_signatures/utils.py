@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -59,7 +59,7 @@ def convert_list_to_ndarray(data: list[Any]) -> npt.NDArray[Any]:
 
 
 def rename_features(
-    features: Sequence[core.BaseFeatureSpec], feature_names: Optional[list[str]] = None
+    features: Sequence[core.BaseFeatureSpec], feature_names: list[str] | None = None
 ) -> Sequence[core.BaseFeatureSpec]:
     """It renames the feature in features provided optional feature names.
 
@@ -204,8 +204,8 @@ _GENERATION_PARAM_SPECS: list[core.BaseParamSpec] = [
 def huggingface_pipeline_signature_auto_infer(
     task: str,
     params: dict[str, Any],
-    has_chat_template: Optional[bool] = True,
-) -> Optional[core.ModelSignature]:
+    has_chat_template: bool | None = True,
+) -> core.ModelSignature | None:
     # Text
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TokenClassificationPipeline
@@ -923,5 +923,5 @@ def infer_dict(name: str, data: dict[str, Any]) -> core.FeatureGroupSpec:
     return core.FeatureGroupSpec(name=name, specs=specs)
 
 
-def check_if_series_is_empty(series: Optional[pd.Series]) -> bool:
+def check_if_series_is_empty(series: pd.Series | None) -> bool:
     return series is None or series.empty

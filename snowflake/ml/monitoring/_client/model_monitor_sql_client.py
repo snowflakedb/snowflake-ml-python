@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -60,21 +60,21 @@ class ModelMonitorSQLClient:
         self._schema_name = schema_name
 
     def _infer_qualified_schema(
-        self, database_name: Optional[sql_identifier.SqlIdentifier], schema_name: Optional[sql_identifier.SqlIdentifier]
+        self, database_name: sql_identifier.SqlIdentifier | None, schema_name: sql_identifier.SqlIdentifier | None
     ) -> str:
         return f"""{database_name or self._database_name}.{schema_name or self._schema_name}"""
 
     def create_model_monitor(
         self,
         *,
-        monitor_database: Optional[sql_identifier.SqlIdentifier],
-        monitor_schema: Optional[sql_identifier.SqlIdentifier],
+        monitor_database: sql_identifier.SqlIdentifier | None,
+        monitor_schema: sql_identifier.SqlIdentifier | None,
         monitor_name: sql_identifier.SqlIdentifier,
-        source_database: Optional[sql_identifier.SqlIdentifier],
-        source_schema: Optional[sql_identifier.SqlIdentifier],
+        source_database: sql_identifier.SqlIdentifier | None,
+        source_schema: sql_identifier.SqlIdentifier | None,
         source: sql_identifier.SqlIdentifier,
-        model_database: Optional[sql_identifier.SqlIdentifier],
-        model_schema: Optional[sql_identifier.SqlIdentifier],
+        model_database: sql_identifier.SqlIdentifier | None,
+        model_schema: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         function_name: str,
@@ -87,15 +87,15 @@ class ModelMonitorSQLClient:
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         refresh_interval: str,
         aggregation_window: str,
-        baseline_database: Optional[sql_identifier.SqlIdentifier] = None,
-        baseline_schema: Optional[sql_identifier.SqlIdentifier] = None,
-        baseline: Optional[sql_identifier.SqlIdentifier] = None,
-        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
-        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
-        timestamp_custom_metric_database: Optional[sql_identifier.SqlIdentifier] = None,
-        timestamp_custom_metric_schema: Optional[sql_identifier.SqlIdentifier] = None,
-        timestamp_custom_metric_table: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        baseline_database: sql_identifier.SqlIdentifier | None = None,
+        baseline_schema: sql_identifier.SqlIdentifier | None = None,
+        baseline: sql_identifier.SqlIdentifier | None = None,
+        segment_columns: list[sql_identifier.SqlIdentifier] | None = None,
+        custom_metric_columns: list[sql_identifier.SqlIdentifier] | None = None,
+        timestamp_custom_metric_database: sql_identifier.SqlIdentifier | None = None,
+        timestamp_custom_metric_schema: sql_identifier.SqlIdentifier | None = None,
+        timestamp_custom_metric_table: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         baseline_sql = ""
         if baseline:
@@ -145,10 +145,10 @@ class ModelMonitorSQLClient:
     def drop_model_monitor(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        schema_name: Optional[sql_identifier.SqlIdentifier] = None,
+        database_name: sql_identifier.SqlIdentifier | None = None,
+        schema_name: sql_identifier.SqlIdentifier | None = None,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         search_database_name = database_name or self._database_name
         search_schema_name = schema_name or self._schema_name
@@ -161,7 +161,7 @@ class ModelMonitorSQLClient:
     def show_model_monitors(
         self,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> list[snowpark.Row]:
         fully_qualified_schema_name = ".".join([self._database_name.identifier(), self._schema_name.identifier()])
         return (
@@ -177,10 +177,10 @@ class ModelMonitorSQLClient:
     def validate_existence_by_name(
         self,
         *,
-        database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        schema_name: Optional[sql_identifier.SqlIdentifier] = None,
+        database_name: sql_identifier.SqlIdentifier | None = None,
+        schema_name: sql_identifier.SqlIdentifier | None = None,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> bool:
         search_database_name = database_name or self._database_name
         search_schema_name = schema_name or self._schema_name
@@ -198,7 +198,7 @@ class ModelMonitorSQLClient:
     def validate_monitor_warehouse(
         self,
         warehouse_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Validate warehouse provided for monitoring exists.
 
@@ -227,8 +227,8 @@ class ModelMonitorSQLClient:
         actual_score_columns: list[sql_identifier.SqlIdentifier],
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
-        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
-        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        segment_columns: list[sql_identifier.SqlIdentifier] | None = None,
+        custom_metric_columns: list[sql_identifier.SqlIdentifier] | None = None,
     ) -> None:
         """Ensures all columns exist in the source table.
 
@@ -275,8 +275,8 @@ class ModelMonitorSQLClient:
     def validate_source(
         self,
         *,
-        source_database: Optional[sql_identifier.SqlIdentifier],
-        source_schema: Optional[sql_identifier.SqlIdentifier],
+        source_database: sql_identifier.SqlIdentifier | None,
+        source_schema: sql_identifier.SqlIdentifier | None,
         source: sql_identifier.SqlIdentifier,
         timestamp_column: sql_identifier.SqlIdentifier,
         prediction_score_columns: list[sql_identifier.SqlIdentifier],
@@ -284,8 +284,8 @@ class ModelMonitorSQLClient:
         actual_score_columns: list[sql_identifier.SqlIdentifier],
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
-        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
-        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        segment_columns: list[sql_identifier.SqlIdentifier] | None = None,
+        custom_metric_columns: list[sql_identifier.SqlIdentifier] | None = None,
     ) -> None:
 
         source_database = source_database or self._database_name
@@ -313,9 +313,9 @@ class ModelMonitorSQLClient:
         self,
         operation: MonitorOperation,
         monitor_name: sql_identifier.SqlIdentifier,
-        target_property: Optional[str] = None,
-        target_value: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        target_property: str | None = None,
+        target_value: sql_identifier.SqlIdentifier | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         supported_target_properties = operation.supported_target_properties
 
@@ -344,7 +344,7 @@ class ModelMonitorSQLClient:
     def suspend_monitor(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._alter_monitor(
             operation=MonitorOperation.SUSPEND,
@@ -355,7 +355,7 @@ class ModelMonitorSQLClient:
     def resume_monitor(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         self._alter_monitor(
             operation=MonitorOperation.RESUME,
@@ -367,7 +367,7 @@ class ModelMonitorSQLClient:
         self,
         monitor_name: sql_identifier.SqlIdentifier,
         segment_column: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Add a segment column to the Model Monitor"""
         self._alter_monitor(
@@ -382,7 +382,7 @@ class ModelMonitorSQLClient:
         self,
         monitor_name: sql_identifier.SqlIdentifier,
         segment_column: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Drop a segment column from the Model Monitor"""
         self._alter_monitor(
@@ -397,7 +397,7 @@ class ModelMonitorSQLClient:
         self,
         monitor_name: sql_identifier.SqlIdentifier,
         custom_metric_column: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Add a custom metric column to the Model Monitor"""
         self._alter_monitor(
@@ -412,7 +412,7 @@ class ModelMonitorSQLClient:
         self,
         monitor_name: sql_identifier.SqlIdentifier,
         custom_metric_column: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> None:
         """Drop a custom metric column from the Model Monitor"""
         self._alter_monitor(

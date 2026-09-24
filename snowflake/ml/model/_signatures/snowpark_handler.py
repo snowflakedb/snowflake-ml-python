@@ -1,5 +1,5 @@
 import json
-from typing import Any, Literal, Optional, Sequence, cast
+from typing import Any, Literal, Sequence, cast
 
 import numpy as np
 import pandas as pd
@@ -59,8 +59,8 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
     def convert_to_df(
         data: snowflake.snowpark.DataFrame,
         ensure_serializable: bool = True,
-        features: Optional[Sequence[core.BaseFeatureSpec]] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        features: Sequence[core.BaseFeatureSpec] | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> pd.DataFrame:
         # This method do things on top of to_pandas, to make sure the local dataframe got is in correct shape.
         dtype_map = {}
@@ -78,7 +78,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         # This is because Array will become string (Even though the correct schema is set)
         # and object will become variant type and requires an additional loads
         # to get correct data otherwise it would be string.
-        def load_if_not_null(x: str) -> Optional[Any]:
+        def load_if_not_null(x: str) -> Any | None:
             if x is None:
                 return None
             return json.loads(x)
@@ -99,8 +99,8 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         session: snowflake.snowpark.Session,
         df: pd.DataFrame,
         keep_order: bool = False,
-        features: Optional[Sequence[core.BaseFeatureSpec]] = None,
-        statement_params: Optional[dict[str, Any]] = None,
+        features: Sequence[core.BaseFeatureSpec] | None = None,
+        statement_params: dict[str, Any] | None = None,
     ) -> snowflake.snowpark.DataFrame:
         # This method is necessary to create the Snowpark Dataframe in correct schema.
         # However, in this case, the order could not be preserved. Thus, a _ID column has to be added,
@@ -146,7 +146,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
 
     @staticmethod
     def _is_quoted_identifiers_ignore_case_enabled(
-        session: snowflake.snowpark.Session, statement_params: Optional[dict[str, Any]] = None
+        session: snowflake.snowpark.Session, statement_params: dict[str, Any] | None = None
     ) -> bool:
         """
         Check if QUOTED_IDENTIFIERS_IGNORE_CASE parameter is enabled.

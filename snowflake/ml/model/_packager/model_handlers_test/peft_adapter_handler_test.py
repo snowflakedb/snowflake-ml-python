@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import tempfile
-from typing import Any, Optional, cast
+from typing import Any, cast
 from unittest import mock
 
 import yaml
@@ -67,12 +67,12 @@ def _write_adapter_dir(
     path: str,
     *,
     r: Any = 8,
-    extra_vocab: Optional[int] = None,
+    extra_vocab: int | None = None,
     include_config: bool = True,
     include_weights: bool = True,
     omit_r: bool = False,
-    extra_files: Optional[dict[str, Any]] = None,
-    config_overrides: Optional[dict[str, Any]] = None,
+    extra_files: dict[str, Any] | None = None,
+    config_overrides: dict[str, Any] | None = None,
 ) -> str:
     os.makedirs(path, exist_ok=True)
     if include_config:
@@ -115,8 +115,8 @@ def _save(
     *,
     adapter: peft_adapter.PeftAdapter,
     model_dir: str,
-    signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-    sample_input_data: Optional[Any] = None,
+    signatures: dict[str, model_signature.ModelSignature] | None = None,
+    sample_input_data: Any | None = None,
 ) -> model_meta.ModelMetadata:
     return model_packager.ModelPackager(model_dir).save(
         name=_MODEL_NAME,
@@ -160,7 +160,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
 
     @_enable_lora_adapters
     def test_peft_type_from_adapter_config(self, _mock_enabled: mock.MagicMock) -> None:
-        cases: list[tuple[str, dict[str, Any], Optional[str]]] = [
+        cases: list[tuple[str, dict[str, Any], str | None]] = [
             ("lora", {}, "lora"),
             ("uppercase_lora", {"config_overrides": {"peft_type": "LORA"}}, "lora"),
             ("ia3", {"config_overrides": {"peft_type": "IA3"}}, "ia3"),
@@ -461,8 +461,8 @@ class PeftAdapterHandlerTest(absltest.TestCase):
         def _fake_download(
             *,
             repo_id: str,
-            revision: Optional[str],
-            token: Optional[str],
+            revision: str | None,
+            token: str | None,
             local_dir: str,
             **kwargs: Any,
         ) -> str:
@@ -531,8 +531,8 @@ class PeftAdapterHandlerTest(absltest.TestCase):
         def _fake_download(
             *,
             repo_id: str,
-            revision: Optional[str],
-            token: Optional[str],
+            revision: str | None,
+            token: str | None,
             local_dir: str,
             **kwargs: Any,
         ) -> str:
@@ -590,8 +590,8 @@ class PeftAdapterHandlerTest(absltest.TestCase):
         def _fake_download(
             *,
             repo_id: str,
-            revision: Optional[str],
-            token: Optional[str],
+            revision: str | None,
+            token: str | None,
             local_dir: str,
             **kwargs: Any,
         ) -> str:

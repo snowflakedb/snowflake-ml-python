@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
@@ -19,7 +19,7 @@ class SoftmaxClassifier(tf.Module):
         return tf.nn.softmax(logits)
 
 
-def train_model(model_name: Optional[str] = None) -> Any:
+def train_model(model_name: str | None = None) -> Any:
     # Load and preprocess Iris dataset
     iris = load_iris()
     X = iris.data.astype(np.float32)

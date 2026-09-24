@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import Union, cast
 
 from typing_extensions import deprecated
 
@@ -11,11 +11,11 @@ from snowflake.ml._internal import telemetry
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def translate(
-    text: Union[str, snowpark.Column],
-    from_language: Union[str, snowpark.Column],
-    to_language: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    text: str | snowpark.Column,
+    from_language: str | snowpark.Column,
+    to_language: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     """Calls into the LLM inference service to perform translation.
 
     Args:
@@ -33,11 +33,11 @@ def translate(
 
 def _translate_impl(
     function: str,
-    text: Union[str, snowpark.Column],
-    from_language: Union[str, snowpark.Column],
-    to_language: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    text: str | snowpark.Column,
+    from_language: str | snowpark.Column,
+    to_language: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, text, from_language, to_language))
 
 

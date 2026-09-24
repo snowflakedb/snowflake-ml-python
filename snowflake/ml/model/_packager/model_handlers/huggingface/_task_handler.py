@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -74,7 +74,7 @@ class HuggingFaceTaskHandler(ABC):
 
     REQUIRES_PILLOW: bool = False
 
-    def get_transformers_upper_bound(self) -> Optional[version.Version]:
+    def get_transformers_upper_bound(self) -> version.Version | None:
         """Return the maximum supported transformers version for this task, or None if unbounded.
 
         Override in subclasses that require a specific transformers version ceiling.

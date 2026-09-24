@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 from packaging import version
 
@@ -82,7 +81,7 @@ def is_torch_cuda_compatible(
     return False
 
 
-def get_latest_cuda_for_torch(torch_version: str) -> Optional[str]:
+def get_latest_cuda_for_torch(torch_version: str) -> str | None:
     """Get latest supporting CUDA version if possible.
 
     Args:

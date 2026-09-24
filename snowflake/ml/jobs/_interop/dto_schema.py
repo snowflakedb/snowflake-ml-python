@@ -1,4 +1,4 @@
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Discriminator, Tag, TypeAdapter, model_validator
 from typing_extensions import Annotated, NotRequired, TypedDict
@@ -31,9 +31,9 @@ class ProtocolInfo(BaseModel):
     """
 
     name: str
-    version: Optional[str] = None
-    metadata: Optional[dict[str, str]] = None
-    manifest: Optional[PayloadManifest] = None
+    version: str | None = None
+    metadata: dict[str, str] | None = None
+    manifest: PayloadManifest | None = None
 
     def __str__(self) -> str:
         result = self.name
@@ -78,9 +78,9 @@ class PayloadDTO(BaseModel):
     """
 
     kind: Literal["base"] = "base"
-    value: Optional[Any] = None
-    protocol: Optional[ProtocolInfo] = None
-    serialize_error: Optional[str] = None
+    value: Any | None = None
+    protocol: ProtocolInfo | None = None
+    serialize_error: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -107,7 +107,7 @@ class ResultDTO(PayloadDTO):
 
     kind: Literal["result"] = "result"  # type: ignore[assignment]
     success: bool
-    metadata: Optional[Union[ResultMetadata, ExceptionMetadata]] = None
+    metadata: ResultMetadata | ExceptionMetadata | None = None
 
     @model_validator(mode="before")
     @classmethod

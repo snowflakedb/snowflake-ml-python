@@ -1,6 +1,6 @@
 import types
 import warnings
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import _experiment_info as experiment_info
@@ -37,9 +37,9 @@ class Run:
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_value: Optional[BaseException],
-        tb: Optional[types.TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        tb: types.TracebackType | None,
     ) -> None:
         self._patcher.__exit__(exc_type, exc_value, tb)
         if self._experiment_tracking._run is self:

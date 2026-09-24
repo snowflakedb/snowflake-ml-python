@@ -1,5 +1,5 @@
 import pathlib
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 import jinja2
 from typing_extensions import NotRequired
@@ -17,7 +17,7 @@ _JINJA_ENV = jinja2.Environment(keep_trailing_newline=True)
 
 
 class FunctionGenerateOptions(TypedDict):
-    max_batch_size: NotRequired[Optional[int]]
+    max_batch_size: NotRequired[int | None]
     function_type: NotRequired[str]
 
 
@@ -25,7 +25,7 @@ def get_function_generate_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> FunctionGenerateOptions:
     method_options = options.get("method_options", {}).get(target_method, {})
-    max_batch_size: Optional[int]
+    max_batch_size: int | None
     if "max_batch_size" in method_options:
         max_batch_size = method_options["max_batch_size"]
     else:
@@ -52,7 +52,7 @@ class FunctionGenerator:
         function_type: str,
         is_partitioned_function: bool = False,
         wide_input: bool = False,
-        options: Optional[FunctionGenerateOptions] = None,
+        options: FunctionGenerateOptions | None = None,
         use_udf_init_once: bool = False,
         single_output: bool = False,
     ) -> None:

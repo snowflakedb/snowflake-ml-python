@@ -3,7 +3,7 @@ from __future__ import annotations  # for return self methods
 import functools
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from snowflake.ml._internal.utils import formatting
 
@@ -147,7 +147,7 @@ class MockSnowMLBase:
         operation: str,
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
-        result: Optional[Any] = None,
+        result: Any | None = None,
         check_args: bool = True,
         check_kwargs: bool = True,
         # TODO(amauser): Set this to True after updating the tests.

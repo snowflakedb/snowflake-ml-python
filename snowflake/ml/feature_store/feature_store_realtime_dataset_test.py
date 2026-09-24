@@ -18,7 +18,7 @@ we test only the SDK-side behavior.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -60,7 +60,7 @@ def _make_upstream(
     *,
     name: str = "TXN_FV",
     version: str = "v1",
-    join_keys: Optional[list[str]] = None,
+    join_keys: list[str] | None = None,
     feature_name: str = "avg_amount",
     status: FeatureViewStatus = FeatureViewStatus.ACTIVE,
 ) -> FeatureView:
@@ -92,10 +92,10 @@ def _make_upstream(
 def _make_rtfv(
     *,
     name: str = "MY_RTFV",
-    join_keys: Optional[list[str]] = None,
+    join_keys: list[str] | None = None,
     request_field_name: str = "amount",
-    request_field_type: Optional[Any] = None,
-    upstream: Optional[FeatureView] = None,
+    request_field_type: Any | None = None,
+    upstream: FeatureView | None = None,
     compute_fn: Callable[..., pd.DataFrame] = rtfv_compute_fn,
 ) -> FeatureView:
     keys = join_keys or ["USER_ID"]

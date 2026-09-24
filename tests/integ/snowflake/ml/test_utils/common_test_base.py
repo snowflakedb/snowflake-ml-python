@@ -4,7 +4,7 @@ import itertools
 import logging
 import os
 import tempfile
-from typing import Any, Callable, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, Literal, TypeVar
 from unittest import mock
 
 import cloudpickle
@@ -102,11 +102,11 @@ def get_function_body(func: Callable[..., Any]) -> str:
 
 
 def get_modified_test_cases(
-    test_cases: Union[list[dict[str, Any]], list[tuple[Any, ...]]],
+    test_cases: list[dict[str, Any]] | list[tuple[Any, ...]],
     additional_cases: list[Any],
     additional_case_arg_name: str,
     naming_type: object,
-) -> Union[list[dict[str, Any]], list[tuple[Any, ...]]]:
+) -> list[dict[str, Any]] | list[tuple[Any, ...]]:
     if all(isinstance(tc, dict) for tc in test_cases):
         modified_test_cases = [{**t1, additional_case_arg_name: t2} for t1 in test_cases for t2 in additional_cases]
         if naming_type is parameterized._NAMED:
@@ -179,14 +179,14 @@ class CommonTestBase(parameterized.TestCase):
         local: bool = True,
         test_callers_rights: bool = True,
         test_owners_rights: bool = True,
-        additional_packages: Optional[list[str]] = None,
+        additional_packages: list[str] | None = None,
     ) -> Callable[
         [Callable[Concatenate[_V, _T_args], None]],
-        Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
+        parameterized._ParameterizedTestIter | Callable[Concatenate[_V, _T_args], None],
     ]:
         def decorator(
-            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
-        ) -> Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]:
+            fn: parameterized._ParameterizedTestIter | Callable[Concatenate[_V, _T_args], None],
+        ) -> parameterized._ParameterizedTestIter | Callable[Concatenate[_V, _T_args], None]:
             if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
                 return fn
 
@@ -284,7 +284,6 @@ class CommonTestBase(parameterized.TestCase):
                             import unittest
                             import zipfile
                             from types import TracebackType
-                            from typing import Optional
 
                             class FileLock:
                                 def __enter__(self) -> None:
@@ -295,9 +294,9 @@ class CommonTestBase(parameterized.TestCase):
 
                                 def __exit__(
                                     self,
-                                    exc_type: Optional[type[BaseException]],
-                                    exc: Optional[BaseException],
-                                    traceback: Optional[TracebackType],
+                                    exc_type: type[BaseException] | None,
+                                    exc: BaseException | None,
+                                    traceback: TracebackType | None,
                                 ) -> None:
                                     self._fd.close()
                                     self._lock.release()
@@ -366,14 +365,14 @@ class CommonTestBase(parameterized.TestCase):
     def compatibility_test(
         kclass: type[_V],
         prepare_fn_factory: Callable[[_V], tuple[Callable[[session.Session, _R_args], None], _R_args]],
-        version_range: Optional[str] = None,
-        additional_packages: Optional[list[str]] = None,
+        version_range: str | None = None,
+        additional_packages: list[str] | None = None,
     ) -> Callable[
-        [Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]]],
+        [parameterized._ParameterizedTestIter | Callable[Concatenate[_V, _T_args], None]],
         parameterized._ParameterizedTestIter,
     ]:
         def decorator(
-            fn: Union[parameterized._ParameterizedTestIter, Callable[Concatenate[_V, _T_args], None]],
+            fn: parameterized._ParameterizedTestIter | Callable[Concatenate[_V, _T_args], None],
         ) -> parameterized._ParameterizedTestIter:
             if isinstance(fn, parameterized._ParameterizedTestIter):
                 actual_method = fn._test_method

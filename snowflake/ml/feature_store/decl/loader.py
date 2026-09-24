@@ -17,7 +17,7 @@ import json
 import os
 import pathlib
 import sys
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -218,9 +218,9 @@ def load_python_file(filepath: str) -> list[tuple[str, Any]]:
 
 def process_file(
     filepath: str,
-    config_source: Optional[str] = None,
+    config_source: str | None = None,
     *,
-    template_vars: Optional[dict[str, Any]] = None,
+    template_vars: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Load a single spec file and return a list of compiled spec dicts.
 
@@ -464,7 +464,7 @@ def _dict_to_spec(data: dict[str, Any]) -> SpecBase:
 
 def load_specs(
     files: list[str],
-    config: Optional[dict[str, Any]] = None,
+    config: dict[str, Any] | None = None,
 ) -> SpecBatch:
     """Load and parse spec files into a :class:`~types.SpecBatch`.
 
@@ -485,7 +485,7 @@ def load_specs(
     """
     import json as _json
 
-    config_source: Optional[str] = None
+    config_source: str | None = None
     if config:
         config_source = _json.dumps(config)
 
@@ -751,7 +751,7 @@ def load_from_project(
     *,
     database: str,
     schema: str,
-    template_vars: Optional[dict[str, Any]] = None,
+    template_vars: dict[str, Any] | None = None,
 ) -> SpecBatch:
     """Load every spec under ``<project_root>/sources/`` (project mode).
 
@@ -806,7 +806,7 @@ def load_from_project(
     if (sources_root / _RESERVED_SUBDIR).exists():
         raise SpecLoadError(_RESERVED_SUBDIR_MESSAGE)
 
-    config_source: Optional[str] = None
+    config_source: str | None = None
     if template_vars:
         config_source = json.dumps(template_vars)
 

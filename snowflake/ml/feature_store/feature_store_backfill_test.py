@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 from absl.testing import absltest
@@ -54,7 +54,7 @@ def _create_feature_store_with_mocks() -> Any:
     return fs
 
 
-def _make_fv(*, backup_source: Optional[str] = None) -> FeatureView:
+def _make_fv(*, backup_source: str | None = None) -> FeatureView:
     """Build an append_only FeatureView with version/db/schema set."""
     mock_df = MagicMock()
     mock_df.columns = ["GUEST_ID", "SNAPSHOT_TS", "N_RSRVS_30_DAY", "N_FUTURE_STAYS"]

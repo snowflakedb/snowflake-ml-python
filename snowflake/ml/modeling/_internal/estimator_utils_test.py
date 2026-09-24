@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from absl.testing import absltest, parameterized
 from sklearn.linear_model import LinearRegression as SkLinearRegression
@@ -18,11 +18,11 @@ class TestEstimator(BaseTransformer):
     def __init__(
         self,
         estimator: Any,
-        dependencies: Optional[list[str]] = None,
-        drop_input_cols: Optional[bool] = False,
-        file_names: Optional[list[str]] = None,
-        custom_states: Optional[list[str]] = None,
-        sample_weight_col: Optional[str] = None,
+        dependencies: list[str] | None = None,
+        drop_input_cols: bool | None = False,
+        file_names: list[str] | None = None,
+        custom_states: list[str] | None = None,
+        sample_weight_col: str | None = None,
     ) -> None:
         super().__init__(
             drop_input_cols=drop_input_cols,

@@ -10,7 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 from absl.testing import absltest, parameterized
@@ -38,7 +38,7 @@ def _make_registered_fv(
     name: str,
     version: str,
     feature_columns: list[str],
-    join_keys: Optional[list[str]] = None,
+    join_keys: list[str] | None = None,
     online: bool = True,
     store_type: OnlineStoreType = OnlineStoreType.POSTGRES,
 ) -> FeatureView:
@@ -85,9 +85,9 @@ def _make_registered_rtfv(
     name: str,
     version: str,
     output_fields: list[StructField],
-    request_fields: Optional[list[StructField]] = None,
-    upstream: Optional[FeatureView] = None,
-    join_keys: Optional[list[str]] = None,
+    request_fields: list[StructField] | None = None,
+    upstream: FeatureView | None = None,
+    join_keys: list[str] | None = None,
 ) -> FeatureView:
     """Build a :class:`FeatureView` that looks like a registered RTFV.
 

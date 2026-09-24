@@ -2,7 +2,7 @@ import inspect
 import json
 import math
 import warnings
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable
 
 import cloudpickle
 import numpy as np
@@ -32,10 +32,10 @@ _SUBPROJECT = "Metrics"
 def accuracy_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
     normalize: bool = True,
-    sample_weight_col_name: Optional[str] = None,
+    sample_weight_col_name: str | None = None,
 ) -> float:
     """
     Accuracy classification score.
@@ -93,10 +93,10 @@ def confusion_matrix(
     df: snowpark.DataFrame,
     y_true_col_name: str,
     y_pred_col_name: str,
-    labels: Optional[npt.ArrayLike] = None,
-    sample_weight_col_name: Optional[str] = None,
-    normalize: Optional[str] = None,
-) -> Union[npt.NDArray[np.int_], npt.NDArray[np.float64]]:
+    labels: npt.ArrayLike | None = None,
+    sample_weight_col_name: str | None = None,
+    normalize: str | None = None,
+) -> npt.NDArray[np.int_] | npt.NDArray[np.float64]:
     """
     Compute confusion matrix to evaluate the accuracy of a classification.
 
@@ -313,14 +313,14 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
 def f1_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
-    labels: Optional[npt.ArrayLike] = None,
-    pos_label: Union[str, int] = 1,
-    average: Optional[str] = "binary",
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float64]]:
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
+    labels: npt.ArrayLike | None = None,
+    pos_label: str | int = 1,
+    average: str | None = "binary",
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> float | npt.NDArray[np.float64]:
     """
     Compute the F1 score, also known as balanced F-score or F-measure.
 
@@ -406,15 +406,15 @@ def f1_score(
 def fbeta_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
     beta: float,
-    labels: Optional[npt.ArrayLike] = None,
-    pos_label: Union[str, int] = 1,
-    average: Optional[str] = "binary",
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float64]]:
+    labels: npt.ArrayLike | None = None,
+    pos_label: str | int = 1,
+    average: str | None = "binary",
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> float | npt.NDArray[np.float64]:
     """
     Compute the F-beta score.
 
@@ -501,12 +501,12 @@ def fbeta_score(
 def log_loss(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
-    eps: Union[float, str] = "auto",
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
+    eps: float | str = "auto",
     normalize: bool = True,
-    sample_weight_col_name: Optional[str] = None,
-    labels: Optional[npt.ArrayLike] = None,
+    sample_weight_col_name: str | None = None,
+    labels: npt.ArrayLike | None = None,
 ) -> float:
     r"""
     Log loss, aka logistic loss or cross-entropy loss.
@@ -626,7 +626,7 @@ def _register_log_loss_computer(
     *,
     session: snowpark.Session,
     statement_params: dict[str, Any],
-    labels: Optional[npt.ArrayLike] = None,
+    labels: npt.ArrayLike | None = None,
 ) -> str:
     """Registers log loss computation UDTF in Snowflake and returns the name of the UDTF.
 
@@ -685,19 +685,19 @@ def _register_log_loss_computer(
 def precision_recall_fscore_support(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
     beta: float = 1.0,
-    labels: Optional[npt.ArrayLike] = None,
-    pos_label: Union[str, int] = 1,
-    average: Optional[str] = None,
-    warn_for: Union[tuple[str, ...], set[str]] = ("precision", "recall", "f-score"),
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[
-    tuple[float, float, float, None],
-    tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]],
-]:
+    labels: npt.ArrayLike | None = None,
+    pos_label: str | int = 1,
+    average: str | None = None,
+    warn_for: tuple[str, ...] | set[str] = ("precision", "recall", "f-score"),
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> (
+    tuple[float, float, float, None]
+    | tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]
+):
     """
     Compute precision, recall, F-measure and support for each class.
 
@@ -853,10 +853,10 @@ def precision_recall_fscore_support(
         )
         result_object = result.deserialize(session, precision_recall_fscore_support_anon_sproc(session, **kwargs))
 
-        res: Union[
-            tuple[float, float, float, None],
-            tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]],
-        ] = result_object[:4]
+        res: (
+            tuple[float, float, float, None]
+            | tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]
+        ) = result_object[:4]
         warning = result_object[-1]
         if warning:
             warnings.warn(warning.message, category=warning.category, stacklevel=2)
@@ -1018,7 +1018,7 @@ def precision_recall_fscore_support(
 def _register_multilabel_confusion_matrix_computer(
     *,
     session: snowpark.Session,
-    labels: Optional[npt.ArrayLike] = None,
+    labels: npt.ArrayLike | None = None,
     samplewise: bool,
 ) -> str:
     """Registers multilabel confusion matrix computation UDTF in Snowflake and returns the name of the UDTF.
@@ -1093,12 +1093,12 @@ def _register_multilabel_confusion_matrix_computer(
 def _binary_precision_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
-    pos_label: Union[str, int] = 1,
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float64]]:
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
+    pos_label: str | int = 1,
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> float | npt.NDArray[np.float64]:
 
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
 
@@ -1166,14 +1166,14 @@ def _binary_precision_score(
 def precision_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
-    labels: Optional[npt.ArrayLike] = None,
-    pos_label: Union[str, int] = 1,
-    average: Optional[str] = "binary",
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float64]]:
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
+    labels: npt.ArrayLike | None = None,
+    pos_label: str | int = 1,
+    average: str | None = "binary",
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> float | npt.NDArray[np.float64]:
     """
     Compute the precision.
 
@@ -1264,14 +1264,14 @@ def precision_score(
 def recall_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
-    labels: Optional[npt.ArrayLike] = None,
-    pos_label: Union[str, int] = 1,
-    average: Optional[str] = "binary",
-    sample_weight_col_name: Optional[str] = None,
-    zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float64]]:
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
+    labels: npt.ArrayLike | None = None,
+    pos_label: str | int = 1,
+    average: str | None = "binary",
+    sample_weight_col_name: str | None = None,
+    zero_division: str | int = "warn",
+) -> float | npt.NDArray[np.float64]:
     """
     Compute the recall.
 
@@ -1377,7 +1377,7 @@ def _sum_array_col(df: snowpark.DataFrame, col_name: str) -> snowpark.DataFrame:
 
 def _check_binary_labels(
     labels: list[Any],
-    pos_label: Union[str, int] = 1,
+    pos_label: str | int = 1,
 ) -> list[Any]:
     """Validation associated with binary average labels.
 
@@ -1410,9 +1410,9 @@ def _prf_divide(
     denominator: npt.NDArray[np.float64],
     metric: str,
     modifier: str,
-    average: Optional[str] = None,
-    warn_for: Union[tuple[str, ...], set[str]] = ("precision", "recall", "f-score"),
-    zero_division: Union[str, int] = "warn",
+    average: str | None = None,
+    warn_for: tuple[str, ...] | set[str] = ("precision", "recall", "f-score"),
+    zero_division: str | int = "warn",
 ) -> npt.NDArray[np.float64]:
     """Performs division and handles divide-by-zero.
 
@@ -1476,7 +1476,7 @@ def _prf_divide(
 
 
 def _warn_prf(
-    average: Optional[str],
+    average: str | None,
     modifier: str,
     msg_start: str,
     result_size: int,
@@ -1505,7 +1505,7 @@ def _warn_prf(
     warnings.warn(msg, exceptions.UndefinedMetricWarning, stacklevel=2)
 
 
-def _check_zero_division(zero_division: Union[int, float, str]) -> float:
+def _check_zero_division(zero_division: int | float | str) -> float:
     """Returns the value to use when division by zero occurs.
 
     Args:
@@ -1522,7 +1522,7 @@ def _check_zero_division(zero_division: Union[int, float, str]) -> float:
         return np.nan
 
 
-def _nanaverage(a: npt.NDArray[np.float64], weights: Optional[npt.ArrayLike] = None) -> Any:
+def _nanaverage(a: npt.NDArray[np.float64], weights: npt.ArrayLike | None = None) -> Any:
     """Compute the weighted average, ignoring NaNs.
 
     Args:

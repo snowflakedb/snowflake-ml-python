@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import cast
 
 from typing_extensions import deprecated
 
@@ -10,9 +10,7 @@ from snowflake.ml._internal import telemetry
 @telemetry.send_api_usage_telemetry(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
-def sentiment(
-    text: Union[str, snowpark.Column], session: Optional[snowpark.Session] = None
-) -> Union[float, snowpark.Column]:
+def sentiment(text: str | snowpark.Column, session: snowpark.Session | None = None) -> float | snowpark.Column:
     """Calls into the LLM inference service to perform sentiment analysis on the input text.
 
     Args:
@@ -26,8 +24,8 @@ def sentiment(
 
 
 def _sentiment_impl(
-    function: str, text: Union[str, snowpark.Column], session: Optional[snowpark.Session] = None
-) -> Union[float, snowpark.Column]:
+    function: str, text: str | snowpark.Column, session: snowpark.Session | None = None
+) -> float | snowpark.Column:
 
     output = call_sql_function(function, session, text)
     if isinstance(output, snowpark.Column):

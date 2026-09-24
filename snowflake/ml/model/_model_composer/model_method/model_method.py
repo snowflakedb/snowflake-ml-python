@@ -1,7 +1,7 @@
 import collections
 import pathlib
 import warnings
-from typing import Optional, TypedDict, Union
+from typing import TypedDict
 
 from typing_extensions import NotRequired
 
@@ -46,7 +46,7 @@ class ModelMethodOptions(TypedDict):
 
 
 def get_model_method_options_from_options(
-    options: type_hints.ModelSaveOption, target_method: str, model_type: Optional[str] = None
+    options: type_hints.ModelSaveOption, target_method: str, model_type: str | None = None
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
@@ -113,7 +113,7 @@ class ModelMethod:
         function_generator: function_generator.FunctionGenerator,
         is_partitioned_function: bool = False,
         wide_input: bool = False,
-        options: Optional[ModelMethodOptions] = None,
+        options: ModelMethodOptions | None = None,
     ) -> None:
         self.model_meta = model_meta
         self.target_method = target_method
@@ -191,7 +191,7 @@ class ModelMethod:
         )
 
     def save(
-        self, workspace_path: pathlib.Path, options: Optional[function_generator.FunctionGenerateOptions] = None
+        self, workspace_path: pathlib.Path, options: function_generator.FunctionGenerateOptions | None = None
     ) -> model_manifest_schema.ModelMethodDict:
         (workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH).mkdir(parents=True, exist_ok=True)
         use_udf_init_once = bool(self.options.get("model_init_once", False))
@@ -207,7 +207,7 @@ class ModelMethod:
         # (server + clients) supports the native type. OBJECT/ARRAY/TIMESTAMP_* outputs stay packed (see
         # _NON_NATIVE_SINGLE_OUTPUT_SF_TYPES).
         output_features = self.model_meta.signatures[self.target_method].outputs
-        single_output_native_type: Optional[str] = None
+        single_output_native_type: str | None = None
         if (
             self.function_type == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
             and len(output_features) == 1
@@ -245,10 +245,10 @@ class ModelMethod:
                 "In this case, set case_sensitive as True for those methods to distinguish them."
             )
 
-        outputs: Union[
-            list[model_manifest_schema.ModelMethodSignatureField],
-            list[model_manifest_schema.ModelMethodSignatureFieldWithName],
-        ]
+        outputs: (
+            list[model_manifest_schema.ModelMethodSignatureField]
+            | list[model_manifest_schema.ModelMethodSignatureFieldWithName]
+        )
         if self.function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
             outputs = [
                 ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))

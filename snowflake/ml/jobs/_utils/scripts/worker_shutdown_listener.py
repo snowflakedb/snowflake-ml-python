@@ -9,7 +9,6 @@ import signal
 import sys
 import time
 from types import FrameType
-from typing import Optional
 
 import ray
 from constants import (
@@ -22,7 +21,7 @@ from ray.actor import ActorHandle
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def get_shutdown_actor() -> Optional[ActorHandle]:
+def get_shutdown_actor() -> ActorHandle | None:
     """
     Retrieve the shutdown signal actor from Ray.
 
@@ -228,7 +227,7 @@ def run_listener() -> int:
 def main() -> None:
     """Main entry point with signal handling"""
 
-    def signal_handler(signum: int, frame: Optional[FrameType]) -> None:
+    def signal_handler(signum: int, frame: FrameType | None) -> None:
         logging.info(f"Received signal {signum}, exiting worker process.")
         sys.exit(0)
 

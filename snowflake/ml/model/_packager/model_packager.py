@@ -1,7 +1,6 @@
 import logging
 import os
 from types import ModuleType
-from typing import Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -31,28 +30,28 @@ class ModelPackager:
 
     def __init__(self, local_dir_path: str) -> None:
         self.local_dir_path = os.path.normpath(local_dir_path)
-        self.model: Optional[model_types.SupportedModelType] = None
-        self.meta: Optional[model_meta.ModelMetadata] = None
+        self.model: model_types.SupportedModelType | None = None
+        self.meta: model_meta.ModelMetadata | None = None
 
     def save(
         self,
         *,
         name: str,
         model: model_types.SupportedModelType,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        metadata: Optional[dict[str, str]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
-        python_version: Optional[str] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
-        code_paths: Optional[list[model_types.CodePathLike]] = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        metadata: dict[str, str] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[model_types.TargetPlatform] | None = None,
+        python_version: str | None = None,
+        ext_modules: list[ModuleType] | None = None,
+        code_paths: list[model_types.CodePathLike] | None = None,
         options: model_types.ModelSaveOption,
         task: model_types.Task = model_types.Task.UNKNOWN,
-        prefer_pip_for_automatic_dependencies: Optional[bool] = None,
+        prefer_pip_for_automatic_dependencies: bool | None = None,
     ) -> model_meta.ModelMetadata:
         handler = model_handler.find_handler(model)
         if handler is None:
@@ -126,7 +125,7 @@ class ModelPackager:
         *,
         meta_only: bool = False,
         as_custom_model: bool = False,
-        options: Optional[model_types.ModelLoadOption] = None,
+        options: model_types.ModelLoadOption | None = None,
     ) -> model_meta.ModelMetadata:
         """Load the model into memory from directory. Used internal only.
 

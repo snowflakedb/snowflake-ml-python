@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 from typing_extensions import TypedDict
@@ -59,9 +59,9 @@ class InputSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    params: Optional[dict[str, Any]] = None
-    column_handling: Optional[dict[str, ColumnHandlingOptions]] = None
-    partition_column: Optional[str] = None
+    params: dict[str, Any] | None = None
+    column_handling: dict[str, ColumnHandlingOptions] | None = None
+    partition_column: str | None = None
 
 
 class OutputSpec(BaseModel):
@@ -98,9 +98,9 @@ class ResourcesSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cpu_requests: Optional[str] = None
-    memory_requests: Optional[str] = None
-    gpu_requests: Optional[str] = None
+    cpu_requests: str | None = None
+    memory_requests: str | None = None
+    gpu_requests: str | None = None
 
 
 class EngineOptions(BaseModel):
@@ -113,12 +113,12 @@ class EngineOptions(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    engine: Optional[inference_engine_module.InferenceEngine] = None
-    engine_args_override: Optional[list[str]] = None
+    engine: inference_engine_module.InferenceEngine | None = None
+    engine_args_override: list[str] | None = None
 
     @field_validator("engine", mode="before")
     @classmethod
-    def _coerce_engine(cls, value: Any) -> Optional[inference_engine_module.InferenceEngine]:
+    def _coerce_engine(cls, value: Any) -> inference_engine_module.InferenceEngine | None:
         # Accept an InferenceEngine member or a case-insensitive value/name string
         # (e.g. "vllm", "VLLM", "python_generic") rather than only the exact enum value.
         if value is None:
@@ -126,7 +126,7 @@ class EngineOptions(BaseModel):
         return inference_engine_module.InferenceEngine.from_value(value)
 
     @field_serializer("engine")
-    def _serialize_engine(self, engine: Optional[inference_engine_module.InferenceEngine]) -> Optional[str]:
+    def _serialize_engine(self, engine: inference_engine_module.InferenceEngine | None) -> str | None:
         # Emit the enum member name (e.g. "VLLM") rather than its lower-case value,
         # to match the canonical spelling used in the EXECUTE INFERENCE JOB SERVICE spec.
         return engine.name if engine is not None else None
@@ -145,9 +145,9 @@ class InferenceSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    num_workers: Optional[int] = None
-    max_batch_rows: Optional[int] = None
-    engine_options: Optional[EngineOptions] = None
+    num_workers: int | None = None
+    max_batch_rows: int | None = None
+    engine_options: EngineOptions | None = None
 
 
 class ImageBuildSpec(BaseModel):
@@ -162,5 +162,5 @@ class ImageBuildSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    image_repo: Optional[str] = None
+    image_repo: str | None = None
     force_rebuild: bool = False

@@ -1,7 +1,7 @@
 import inspect
 import json
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -41,20 +41,20 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         self,
         model: model_types.SupportedModelType,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[list[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        additional_version_suffix: Optional[str] = None,
-        function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
-        is_partitioned_assert: Optional[dict[str, bool]] = None,
-        is_object_output_assert: Optional[dict[str, bool]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        code_paths: Optional[list[model_types.CodePathLike]] = None,
-        partition_column: Optional[str] = None,
-        params_assert_fns: Optional[dict[str, tuple[Any, dict[str, Any], Callable[[Any], Any]]]] = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        additional_dependencies: list[str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        additional_version_suffix: str | None = None,
+        function_type_assert: dict[str, model_manifest_schema.ModelMethodFunctionTypes] | None = None,
+        is_partitioned_assert: dict[str, bool] | None = None,
+        is_object_output_assert: dict[str, bool] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        code_paths: list[model_types.CodePathLike] | None = None,
+        partition_column: str | None = None,
+        params_assert_fns: dict[str, tuple[Any, dict[str, Any], Callable[[Any], Any]]] | None = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -121,14 +121,14 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         self,
         model: model_types.SupportedModelType,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[list[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[str]] = None,
-        expect_error: Optional[bool] = False,
-        conda_dependencies: Optional[list[str]] = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        additional_dependencies: list[str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        target_platforms: list[str] | None = None,
+        expect_error: bool | None = False,
+        conda_dependencies: list[str] | None = None,
     ) -> None:
         # ``conda_dependencies`` when not None is the full list (e.g. [] for pip-only); when None, use default
         # snowpark pin plus ``additional_dependencies``.
@@ -198,17 +198,17 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         self,
         model: model_types.SupportedModelType,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[list[str]] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        additional_version_suffix: Optional[str] = None,
-        function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
-        is_partitioned_assert: Optional[dict[str, bool]] = None,
-        is_object_output_assert: Optional[dict[str, bool]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        additional_dependencies: list[str] | None = None,
+        options: model_types.ModelSaveOption | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        additional_version_suffix: str | None = None,
+        function_type_assert: dict[str, model_manifest_schema.ModelMethodFunctionTypes] | None = None,
+        is_partitioned_assert: dict[str, bool] | None = None,
+        is_object_output_assert: dict[str, bool] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")

@@ -7,6 +7,7 @@ Helper functions to autogenerate genrules and build rules for the following
 """
 
 load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_package", "py_test")
+load("//codegen:modeling_test_tiers.bzl", "MODELING_TEST_TIERS", "NO_TEST", "validate_modeling_test_tiers")
 
 AUTO_GEN_TOOL_BAZEL_PATH = "//codegen:estimator_autogen_tool"
 ESTIMATOR_TEMPLATE_BAZEL_PATH = "//codegen:sklearn_wrapper_template.py_template"
@@ -112,8 +113,9 @@ def autogen_estimators(module, estimator_info_list):
     )
 
 def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
-    """Generates `genrules` and `py_test` rules for every estimator in the estimator_info_list
-     List of generated build rules for every class in the estimator_info_list
+    """Generates integration tests for capability representatives.
+
+    List of generated build rules for each selected class in estimator_info_list:
         1. `genrule` with label `generate_test_<estimator-class-name-snakecase>` to auto-generate
             integration test for the estimator's wrapper class.
         2. `py_test` rule with label `<estimator-class-name-snakecase>_test` to build the auto-generated
@@ -136,7 +138,19 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
     elif module == "xgboost":
         optional_dependencies = ["xgboost", "scikit-learn"]
 
+    # Modeling APIs are deprecated and not under active development.
+    # Bump these estimators to eternal so warehouse integ stays under the limit.
+    EXTENDED_TIMEOUT_CLASS_NAMES = [
+        "HistGradientBoostingRegressor",
+        "LogisticRegressionCV",
+    ]
+
+    validate_modeling_test_tiers()
+
     for e in estimator_info_list:
+        if MODELING_TEST_TIERS.get(e.class_name, NO_TEST) == NO_TEST:
+            continue
+
         py_genrule(
             name = "generate_test_{}".format(e.normalized_class_name),
             outs = ["{}_test.py".format(e.normalized_class_name)],
@@ -153,7 +167,7 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
                 "//{}:{}".format(module_root_dir, e.normalized_class_name),
                 "//snowflake/ml/_internal/utils:connection_params",
             ],
-            timeout = "long",
+            timeout = "eternal" if e.class_name in EXTENDED_TIMEOUT_CLASS_NAMES else "long",
             legacy_create_init = 0,
             shard_count = 5,
             optional_dependencies = optional_dependencies,

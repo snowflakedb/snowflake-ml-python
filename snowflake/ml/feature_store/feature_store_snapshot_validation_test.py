@@ -18,6 +18,8 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewStatus,
     FeatureViewVersion,
+    StorageConfig,
+    StorageFormat,
 )
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
@@ -412,6 +414,48 @@ class RegisterFeatureViewSnapshotValidationTest(absltest.TestCase):
         fs._validate_entity_exists.assert_not_called()
         fs._create_offline_feature_view.assert_not_called()
         fs._finalize_feature_view_registration.assert_not_called()
+
+    def test_register_rejects_iceberg_append_only(self) -> None:
+        """Iceberg storage cannot back snapshot accumulation, so registration refuses it.
+
+        The snapshot table is derived from the offline object with ``CREATE TABLE ... LIKE``,
+        which has no Iceberg equivalent. Refused here rather than in ``__init__`` so that an
+        already-registered feature view stays reconstructable, and therefore deletable.
+        """
+        fs = _create_feature_store_with_mocks()
+        fv = _make_valid_snapshot_fv()
+        fv._status = FeatureViewStatus.DRAFT
+        fv._storage_config = StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL")
+
+        # Mocks that should never be reached because validation must fail first.
+        fs._validate_entity_exists = MagicMock(return_value=True)
+        fs._create_offline_feature_view = MagicMock(return_value=[])
+        fs._finalize_feature_view_registration = MagicMock()
+        fs.get_feature_view = MagicMock(return_value=fv)
+
+        with self.assertRaises(Exception) as cm:
+            fs.register_feature_view(feature_view=fv, version="V1", overwrite=False)
+
+        self.assertIn("Iceberg storage is not supported with append_only=True", str(cm.exception))
+        # The gate needs no round trip, so it must fire before the entity lookup and well
+        # before anything is created in Snowflake.
+        fs._validate_entity_exists.assert_not_called()
+        fs._create_offline_feature_view.assert_not_called()
+        fs._finalize_feature_view_registration.assert_not_called()
+
+    def test_update_rejects_feature_view_switched_to_iceberg(self) -> None:
+        """A caller-supplied FeatureView is used as passed rather than reloaded, so an object
+        mutated to Iceberg storage can still reach update and must be refused."""
+        fs = _create_feature_store_with_mocks()
+        fv = _make_valid_snapshot_fv()
+        fv._storage_config = StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL")
+
+        fs._validate_feature_view_name_and_version_input = MagicMock(return_value=fv)
+
+        with self.assertRaises(Exception) as cm:
+            fs.update_feature_view(name=fv, desc="new description")
+
+        self.assertIn("Iceberg storage is not supported with append_only=True", str(cm.exception))
 
 
 class UpdateFeatureViewSnapshotValidationTest(absltest.TestCase):

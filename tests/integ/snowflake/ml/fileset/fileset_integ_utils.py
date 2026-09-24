@@ -1,7 +1,6 @@
 import os
 import posixpath
 import tempfile
-from typing import Union
 
 from snowflake import snowpark
 
@@ -89,7 +88,7 @@ def get_fileset_query(row_number: int) -> str:
     return final_query
 
 
-def get_column_min(col_name: str) -> Union[int, float]:
+def get_column_min(col_name: str) -> int | float:
     """Return the expected minimum value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return 1.1
@@ -98,7 +97,7 @@ def get_column_min(col_name: str) -> Union[int, float]:
     return 1
 
 
-def get_column_max(col_name: str, row_number: int) -> Union[int, float]:
+def get_column_max(col_name: str, row_number: int) -> int | float:
     """Return the expected maximum value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return 0.1 + row_number
@@ -107,7 +106,7 @@ def get_column_max(col_name: str, row_number: int) -> Union[int, float]:
     return row_number
 
 
-def get_column_avg(col_name: str, row_number: int) -> Union[int, float]:
+def get_column_avg(col_name: str, row_number: int) -> int | float:
     """Return the expected average value of the given column in the arbitrary resultset."""
     if col_name == "NUMBER_FIXED_POINT_COL":
         return (1.2 + row_number) / 2

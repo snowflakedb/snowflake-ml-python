@@ -1,5 +1,5 @@
 import re
-from typing import Any, Optional, Union, overload
+from typing import Any, overload
 
 from snowflake.snowpark._internal.analyzer import analyzer_utils
 
@@ -142,7 +142,7 @@ def rename_to_valid_snowflake_identifier(name: str) -> str:
 
 def parse_schema_level_object_identifier(
     object_name: str,
-) -> tuple[Union[str, Any], Union[str, Any], Union[str, Any]]:
+) -> tuple[str | Any, str | Any, str | Any]:
     """Parse a string which starts with schema level object.
 
     Args:
@@ -172,7 +172,7 @@ def parse_schema_level_object_identifier(
 
 def parse_snowflake_stage_path(
     path: str,
-) -> tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:
+) -> tuple[str | Any, str | Any, str | Any, str | Any]:
     """Parse a string which represents a snowflake stage path.
 
     Args:
@@ -219,10 +219,10 @@ def is_fully_qualified_name(name: str) -> bool:
 
 
 def get_schema_level_object_identifier(
-    db: Optional[str],
-    schema: Optional[str],
+    db: str | None,
+    schema: str | None,
     object_name: str,
-    others: Optional[str] = None,
+    others: str | None = None,
 ) -> str:
     """The reverse operation of parse_schema_level_object_identifier
 
@@ -264,7 +264,7 @@ def get_unescaped_names(ids: list[str]) -> list[str]:
     ...
 
 
-def get_unescaped_names(ids: Optional[Union[str, list[str]]]) -> Optional[Union[str, list[str]]]:
+def get_unescaped_names(ids: str | list[str] | None) -> str | list[str] | None:
     """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s) in the
     response pandas dataframe(i.e., in the response of snowpark_df.to_pandas()) using the rules defined here
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
@@ -312,7 +312,7 @@ def get_inferred_names(names: list[str]) -> list[str]:
     ...
 
 
-def get_inferred_names(names: Optional[Union[str, list[str]]]) -> Optional[Union[str, list[str]]]:
+def get_inferred_names(names: str | list[str] | None) -> str | list[str] | None:
     """Given a user provided *string(s)*, this method will compute the equivalent column name identifier(s)
     in case of column name contains special characters, and maintains case-sensitivity
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.

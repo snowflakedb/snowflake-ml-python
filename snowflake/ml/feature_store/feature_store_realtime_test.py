@@ -20,7 +20,7 @@ warehouse / metadata-table side effects.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -73,7 +73,7 @@ def _make_registered_upstream_fv(
     online: bool = True,
     store_type: OnlineStoreType = OnlineStoreType.POSTGRES,
     entity_name: str = "USER",
-    entity_join_keys: Optional[list[str]] = None,
+    entity_join_keys: list[str] | None = None,
 ) -> FeatureView:
     """Build an upstream FV that looks registered for RTFV tests."""
     join_keys = entity_join_keys or ["USER_ID"]
@@ -105,8 +105,8 @@ def _make_rtfv(
     *,
     name: str = "MY_RTFV",
     entity_name: str = "USER",
-    entity_join_keys: Optional[list[str]] = None,
-    upstream_fv: Optional[FeatureView] = None,
+    entity_join_keys: list[str] | None = None,
+    upstream_fv: FeatureView | None = None,
 ) -> FeatureView:
     join_keys = entity_join_keys or ["USER_ID"]
     upstream = upstream_fv or _make_registered_upstream_fv(entity_join_keys=join_keys)
@@ -124,8 +124,8 @@ def _make_rtfv(
 
 def _new_fs_with_mocks(
     *,
-    metadata_manager: Optional[MagicMock] = None,
-    session: Optional[MagicMock] = None,
+    metadata_manager: MagicMock | None = None,
+    session: MagicMock | None = None,
 ) -> FeatureStore:
     """Bare-bones FeatureStore with all I/O mocked.
 

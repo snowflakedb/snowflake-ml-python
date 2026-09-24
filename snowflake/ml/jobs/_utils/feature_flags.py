@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Optional, Union
+from typing import Callable, Union
 
 from snowflake.ml._internal.utils.snowflake_env import SnowflakeCloudType
 from snowflake.snowpark import context as sp_context
@@ -8,7 +8,7 @@ from snowflake.snowpark import context as sp_context
 DefaultValue = Union[bool, Callable[[], bool]]
 
 
-def parse_bool_env_value(value: Optional[str], default: bool = False) -> bool:
+def parse_bool_env_value(value: str | None, default: bool = False) -> bool:
     """Parse a boolean value from an environment variable string.
 
     Args:

@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 import lightgbm as lgb
 from absl.testing import absltest, parameterized
@@ -43,7 +43,7 @@ class SnowflakeLightgbmCallbackTest(SnowflakeCallbackTest, parameterized.TestCas
         version_name=[None, "v1"],
     )  # type: ignore[misc]
     def test_log_model(
-        self, model_class: type[ModelClass], model_name: Optional[str] = None, version_name: Optional[str] = None
+        self, model_class: type[ModelClass], model_name: str | None = None, version_name: str | None = None
     ) -> None:
         super()._log_model(model_class, model_name, version_name)
 

@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import cast
 
 from absl.testing import absltest, parameterized
 from packaging import version
@@ -111,7 +111,7 @@ class SnowflakeEnvTest(parameterized.TestCase):
         ("PUBLIC.PREPROD6", ValueError("enum not found")),
     )
     def test_get_current_cloud_no_show_regions(
-        self, region: str, expected: Union[str, Exception], default_cloud: Optional[str] = None
+        self, region: str, expected: str | Exception, default_cloud: str | None = None
     ) -> None:
         session = mock_session.MockSession(conn=None, test_case=self)
 

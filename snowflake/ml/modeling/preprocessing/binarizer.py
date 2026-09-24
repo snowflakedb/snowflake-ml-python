@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import pandas as pd
 from sklearn import preprocessing
@@ -50,10 +50,10 @@ class Binarizer(base.BaseTransformer):
         self,
         *,
         threshold: float = 0.0,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Map each feature to a binary value.
@@ -90,7 +90,7 @@ class Binarizer(base.BaseTransformer):
         """
         super()._reset()
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Binarizer":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "Binarizer":
         """
         This is a stateless transformer, so there is nothing to fit. Validates the transformer arguments.
         Returns the transformer instance.
@@ -117,7 +117,7 @@ class Binarizer(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Binarize the data. Map to 1 if it is strictly greater than the threshold, otherwise 0.
 

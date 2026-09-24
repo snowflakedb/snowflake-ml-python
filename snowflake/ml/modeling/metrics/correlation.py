@@ -1,4 +1,4 @@
-from typing import Collection, Optional
+from typing import Collection
 
 import cloudpickle
 import numpy as np
@@ -17,7 +17,7 @@ _SUBPROJECT = "Metrics"
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
-def correlation(*, df: snowpark.DataFrame, columns: Optional[Collection[str]] = None) -> pd.DataFrame:
+def correlation(*, df: snowpark.DataFrame, columns: Collection[str] | None = None) -> pd.DataFrame:
     """Pearson correlation matrix for the columns in a snowpark dataframe.
     NaNs and Nulls are not ignored, i.e. correlation on columns containing NaN or Null
     results in NaN correlation values.

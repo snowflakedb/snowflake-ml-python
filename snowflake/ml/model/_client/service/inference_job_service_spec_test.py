@@ -20,7 +20,7 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
         builder = inference_job_service_spec.InferenceJobServiceSpec()
         if with_input:
             builder.add_input_spec(
-                batch_inference_job_specs.InputSpec(
+                inference_job_service_spec._InternalInputSpec(
                     params={"temperature": 0.7},
                     column_handling={
                         "image_col": {
@@ -77,7 +77,7 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
         builder.add_inference_spec(batch_inference_job_specs.InferenceSpec(num_workers=2))
         builder.add_resources_spec(batch_inference_job_specs.ResourcesSpec(cpu_requests="1"))
         builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
-        builder.add_input_spec(batch_inference_job_specs.InputSpec(params={"k": "v"}))
+        builder.add_input_spec(inference_job_service_spec._InternalInputSpec(params={"k": "v"}))
         rendered = builder.save()
         self.assertLess(rendered.index("input"), rendered.index("output"))
         self.assertLess(rendered.index("output"), rendered.index("resources"))
@@ -92,6 +92,52 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
             {"image_col": {"input_format": "full_stage_path", "convert_to": "base64"}},
         )
         self.assertEqual(body["input"]["partition_column"], "PART_COL")
+
+    def test_internal_input_spec_emits_layout(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_input_spec(
+            inference_job_service_spec._InternalInputSpec(partition_column="PART_COL", layout="partitioned")
+        )
+        body = yaml.safe_load(builder.save())
+        self.assertEqual(body["input"]["layout"], "partitioned")
+        self.assertEqual(body["input"]["partition_column"], "PART_COL")
+
+    def test_internal_input_spec_layout_creates_input_block(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_input_spec(inference_job_service_spec._InternalInputSpec(layout="partitioned"))
+        body = yaml.safe_load(builder.save())
+        self.assertEqual(body["input"], {"layout": "partitioned"})
+
+    def test_from_input_spec_copies_public_fields_and_layout(self) -> None:
+        spec = inference_job_service_spec._InternalInputSpec.from_input_spec(
+            batch_inference_job_specs.InputSpec(partition_column="PART_COL"),
+            layout="partitioned",
+        )
+        self.assertIsInstance(spec, inference_job_service_spec._InternalInputSpec)
+        assert spec is not None
+        self.assertEqual(
+            spec.model_dump(mode="json", exclude_none=True),
+            {"partition_column": "PART_COL", "layout": "partitioned"},
+        )
+
+    def test_from_input_spec_without_layout_omits_field(self) -> None:
+        spec = inference_job_service_spec._InternalInputSpec.from_input_spec(
+            batch_inference_job_specs.InputSpec(partition_column="PART_COL")
+        )
+        self.assertIsInstance(spec, inference_job_service_spec._InternalInputSpec)
+        assert spec is not None
+        self.assertNotIn("layout", spec.model_dump(exclude_none=True))
+        self.assertIsNone(inference_job_service_spec._InternalInputSpec.from_input_spec(None))
+        self.assertIsNone(inference_job_service_spec._InternalInputSpec.from_input_spec(None, layout="partitioned"))
+
+    def test_empty_input_spec_emits_empty_input_block(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_input_spec(inference_job_service_spec._InternalInputSpec())
+        body = yaml.safe_load(builder.save())
+        self.assertEqual(body["input"], {})
 
     def test_inference_engine_serializes_to_server_enum(self) -> None:
         body = self._build(with_inference=True)
@@ -110,7 +156,7 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
     def test_clear_resets_state(self) -> None:
         builder = inference_job_service_spec.InferenceJobServiceSpec()
         builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
-        builder.add_input_spec(batch_inference_job_specs.InputSpec(params={"a": 1}))
+        builder.add_input_spec(inference_job_service_spec._InternalInputSpec(params={"a": 1}))
         builder.clear()
         with self.assertRaises(ValueError):
             builder.save()

@@ -5,7 +5,7 @@ import sched
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import (
@@ -40,7 +40,7 @@ class SyntheticDataGenerator:
         self._schema = schema
         self._source_table = source_table
         self._table_schema, self._stats = self._collect_metadata()
-        self._trigger_thread: Optional[threading.Thread] = None
+        self._trigger_thread: threading.Thread | None = None
 
     def trigger(self, batch_size: int, num_batches: int, freq: int = 10) -> None:
         def _run() -> None:

@@ -1,6 +1,5 @@
 import re
 import uuid
-from typing import Optional
 
 from absl.testing import absltest
 
@@ -197,7 +196,7 @@ class HiddenLiveCommitIntegTest(common_test_base.CommonTestBase):
         model_name: str,
         live_version_name: str,
         model_must_exist: bool,
-        expected_visible_versions: Optional[list[str]] = None,
+        expected_visible_versions: list[str] | None = None,
     ) -> None:
         try:
             shown_versions = self._show_version_names(model_name)

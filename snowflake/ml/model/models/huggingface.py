@@ -6,7 +6,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import TYPE_CHECKING, Any, NoReturn, Optional, Union
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from snowflake.ml._internal import platform_capabilities, type_utils
 from snowflake.ml._internal.exceptions import (
@@ -51,17 +51,17 @@ class TransformersPipeline:
 
     def __init__(
         self,
-        task: Optional[str],
+        task: str | None,
         model: str,
         *,
-        revision: Optional[str] = None,
-        token_or_secret: Optional[str] = None,
-        trust_remote_code: Optional[bool] = None,
-        model_kwargs: Optional[dict[str, Any]] = None,
-        compute_pool_for_log: Optional[str] = DEFAULT_CPU_COMPUTE_POOL,
+        revision: str | None = None,
+        token_or_secret: str | None = None,
+        trust_remote_code: bool | None = None,
+        model_kwargs: dict[str, Any] | None = None,
+        compute_pool_for_log: str | None = DEFAULT_CPU_COMPUTE_POOL,
         # repo snapshot download args
-        allow_patterns: Optional[Union[list[str], str]] = None,
-        ignore_patterns: Optional[Union[list[str], str]] = None,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
         lazy_upload: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -119,9 +119,9 @@ class TransformersPipeline:
 
         self._validate_device_map(kwargs, model_kwargs)
 
-        self._lazy_repo_files: Optional[list[str]] = None
-        self._lazy_file_sizes: Optional[dict[str, int]] = None
-        self._lazy_download_kwargs: Optional[dict[str, Any]] = None
+        self._lazy_repo_files: list[str] | None = None
+        self._lazy_file_sizes: dict[str, int] | None = None
+        self._lazy_download_kwargs: dict[str, Any] | None = None
 
         repo_snapshot_dir = self._download_snapshot_if_needed(
             logging_mode=logging_mode,
@@ -153,7 +153,7 @@ class TransformersPipeline:
         self.__dict__.update(kwargs)
 
     @staticmethod
-    def _parse_secret_identifier(token_or_secret: Optional[str]) -> tuple[Optional[str], bool]:
+    def _parse_secret_identifier(token_or_secret: str | None) -> tuple[str | None, bool]:
         """Parse the token_or_secret to extract secret identifier if it's a fully qualified name.
 
         Args:
@@ -180,7 +180,7 @@ class TransformersPipeline:
         return None, False
 
     @staticmethod
-    def _determine_logging_mode(compute_pool_for_log: Optional[str]) -> _LoggingMode:
+    def _determine_logging_mode(compute_pool_for_log: str | None) -> _LoggingMode:
         """Determine the logging mode based on compute_pool_for_log and available packages.
 
         Args:
@@ -207,7 +207,7 @@ class TransformersPipeline:
             )
 
     @staticmethod
-    def _handle_deprecated_auth_token(model_kwargs: dict[str, Any], token_or_secret: Optional[str]) -> Optional[str]:
+    def _handle_deprecated_auth_token(model_kwargs: dict[str, Any], token_or_secret: str | None) -> str | None:
         """Handle the deprecated use_auth_token argument.
 
         Args:
@@ -220,7 +220,7 @@ class TransformersPipeline:
         Raises:
             ValueError: If both token_or_secret and use_auth_token are specified.
         """
-        use_auth_token: Optional[str] = model_kwargs.pop("use_auth_token", None)
+        use_auth_token: str | None = model_kwargs.pop("use_auth_token", None)
         if use_auth_token is not None:
             warnings.warn(
                 "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.",
@@ -237,8 +237,8 @@ class TransformersPipeline:
 
     def _validate_inputs(
         self,
-        task: Optional[str],
-        model: Optional[str],
+        task: str | None,
+        model: str | None,
     ) -> None:
         """Validate the input arguments for pipeline creation.
 
@@ -292,8 +292,8 @@ class TransformersPipeline:
     def _filter_repo_files(
         repo_files: list[str],
         *,
-        allow_patterns: Optional[Union[list[str], str]] = None,
-        ignore_patterns: Optional[Union[list[str], str]] = None,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
     ) -> list[str]:
         """Filter repo file paths using the same glob semantics as ``snapshot_download``."""
         filtered_files = repo_files
@@ -314,14 +314,14 @@ class TransformersPipeline:
         *,
         logging_mode: _LoggingMode,
         uses_secret: bool,
-        model: Optional[str],
-        revision: Optional[str],
-        token_or_secret: Optional[str],
-        allow_patterns: Optional[Union[list[str], str]],
-        ignore_patterns: Optional[Union[list[str], str]],
+        model: str | None,
+        revision: str | None,
+        token_or_secret: str | None,
+        allow_patterns: list[str] | str | None,
+        ignore_patterns: list[str] | str | None,
         lazy_upload: bool,
-        task: Optional[str],
-    ) -> Optional[str]:
+        task: str | None,
+    ) -> str | None:
         """Download the model snapshot if in SNAPSHOT_DOWNLOAD mode.
 
         Args:
@@ -376,7 +376,7 @@ class TransformersPipeline:
     def _lazy_metadata_seed_files(
         self,
         *,
-        task: Optional[str],
+        task: str | None,
         filtered_files: list[str],
     ) -> list[str]:
         """Return repo-relative paths to download before follow-up metadata resolution."""
@@ -399,8 +399,8 @@ class TransformersPipeline:
         hf_hub: Any,
         model: str,
         filename: str,
-        revision: Optional[str],
-        token_or_secret: Optional[str],
+        revision: str | None,
+        token_or_secret: str | None,
         metadata_dir: str,
     ) -> None:
         """Download one HuggingFace metadata file into the lazy-upload staging directory."""
@@ -424,11 +424,11 @@ class TransformersPipeline:
         *,
         hf_hub: Any,
         model: str,
-        revision: Optional[str],
-        token_or_secret: Optional[str],
+        revision: str | None,
+        token_or_secret: str | None,
         metadata_dir: str,
         filtered_files: list[str],
-        task: Optional[str],
+        task: str | None,
     ) -> None:
         """Download metadata files needed for local inference before log_model."""
         seed_files = self._lazy_metadata_seed_files(task=task, filtered_files=filtered_files)
@@ -461,11 +461,11 @@ class TransformersPipeline:
         *,
         hf_hub: Any,
         model: str,
-        revision: Optional[str],
-        token_or_secret: Optional[str],
-        allow_patterns: Optional[Union[list[str], str]],
-        ignore_patterns: Optional[Union[list[str], str]],
-        task: Optional[str],
+        revision: str | None,
+        token_or_secret: str | None,
+        allow_patterns: list[str] | str | None,
+        ignore_patterns: list[str] | str | None,
+        task: str | None,
     ) -> str:
         """List repo files and download only metadata needed before log_model."""
         api = hf_hub.HfApi()
@@ -518,9 +518,9 @@ class TransformersPipeline:
     def _has_chat_template(
         self,
         logging_mode: _LoggingMode,
-        task: Optional[str],
-        repo_snapshot_dir: Optional[str],
-    ) -> Optional[bool]:
+        task: str | None,
+        repo_snapshot_dir: str | None,
+    ) -> bool | None:
         """Determine whether the model has a chat template.
 
         Chat template detection only applies to snapshot-downloaded models
@@ -544,7 +544,7 @@ class TransformersPipeline:
         return None
 
     @staticmethod
-    def _detect_chat_template(local_repo_path: str) -> Optional[bool]:
+    def _detect_chat_template(local_repo_path: str) -> bool | None:
         """
         Checks if a local Hugging Face repository has a chat template defined.
 
@@ -652,7 +652,7 @@ class SentenceTransformer(TransformersPipeline):
     def _lazy_metadata_seed_files(
         self,
         *,
-        task: Optional[str],
+        task: str | None,
         filtered_files: list[str],
     ) -> list[str]:
         del task
@@ -702,12 +702,12 @@ class SentenceTransformer(TransformersPipeline):
         self,
         model: str,
         *,
-        revision: Optional[str] = None,
-        token_or_secret: Optional[str] = None,
+        revision: str | None = None,
+        token_or_secret: str | None = None,
         trust_remote_code: bool = False,
-        compute_pool_for_log: Optional[str] = DEFAULT_CPU_COMPUTE_POOL,
-        allow_patterns: Optional[Union[list[str], str]] = None,
-        ignore_patterns: Optional[Union[list[str], str]] = None,
+        compute_pool_for_log: str | None = DEFAULT_CPU_COMPUTE_POOL,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
         lazy_upload: bool = True,
     ) -> None:
         """Initialize a SentenceTransformer wrapper.
@@ -751,12 +751,12 @@ class PeftAdapter:
         self,
         *,
         base_model: "model_version_impl.ModelVersion",
-        adapter_path: Optional[str] = None,
-        adapter: Optional[Any] = None,
-        adapter_repo: Optional[str] = None,
-        subfolder: Optional[str] = None,
-        revision: Optional[str] = None,
-        token: Optional[str] = None,
+        adapter_path: str | None = None,
+        adapter: Any | None = None,
+        adapter_repo: str | None = None,
+        subfolder: str | None = None,
+        revision: str | None = None,
+        token: str | None = None,
     ) -> None:
         """Construct a PeftAdapter.
 

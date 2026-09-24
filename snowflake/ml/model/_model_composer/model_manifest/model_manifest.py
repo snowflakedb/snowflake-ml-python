@@ -1,7 +1,7 @@
 import collections
 import logging
 import pathlib
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -47,11 +47,11 @@ class ModelManifest:
         self,
         model_meta: model_meta_api.ModelMetadata,
         model_rel_path: pathlib.PurePosixPath,
-        user_files: Optional[dict[str, list[str]]] = None,
-        options: Optional[type_hints.ModelSaveOption] = None,
-        data_sources: Optional[list[data_source.DataSource]] = None,
-        experiment_info: Optional["ExperimentInfo"] = None,
-        target_platforms: Optional[list[type_hints.TargetPlatform]] = None,
+        user_files: dict[str, list[str]] | None = None,
+        options: type_hints.ModelSaveOption | None = None,
+        data_sources: list[data_source.DataSource] | None = None,
+        experiment_info: "ExperimentInfo | None" = None,
+        target_platforms: list[type_hints.TargetPlatform] | None = None,
     ) -> None:
         assert options is not None, "ModelParameterReconciler should have set options with relax_version"
         relax_version = options["relax_version"]
@@ -180,8 +180,8 @@ class ModelManifest:
 
     def _extract_lineage_info(
         self,
-        data_sources: Optional[list[data_source.DataSource]],
-        experiment_info: Optional["ExperimentInfo"],
+        data_sources: list[data_source.DataSource] | None,
+        experiment_info: "ExperimentInfo | None",
     ) -> list[model_manifest_schema.LineageSourceDict]:
         result = []
         if data_sources:

@@ -1,6 +1,6 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Optional, Union
+from typing import Any
 from unittest import TestCase
 
 from snowflake import snowpark
@@ -62,11 +62,11 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         self,
         query: str,
         result: mock_data_frame.MockDataFrame,
-        matcher: Union[
-            type[smatcher.StringMatcherSql], type[smatcher.StringMatcherIgnoreWhitespace]
-        ] = smatcher.StringMatcherSql,
+        matcher: (
+            type[smatcher.StringMatcherSql] | type[smatcher.StringMatcherIgnoreWhitespace]
+        ) = smatcher.StringMatcherSql,
         *,
-        params: Optional[list[Any]] = None,
+        params: list[Any] | None = None,
     ) -> mock_snowml_base.MockSnowMLBase:
         """Add an expected query-result pair to the session."""
         return self.add_operation(
@@ -83,7 +83,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         )
         return mo.result
 
-    def sql(self, query: str, params: Optional[list[Any]] = None) -> Any:
+    def sql(self, query: str, params: list[Any] | None = None) -> Any:
         """Execute a mock sql call.
 
         This will compare the `query` string against the stored expected calls and if it matches, the corresponding
@@ -123,11 +123,11 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         )
         return mo.result
 
-    def get_current_database(self) -> Optional[str]:
+    def get_current_database(self) -> str | None:
         return None
 
-    def get_current_schema(self) -> Optional[str]:
+    def get_current_schema(self) -> str | None:
         return None
 
-    def get_current_warehouse(self) -> Optional[str]:
+    def get_current_warehouse(self) -> str | None:
         return None

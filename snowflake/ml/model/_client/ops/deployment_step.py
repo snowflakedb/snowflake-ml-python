@@ -1,6 +1,5 @@
 import enum
 import hashlib
-from typing import Optional
 
 
 class DeploymentStep(enum.Enum):
@@ -8,7 +7,7 @@ class DeploymentStep(enum.Enum):
     MODEL_INFERENCE = ("model-inference", None)
     MODEL_LOGGING = ("model-logging", "model_logging_")
 
-    def __init__(self, container_name: str, service_name_prefix: Optional[str]) -> None:
+    def __init__(self, container_name: str, service_name_prefix: str | None) -> None:
         self._container_name = container_name
         self._service_name_prefix = service_name_prefix
 
@@ -18,7 +17,7 @@ class DeploymentStep(enum.Enum):
         return self._container_name
 
     @property
-    def service_name_prefix(self) -> Optional[str]:
+    def service_name_prefix(self) -> str | None:
         """Get the service name prefix for the deployment step."""
         return self._service_name_prefix
 

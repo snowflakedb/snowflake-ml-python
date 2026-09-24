@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -34,8 +34,8 @@ class LoadedExecutionResult(ExecutionResult):
     A result of a job execution that has been loaded from a file.
     """
 
-    load_error: Optional[Exception] = None
-    result_metadata: Optional[dict[str, Any]] = None
+    load_error: Exception | None = None
+    result_metadata: dict[str, Any] | None = None
 
     def get_value(self, wrap_exceptions: bool = True) -> Any:
         if not self.success:
@@ -67,8 +67,8 @@ class DistributedResult:
     """
 
     success: bool
-    exit_codes: dict[int, Optional[int]]
-    failed_instance: Optional[int] = None
+    exit_codes: dict[int, int | None]
+    failed_instance: int | None = None
     return_value: Any = None
 
 
@@ -81,7 +81,7 @@ class DistributedJobError(RuntimeError):
     the original error and its remote traceback surface on an uncaught raise.
     """
 
-    def __init__(self, message: str, result: Optional[DistributedResult] = None) -> None:
+    def __init__(self, message: str, result: DistributedResult | None = None) -> None:
         super().__init__(message)
         self.result = result
 

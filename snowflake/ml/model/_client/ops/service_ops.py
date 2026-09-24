@@ -20,6 +20,7 @@ from snowflake.ml.model._client.ops import deployment_step
 from snowflake.ml.model._client.service import (
     inference_job_service_spec,
     model_deployment_spec,
+    model_deployment_spec_schema,
 )
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.snowpark import async_job, dataframe, exceptions, row, session
@@ -32,6 +33,23 @@ STOP_WAIT_SECONDS = 1
 module_logger.propagate = False
 
 _UTF8_ENCODING = "utf-8"
+
+
+def _build_batch_inference_partition_expression(partition_column: str) -> str:
+    """Build a COPY partition expression using the raw string value of a column.
+
+    Snowflake supplies its native default partition directory for null and empty
+    values. The original partition column remains in the unloaded Parquet data.
+
+    Args:
+        partition_column: User-provided SQL identifier for the partition column.
+
+    Returns:
+        A string-valued Snowflake SQL expression suitable for COPY PARTITION BY.
+    """
+    partition_identifier = sql_identifier.SqlIdentifier(partition_column).identifier()
+    return f"TO_VARCHAR({partition_identifier})"
+
 
 # Reserved subdirectory under the output stage where input parquet is materialized.
 # Must stay in sync with ``InferenceJobServiceSpecWrapper.RESERVED_INPUT_SUBDIR`` on
@@ -151,7 +169,7 @@ def normalize_output_stage_location(
 
 def build_inference_job_service_yaml(
     *,
-    input_spec: batch_inference_job_specs.InputSpec | None,
+    input_spec: inference_job_service_spec._InternalInputSpec | None,
     output_spec: batch_inference_job_specs.OutputSpec,
     resources_spec: batch_inference_job_specs.ResourcesSpec | None,
     inference_spec: batch_inference_job_specs.InferenceSpec | None,
@@ -160,7 +178,7 @@ def build_inference_job_service_yaml(
     """Assemble the ``WITH SPECIFICATION`` YAML body from the spec blocks.
 
     Args:
-        input_spec: Optional input block.
+        input_spec: Optional YAML input block (``_InternalInputSpec``).
         output_spec: Required output block, already slash-normalized.
         resources_spec: Optional resources block.
         inference_spec: Optional inference block.
@@ -240,7 +258,7 @@ def build_batch_inference_task_definition(
         from_source = input_stage_location if input_stage_location.endswith("/") else input_stage_location + "/"
 
     yaml_body = build_inference_job_service_yaml(
-        input_spec=input_spec,
+        input_spec=inference_job_service_spec._InternalInputSpec.from_input_spec(input_spec),
         output_spec=normalized_output_spec,
         resources_spec=resources_spec,
         inference_spec=inference_spec,
@@ -377,9 +395,9 @@ class ServiceOperator:
             database_name=database_name,
             schema_name=schema_name,
         )
-        self._use_inlined_deployment_spec = pc.PlatformCapabilities.get_instance(
-            session
-        ).is_inlined_deployment_spec_enabled()
+        caps = pc.PlatformCapabilities.get_instance(session)
+        self._use_inlined_deployment_spec = caps.is_inlined_deployment_spec_enabled()
+        self._partition_on_write_enabled = caps.is_batch_inference_partition_on_write_enabled()
         if self._use_inlined_deployment_spec:
             self._workspace = None
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec()
@@ -428,6 +446,7 @@ class ServiceOperator:
         autocapture: bool | None = None,
         # feature retrieval
         feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        adapters: list[model_deployment_spec_schema.AdapterSpec] | None = None,
     ) -> str | async_job.AsyncJob:
         # Generate operation ID for this deployment
         operation_id = service_logger.get_operation_id()
@@ -485,6 +504,7 @@ class ServiceOperator:
             max_batch_rows=max_batch_rows,
             autocapture=autocapture,
             feature_sources_per_function=feature_sources_per_function,
+            adapters=adapters,
         )
         if hf_model_args:
             # hf model
@@ -1298,14 +1318,6 @@ class ServiceOperator:
             from_stage_path = f"{output_stage_location}{_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR}/{uuid.uuid4().hex}/"
             staged_input_to_cleanup = from_stage_path
 
-        yaml_body = build_inference_job_service_yaml(
-            input_spec=input_spec,
-            output_spec=normalized_output_spec,
-            resources_spec=resources_spec,
-            inference_spec=inference_spec,
-            image_build_spec=image_build_spec,
-        )
-
         model_fqn = identifier.get_schema_level_object_identifier(
             self._database_name.identifier(), self._schema_name.identifier(), model_name.identifier()
         )
@@ -1323,14 +1335,45 @@ class ServiceOperator:
                 job_database_name.identifier(), job_schema_name.identifier(), parsed_job_name.identifier()
             )
 
-        # I/O starts here.
+        # I/O starts here. Set YAML layout only after a successful managed
+        # COPY PARTITION BY so GS/container take the directory path. Caller-owned
+        # stages never get the field (GS stamps query-backed COPY itself).
+        copied_partitioned = False
         if X is not None:
+            partition_column = input_spec.partition_column if input_spec is not None else None
             try:
-                X.write.copy_into_location(  # type:ignore[call-overload]
-                    location=from_stage_path, file_format_type="parquet", header=True, overwrite=True
-                )
+                # Case D (PARTITIONED, no column) stays a flat COPY. PARTITION BY 1
+                # still needs every row on one replica; a single-group LAYOUT write
+                # would only skip the Ray shuffle, and today's dump is root-level
+                # Parquet, which partitioned rejects. Revisit if Case D jobs
+                # fit in RAM and still spill.
+                if self._partition_on_write_enabled and partition_column is not None:
+                    # OVERWRITE is unsupported with PARTITION BY. The managed path contains a
+                    # fresh UUID, so it is empty without requiring OVERWRITE.
+                    X.write.copy_into_location(
+                        location=from_stage_path,
+                        file_format_type="parquet",
+                        header=True,
+                        partition_by=_build_batch_inference_partition_expression(partition_column),
+                    )
+                    copied_partitioned = True
+                else:
+                    X.write.copy_into_location(  # type:ignore[call-overload]
+                        location=from_stage_path, file_format_type="parquet", header=True, overwrite=True
+                    )
             except Exception as e:
                 raise RuntimeError(f"Failed to process input data: {e}")
+
+        yaml_body = build_inference_job_service_yaml(
+            input_spec=inference_job_service_spec._InternalInputSpec.from_input_spec(
+                input_spec,
+                layout="partitioned" if copied_partitioned else None,
+            ),
+            output_spec=normalized_output_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+        )
 
         try:
             _, async_job_handle = self._service_client.execute_inference_job_service(

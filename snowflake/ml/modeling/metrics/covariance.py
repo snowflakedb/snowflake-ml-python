@@ -1,4 +1,4 @@
-from typing import Collection, Optional
+from typing import Collection
 
 import cloudpickle
 import numpy as np
@@ -16,7 +16,7 @@ _SUBPROJECT = "Metrics"
     project=_PROJECT,
     subproject=_SUBPROJECT,
 )
-def covariance(*, df: DataFrame, columns: Optional[Collection[str]] = None, ddof: int = 1) -> pd.DataFrame:
+def covariance(*, df: DataFrame, columns: Collection[str] | None = None, ddof: int = 1) -> pd.DataFrame:
     """Covariance matrix for the columns in a snowpark dataframe.
     NaNs and Nulls are not ignored, i.e. covariance on columns containing NaN or Null
     results in NaN covariance values.

@@ -330,6 +330,53 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_pip_only_packaging_enabled())
 
+    def test_partition_on_write_enabled_when_true(self) -> None:
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: True,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_batch_inference_partition_on_write_enabled())
+
+    def test_partition_on_write_defaults_off_when_capability_absent(self) -> None:
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_batch_inference_partition_on_write_enabled())
+
+    def test_partition_on_write_false_when_capability_false(self) -> None:
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE: False,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_batch_inference_partition_on_write_enabled())
+
     def test_lora_adapters_disabled_by_default(self) -> None:
         """Test is_lora_adapters_enabled stays off until client release."""
         with platform_capabilities.PlatformCapabilities.mock_features(

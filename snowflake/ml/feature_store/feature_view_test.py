@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 if TYPE_CHECKING:
@@ -162,13 +162,14 @@ class FeatureViewValidationTest(parameterized.TestCase):
 
         self.assertIn("Duplicate feature alias", str(cm.exception))
 
-    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
     def test_iceberg_rejects_hybrid_table_online(self) -> None:
         """Hybrid-table online storage is unsupported for Iceberg-backed feature views."""
         mock_df = MagicMock()
         mock_df.columns = ["user_id", "amount"]
         mock_df.queries = {"queries": ["SELECT * FROM source"]}
-        with self.assertRaisesRegex(ValueError, "only supported with the Postgres online store"):
+        with self.assertRaisesRegex(
+            ValueError, "Iceberg offline storage is only supported with Postgres online store type."
+        ):
             FeatureView(
                 name="test_fv",
                 entities=[Entity(name="user", join_keys=["user_id"])],
@@ -178,7 +179,62 @@ class FeatureViewValidationTest(parameterized.TestCase):
                 online_config=OnlineConfig(enable=True),
             )
 
-    @absltest.skip("Iceberg feature views are not supported with online storage enabled.")  # type: ignore[misc]
+    def test_iceberg_rejects_append_only(self) -> None:
+        """Snapshot accumulation is unsupported for Iceberg-backed feature views.
+
+        The snapshot table is derived from the offline object with
+        ``CREATE TABLE ... LIKE``, which has no Iceberg equivalent.
+
+        Defining the combination is allowed; only create/update reject it, so that an
+        already-registered feature view can still be reconstructed, read, and deleted.
+        """
+        from snowflake.snowpark.types import TimestampType
+
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount", "snapshot_ts"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            timestamp_col="snapshot_ts",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "not supported with append_only=True"):
+            fv._validate_iceberg_append_only()
+
+    def test_append_only_allowed_on_native_storage(self) -> None:
+        """The restriction is Iceberg-specific: native storage still supports append_only."""
+        from snowflake.snowpark.types import TimestampType
+
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount", "snapshot_ts"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            timestamp_col="snapshot_ts",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+        )
+        fv._validate_iceberg_append_only()  # does not raise
+
+        self.assertTrue(fv.append_only)
+
     def test_iceberg_allows_postgres_online(self) -> None:
         """Postgres OFT is allowed with Iceberg-backed feature views."""
         mock_df = MagicMock()
@@ -197,6 +253,311 @@ class FeatureViewValidationTest(parameterized.TestCase):
         self.assertEqual(fv.online_config.store_type, OnlineStoreType.POSTGRES)
         assert fv.storage_config is not None
         self.assertEqual(fv.storage_config.format, StorageFormat.ICEBERG)
+
+    def _make_tiled_fv(self, features: list[Feature], *, iceberg: bool) -> FeatureView:
+        """Build a tiled feature view over a mock source, optionally Iceberg-backed.
+
+        Args:
+            features: Aggregation features for the tiled feature view.
+            iceberg: When True, attach an Iceberg storage config.
+
+        Returns:
+            The constructed feature view.
+        """
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "event_ts", "amount"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        return FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            storage_config=(StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL") if iceberg else None),
+        )
+
+    def test_iceberg_tile_query_narrows_tile_start(self) -> None:
+        """Iceberg tiled FVs cast TIME_SLICE to TIMESTAMP_NTZ(6) so the DT can be created."""
+        iceberg_fv = self._make_tiled_fv([Feature.sum("amount", "24h").alias("spend_24h")], iceberg=True)
+        iceberg_sql = iceberg_fv._get_tile_query()
+        self.assertIn("::TIMESTAMP_NTZ(6) AS TILE_START", iceberg_sql)
+
+        native_fv = self._make_tiled_fv([Feature.sum("amount", "24h").alias("spend_24h")], iceberg=False)
+        native_sql = native_fv._get_tile_query()
+        self.assertIn("TIME_SLICE", native_sql)
+        self.assertNotIn("TIMESTAMP_NTZ(6)", native_sql)
+
+    def test_iceberg_rejects_rollup(self) -> None:
+        """Rollup feature views are unsupported on Iceberg storage.
+
+        ``_create_rollup_feature_view`` emits a plain ``CREATE DYNAMIC TABLE`` and never reads
+        ``storage_config``, so without this gate the feature view would silently register as a
+        native Dynamic Table while its metadata claimed ``is_iceberg=True`` — after which
+        ``get_feature_view`` (and therefore ``delete_feature_view``) fails on the
+        ``SHOW ICEBERG TABLES`` lookup.
+        """
+        fv = self._make_tiled_fv([Feature.sum("amount", "24h").alias("spend_24h")], iceberg=True)
+        # is_rollup reads _rollup_metadata as well as _rollup_config, so either marks the FV.
+        fv._rollup_metadata = MagicMock()
+        self.assertTrue(fv.is_rollup)
+
+        with self.assertRaisesRegex(ValueError, "not supported for rollup feature views"):
+            fv._validate_iceberg_rollup()
+
+    def test_rollup_allowed_on_native_storage(self) -> None:
+        """The restriction is Iceberg-specific: native storage still supports rollups."""
+        fv = self._make_tiled_fv([Feature.sum("amount", "24h").alias("spend_24h")], iceberg=False)
+        fv._rollup_metadata = MagicMock()
+
+        fv._validate_iceberg_rollup()  # does not raise
+
+        self.assertTrue(fv.is_rollup)
+
+    def test_iceberg_non_rollup_allowed(self) -> None:
+        """A plain Iceberg batch FV is unaffected by the rollup gate."""
+        fv = self._make_tiled_fv([Feature.sum("amount", "24h").alias("spend_24h")], iceberg=True)
+
+        fv._validate_iceberg_rollup()  # does not raise
+
+        self.assertFalse(fv.is_rollup)
+
+    def test_iceberg_append_only_survives_reconstruction(self) -> None:
+        """A registered append_only Iceberg FV must still reconstruct.
+
+        ``get_feature_view`` rebuilds through the batch constructor with both ``append_only``
+        and ``storage_config`` restored from the backend, so refusing the combination in
+        ``__init__`` would make such a feature view unreadable *and* undeletable
+        (``delete_feature_view`` reconstructs it first).
+        """
+        from snowflake.snowpark.types import TimestampType
+
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount", "snapshot_ts"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+
+        fv = FeatureView._construct_feature_view(
+            name="snap_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            timestamp_col="snapshot_ts",
+            desc="",
+            version="v1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="0 0 * * * UTC",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            append_only=True,
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL", base_location="loc"),
+        )
+
+        self.assertTrue(fv.append_only)
+        assert fv.storage_config is not None
+        self.assertEqual(fv.storage_config.format, StorageFormat.ICEBERG)
+
+    @parameterized.parameters("last_n", "first_n", "last_distinct_n", "first_distinct_n")  # type: ignore[misc]
+    def test_iceberg_rejects_list_aggregations(self, function_name: str) -> None:
+        """Ordered-N list aggregations tile into ARRAY columns, which Iceberg cannot store."""
+        feature = getattr(Feature, function_name)("amount", "24h", n=5).alias("recent_amounts")
+        fv = self._make_tiled_fv([feature], iceberg=True)
+
+        with self.assertRaisesRegex(ValueError, f"Iceberg storage is not supported for the {function_name}"):
+            fv._validate_iceberg_semi_structured_aggregations()
+
+    def test_iceberg_rejects_approx_percentile(self) -> None:
+        """``approx_percentile`` tiles into an OBJECT column, which Iceberg cannot store.
+
+        ``APPROX_PERCENTILE_ACCUMULATE`` returns the t-Digest state as an OBJECT, and
+        ``CREATE ICEBERG TABLE`` rejects it with "Unsupported data type 'OBJECT' for iceberg
+        tables". Refused client-side so the caller gets a domain error instead of that
+        compilation error part-way through Dynamic Iceberg Table creation.
+        """
+        fv = self._make_tiled_fv(
+            [Feature.approx_percentile("amount", "24h", percentile=0.5).alias("p50_24h")],
+            iceberg=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "not supported for the approx_percentile aggregation"):
+            fv._validate_iceberg_semi_structured_aggregations()
+
+    def test_approx_percentile_allowed_on_native_storage(self) -> None:
+        """The restriction is Iceberg-specific: native storage still supports approx_percentile."""
+        fv = self._make_tiled_fv(
+            [Feature.approx_percentile("amount", "24h", percentile=0.5).alias("p50_24h")],
+            iceberg=False,
+        )
+
+        fv._validate_iceberg_semi_structured_aggregations()  # does not raise
+
+        self.assertIn(SqlIdentifier("P50_24H"), fv.feature_names)
+
+    def test_iceberg_rejects_list_aggregation_mixed_with_scalar(self) -> None:
+        """A single list aggregation is enough to reject the whole feature view."""
+        fv = self._make_tiled_fv(
+            [
+                Feature.sum("amount", "24h").alias("spend_24h"),
+                Feature.last_distinct_n("amount", "24h", n=5).alias("recent_amounts"),
+            ],
+            iceberg=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "not supported for the last_distinct_n aggregation"):
+            fv._validate_iceberg_semi_structured_aggregations()
+
+    def test_iceberg_list_aggregations_survive_construction(self) -> None:
+        """Defining the combination is allowed; only create/update reject it.
+
+        The check runs during register/update rather than in ``__init__`` so that an
+        already-registered feature view can still be reconstructed, read, and deleted.
+        """
+        fv = self._make_tiled_fv(
+            [Feature.last_distinct_n("amount", "24h", n=5).alias("recent_amounts")],
+            iceberg=True,
+        )
+        self.assertIn(SqlIdentifier("RECENT_AMOUNTS"), fv.feature_names)
+
+    def test_iceberg_allows_iceberg_representable_aggregations(self) -> None:
+        """Scalar tiles (NUMBER/FLOAT) and the HLL sketch tile (BINARY) map to Iceberg types.
+
+        ``approx_percentile`` is deliberately excluded — its t-Digest tile is an OBJECT; see
+        ``test_iceberg_rejects_approx_percentile``.
+        """
+        fv = self._make_tiled_fv(
+            [
+                Feature.sum("amount", "24h").alias("spend_24h"),
+                Feature.count("amount", "24h").alias("count_24h"),
+                Feature.avg("amount", "24h").alias("avg_24h"),
+                Feature.min("amount", "24h").alias("min_24h"),
+                Feature.max("amount", "24h").alias("max_24h"),
+                Feature.stddev("amount", "24h").alias("std_24h"),
+                Feature.var("amount", "24h").alias("var_24h"),
+                Feature.approx_count_distinct("amount", "24h").alias("uniques_24h"),
+            ],
+            iceberg=True,
+        )
+        fv._validate_iceberg_semi_structured_aggregations()  # does not raise
+
+        assert fv.storage_config is not None
+        self.assertEqual(fv.storage_config.format, StorageFormat.ICEBERG)
+
+    def test_list_aggregations_allowed_on_native_storage(self) -> None:
+        """The restriction is Iceberg-specific: native storage still supports list aggregations."""
+        fv = self._make_tiled_fv(
+            [Feature.last_distinct_n("amount", "24h", n=5).alias("recent_amounts")],
+            iceberg=False,
+        )
+        fv._validate_iceberg_semi_structured_aggregations()  # does not raise
+
+        self.assertIn(SqlIdentifier("RECENT_AMOUNTS"), fv.feature_names)
+
+    def _make_streaming_fv(self, *, iceberg: bool, **kwargs: Any) -> FeatureView:
+        """Build a draft streaming feature view, optionally Iceberg-backed.
+
+        Args:
+            iceberg: When True, attach an Iceberg storage config.
+            kwargs: Extra ``FeatureView`` arguments (e.g. ``refresh_freq``, ``online_config``).
+
+        Returns:
+            A streaming FeatureView.
+        """
+        from snowflake.ml.feature_store.stream_config import StreamConfig
+
+        def _identity(df: Any) -> Any:
+            return df
+
+        backfill_df = MagicMock()
+        backfill_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        backfill_df.queries = {"queries": ["SELECT * FROM source"]}
+
+        return FeatureView(
+            name="streaming_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=StreamConfig(
+                stream_source="txn_events",
+                transformation_fn=_identity,
+                backfill_df=backfill_df,
+            ),
+            timestamp_col="EVENT_TIME",
+            storage_config=(StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL") if iceberg else None),
+            **kwargs,
+        )
+
+    def test_iceberg_streaming_allows_missing_refresh_freq(self) -> None:
+        """A streaming feature view may take Iceberg storage without a refresh cadence.
+
+        Its offline object is then a View, which has no Iceberg form, but its
+        ``$UDF_TRANSFORMED`` and ``$BACKFILL`` landing tables still hold the rows and are
+        created as Snowflake-managed Iceberg tables — so the request is meaningful.
+        """
+        fv = self._make_streaming_fv(iceberg=True)
+
+        fv._validate_iceberg_storage()  # does not raise
+
+        self.assertIsNone(fv.refresh_freq)
+        assert fv.storage_config is not None
+        self.assertEqual(fv.storage_config.format, StorageFormat.ICEBERG)
+
+    def test_iceberg_batch_rejects_missing_refresh_freq(self) -> None:
+        """A batch feature view still needs a refresh cadence to take Iceberg storage.
+
+        Without one it materializes as a View and nothing else, so there is no table for
+        Iceberg to back.
+        """
+        feature_df = MagicMock()
+        feature_df.columns = ["USER_ID", "AMOUNT"]
+        feature_df.queries = {"queries": ["SELECT * FROM source"]}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Iceberg storage is not applicable to static feature views since they omit the data materialization step.",
+        ):
+            FeatureView(
+                name="batch_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                feature_df=feature_df,
+                storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="VOL"),
+            )
+
+    def test_iceberg_streaming_rejects_hybrid_table_online(self) -> None:
+        """A streaming feature view is refused Iceberg storage on a hybrid-table online store."""
+        fv = self._make_streaming_fv(
+            iceberg=True,
+            refresh_freq="1h",
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.HYBRID_TABLE),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "Iceberg offline storage is only supported with Postgres online store type."
+        ):
+            fv._validate_iceberg_storage()
+
+    def test_iceberg_streaming_allows_postgres_online_with_refresh_freq(self) -> None:
+        """The supported streaming Iceberg shape passes: Postgres online plus a refresh cadence."""
+        fv = self._make_streaming_fv(iceberg=True, refresh_freq="1h")
+
+        fv._validate_iceberg_storage()  # does not raise
+
+        assert fv.online_config is not None
+        self.assertEqual(fv.online_config.store_type, OnlineStoreType.POSTGRES)
+
+    def test_streaming_without_refresh_freq_allowed_on_native_storage(self) -> None:
+        fv = self._make_streaming_fv(iceberg=False)
+
+        fv._validate_iceberg_storage()  # does not raise
+
+        self.assertIsNone(fv.refresh_freq)
 
 
 class InitializationWarehouseTest(absltest.TestCase):
@@ -258,9 +619,9 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
         self,
         specs: list[AggregationSpec],
         *,
-        secondary_keys: Optional[list[str]] = None,
-        df_columns: Optional[list[str]] = None,
-        entity_join_keys: Optional[list[str]] = None,
+        secondary_keys: list[str] | None = None,
+        df_columns: list[str] | None = None,
+        entity_join_keys: list[str] | None = None,
     ) -> FeatureView:
         if df_columns is None:
             df_columns = ["user_id", "event_ts", "amount", "ad_id"]
@@ -911,11 +1272,11 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
         self,
         *,
         columns: list[str],
-        column_types: Optional[list[DataType]] = None,
+        column_types: list[DataType] | None = None,
         entity_keys: list[str],
-        timestamp_col: Optional[str] = None,
-        feature_granularity: Optional[str] = None,
-        aggregation_specs: Optional[list[AggregationSpec]] = None,
+        timestamp_col: str | None = None,
+        feature_granularity: str | None = None,
+        aggregation_specs: list[AggregationSpec] | None = None,
     ) -> FeatureView:
         """Create a FeatureView with mocked DataFrame."""
         if column_types is None:
@@ -1458,14 +1819,14 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         *,
         entity_keys: list[str],
         columns: list[str],
-        column_types: Optional[list[DataType]] = None,
-        timestamp_col: Optional[str] = None,
+        column_types: list[DataType] | None = None,
+        timestamp_col: str | None = None,
         store_type: OnlineStoreType = OnlineStoreType.HYBRID_TABLE,
-        feature_granularity: Optional[str] = None,
-        aggregation_secondary_keys: Optional[list[str]] = None,
-        features: Optional[list[Feature]] = None,
-        refresh_freq: Optional[str] = "1h",
-        refresh_mode: Optional[str] = "AUTO",
+        feature_granularity: str | None = None,
+        aggregation_secondary_keys: list[str] | None = None,
+        features: list[Feature] | None = None,
+        refresh_freq: str | None = "1h",
+        refresh_mode: str | None = "AUTO",
     ) -> FeatureView:
         """Create a non-tiled FeatureView with mocked DataFrame.
 
@@ -1887,7 +2248,7 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
     # ------------------------------------------------------------------ #
 
     def test_postgres_pk_includes_aggregation_secondary_keys(self) -> None:
-        """POSTGRES path: SKs are appended to the DDL PK and to the spec's ``ordered_entity_column_names``."""
+        """POSTGRES path: SKs stay in the DDL PK but out of the entity list, and get their own spec field."""
         fv = self._make_feature_view(
             entity_keys=["USER_ID"],
             columns=["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"],
@@ -1912,13 +2273,39 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
 
         query = self._first_online_feature_table_sql(fs)
-        # DDL PK is widened with the resolved (canonical) SK after the entity key.
         self.assertIn('PRIMARY KEY ("USER_ID", "AD_ID")', query)
-        # Spec JSON ``ordered_entity_column_names`` carries the same widening.
         start = query.index("$$") + 2
         end = query.index("$$", start)
         parsed = json.loads(query[start:end])
-        self.assertEqual(parsed["spec"]["ordered_entity_column_names"], ["USER_ID", "AD_ID"])
+        self.assertEqual(parsed["spec"]["ordered_entity_column_names"], ["USER_ID"])
+        # The resolved (canonical) SK is declared on its own spec field.
+        self.assertEqual(parsed["spec"]["ordered_secondary_key_column_names"], ["AD_ID"])
+
+    def test_postgres_pk_quotes_case_sensitive_secondary_key_once(self) -> None:
+        """A case-sensitive SK is stored pre-quoted, so the DDL key must not quote it twice."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "EVENT_TS", "AMOUNT", '"ad_id"'],
+            column_types=[StringType(), TimestampType(TimestampTimeZone.NTZ), DoubleType(), StringType()],
+            timestamp_col="EVENT_TS",
+            store_type=OnlineStoreType.POSTGRES,
+            aggregation_secondary_keys=['"ad_id"'],
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TS", TimestampType(TimestampTimeZone.NTZ)),
+                StructField("AMOUNT", DoubleType()),
+                StructField('"ad_id"', StringType()),
+            ]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        query = self._first_online_feature_table_sql(fs)
+        self.assertIn('PRIMARY KEY ("USER_ID", "ad_id")', query)
+        self.assertNotIn('""ad_id""', query)
 
     def test_hybrid_online_rejected_for_tiled_fv(self) -> None:
         """HYBRID_TABLE online is unsupported for aggregation (tiled) feature views.

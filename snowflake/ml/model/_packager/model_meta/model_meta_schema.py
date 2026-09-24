@@ -1,7 +1,7 @@
 # This files contains schema definition of what will be written into model.yml
 # Changing this file should lead to a change of the schema version.
 from enum import Enum
-from typing import Any, Optional, TypedDict, Union
+from typing import Any, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -18,23 +18,23 @@ class FunctionProperties(Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
-    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
+    artifact_repository_map: NotRequired[dict[str, str] | None]
 
 
 class ModelRuntimeDict(TypedDict):
     imports: Required[list[str]]
     dependencies: Required[ModelRuntimeDependenciesDict]
-    resource_constraint: NotRequired[Optional[dict[str, str]]]
+    resource_constraint: NotRequired[dict[str, str] | None]
 
 
 class ModelEnvDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
     pip_extra_index_urls: NotRequired[list[str]]
-    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
-    resource_constraint: NotRequired[Optional[dict[str, str]]]
+    artifact_repository_map: NotRequired[dict[str, str] | None]
+    resource_constraint: NotRequired[dict[str, str] | None]
     python_version: Required[str]
-    cuda_version: NotRequired[Optional[str]]
+    cuda_version: NotRequired[str | None]
     snowpark_ml_version: Required[str]
 
 
@@ -54,11 +54,11 @@ class CatBoostModelBlobOptions(BaseModelBlobOptions):
 class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     task: Required[str]
     batch_size: Required[int]
-    model: NotRequired[Optional[str]]
+    model: NotRequired[str | None]
     has_tokenizer: NotRequired[bool]
     has_feature_extractor: NotRequired[bool]
     has_image_preprocessor: NotRequired[bool]
-    is_repo_downloaded: NotRequired[Optional[bool]]
+    is_repo_downloaded: NotRequired[bool | None]
 
 
 class LightGBMModelBlobOptions(BaseModelBlobOptions):
@@ -89,14 +89,14 @@ class TensorflowModelBlobOptions(BaseModelBlobOptions):
 
 class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
     batch_size: NotRequired[int]
-    model: NotRequired[Optional[str]]
+    model: NotRequired[str | None]
     truncate_dim: NotRequired[int]
-    is_repo_downloaded: NotRequired[Optional[bool]]
+    is_repo_downloaded: NotRequired[bool | None]
 
 
 class ProphetModelBlobOptions(BaseModelBlobOptions):
-    date_column: NotRequired[Optional[str]]
-    target_column: NotRequired[Optional[str]]
+    date_column: NotRequired[str | None]
+    target_column: NotRequired[str | None]
 
 
 class PeftAdapterModelBlobOptions(BaseModelBlobOptions):
@@ -140,7 +140,7 @@ class ModelMetadataDict(TypedDict):
     creation_timestamp: Required[str]
     env: Required[ModelEnvDict]
     runtimes: NotRequired[dict[str, ModelRuntimeDict]]
-    metadata: NotRequired[Optional[dict[str, str]]]
+    metadata: NotRequired[dict[str, str] | None]
     model_type: Required[type_hints.SupportedModelHandlerType]
     models: Required[dict[str, ModelBlobMetadataDict]]
     name: Required[str]
@@ -148,7 +148,7 @@ class ModelMetadataDict(TypedDict):
     version: Required[str]
     min_snowpark_ml_version: Required[str]
     task: Required[str]
-    explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
+    explainability: NotRequired[ExplainabilityMetadataDict | None]
     function_properties: NotRequired[dict[str, dict[str, Any]]]
     method_options: NotRequired[dict[str, dict[str, Any]]]
     case_sensitive: NotRequired[bool]

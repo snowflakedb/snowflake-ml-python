@@ -2,7 +2,7 @@ import base64
 import datetime
 import json
 import time
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -149,7 +149,7 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         self,
         autocapture_param: bool,
         autocapture_deployment: bool,
-        service_name: Optional[str] = None,
+        service_name: str | None = None,
     ) -> ModelVersion:
         """Deploy a simple sklearn model for testing.
 

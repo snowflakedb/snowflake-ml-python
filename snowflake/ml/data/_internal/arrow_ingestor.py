@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any, Deque, Iterator, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Deque, Iterator, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -54,7 +54,7 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         self,
         session: snowpark.Session,
         data_sources: Sequence[data_source.DataSource],
-        format: Optional[str] = None,
+        format: str | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -70,7 +70,7 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         self._format = format
         self._kwargs = kwargs
 
-        self._schema: Optional[pa.Schema] = None
+        self._schema: pa.Schema | None = None
 
     @classmethod
     def from_sources(
@@ -132,7 +132,7 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         if self._rb_buffer.num_rows and not drop_last_batch:
             yield self._get_batches_from_buffer(batch_size)
 
-    def to_pandas(self, limit: Optional[int] = None) -> pd.DataFrame:
+    def to_pandas(self, limit: int | None = None) -> pd.DataFrame:
         ds = self._get_dataset(shuffle=False)
         table = ds.to_table() if limit is None else ds.head(num_rows=limit)
         return table.to_pandas(split_blocks=True, self_destruct=True)
@@ -320,9 +320,7 @@ def _retryable_batches(
                 raise e
 
 
-def _cast_if_needed(
-    batch: Union[pa.Table, pa.RecordBatch], schema: Optional[pa.Schema] = None
-) -> Union[pa.Table, pa.RecordBatch]:
+def _cast_if_needed(batch: pa.Table | pa.RecordBatch, schema: pa.Schema | None = None) -> pa.Table | pa.RecordBatch:
     """
     Cast the batch to be compatible with downstream frameworks. Returns original batch if cast is not necessary.
     Besides casting types to match `schema` (if provided), this function also applies the following casting:

@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -24,10 +24,10 @@ class LineageNode(mixins.SerializableSessionMixin):
         self,
         session: snowpark.Session,
         name: str,
-        domain: Union[Literal["feature_view", "dataset", "model", "table", "view", "experiment"]],
-        version: Optional[str] = None,
-        status: Optional[Literal["ACTIVE", "DELETED", "MASKED"]] = None,
-        created_on: Optional[datetime] = None,
+        domain: Literal["feature_view", "dataset", "model", "table", "view", "experiment"],
+        version: str | None = None,
+        status: Literal["ACTIVE", "DELETED", "MASKED"] | None = None,
+        created_on: datetime | None = None,
     ) -> None:
         """
         Initializes a LineageNode instance.
@@ -86,7 +86,7 @@ class LineageNode(mixins.SerializableSessionMixin):
     def lineage(
         self,
         direction: Literal["upstream", "downstream"] = "downstream",
-        domain_filter: Optional[set[Literal["feature_view", "dataset", "model", "table", "view"]]] = None,
+        domain_filter: set[Literal["feature_view", "dataset", "model", "table", "view"]] | None = None,
     ) -> list[Union["feature_view.FeatureView", "dataset.Dataset", "ModelVersion", "LineageNode"]]:
         """
         Retrieves the lineage nodes connected to this node.

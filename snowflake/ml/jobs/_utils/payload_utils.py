@@ -16,8 +16,8 @@ except ImportError:
     from importlib.abc import Traversable
 
 from pathlib import Path, PurePath
-from types import ModuleType
-from typing import IO, Any, Callable, Optional, Union, cast, get_args, get_origin
+from types import ModuleType, UnionType
+from typing import IO, Any, Callable, Union, cast, get_args, get_origin
 from uuid import uuid4
 
 import cloudpickle as cp
@@ -43,7 +43,7 @@ def _compress_and_upload_file(
     session: snowpark.Session,
     source_path: Path,
     stage_path: PurePath,
-    import_path: Optional[str] = None,
+    import_path: str | None = None,
     overwrite: bool = True,
 ) -> None:
     absolute_source_path = source_path.absolute()
@@ -162,9 +162,7 @@ def upload_system_resources(session: snowpark.Session, stage_path: PurePath) -> 
     upload_dir(resource_ref)
 
 
-def resolve_source(
-    source: Union[type_utils.PayloadPath, Callable[..., Any]]
-) -> Union[type_utils.PayloadPath, Callable[..., Any]]:
+def resolve_source(source: type_utils.PayloadPath | Callable[..., Any]) -> type_utils.PayloadPath | Callable[..., Any]:
     if callable(source):
         return source
     elif isinstance(source, type_utils.PayloadPath):
@@ -176,9 +174,9 @@ def resolve_source(
 
 
 def resolve_entrypoint(
-    source: Union[type_utils.PayloadPath, Callable[..., Any]],
-    entrypoint: Optional[Union[type_utils.PayloadPath, list[str]]],
-) -> Union[type_utils.PayloadEntrypoint, list[str]]:
+    source: type_utils.PayloadPath | Callable[..., Any],
+    entrypoint: type_utils.PayloadPath | list[str] | None,
+) -> type_utils.PayloadEntrypoint | list[str]:
     """Resolve and validate the entrypoint for a job payload.
 
     Args:
@@ -276,8 +274,8 @@ def get_zip_file_from_path(path: type_utils.PayloadPath) -> type_utils.PayloadPa
 
 
 def _finalize_payload_pair(
-    p: type_utils.PayloadPath, base_import_path: Optional[str]
-) -> tuple[type_utils.PayloadPath, Optional[str]]:
+    p: type_utils.PayloadPath, base_import_path: str | None
+) -> tuple[type_utils.PayloadPath, str | None]:
     """Finalize the `(payload_path, import_path)` pair based on source type.
 
     - Zip file: ignore import path (returns `(p, None)`).
@@ -315,9 +313,9 @@ def _finalize_payload_pair(
 
 
 def resolve_import_path(
-    path: Union[type_utils.PayloadPath, ModuleType],
-    import_path: Optional[str] = None,
-) -> list[tuple[type_utils.PayloadPath, Optional[str]]]:
+    path: type_utils.PayloadPath | ModuleType,
+    import_path: str | None = None,
+) -> list[tuple[type_utils.PayloadPath, str | None]]:
     """
     Resolve and normalize the import path for modules, Python files, or zip payloads.
 
@@ -364,7 +362,7 @@ def resolve_import_path(
         raise ValueError(f"Module {path} is not a valid imports")
 
 
-def validate_import_path(source: Union[str, type_utils.PayloadPath], import_path: Optional[str]) -> None:
+def validate_import_path(source: str | type_utils.PayloadPath, import_path: str | None) -> None:
     """Validate the import path for local python file or directory."""
     if import_path is None:
         return
@@ -379,7 +377,7 @@ def validate_import_path(source: Union[str, type_utils.PayloadPath], import_path
 
 
 def upload_imports(
-    imports: Optional[list[Union[str, Path, ModuleType, tuple[Union[str, Path, ModuleType], Optional[str]]]]],
+    imports: list[str | Path | ModuleType | tuple[str | Path | ModuleType, str | None]] | None,
     session: snowpark.Session,
     stage_path: PurePath,
 ) -> None:
@@ -438,11 +436,11 @@ def upload_imports(
 class JobPayload:
     def __init__(
         self,
-        source: Union[str, Path, Callable[..., Any]],
-        entrypoint: Optional[Union[str, Path, list[str]]] = None,
+        source: str | Path | Callable[..., Any],
+        entrypoint: str | Path | list[str] | None = None,
         *,
-        pip_requirements: Optional[list[str]] = None,
-        imports: Optional[list[Union[ImportType, tuple[ImportType, Optional[str]]]]] = None,
+        pip_requirements: list[str] | None = None,
+        imports: list[ImportType | tuple[ImportType, str | None]] | None = None,
     ) -> None:
         """Initialize a job payload.
 
@@ -460,14 +458,14 @@ class JobPayload:
         # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
         self.source = stage_utils.resolve_path(source) if isinstance(source, str) else source
         if isinstance(entrypoint, list):
-            self.entrypoint: Optional[Union[type_utils.PayloadPath, list[str]]] = entrypoint
+            self.entrypoint: type_utils.PayloadPath | list[str] | None = entrypoint
         else:
             self.entrypoint = stage_utils.resolve_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
         self.imports = imports
 
     def upload(
-        self, session: snowpark.Session, stage_path: Union[str, PurePath], overwrite: bool = False
+        self, session: snowpark.Session, stage_path: str | PurePath, overwrite: bool = False
     ) -> type_utils.UploadedPayload:
         # Prepare local variables
         stage_path = PurePath(stage_path) if isinstance(stage_path, str) else stage_path
@@ -500,7 +498,7 @@ class JobPayload:
                 upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None))
             elif isinstance(source, stage_utils.StagePath):
                 upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None))
-            python_entrypoint: list[Union[str, PurePath]] = list(entrypoint)
+            python_entrypoint: list[str | PurePath] = list(entrypoint)
         else:
             # Standard file-based entrypoint handling
             if not isinstance(source, type_utils.PayloadPath):
@@ -573,10 +571,16 @@ class JobPayload:
         )
 
 
-def _get_parameter_type(param: inspect.Parameter) -> Optional[type[object]]:
-    # Unwrap Optional type annotations
+def _get_parameter_type(param: inspect.Parameter) -> type[object] | None:
+    # Unwrap Optional type annotations. ``Optional[int]``/``Union[int, None]`` and the PEP 604
+    # ``int | None`` spelling report different origins (``typing.Union`` vs ``types.UnionType``)
+    # until Python 3.14 unifies them, so both must be accepted.
     param_type = param.annotation
-    if get_origin(param_type) is Union and len(get_args(param_type)) == 2 and type(None) in get_args(param_type):
+    if (
+        get_origin(param_type) in (Union, UnionType)
+        and len(get_args(param_type)) == 2
+        and type(None) in get_args(param_type)
+    ):
         param_type = next(t for t in get_args(param_type) if t is not type(None))
 
     # Return None for empty type annotations
@@ -741,8 +745,8 @@ if __name__ == '__main__':
 
 
 def get_payload_name(
-    source: Union[str, Callable[..., Any]],
-    entrypoint: Optional[Union[str, list[str]]] = None,
+    source: str | Callable[..., Any],
+    entrypoint: str | list[str] | None = None,
     generate_suffix: bool = True,
 ) -> str:
     suffix = f"_{str(uuid4().hex)[:8]}" if generate_suffix else ""

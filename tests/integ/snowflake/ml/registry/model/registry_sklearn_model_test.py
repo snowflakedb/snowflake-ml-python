@@ -1,4 +1,4 @@
-from typing import Callable, Optional, cast
+from typing import Callable, cast
 
 import numpy as np
 import pandas as pd
@@ -404,7 +404,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
     )
     def test_skl_model_with_categorical_dtype_columns(
         self,
-        enable_explainability: Optional[bool],
+        enable_explainability: bool | None,
     ) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
@@ -516,7 +516,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
     @parameterized.product(  # type: ignore[misc]
         enable_explainability=[False, None],  # Explainability not yet supported
     )
-    def test_scaler_random_forest_pipeline(self, enable_explainability: Optional[bool]) -> None:
+    def test_scaler_random_forest_pipeline(self, enable_explainability: bool | None) -> None:
         X, y = datasets.load_iris(return_X_y=True)
         pipeline = SK_pipeline.Pipeline(
             [

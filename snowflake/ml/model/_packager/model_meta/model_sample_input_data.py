@@ -11,7 +11,7 @@ import logging
 import math
 import os
 from functools import reduce
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ _STRING_TRUNCATION_MARKER = "... (truncated)"
 
 def persist_sample_input_data(
     *,
-    sample_input_data: Optional[model_types.SupportedDataType],
+    sample_input_data: model_types.SupportedDataType | None,
     model_meta: model_meta_api.ModelMetadata,
     model_dir_path: str,
 ) -> None:
@@ -101,7 +101,7 @@ def persist_sample_input_data(
 
 def _to_truncated_dataframe(
     sample_input_data: model_types.SupportedDataType,
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """Convert any supported sample input format to a pandas DataFrame of up to ``_ROW_SCAN_LIMIT`` rows."""
     if isinstance(sample_input_data, snowpark.DataFrame):
         local_df: pd.DataFrame = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
@@ -152,7 +152,7 @@ def _has_large_tensor_spec(specs: Sequence[Any]) -> bool:
 def _find_reference_method(
     df: pd.DataFrame,
     signatures: dict[str, model_signature.ModelSignature],
-) -> tuple[Optional[str], list[str]]:
+) -> tuple[str | None, list[str]]:
     """Pick a method whose input feature list aligns with the captured DataFrame."""
     # Preference order:
     #   1. A method whose top-level input names exactly match the DataFrame's
@@ -160,7 +160,7 @@ def _find_reference_method(
     #   2. The first method with the same number of top-level inputs.
     df_column_count = len(df.columns)
     df_columns_set = {str(c) for c in df.columns}
-    fallback: tuple[Optional[str], list[str]] = (None, [])
+    fallback: tuple[str | None, list[str]] = (None, [])
 
     for method, sig in signatures.items():
         feature_names = _input_feature_names(sig)
@@ -193,7 +193,7 @@ def _find_matching_methods(
     return matching
 
 
-def _input_feature_names(sig: model_signature.ModelSignature) -> Optional[list[str]]:
+def _input_feature_names(sig: model_signature.ModelSignature) -> list[str] | None:
     """Return ordered top-level input names (FeatureSpec or FeatureGroupSpec), or None if unrecognized."""
     feature_names: list[str] = []
     for spec in sig.inputs:

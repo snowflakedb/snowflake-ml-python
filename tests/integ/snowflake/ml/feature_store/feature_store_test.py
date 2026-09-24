@@ -42,37 +42,10 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.version import VERSION
 from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
+from tests.integ.snowflake.ml.test_utils import external_volume_manager, test_env_utils
 
 
 class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
-    # Iceberg storage configurations for different cloud providers
-    # Each config contains: (volume_prefix, storage_location_sql)
-    _ICEBERG_STORAGE_CONFIGS = {
-        "AWS": (
-            "MLPLATFORMTEST_ICEBERG_AWS_S3",
-            """
-                (
-                    NAME                 = 'prod-iceberg-s3'
-                    STORAGE_PROVIDER     = 'S3'
-                    STORAGE_BASE_URL     = 's3://mlplatform-iceberg-test/ml-platform/'
-                    STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::736112632310:role/MLPlatformTestIcebergRole'
-                    STORAGE_AWS_EXTERNAL_ID = 'MLPLATFORMTEST_SFCRole=MLPlatformExternalVolume='
-                )
-            """,
-        ),
-        "AZURE": (
-            "MLPLATFORMTEST_ICEBERG_AZURE_BLOB",
-            """
-                (
-                    NAME = 'prod-iceberg-azure'
-                    STORAGE_PROVIDER = 'AZURE'
-                    STORAGE_BASE_URL = 'azure://mlplatformtesticeberg.blob.core.windows.net/iceberg-data/'
-                    AZURE_TENANT_ID = '075f576f-6f9a-4955-8d99-4086736225c9'
-                )
-            """,
-        ),
-    }
-
     def setUp(self) -> None:
         super().setUp()
         # Preserve access to connection options for tests that spawn sessions explicitly
@@ -90,36 +63,30 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self.tearDown()
             raise Exception(f"Test setup failed: {e}")
 
-    def _create_iceberg_external_volume(self, provider: str = "AWS") -> str:
-        """Create a unique external volume for the specified cloud provider.
+    def _create_iceberg_external_volume(self, provider: str = "AWS", *, unique: bool = False) -> str:
+        """Return an Iceberg external volume for ``provider``.
 
-        Each test gets its own external volume with a unique name to avoid
-        permission conflicts when different roles run tests. The volume is
-        cleaned up in tearDown().
+        By default this reuses the process-wide shared volume and isolates tests
+        with unique ``base_location`` prefixes. Pass ``unique=True`` when the test
+        must compare two distinct volume names (for example default vs explicit).
 
         Args:
             provider: Cloud provider (e.g. "AWS" or "AZURE")
+            unique: When True, provision a volume used only by this test instance.
 
         Returns:
-            The name of the created external volume.
+            The name of the external volume.
         """
-        volume_prefix, storage_location_sql = self._ICEBERG_STORAGE_CONFIGS[provider]
-        volume_name = f"{volume_prefix}_{uuid4().hex[:8].upper()}"
-
-        self._evm.create_external_volume(volume_name, storage_location_sql)
-
-        # Track for cleanup
-        if not hasattr(self, "_iceberg_external_volumes"):
-            self._iceberg_external_volumes = []
-        self._iceberg_external_volumes.append(volume_name)
-
-        return volume_name
+        if unique:
+            volume_name = self._evm.create_iceberg_external_volume(provider)
+            if not hasattr(self, "_iceberg_external_volumes"):
+                self._iceberg_external_volumes = []
+            self._iceberg_external_volumes.append(volume_name)
+            return volume_name
+        return self._evm.get_or_create_shared_iceberg_volume(provider=provider)
 
     def _create_iceberg_storage_config(self, provider: str) -> StorageConfig:
-        """Create a StorageConfig for Iceberg with a unique base_location per test.
-
-        Each test gets its own isolated storage path to prevent conflicts when tests
-        run in parallel. The base_location uses a UUID to ensure uniqueness.
+        """Create a StorageConfig for Iceberg with a unique base_location per call.
 
         Args:
             provider: Cloud provider - "AWS" or "AZURE"
@@ -128,7 +95,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             StorageConfig configured for Iceberg format with a unique base_location.
         """
         volume_name = self._create_iceberg_external_volume(provider)
-        unique_path = f"test_{uuid4().hex}/"
+        unique_path = self._evm.new_iceberg_base_location()
 
         # Track for cloud storage cleanup
         if not hasattr(self, "_iceberg_storage_paths"):
@@ -141,12 +108,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             base_location=unique_path,
         )
 
-    # Cloud storage config constants for cleanup
-    _S3_BUCKET = "mlplatform-iceberg-test"
-    _S3_PREFIX = "ml-platform/"
-    _AZURE_ACCOUNT_URL = "https://mlplatformtesticeberg.blob.core.windows.net"
-    _AZURE_CONTAINER = "iceberg-data"
-
     def tearDown(self) -> None:
         for fs in self._active_feature_store:
             try:
@@ -158,15 +119,25 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         self._session.sql(f"DROP TABLE IF EXISTS {self._mock_table}").collect()
 
-        # Clean up external volumes created by this specific test instance
+        # Unique volumes created by tests that cannot share the process-wide volume.
         if hasattr(self, "_iceberg_external_volumes"):
             for volume in self._iceberg_external_volumes:
-                self._evm.drop_external_volume(volume, if_exists=True)
+                self._evm.try_drop_external_volume(volume)
 
-        # Also clean up stale/orphaned volumes (older than 1 day) to handle crashed tests
-        self._evm.cleanup_external_volumes("MLPLATFORMTEST_ICEBERG_", expire_days=1)
+        self._evm.cleanup_external_volumes(external_volume_manager.ICEBERG_VOLUME_NAME_PREFIX, expire_days=1)
 
         super().tearDown()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if external_volume_manager.ExternalVolumeManager._shared_volumes:
+            session = test_env_utils.get_available_session()
+            try:
+                evm = external_volume_manager.ExternalVolumeManager(session)
+                evm.try_drop_shared_iceberg_volumes()
+            finally:
+                session.close()
+        super().tearDownClass()
 
     def _create_mock_table(self, name: str) -> str:
         table_full_path = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
@@ -4755,7 +4726,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertIn("external_volume", str(cm.exception).lower())
 
         # Scenario 2: Default external_volume is used
-        default_volume = self._create_iceberg_external_volume("AWS")
+        default_volume = self._create_iceberg_external_volume("AWS", unique=True)
         fs2 = self._create_feature_store(default_iceberg_external_volume=default_volume)
         e2 = Entity("foo", ["id"])
         fs2.register_entity(e2)
@@ -4772,7 +4743,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertEqual(default_volume, registered_fv2.storage_config.external_volume)
 
         # Scenario 3: Explicit external_volume overrides default
-        explicit_volume = self._create_iceberg_external_volume("AWS")
+        explicit_volume = self._create_iceberg_external_volume("AWS", unique=True)
         fv3 = FeatureView(
             name="iceberg_fv_explicit_volume",
             entities=[e2],
@@ -4916,7 +4887,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
     @parameterized.parameters("AWS", "AZURE")
     def test_iceberg_storage_requires_refresh_freq(self, provider: str) -> None:
-        """Test that Iceberg storage requires refresh_freq."""
+        """Test that Iceberg storage is refused for static feature views (no refresh_freq)."""
         e = Entity("foo", ["id"])
 
         sql = f"SELECT name, id, title, age FROM {self._mock_table}"
@@ -4924,7 +4895,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "Iceberg storage requires refresh_freq",
+            "Iceberg storage is not applicable to static feature views since they omit the data materialization step.",
         ):
             FeatureView(
                 name="iceberg_fv_no_refresh",
@@ -5015,10 +4986,10 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
     @parameterized.parameters("AWS", "AZURE")
     def test_iceberg_storage_rejects_online_config(self, provider: str) -> None:
-        """Test that Iceberg storage does not allow online feature tables.
+        """Test that Iceberg storage rejects hybrid-table (HT-OFT) online config.
 
-        Online Feature Tables with Iceberg storage is not currently supported and
-        requires a dedicated investigation into compatibility.
+        Postgres OFT on Iceberg is covered by the spec-OFT bundle
+        (``test_iceberg_batch_fv_spec_oft_online_read_by_key``).
         """
         fs = self._create_feature_store()
 
@@ -5030,7 +5001,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "Online storage is not supported with Iceberg",
+            "Iceberg offline storage is only supported with Postgres online store type.",
         ):
             FeatureView(
                 name="iceberg_fv_online",
@@ -5229,6 +5200,67 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         retrieved_fv = fs.get_feature_view("snap_fv", "v1")
         self.assertTrue(retrieved_fv.append_only)
         self.assertIsNone(retrieved_fv.backup_source)
+
+    def test_register_rejects_iceberg_append_only(self) -> None:
+        """Defining Iceberg + append_only is allowed; register_feature_view refuses it.
+
+        The snapshot table is derived with ``CREATE TABLE ... LIKE``, which has no Iceberg
+        equivalent. Refused before any DDL, so the volume does not need to exist.
+        """
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("iceberg_snap_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="snap_fv",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT name, id, age, ts FROM {mock_table}"),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume="ICEBERG_VOLUME_NEVER_CREATED"),
+        )
+        self.assertTrue(fv.append_only)
+
+        with self.assertRaisesRegex(Exception, "Iceberg storage is not supported with append_only=True"):
+            fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertEqual(len(fs.list_feature_views().filter("NAME = 'SNAP_FV'").collect()), 0)
+
+    def test_update_rejects_iceberg_append_only(self) -> None:
+        """A caller-supplied append_only FeatureView mutated to Iceberg is refused on update."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("iceberg_snap_update_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        registered = fs.register_feature_view(
+            feature_view=FeatureView(
+                name="snap_fv",
+                entities=[e],
+                feature_df=self._session.sql(f"SELECT name, id, age, ts FROM {mock_table}"),
+                timestamp_col="ts",
+                refresh_mode="FULL",
+                refresh_freq="0 0 * * * UTC",
+                append_only=True,
+            ),
+            version="v1",
+        )
+        original_desc = registered.desc
+
+        registered._storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG, external_volume="ICEBERG_VOLUME_NEVER_CREATED"
+        )
+        with self.assertRaisesRegex(Exception, "Iceberg storage is not supported with append_only=True"):
+            fs.update_feature_view(name=registered, desc="should not land")
+
+        reloaded = fs.get_feature_view("snap_fv", "v1")
+        self.assertEqual(reloaded.desc, original_desc)
+        self.assertTrue(reloaded.append_only)
+        self.assertTrue(reloaded.storage_config is None or reloaded.storage_config.format != StorageFormat.ICEBERG)
 
     def test_register_append_only_with_backfill(self) -> None:
         fs = self._create_feature_store()

@@ -5,7 +5,7 @@ import threading
 import time
 import traceback
 import typing
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 from unittest import mock
 
 import cloudpickle
@@ -462,7 +462,7 @@ class TelemetryTest(parameterized.TestCase):
                 api_calls_extractor=extract_api_calls,
                 custom_tags={"custom_tag": "tag"},
             )
-            def foo(self, default_stmt_params: Optional[dict[str, Any]] = None) -> dataframe.DataFrame:
+            def foo(self, default_stmt_params: dict[str, Any] | None = None) -> dataframe.DataFrame:
                 mock_df: dataframe.DataFrame = absltest.mock.MagicMock(spec=dataframe.DataFrame)
                 if default_stmt_params is not None:
                     mock_df._statement_params = default_stmt_params.copy()  # type: ignore[assignment]
@@ -695,7 +695,7 @@ class TelemetryTest(parameterized.TestCase):
         def test_sproc_no_statement_params() -> None:
             return None
 
-        def test_sproc_statement_params(statement_params: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+        def test_sproc_statement_params(statement_params: dict[str, Any] | None = None) -> dict[str, Any] | None:
             return statement_params
 
         statement_params = {"test": "test"}
@@ -896,7 +896,7 @@ class TelemetryTest(parameterized.TestCase):
         self.assertNotIn("snowml_telemetry_type", call_statement_params[1].keys())
 
     def _do_internal_statement_params_test(
-        self, func: Callable[[session.Session], None], expected_params: Optional[dict[str, str]] = None
+        self, func: Callable[[session.Session], None], expected_params: dict[str, str] | None = None
     ) -> None:
         # Set up a real Session with mocking starting at SnowflakeConnection
         mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)
@@ -1055,7 +1055,7 @@ class TelemetryTest(parameterized.TestCase):
                 positional_arg: str,
                 *,
                 kwonly_arg: str,
-                kwonly_with_default: Optional[dict[str, Any]] = None,
+                kwonly_with_default: dict[str, Any] | None = None,
                 optional_arg: str = "default_value",
             ) -> None:
                 pass

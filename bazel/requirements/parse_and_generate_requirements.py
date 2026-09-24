@@ -18,7 +18,9 @@ yaml.default_flow_style = False
 yaml.map_indent = 2
 yaml.sequence_dash_offset = 2
 yaml.sequence_indent = 4
-yaml.width = 120
+# Keep pip index URLs on one line so generated files match yamlfix + trailing-whitespace
+# (width=120 wraps `--index-url https://artifactory...` and inserts a trailing space).
+yaml.width = 4096
 
 
 class RequirementInfo(TypedDict, total=False):

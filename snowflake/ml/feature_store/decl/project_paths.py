@@ -30,7 +30,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from snowflake.ml.feature_store.decl.manifest import (
     MANIFEST_FILE_NAME,
@@ -92,7 +91,7 @@ class FSProjectPaths:
         )
 
     @classmethod
-    def discover(cls, start: Optional[Path] = None) -> FSProjectPaths:
+    def discover(cls, start: Path | None = None) -> FSProjectPaths:
         """Walk up from ``start`` until a directory containing
         ``manifest.yml`` is found.
 

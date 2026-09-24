@@ -1,7 +1,6 @@
 import configparser
 import logging
 import os
-from typing import Optional, Union
 
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
@@ -42,7 +41,7 @@ def _load_pem_to_der(private_key_path: str) -> bytes:
     """Given a private key file path (in PEM format), decode key data into DER format."""
     with open(private_key_path, "rb") as f:
         private_key_pem = f.read()
-    private_key_passphrase: Optional[str] = os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", None)
+    private_key_passphrase: str | None = os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", None)
 
     # Only PKCS#8 format key will be accepted. However, openssl
     # transparently handle PKCS#8 and PKCS#1 format (by some fallback
@@ -137,7 +136,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
     return conn_params
 
 
-def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> dict[str, Union[str, bytes]]:
+def SnowflakeLoginOptions(connection_name: str = "", login_file: str | None = None) -> dict[str, str | bytes]:
     """Returns a dict that can be used directly into snowflake python connector or Snowpark session config.
 
     NOTE: Token/Auth information is sideloaded in all cases above, if provided in following order:
@@ -170,7 +169,7 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
     Raises:
         Exception: if none of config file and environment variable are present.
     """
-    conn_prop: dict[str, Union[str, bytes]] = {}
+    conn_prop: dict[str, str | bytes] = {}
     login_file = login_file or os.path.expanduser(_DEFAULT_CONNECTION_FILE)
     # If login file exists, use this exclusively.
     if os.path.exists(login_file):

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 from snowflake.ml.model._client.service import model_deployment_spec_schema
@@ -14,8 +12,8 @@ class ModelName(BaseModel):
 
 class ModelSpec(BaseModel):
     name: ModelName
-    hf_model: Optional[model_deployment_spec_schema.HuggingFaceModel] = None
-    log_model_args: Optional[model_deployment_spec_schema.LogModelArgs] = None
+    hf_model: model_deployment_spec_schema.HuggingFaceModel | None = None
+    log_model_args: model_deployment_spec_schema.LogModelArgs | None = None
 
 
 class ImportModelSpec(BaseModel):

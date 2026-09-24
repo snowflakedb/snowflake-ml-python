@@ -117,6 +117,26 @@ class AggregationType(Enum):
         """Check if this is the synthesized secondary-key ``ARRAY_AGG`` type."""
         return self == AggregationType._SECONDARY_KEY_ARRAY
 
+    def tile_column_is_semi_structured(self) -> bool:
+        """Check whether this aggregation's tile column is a semi-structured type.
+
+        Snowflake-managed Iceberg tables reject untyped ``ARRAY`` and ``OBJECT`` columns
+        ("Unsupported data type ... for iceberg tables"), so these aggregations cannot be
+        stored on an Iceberg-backed feature view:
+
+        - ordered-N list aggregations tile into ``ARRAY`` via ``ARRAY_AGG``
+        - ``approx_percentile`` tiles into ``OBJECT`` via ``APPROX_PERCENTILE_ACCUMULATE``
+
+        ``approx_count_distinct`` is *not* included: ``DATASKETCHES_HLL_ACCUMULATE`` returns
+        ``BINARY``, which Iceberg stores. Classified by tile column type rather than by
+        function name so a newly added aggregation has to be assessed explicitly instead of
+        defaulting to Iceberg-compatible.
+
+        Returns:
+            True if this aggregation's tile column has no Iceberg type mapping.
+        """
+        return self.is_list() or self == AggregationType.APPROX_PERCENTILE
+
 
 # Internal column name prefixes used in tile tables.
 # WARNING: Changing these will break existing registered tiled feature views.

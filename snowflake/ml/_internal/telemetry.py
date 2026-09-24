@@ -10,7 +10,7 @@ import time
 import traceback
 import types
 from collections.abc import Iterable, Mapping
-from typing import Any, Callable, Optional, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, cast
 
 from typing_extensions import ParamSpec
 
@@ -38,7 +38,7 @@ _CONNECTION_TYPES = {
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
-_conn: Optional[connector.SnowflakeConnection] = None
+_conn: connector.SnowflakeConnection | None = None
 
 
 def clear_cached_conn() -> None:
@@ -49,23 +49,23 @@ def clear_cached_conn() -> None:
     _conn = None
 
 
-def get_cached_conn() -> Optional[connector.SnowflakeConnection]:
+def get_cached_conn() -> connector.SnowflakeConnection | None:
     """Get the cached Snowflake connection. Primarily for testing purposes."""
     global _conn
     return _conn
 
 
-def _get_login_token() -> Union[str, bytes]:
+def _get_login_token() -> str | bytes:
     with open("/snowflake/session/token") as f:
         return f.read()
 
 
-def _get_snowflake_connection() -> Optional[connector.SnowflakeConnection]:
+def _get_snowflake_connection() -> connector.SnowflakeConnection | None:
     global _conn
     if _conn is not None and _conn.is_valid():
         return _conn
 
-    conn: Optional[connector.SnowflakeConnection] = None
+    conn: connector.SnowflakeConnection | None = None
     if os.getenv("SNOWFLAKE_HOST") is not None and os.getenv("SNOWFLAKE_ACCOUNT") is not None:
         try:
             conn = connect(
@@ -264,9 +264,7 @@ class _StatementParamsPatchManager:
 _patch_manager = _StatementParamsPatchManager()
 
 
-def get_statement_params(
-    project: str, subproject: Optional[str] = None, class_name: Optional[str] = None
-) -> dict[str, Any]:
+def get_statement_params(project: str, subproject: str | None = None, class_name: str | None = None) -> dict[str, Any]:
     """
     Get telemetry statement parameters.
 
@@ -287,7 +285,7 @@ def get_statement_params(
 
 
 def add_statement_params_custom_tags(
-    statement_params: Optional[dict[str, Any]], custom_tags: Mapping[str, Any]
+    statement_params: dict[str, Any] | None, custom_tags: Mapping[str, Any]
 ) -> dict[str, Any]:
     """
     Add custom_tags to existing statement_params.  Overwrite keys in custom_tags dict that already exist.
@@ -312,7 +310,7 @@ def add_statement_params_custom_tags(
 
 
 # TODO: we can merge this with get_statement_params after code clean up
-def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_name: Optional[str] = None) -> str:
+def get_statement_params_full_func_name(frame: types.FrameType | None, class_name: str | None = None) -> str:
     """
     Get the class-level or module-level full function name to be logged in statement parameters.
     The full function name is in the form of "module_name.class_name.function_name" (class-level)
@@ -340,21 +338,14 @@ def get_statement_params_full_func_name(frame: Optional[types.FrameType], class_
 
 
 def get_function_usage_statement_params(
-    project: Optional[str] = None,
-    subproject: Optional[str] = None,
+    project: str | None = None,
+    subproject: str | None = None,
     *,
     function_category: str = TelemetryField.FUNC_CAT_USAGE.value,
-    function_name: Optional[str] = None,
-    function_parameters: Optional[dict[str, Any]] = None,
-    api_calls: Optional[
-        list[
-            Union[
-                dict[str, Union[Callable[..., Any], str]],
-                Union[Callable[..., Any], str],
-            ]
-        ]
-    ] = None,
-    custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
+    function_name: str | None = None,
+    function_parameters: dict[str, Any] | None = None,
+    api_calls: None | (list[(dict[str, Callable[..., Any] | str] | Callable[..., Any] | str)]) = None,
+    custom_tags: dict[str, bool | int | str | float] | None = None,
 ) -> dict[str, Any]:
     """
     Get function usage statement parameters.
@@ -443,8 +434,8 @@ def send_custom_usage(
     project: str,
     *,
     telemetry_type: str,
-    subproject: Optional[str] = None,
-    data: Optional[dict[str, Any]] = None,
+    subproject: str | None = None,
+    data: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> None:
     conn = _get_snowflake_connection()
@@ -459,24 +450,20 @@ def send_custom_usage(
 
 def send_api_usage_telemetry(
     project: str,
-    subproject: Optional[str] = None,
+    subproject: str | None = None,
     *,
-    func_params_to_log: Optional[Iterable[str]] = None,
-    conn_attr_name: Optional[str] = None,
-    api_calls_extractor: Optional[
+    func_params_to_log: Iterable[str] | None = None,
+    conn_attr_name: str | None = None,
+    api_calls_extractor: None
+    | (
         Callable[
             ...,
-            list[
-                Union[
-                    dict[str, Union[Callable[..., Any], str]],
-                    Union[Callable[..., Any], str],
-                ]
-            ],
+            list[(dict[str, Callable[..., Any] | str] | Callable[..., Any] | str)],
         ]
-    ] = None,
-    sfqids_extractor: Optional[Callable[..., list[str]]] = None,
-    subproject_extractor: Optional[Callable[[Any], str]] = None,
-    custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
+    ) = None,
+    sfqids_extractor: Callable[..., list[str]] | None = None,
+    subproject_extractor: Callable[[Any], str] | None = None,
+    custom_tags: dict[str, bool | int | str | float] | None = None,
     log_execution_context: bool = True,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
     """
@@ -514,7 +501,7 @@ def send_api_usage_telemetry(
 
             params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
 
-            api_calls: list[Union[dict[str, Union[Callable[..., Any], str]], Callable[..., Any], str]] = []
+            api_calls: list[dict[str, Callable[..., Any] | str] | Callable[..., Any] | str] = []
             if api_calls_extractor:
                 extracted_api_calls = api_calls_extractor(args[0])
                 for api_call in extracted_api_calls:
@@ -676,7 +663,7 @@ def _get_full_func_name(func: Callable[..., Any]) -> str:
 
 def _get_func_params(
     func: Callable[..., Any],
-    func_params_to_log: Optional[Iterable[str]],
+    func_params_to_log: Iterable[str] | None,
     args: Any,
     kwargs: Any,
 ) -> dict[str, Any]:
@@ -748,8 +735,8 @@ class _SourceTelemetryClient:
     def __init__(
         self,
         conn: connector.SnowflakeConnection,
-        project: Optional[str] = None,
-        subproject: Optional[str] = None,
+        project: str | None = None,
+        subproject: str | None = None,
     ) -> None:
         """
         Universal telemetry client for the source using Python connector TelemetryClient.
@@ -767,17 +754,17 @@ class _SourceTelemetryClient:
             os: Operating system.
         """
         # TODO(hayu): [SNOW-750111] Support telemetry when libraries are used in SProc.
-        self._telemetry: Optional[connector_telemetry.TelemetryClient] = (
+        self._telemetry: connector_telemetry.TelemetryClient | None = (
             None if utils.is_in_stored_procedure() else conn._telemetry  # type: ignore[no-untyped-call]
         )
         self.source: str = env.SOURCE
-        self.project: Optional[str] = project
-        self.subproject: Optional[str] = subproject
+        self.project: str | None = project
+        self.subproject: str | None = subproject
         self.version = snowml_version.VERSION
         self.python_version: str = env.PYTHON_VERSION
         self.os: str = env.OS
 
-    def _send(self, msg: dict[str, Any], timestamp: Optional[int] = None) -> None:
+    def _send(self, msg: dict[str, Any], timestamp: int | None = None) -> None:
         """
         Add telemetry data to a batch in connector client.
 
@@ -809,13 +796,13 @@ class _SourceTelemetryClient:
         func_name: str,
         function_category: str,
         duration: float,
-        func_params: Optional[dict[str, Any]] = None,
-        api_calls: Optional[list[dict[str, Any]]] = None,
-        sfqids: Optional[list[Any]] = None,
-        custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
-        error: Optional[str] = None,
-        error_code: Optional[str] = None,
-        stack_trace: Optional[str] = None,
+        func_params: dict[str, Any] | None = None,
+        api_calls: list[dict[str, Any]] | None = None,
+        sfqids: list[Any] | None = None,
+        custom_tags: dict[str, bool | int | str | float] | None = None,
+        error: str | None = None,
+        error_code: str | None = None,
+        stack_trace: str | None = None,
     ) -> None:
         """
         Send function usage telemetry message.

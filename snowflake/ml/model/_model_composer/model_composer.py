@@ -2,7 +2,7 @@ import pathlib
 import tempfile
 import uuid
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 from urllib import parse
 
 from snowflake import snowpark
@@ -42,11 +42,11 @@ class ModelComposer:
         session: Session,
         stage_path: str,
         *,
-        statement_params: Optional[dict[str, Any]] = None,
-        save_location: Optional[str] = None,
+        statement_params: dict[str, Any] | None = None,
+        save_location: str | None = None,
     ) -> None:
         self.session = session
-        self.stage_path: Union[pathlib.PurePosixPath, parse.ParseResult] = None  # type: ignore[assignment]
+        self.stage_path: pathlib.PurePosixPath | parse.ParseResult = None  # type: ignore[assignment]
         if stage_path.startswith("snow://"):
             # The stage path is a snowflake internal stage path
             self.stage_path = parse.urlparse(stage_path)
@@ -104,22 +104,22 @@ class ModelComposer:
         *,
         name: str,
         model: model_types.SupportedModelType,
-        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        metadata: Optional[dict[str, str]] = None,
-        conda_dependencies: Optional[list[str]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        artifact_repository_map: Optional[dict[str, str]] = None,
-        resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
-        python_version: Optional[str] = None,
-        user_files: Optional[dict[str, list[str]]] = None,
-        ext_modules: Optional[list[ModuleType]] = None,
-        code_paths: Optional[list[model_types.CodePathLike]] = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        metadata: dict[str, str] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[model_types.TargetPlatform] | None = None,
+        python_version: str | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        ext_modules: list[ModuleType] | None = None,
+        code_paths: list[model_types.CodePathLike] | None = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
-        experiment_info: Optional["ExperimentInfo"] = None,
-        prefer_pip_for_automatic_dependencies: Optional[bool] = None,
-        options: Optional[model_types.ModelSaveOption] = None,
+        experiment_info: "ExperimentInfo | None" = None,
+        prefer_pip_for_automatic_dependencies: bool | None = None,
+        options: model_types.ModelSaveOption | None = None,
     ) -> model_meta.ModelMetadata:
         if not options:
             options = model_types.BaseModelSaveOption()
@@ -169,20 +169,57 @@ class ModelComposer:
             )
         return model_metadata
 
+    def upload_workspace_to_stage(
+        self,
+        stage_path: str,
+        *,
+        statement_params: dict[str, Any] | None = None,
+    ) -> None:
+        """Upload an already-packaged workspace to a different stage.
+
+        Used when live-commit fails after packaging and log_model falls back to FROM @.
+
+        Args:
+            stage_path: Destination stage or snow URL.
+            statement_params: Query tags to attach to the upload.
+        """
+        if statement_params is not None:
+            self._statement_params = statement_params
+        if stage_path.startswith("snow://"):
+            self.stage_path = parse.urlparse(stage_path)
+        else:
+            self.stage_path = pathlib.PurePosixPath(stage_path)
+        file_utils.upload_directory_to_stage(
+            self.session,
+            local_path=self.workspace_path,
+            stage_path=self.stage_path,
+            statement_params=self._statement_params,
+        )
+        lazy_hf_upload = None
+        if self.packager.meta is not None:
+            lazy_hf_upload = self.packager.meta._lazy_hf_upload
+        if lazy_hf_upload is not None:
+            huggingface_lazy_uploader.stream_upload(
+                self.session,
+                self.stage_path,
+                lazy_hf_upload,
+                statement_params=self._statement_params,
+            )
+
     @staticmethod
     def load(
         workspace_path: pathlib.Path,
         *,
         meta_only: bool = False,
-        options: Optional[model_types.ModelLoadOption] = None,
+        options: model_types.ModelLoadOption | None = None,
     ) -> model_packager.ModelPackager:
         mp = model_packager.ModelPackager(str(workspace_path / ModelComposer.MODEL_DIR_REL_PATH))
         mp.load(meta_only=meta_only, options=options)
         return mp
 
     def _get_data_sources(
-        self, model: model_types.SupportedModelType, sample_input_data: Optional[model_types.SupportedDataType] = None
-    ) -> Optional[list[data_source.DataSource]]:
+        self, model: model_types.SupportedModelType, sample_input_data: model_types.SupportedDataType | None = None
+    ) -> list[data_source.DataSource] | None:
         data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
             data_sources = lineage_utils.get_data_sources(sample_input_data)

@@ -1,16 +1,7 @@
 import datetime
 import functools
 import inspect
-from typing import (
-    Any,
-    Callable,
-    Coroutine,
-    Generator,
-    Optional,
-    Union,
-    get_args,
-    get_origin,
-)
+from typing import Any, Callable, Coroutine, Generator, get_args, get_origin
 
 import anyio
 import pandas as pd
@@ -127,9 +118,9 @@ class ModelContext:
     def __init__(
         self,
         *,
-        artifacts: Optional[Union[dict[str, str], str, model_types.SupportedModelType]] = None,
-        models: Optional[Union[dict[str, model_types.SupportedModelType], str, model_types.SupportedModelType]] = None,
-        **kwargs: Optional[Union[str, model_types.SupportedModelType]],
+        artifacts: dict[str, str] | str | model_types.SupportedModelType | None = None,
+        models: dict[str, model_types.SupportedModelType] | str | model_types.SupportedModelType | None = None,
+        **kwargs: str | model_types.SupportedModelType | None,
     ) -> None:
         """Initialize the model context.
 
@@ -198,8 +189,8 @@ class ModelContext:
         """
         return self.model_refs[name]
 
-    def __getitem__(self, key: str) -> Union[str, ModelRef]:
-        combined: dict[str, Union[str, ModelRef]] = {**self.artifacts, **self.model_refs}
+    def __getitem__(self, key: str) -> str | ModelRef:
+        combined: dict[str, str | ModelRef] = {**self.artifacts, **self.model_refs}
         if key not in combined:
             raise KeyError(f"Key {key} not found in the kwargs, current available keys are: {combined.keys()}")
         return combined[key]
@@ -216,7 +207,7 @@ class CustomModel:
 
     _allows_kwargs: bool = False
 
-    def __init__(self, context: Optional[ModelContext] = None) -> None:
+    def __init__(self, context: ModelContext | None = None) -> None:
         if context is None:
             context = ModelContext()
         self.context = context

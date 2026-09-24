@@ -1,4 +1,4 @@
-from typing import Any, Iterator, Optional, Union
+from typing import Any, Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -14,7 +14,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[dict[str, Any]]):
         self,
         ingestor: data_ingestor.DataIngestor,
         *,
-        batch_size: Optional[int],
+        batch_size: int | None,
         shuffle: bool = False,
         drop_last: bool = False,
         expand_dims: bool = True,
@@ -32,7 +32,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[dict[str, Any]]):
         self._squeeze_outputs = squeeze
         self._expand_dims = expand_dims
 
-    def __iter__(self) -> Iterator[dict[str, Union[npt.NDArray[Any], list[Any]]]]:
+    def __iter__(self) -> Iterator[dict[str, npt.NDArray[Any] | list[Any]]]:
         max_idx = 0
         filter_idx = 0
         worker_info = torch.utils.data.get_worker_info()
@@ -77,7 +77,7 @@ class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[di
 
 def _preprocess_array(
     arr: npt.NDArray[Any], squeeze: bool = False, expand_dims: bool = True
-) -> Union[npt.NDArray[Any], list[np.object_]]:
+) -> npt.NDArray[Any] | list[np.object_]:
     """Preprocesses batch column values."""
     single_dimensional = arr.ndim < 2 and not arr.dtype == np.object_
 

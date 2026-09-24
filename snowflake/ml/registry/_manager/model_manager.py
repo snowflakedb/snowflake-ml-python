@@ -4,7 +4,7 @@ import time
 import traceback
 import uuid
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import yaml
@@ -144,6 +144,29 @@ def _telemetry_error_code(exc: BaseException) -> str:
     if isinstance(exc, snowpark_exceptions.SnowparkClientException):
         return error_codes.INTERNAL_SNOWPARK_ERROR
     return error_codes.UNDEFINED
+
+
+def _activate_live_commit_fallback(
+    exc: BaseException,
+    *,
+    fallback_telemetry_state: _LiveCommitFallbackTelemetryState,
+    statement_params: dict[str, Any] | None,
+    log_message: str,
+) -> dict[str, Any] | None:
+    """Switch a live-commit attempt onto the FROM @ fallback path. Must not raise."""
+    fallback_telemetry_state.start()
+    live_commit_sfqids = _sfqids_from_exception(exc)
+    _send_live_commit_fallback_telemetry(
+        exc,
+        sfqids=live_commit_sfqids,
+        operation_id=fallback_telemetry_state.operation_id,
+    )
+    statement_params = _chain_sfqids_into_statement_params(statement_params, live_commit_sfqids)
+    logger.info(log_message)
+    return telemetry.add_statement_params_custom_tags(
+        statement_params,
+        {MODEL_LOG_PATH_TAG: MODEL_LOG_PATH_LIVE_COMMIT_FALLBACK},
+    )
 
 
 def _send_live_commit_fallback_telemetry(
@@ -286,7 +309,7 @@ class ModelManager:
         code_paths: list[type_hints.CodePathLike] | None = None,
         ext_modules: list[ModuleType] | None = None,
         task: type_hints.Task = task.Task.UNKNOWN,
-        experiment_info: Optional["ExperimentInfo"] = None,
+        experiment_info: "ExperimentInfo | None" = None,
         options: type_hints.ModelSaveOption | None = None,
         statement_params: dict[str, Any] | None = None,
     ) -> model_version_impl.ModelVersion:
@@ -406,7 +429,7 @@ class ModelManager:
         code_paths: list[type_hints.CodePathLike] | None = None,
         ext_modules: list[ModuleType] | None = None,
         task: type_hints.Task = task.Task.UNKNOWN,
-        experiment_info: Optional["ExperimentInfo"] = None,
+        experiment_info: "ExperimentInfo | None" = None,
         options: type_hints.ModelSaveOption | None = None,
         statement_params: dict[str, Any] | None = None,
         fallback_telemetry_state: _LiveCommitFallbackTelemetryState,
@@ -488,15 +511,14 @@ class ModelManager:
                         statement_params=statement_params,
                     )
             except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
-                fallback_telemetry_state.start()
-                live_commit_sfqids = _sfqids_from_exception(e)
-                _send_live_commit_fallback_telemetry(
+                statement_params = _activate_live_commit_fallback(
                     e,
-                    sfqids=live_commit_sfqids,
-                    operation_id=fallback_telemetry_state.operation_id,
+                    fallback_telemetry_state=fallback_telemetry_state,
+                    statement_params=statement_params,
+                    log_message=(
+                        "Hidden live model version creation failed; falling back to regular model version creation"
+                    ),
                 )
-                statement_params = _chain_sfqids_into_statement_params(statement_params, live_commit_sfqids)
-                logger.info("Hidden live model version creation failed; falling back to regular model version creation")
                 use_hidden_live_commit = False
                 checkout_model_name_id = model_name_id
                 checkout_version_name_id = None
@@ -602,15 +624,41 @@ class ModelManager:
         fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_MODEL_CREATION)
         if use_hidden_live_commit:
             assert checkout_version_name_id is not None
-            self._model_ops.commit_live_version(
-                database_name=database_name_id,
-                schema_name=schema_name_id,
-                checkout_model_name=checkout_model_name_id,
-                checkout_version_name=checkout_version_name_id,
-                rename_model_to=rename_model_to_id,
-                rename_version_to=version_name_id,
-                statement_params=statement_params,
-            )
+            try:
+                self._model_ops.commit_live_version(
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    checkout_model_name=checkout_model_name_id,
+                    checkout_version_name=checkout_version_name_id,
+                    rename_model_to=rename_model_to_id,
+                    rename_version_to=version_name_id,
+                    statement_params=statement_params,
+                )
+            except (AssertionError, snowpark_exceptions.SnowparkSQLException) as e:
+                statement_params = _activate_live_commit_fallback(
+                    e,
+                    fallback_telemetry_state=fallback_telemetry_state,
+                    statement_params=statement_params,
+                    log_message=(
+                        "Hidden live model version commit failed; falling back to regular model version creation"
+                    ),
+                )
+                fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_STAGE_PREPARATION)
+                fallback_stage_path = self._model_ops.prepare_model_temp_stage_path(
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    statement_params=statement_params,
+                )
+                mc.upload_workspace_to_stage(fallback_stage_path, statement_params=statement_params)
+                fallback_telemetry_state.set_phase(LIVE_COMMIT_FALLBACK_PHASE_MODEL_CREATION)
+                self._model_ops.create_from_stage(
+                    composed_model=mc,
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    model_name=model_name_id,
+                    version_name=version_name_id,
+                    statement_params=statement_params,
+                )
         else:
             self._model_ops.create_from_stage(
                 composed_model=mc,

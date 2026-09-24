@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.spec.enums import FSBaseType
@@ -177,11 +177,11 @@ class StreamSource:
 
         self.name: SqlIdentifier = SqlIdentifier(name)
         self.schema: StructType = schema
-        self.owner: Optional[str] = None
+        self.owner: str | None = None
         self.desc: str = desc
         # Runtime-only cache of the Online Service ingest endpoint URL, populated by
         # FeatureStore.get_stream_source. Not persisted to metadata.
-        self._postgres_online_ingest_url: Optional[str] = None
+        self._postgres_online_ingest_url: str | None = None
 
     def _validate(self, name: str, schema: StructType) -> None:
         if len(name) > _STREAM_SOURCE_NAME_LENGTH_LIMIT:
@@ -207,7 +207,7 @@ class StreamSource:
         name: str,
         schema: StructType,
         desc: str,
-        owner: Optional[str] = None,
+        owner: str | None = None,
     ) -> "StreamSource":
         """Construct a StreamSource with owner populated (for objects retrieved from backend)."""
         ss = StreamSource(name, schema, desc=desc)

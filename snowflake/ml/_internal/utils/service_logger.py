@@ -5,7 +5,6 @@ import sys
 import tempfile
 import time
 import uuid
-from typing import Optional
 
 import platformdirs
 
@@ -111,14 +110,14 @@ def _test_writability(directory: str) -> bool:
         return False
 
 
-def _try_log_location(log_dir: str, operation_id: str) -> Optional[str]:
+def _try_log_location(log_dir: str, operation_id: str) -> str | None:
     """Try to create a log file in the given directory if it's writable."""
     if _test_writability(log_dir):
         return os.path.join(log_dir, f"{operation_id}.log")
     return None
 
 
-def _get_log_file_path(operation_id: str) -> Optional[str]:
+def _get_log_file_path(operation_id: str) -> str | None:
     """Get platform-independent log file path. Returns None if no writable location found."""
     # Try locations in order of preference
     locations = [
@@ -170,7 +169,7 @@ def _get_or_create_parent_logger(operation_id: str) -> logging.Logger:
     return parent_logger
 
 
-def get_logger(logger_name: str, info_color: LogColor, operation_id: Optional[str] = None) -> logging.Logger:
+def get_logger(logger_name: str, info_color: LogColor, operation_id: str | None = None) -> logging.Logger:
     logger = logging.getLogger(logger_name)
     root_logger = logging.getLogger()
 
@@ -199,6 +198,6 @@ def get_operation_id() -> str:
     return f"model_deploy_{uuid.uuid4().hex[:8]}_{int(time.time())}"
 
 
-def get_log_file_location(operation_id: str) -> Optional[str]:
+def get_log_file_location(operation_id: str) -> str | None:
     """Get the log file path for an operation ID. Returns None if no writable location available."""
     return _get_log_file_path(operation_id)

@@ -3,7 +3,7 @@ Aux file for test purposes, keeping test data for json-mode related tests in one
 """
 
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 from pandas.core.interchange.dataframe_protocol import Column
 
@@ -14,7 +14,7 @@ from snowflake.cortex._complete import ConversationMessage, ResponseFormat
 class JsonModeTestUtils:
     """Aux object for test purposes to unify testing data"""
 
-    prompt: Union[str, list[ConversationMessage], Column]
+    prompt: str | list[ConversationMessage] | Column
     response_format: ResponseFormat
     error_message_sql: str
     error_message_rest: dict[str, Any]

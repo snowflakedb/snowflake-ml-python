@@ -2,7 +2,7 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import Iterable, Union
+from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def get_temp_file_path(prefix: str = "") -> str:
     return local_file_name
 
 
-def cleanup_temp_files(file_paths: Union[str, Iterable[str]]) -> None:
+def cleanup_temp_files(file_paths: str | Iterable[str]) -> None:
     """Deletes all the temp files.
 
     Args:

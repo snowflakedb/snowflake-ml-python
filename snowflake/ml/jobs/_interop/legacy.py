@@ -57,7 +57,7 @@ import pickle
 import sys
 import traceback
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml.jobs._interop import exception_utils, results
@@ -67,7 +67,7 @@ from snowflake.snowpark import exceptions as sp_exceptions
 @dataclass(frozen=True)
 class ExecutionResult:
     result: Any = None
-    exception: Optional[BaseException] = None
+    exception: BaseException | None = None
 
     @property
     def success(self) -> bool:
@@ -106,7 +106,7 @@ class ExecutionResult:
 
 
 def fetch_result(
-    session: snowpark.Session, result_path: str, result_json: Optional[dict[str, Any]] = None
+    session: snowpark.Session, result_path: str, result_json: dict[str, Any] | None = None
 ) -> ExecutionResult:
     """
     Fetch the serialized result from the specified path.
@@ -145,7 +145,7 @@ def fetch_result(
             raise RuntimeError(_fetch_result_error_message(pickle_error, result_path, json_error)) from pickle_error
 
 
-def _fetch_result_error_message(error: Exception, result_path: str, json_error: Optional[Exception] = None) -> str:
+def _fetch_result_error_message(error: Exception, result_path: str, json_error: Exception | None = None) -> str:
     """Create helpful error messages for common result retrieval failures."""
 
     # Package import issues
@@ -189,7 +189,7 @@ def _fetch_result_error_message(error: Exception, result_path: str, json_error: 
     return base_message
 
 
-def load_exception(exc_type_name: str, exc_value: Union[Exception, str], exc_tb: str) -> BaseException:
+def load_exception(exc_type_name: str, exc_value: Exception | str, exc_tb: str) -> BaseException:
     """
     Create an exception with a string-formatted traceback.
 
@@ -213,7 +213,7 @@ def load_exception(exc_type_name: str, exc_value: Union[Exception, str], exc_tb:
 
 
 def load_legacy_result(
-    session: snowpark.Session, result_path: str, result_json: Optional[dict[str, Any]] = None
+    session: snowpark.Session, result_path: str, result_json: dict[str, Any] | None = None
 ) -> results.ExecutionResult:
     # Load result using legacy interop
     legacy_result = fetch_result(session, result_path, result_json=result_json)

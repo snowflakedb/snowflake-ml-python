@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import Any, Collection, Iterable, Optional, Union
+from typing import Any, Collection, Iterable
 
 import cloudpickle
 import numpy as np
@@ -193,7 +193,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: dic
 
 
 def validate_and_return_dataframe_and_columns(
-    *, df: snowpark.DataFrame, columns: Optional[Collection[str]] = None
+    *, df: snowpark.DataFrame, columns: Collection[str] | None = None
 ) -> tuple[snowpark.DataFrame, Collection[str]]:
     """Validates that the columns are all numeric and returns a dataframe with those columns.
 
@@ -221,8 +221,8 @@ def validate_and_return_dataframe_and_columns(
 
 
 def check_label_columns(
-    y_true_col_names: Union[str, list[str]],
-    y_pred_col_names: Union[str, list[str]],
+    y_true_col_names: str | list[str],
+    y_pred_col_names: str | list[str],
 ) -> None:
     """Check y true and y pred columns.
 
@@ -247,7 +247,7 @@ def check_label_columns(
         )
 
 
-def flatten_cols(cols: list[Optional[Union[str, list[str]]]]) -> list[str]:
+def flatten_cols(cols: list[str | list[str] | None]) -> list[str]:
     res = []
     for col in cols:
         if isinstance(col, str):
@@ -287,7 +287,7 @@ def unique_labels(
     return res
 
 
-def validate_average_pos_label(average: Optional[str] = None, pos_label: Union[str, int] = 1) -> None:
+def validate_average_pos_label(average: str | None = None, pos_label: str | int = 1) -> None:
     """Validating average and pos_label parameters.
 
     Args:
@@ -318,7 +318,7 @@ def weighted_sum(
     *,
     df: snowpark.DataFrame,
     sample_score_column: snowpark.Column,
-    sample_weight_column: Optional[snowpark.Column] = None,
+    sample_weight_column: snowpark.Column | None = None,
     normalize: bool = False,
     statement_params: dict[str, str],
 ) -> float:

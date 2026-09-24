@@ -1,7 +1,7 @@
 import math
 from contextlib import contextmanager
 from timeit import default_timer
-from typing import Any, Callable, Generator, Iterable, Optional
+from typing import Any, Callable, Generator, Iterable
 
 import snowflake.snowpark.functions as F
 from snowflake import snowpark
@@ -26,7 +26,7 @@ def map_dataframe_by_column(
     cols: list[str],
     map_func: Callable[[snowpark.DataFrame, list[str]], snowpark.DataFrame],
     partition_size: int,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> list[list[Any]]:
     """Applies the `map_func` to the input DataFrame by parallelizing it over subsets of the column.
 
@@ -53,7 +53,7 @@ def map_dataframe_by_column(
     """
     partition_id_col = "_PARTITION_ID"
     n_output_cols = 0
-    unioned_df: Optional[snowpark.DataFrame] = None
+    unioned_df: snowpark.DataFrame | None = None
     last_partition_df = None
 
     if partition_size < 1:

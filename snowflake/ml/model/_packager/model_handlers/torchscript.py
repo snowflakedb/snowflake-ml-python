@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -68,8 +68,8 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         model: "torch.jit.ScriptModule",
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
-        is_sub_model: Optional[bool] = False,
+        sample_input_data: model_types.SupportedDataType | None = None,
+        is_sub_model: bool | None = False,
         **kwargs: Unpack[model_types.TorchScriptSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
@@ -173,7 +173,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         cls,
         raw_model: "torch.jit.ScriptModule",
         model_meta: model_meta_api.ModelMetadata,
-        background_data: Optional[pd.DataFrame] = None,
+        background_data: pd.DataFrame | None = None,
         **kwargs: Unpack[model_types.TorchScriptLoadOptions],
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model

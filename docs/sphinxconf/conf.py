@@ -11,7 +11,7 @@ import re
 import sys
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any
 
 from snowflake.ml.version import VERSION
 
@@ -143,7 +143,7 @@ def setup(app: Any) -> None:
 
 # Construct URL to corresponding section in the GitHub repo
 # Not currently used
-def linkcode_resolve(domain: str, info: dict[str, Any]) -> Optional[str]:
+def linkcode_resolve(domain: str, info: dict[str, Any]) -> str | None:
     import inspect
 
     # import pkg_resources

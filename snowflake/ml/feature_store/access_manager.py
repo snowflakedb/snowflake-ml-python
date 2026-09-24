@@ -1,6 +1,5 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Optional
 from warnings import warn
 
 from snowflake.ml._internal import telemetry
@@ -29,7 +28,7 @@ class _Privilege:
     object_type: str
     object_name: str
     privileges: list[str]
-    scope: Optional[str] = None
+    scope: str | None = None
     optional: bool = False
 
 
@@ -181,7 +180,7 @@ def _configure_post_init_privileges(
 def _configure_role_hierarchy(
     session: Session,
     producer_role: str,
-    consumer_role: Optional[str],
+    consumer_role: str | None,
 ) -> None:
     """
     Create Feature Store roles and configure role hierarchy hierarchy. Must be run with
@@ -215,7 +214,7 @@ def setup_feature_store(
     schema: str,
     warehouse: str,
     producer_role: str = "FS_PRODUCER",
-    consumer_role: Optional[str] = None,
+    consumer_role: str | None = None,
 ) -> FeatureStore:
     """
     Sets up a new Feature Store including role/privilege setup. Must be run with ACCOUNTADMIN

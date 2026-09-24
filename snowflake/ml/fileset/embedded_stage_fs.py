@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.connector import connection
@@ -30,8 +30,8 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
         *,
         domain: str,
         name: str,
-        snowpark_session: Optional[snowpark.Session] = None,
-        sf_connection: Optional[connection.SnowflakeConnection] = None,
+        snowpark_session: snowpark.Session | None = None,
+        sf_connection: connection.SnowflakeConnection | None = None,
         **kwargs: Any,
     ) -> None:
 

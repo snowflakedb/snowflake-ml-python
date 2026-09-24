@@ -1,4 +1,4 @@
-from typing import Optional, Protocol, Union
+from typing import Protocol
 
 import pandas as pd
 
@@ -19,14 +19,14 @@ class ModelTrainer(Protocol):
     def train_fit_predict(
         self,
         expected_output_cols_list: list[str],
-        drop_input_cols: Optional[bool] = False,
-        example_output_pd_df: Optional[pd.DataFrame] = None,
-    ) -> tuple[Union[DataFrame, pd.DataFrame], object]:
+        drop_input_cols: bool | None = False,
+        example_output_pd_df: pd.DataFrame | None = None,
+    ) -> tuple[DataFrame | pd.DataFrame, object]:
         raise NotImplementedError
 
     def train_fit_transform(
         self,
         expected_output_cols_list: list[str],
-        drop_input_cols: Optional[bool] = False,
-    ) -> tuple[Union[DataFrame, pd.DataFrame], object]:
+        drop_input_cols: bool | None = False,
+    ) -> tuple[DataFrame | pd.DataFrame, object]:
         raise NotImplementedError

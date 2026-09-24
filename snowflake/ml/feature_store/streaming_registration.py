@@ -18,7 +18,7 @@ import datetime
 import logging
 import textwrap
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import (
@@ -63,6 +63,13 @@ logger = logging.getLogger(__name__)
 
 
 _BACKFILL_TABLE_SUFFIX = "$BACKFILL"
+
+# Sibling Iceberg paths under the FV ``base_location``. Each Iceberg table needs its own
+# non-overlapping directory — a directory must hold the files of exactly one table — so these
+# sit beside the Dynamic Iceberg Table rather than nested under it. Snowflake does not
+# necessarily reject an overlapping ``BASE_LOCATION`` at DDL time; it corrupts the layout.
+_ICEBERG_UDF_TRANSFORMED_LOCATION_SUFFIX = "UDFT"
+_ICEBERG_BACKFILL_LOCATION_SUFFIX = "BF"
 
 # Backfill task graph naming. The shared ``$BACKFILL_`` prefix lets
 # ``get_refresh_history`` and integ polling find all members with a single
@@ -311,7 +318,8 @@ def run_streaming_preamble(
       2. Validate stream source exists.
       3. Probe — infer UDF output schema (10 rows, fast).
       4. Apply backfill_start_time filter if provided.
-      5. Create empty udf_transformed and backfill tables (fast).
+      5. Create empty udf_transformed and backfill tables (Iceberg when
+         ``storage_config`` is Iceberg).
 
     After this returns, the caller should call
     ``feature_view._initialize_from_feature_df(session.table(fq_udf_table))``
@@ -392,6 +400,11 @@ def run_streaming_preamble(
     fq_udf_table = get_fully_qualified_name_fn(udf_table_name)
     fq_backfill_table = get_fully_qualified_name_fn(backfill_table_name)
 
+    # Both landing tables follow the feature view's declared storage format, so a streaming
+    # feature view never has a mixed-format staging pair: an Iceberg FV lands ``$UDF_TRANSFORMED``
+    # (which the Postgres online feature table hydrates from) and ``$BACKFILL`` as Iceberg.
+    # Distinct ``BASE_LOCATION`` suffixes keep them from colliding with each other or the
+    # Dynamic Iceberg Table.
     _create_empty_table(
         session=session,
         fq_table_name=fq_udf_table,
@@ -399,6 +412,7 @@ def run_streaming_preamble(
         overwrite=overwrite,
         telemetry_stmp=telemetry_stmp,
         storage_config=feature_view.storage_config,
+        iceberg_location_suffix=_ICEBERG_UDF_TRANSFORMED_LOCATION_SUFFIX,
     )
     _create_empty_table(
         session=session,
@@ -407,6 +421,7 @@ def run_streaming_preamble(
         overwrite=overwrite,
         telemetry_stmp=telemetry_stmp,
         storage_config=feature_view.storage_config,
+        iceberg_location_suffix=_ICEBERG_BACKFILL_LOCATION_SUFFIX,
     )
 
     return StreamingPreambleResult(
@@ -453,10 +468,10 @@ def run_streaming_postamble(
     feature_view_name: SqlIdentifier,
     preamble: StreamingPreambleResult,
     metadata_manager: FeatureStoreMetadataManager,
-    default_warehouse: Optional[SqlIdentifier],
+    default_warehouse: SqlIdentifier | None,
     get_fully_qualified_name_fn: Callable[..., str],
     telemetry_stmp: dict[str, Any],
-    on_resource_created: Optional[Callable[[str, str], None]] = None,
+    on_resource_created: Callable[[str, str], None] | None = None,
 ) -> StreamingPostambleResult:
     """Save streaming metadata, increment ref count, and kick off server-side backfill.
 
@@ -748,7 +763,7 @@ def _render_backfill_insert_all_sql(
     input_col_names: list[str],
     input_col_types: list[str],
     output_col_names: list[str],
-    timestamp_col: Optional[str],
+    timestamp_col: str | None,
 ) -> str:
     """Render the ``INSERT ALL ... SELECT`` body that runs inside the proc.
 
@@ -929,13 +944,13 @@ def _create_backfill_task_graph(
     fq_proc: str,
     fq_udtf: str,
     udtf_signature: str,
-    backfill_start_time: Optional[datetime.datetime],
+    backfill_start_time: datetime.datetime | None,
     get_fully_qualified_name_fn: Callable[..., str],
     telemetry_stmp: dict[str, Any],
     metadata_table_path: str,
     fv_metadata_name: str,
     fv_metadata_version: str,
-    on_resource_created: Optional[Callable[[str, str], None]] = None,
+    on_resource_created: Callable[[str, str], None] | None = None,
 ) -> tuple[str, str]:
     """Create the root + finalizer task graph for a streaming-FV backfill.
 
@@ -1217,7 +1232,7 @@ def _build_streaming_feature_view_spec(
     udf_transformed_schema: StructType,
     database: str,
     schema: str,
-    tiled_materialized_schema: Optional[StructType] = None,
+    tiled_materialized_schema: StructType | None = None,
 ) -> FeatureViewSpec:
     """Build a ``StreamingFeatureView`` spec for OFT creation.
 
@@ -1251,14 +1266,7 @@ def _build_streaming_feature_view_spec(
     if stream_config is None:
         raise ValueError(f"FeatureView '{feature_view.name}' does not have a stream_config.")
 
-    entity_columns = list(feature_view.ordered_entity_columns)
-    # GS dedupes on ``ordered_entity_column_names`` during ``$BACKFILL`` and
-    # ignores ``ordered_secondary_key_column_names``; Quake strips SKs back
-    # out before storing.
-    if feature_view.aggregation_secondary_keys:
-        for sk in feature_view.aggregation_secondary_keys:
-            if sk not in entity_columns:
-                entity_columns.append(sk)
+    entity_columns = feature_view.ordered_entity_columns
 
     # UDF_TRANSFORMED offline config (always present)
     udf_table_name = FeatureView._get_udf_transformed_table_name(feature_view_name)
@@ -1330,12 +1338,12 @@ def _build_streaming_feature_view_spec(
 # ---------------------------------------------------------------------------
 
 
-def _is_iceberg_storage(storage_config: Optional[StorageConfig]) -> bool:
+def _is_iceberg_storage(storage_config: StorageConfig | None) -> bool:
     """Return True when the FV's offline storage is Iceberg.
 
-    ``$UDF_TRANSFORMED`` and ``$BACKFILL`` stay regular Snowflake tables.
-    This flag only selects Iceberg-compatible TIME/TIMESTAMP scales in DDL
-    so a Dynamic Iceberg Table can ``SELECT`` from them.
+    Iceberg feature views land ``$UDF_TRANSFORMED`` and ``$BACKFILL`` as
+    Snowflake-managed Iceberg tables too, so a streaming feature view never has a
+    mixed-format staging pair.
 
     Args:
         storage_config: Feature view storage config, or None.
@@ -1346,6 +1354,33 @@ def _is_iceberg_storage(storage_config: Optional[StorageConfig]) -> bool:
     return storage_config is not None and storage_config.format == StorageFormat.ICEBERG
 
 
+def _iceberg_base_location(storage_config: StorageConfig, suffix: str | None) -> str:
+    """Build the Iceberg ``BASE_LOCATION``, optionally appending a unique suffix.
+
+    The suffix is joined with ``_`` (a sibling path), not ``/``. A child path such
+    as ``<dt_base>/BACKFILL`` would nest this table's directory inside the Dynamic
+    Iceberg Table's directory at ``<dt_base>``, which mixes two tables' files under
+    one prefix.
+
+    Args:
+        storage_config: Resolved Iceberg storage config (``base_location`` required).
+        suffix: Extra path segment so this table does not share a prefix with the
+            Dynamic Iceberg Table.
+
+    Returns:
+        Relative Iceberg base location.
+
+    Raises:
+        ValueError: If ``base_location`` is missing.
+    """
+    if storage_config.base_location is None:
+        raise ValueError("Iceberg storage requires a base_location.")
+    location = storage_config.base_location.rstrip("/")
+    if suffix:
+        location = f"{location}.{suffix}"
+    return location
+
+
 def _create_empty_table(
     *,
     session: Session,
@@ -1353,13 +1388,10 @@ def _create_empty_table(
     schema: StructType,
     overwrite: bool,
     telemetry_stmp: dict[str, Any],
-    storage_config: Optional[StorageConfig] = None,
+    storage_config: StorageConfig | None = None,
+    iceberg_location_suffix: str | None = None,
 ) -> None:
-    """Create an empty Snowflake table with the given schema.
-
-    Always a regular table. When ``storage_config.format`` is Iceberg,
-    TIME/TIMESTAMP columns use scale 6 so a later Dynamic Iceberg Table
-    can ``SELECT`` from this table.
+    """Create an empty native or Snowflake-managed Iceberg table with the given schema.
 
     Args:
         session: Snowpark session.
@@ -1367,9 +1399,14 @@ def _create_empty_table(
         schema: Column schema for the empty table.
         overwrite: When True, emit ``CREATE OR REPLACE``.
         telemetry_stmp: Telemetry statement parameters.
-        storage_config: Optional FV storage config. Iceberg FVs emit
-            Iceberg-compatible TIME/TIMESTAMP scales; the table itself
-            is still a Snowflake table.
+        storage_config: When format is Iceberg, create a managed Iceberg table.
+            ``external_volume`` and ``base_location`` must already be resolved.
+        iceberg_location_suffix: Path segment joined onto ``base_location`` with ``_``
+            so this table is a sibling of the offline Dynamic Iceberg Table, not a
+            nested prefix.
+
+    Raises:
+        ValueError: If Iceberg storage is requested without an ``external_volume``.
     """
     overwrite_clause = "OR REPLACE " if overwrite else ""
     iceberg = _is_iceberg_storage(storage_config)
@@ -1379,5 +1416,20 @@ def _create_empty_table(
         col_defs.append(f'"{field.name}" {_snowpark_type_to_sql(field.datatype, iceberg=iceberg)}')
     col_defs_str = ", ".join(col_defs)
 
-    query = f"CREATE {overwrite_clause}TABLE {fq_table_name} ({col_defs_str})"
+    if iceberg:
+        assert storage_config is not None
+        if storage_config.external_volume is None:
+            raise ValueError(
+                "Iceberg storage requires an external_volume. Either provide external_volume in "
+                "StorageConfig or set default_iceberg_external_volume when creating FeatureStore."
+            )
+        escaped_location = _iceberg_base_location(storage_config, iceberg_location_suffix).replace("'", "''")
+        query = (
+            f"CREATE {overwrite_clause}ICEBERG TABLE {fq_table_name} ({col_defs_str})"
+            f" CATALOG = 'SNOWFLAKE'"
+            f" EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}"
+            f" BASE_LOCATION = '{escaped_location}'"
+        )
+    else:
+        query = f"CREATE {overwrite_clause}TABLE {fq_table_name} ({col_defs_str})"
     session.sql(query).collect(statement_params=telemetry_stmp)

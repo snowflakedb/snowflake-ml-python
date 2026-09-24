@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Iterator, Optional, Protocol, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Iterator, Protocol, Sequence, TypeVar
 
 from numpy import typing as npt
 
@@ -40,5 +40,5 @@ class DataIngestor(Protocol):
     ) -> Iterator[dict[str, npt.NDArray[Any]]]:
         raise NotImplementedError
 
-    def to_pandas(self, limit: Optional[int] = None) -> "pd.DataFrame":
+    def to_pandas(self, limit: int | None = None) -> "pd.DataFrame":
         raise NotImplementedError

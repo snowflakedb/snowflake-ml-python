@@ -1,5 +1,5 @@
 import warnings
-from typing import Literal, Sequence, Union
+from typing import Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,7 @@ from snowflake.ml.model._signatures import base_handler, core, utils
 
 class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
     @staticmethod
-    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[Union[pd.DataFrame, pd.Series]]:
+    def can_handle(data: model_types.SupportedDataType) -> TypeGuard[pd.DataFrame | pd.Series]:
         return isinstance(data, pd.DataFrame) or isinstance(data, pd.Series)
 
     @staticmethod
@@ -27,7 +27,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
         return data.head(min(PandasDataFrameHandler.count(data), length))
 
     @staticmethod
-    def validate(data: Union[pd.DataFrame, pd.Series]) -> None:
+    def validate(data: pd.DataFrame | pd.Series) -> None:
         if isinstance(data, pd.Series):
             # check if the series is empty and throw error
             if data.empty:
@@ -127,7 +127,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
 
     @staticmethod
     def infer_signature(
-        data: Union[pd.DataFrame, pd.Series],
+        data: pd.DataFrame | pd.Series,
         role: Literal["input", "output"],
     ) -> Sequence[core.BaseFeatureSpec]:
         feature_prefix = f"{PandasDataFrameHandler.FEATURE_PREFIX}_"

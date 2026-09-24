@@ -9,7 +9,7 @@ import logging
 import socket
 import sys
 import time
-from typing import Any, Optional
+from typing import Any
 
 import ray
 from constants import (
@@ -28,7 +28,7 @@ class ShutdownSignal:
 
     def __init__(self) -> None:
         self.shutdown_requested = False
-        self.timestamp: Optional[float] = None
+        self.timestamp: float | None = None
         self.hostname = socket.gethostname()
         self.acknowledged_workers: set[str] = set()
         logging.info(f"ShutdownSignal actor created on {self.hostname}")

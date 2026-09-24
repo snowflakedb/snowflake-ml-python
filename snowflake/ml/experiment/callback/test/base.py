@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import ANY, MagicMock
 
 import numpy as np
@@ -50,7 +50,7 @@ class SnowflakeCallbackTest(parameterized.TestCase):
         for epoch in range(0, self.num_steps, log_every_n_epochs):
             self.experiment_tracking.log_metric.assert_any_call(key=ANY, value=ANY, step=epoch)
 
-    def _log_model(self, model_class: type[Any], model_name: Optional[str], version_name: Optional[str]) -> None:
+    def _log_model(self, model_class: type[Any], model_name: str | None, version_name: str | None) -> None:
         """Test that model is autologged."""
 
         callback = self._get_callback(

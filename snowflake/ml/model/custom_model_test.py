@@ -79,7 +79,7 @@ class ModelTest(absltest.TestCase):
                 bad_async_model = BadAsyncModel(custom_model.ModelContext())
                 _ = await bad_async_model.predict(d)
 
-        asyncio.get_event_loop().run_until_complete(_test(self))
+        asyncio.run(_test(self))
 
     def test_custom_model_with_keyword_args(self) -> None:
         """Test that keyword-only arguments with defaults are allowed."""
@@ -248,7 +248,7 @@ class ModelTest(absltest.TestCase):
             p2 = await acm.predict(digits_df[-10:])
             self.assertTrue(np.allclose(p1, p2["output"]))
 
-        asyncio.get_event_loop().run_until_complete(_test(self))
+        asyncio.run(_test(self))
 
 
 class IsSupportedAnnotationTest(absltest.TestCase):

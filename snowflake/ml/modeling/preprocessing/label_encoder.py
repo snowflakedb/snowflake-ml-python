@@ -2,7 +2,7 @@
 #
 # Copyright (c) 2012-2023 Snowflake Computing Inc. All rights reserved.
 #
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import pandas as pd
 from sklearn import preprocessing
@@ -45,10 +45,10 @@ class LabelEncoder(base.BaseTransformer):
 
     def __init__(
         self,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Encode target labels with integers between 0 and n_classes-1.
@@ -76,8 +76,8 @@ class LabelEncoder(base.BaseTransformer):
 
         """
         super().__init__(drop_input_cols=drop_input_cols)
-        self._ordinal_encoder: Optional[ordinal_encoder.OrdinalEncoder] = None
-        self.classes_: Optional[type_utils.LiteralNDArrayType] = None
+        self._ordinal_encoder: ordinal_encoder.OrdinalEncoder | None = None
+        self.classes_: type_utils.LiteralNDArrayType | None = None
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
         self.set_passthrough_cols(passthrough_cols)
@@ -88,7 +88,7 @@ class LabelEncoder(base.BaseTransformer):
             self._ordinal_encoder = None
             self.classes_ = None
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "LabelEncoder":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "LabelEncoder":
         """
         Fit label encoder with label column in dataset.
 
@@ -135,7 +135,7 @@ class LabelEncoder(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Use fit result to transform snowpark dataframe or pandas dataframe. The original dataset with
         the transform result column added will be returned.

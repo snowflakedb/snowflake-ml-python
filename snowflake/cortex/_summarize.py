@@ -1,4 +1,4 @@
-from typing import Optional, Union, cast
+from typing import Union, cast
 
 from typing_extensions import deprecated
 
@@ -11,9 +11,9 @@ from snowflake.ml._internal import telemetry
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def summarize(
-    text: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    text: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     """Calls into the LLM inference service to summarize the input text.
 
     Args:
@@ -29,9 +29,9 @@ def summarize(
 
 def _summarize_impl(
     function: str,
-    text: Union[str, snowpark.Column],
-    session: Optional[snowpark.Session] = None,
-) -> Union[str, snowpark.Column]:
+    text: str | snowpark.Column,
+    session: snowpark.Session | None = None,
+) -> str | snowpark.Column:
     return cast(Union[str, snowpark.Column], call_sql_function(function, session, text))
 
 

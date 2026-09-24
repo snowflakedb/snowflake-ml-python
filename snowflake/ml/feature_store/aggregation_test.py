@@ -114,6 +114,49 @@ class AggregationTypeTest(absltest.TestCase):
         self.assertTrue(AggregationType.FIRST_N.is_list())
         self.assertTrue(AggregationType.FIRST_DISTINCT_N.is_list())
 
+    def test_tile_column_is_semi_structured_classifies_every_aggregation(self) -> None:
+        """Every AggregationType must be explicitly classified for Iceberg storability.
+
+        The Iceberg gate keys off this predicate, so a newly added aggregation has to be
+        assessed here rather than silently defaulting to Iceberg-compatible. The expectations
+        below are grounded in the tile column type each aggregation emits:
+
+        - ARRAY (``ARRAY_AGG``) and OBJECT (``APPROX_PERCENTILE_ACCUMULATE``) are rejected by
+          ``CREATE ICEBERG TABLE`` with "Unsupported data type ... for iceberg tables"
+        - BINARY (``DATASKETCHES_HLL_ACCUMULATE``) and NUMBER/FLOAT scalars are accepted
+        """
+        expected_semi_structured = {
+            AggregationType.LAST_N,
+            AggregationType.LAST_DISTINCT_N,
+            AggregationType.FIRST_N,
+            AggregationType.FIRST_DISTINCT_N,
+            AggregationType.APPROX_PERCENTILE,
+        }
+        expected_representable = {
+            AggregationType.SUM,
+            AggregationType.COUNT,
+            AggregationType.AVG,
+            AggregationType.MIN,
+            AggregationType.MAX,
+            AggregationType.STD,
+            AggregationType.VAR,
+            AggregationType.APPROX_COUNT_DISTINCT,
+            AggregationType._SECONDARY_KEY_ARRAY,
+        }
+
+        unclassified = set(AggregationType) - expected_semi_structured - expected_representable
+        self.assertEqual(
+            unclassified,
+            set(),
+            f"New AggregationType(s) {sorted(t.name for t in unclassified)} must be classified "
+            "as Iceberg-storable or not, and the Iceberg gate updated accordingly.",
+        )
+
+        for agg_type in expected_semi_structured:
+            self.assertTrue(agg_type.tile_column_is_semi_structured(), f"{agg_type.name} must be rejected")
+        for agg_type in expected_representable:
+            self.assertFalse(agg_type.tile_column_is_semi_structured(), f"{agg_type.name} must be allowed")
+
     def test_std_value_is_std_and_accepts_stddev(self) -> None:
         """STD keeps the short ``std`` token on the imperative wire.
 

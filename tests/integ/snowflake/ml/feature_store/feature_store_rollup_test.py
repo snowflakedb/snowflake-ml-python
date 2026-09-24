@@ -14,10 +14,19 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import Feature, RollupConfig
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
-from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewStatus,
+    StorageConfig,
+    StorageFormat,
+)
 from snowflake.ml.feature_store.metadata_manager import (
     _METADATA_TABLE_NAME as _FS_METADATA_TABLE,
 )
+
+# Registration refuses the Iceberg case before running any DDL, so this volume is never
+# dereferenced and does not need to exist.
+_UNUSED_EXTERNAL_VOLUME = "ICEBERG_VOLUME_NEVER_CREATED"
 
 
 class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -130,6 +139,61 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
     # =========================================================================
     # Basic Rollup Tests
     # =========================================================================
+
+    def test_register_rejects_iceberg_rollup(self) -> None:
+        """Iceberg storage is refused for rollup feature views before any DDL runs.
+
+        ``_create_rollup_feature_view`` emits a plain ``CREATE DYNAMIC TABLE`` and ignores
+        ``storage_config``.  Without the client-side gate, registration would succeed while
+        producing a native Dynamic Table tagged ``is_iceberg=True`` in metadata — a state
+        ``get_feature_view`` cannot load (``SHOW ICEBERG TABLES`` finds nothing) and
+        ``delete_feature_view`` cannot clean up.
+
+        Both entities are registered and the source feature view is registered for real,
+        because a rollup needs a registered source to point at. Only the rollup itself is
+        expected to be refused, which is what the absence check below confirms.
+        """
+        fs = self._create_feature_store()
+
+        visitor_entity = self._create_visitor_entity()
+        subscriber_entity = self._create_subscriber_entity()
+        fs.register_entity(visitor_entity)
+        fs.register_entity(subscriber_entity)
+
+        visitor_fv = FeatureView(
+            name="visitor_events",
+            entities=[visitor_entity],
+            feature_df=self._get_events_df(),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[Feature.sum("order_value", "24h").alias("spend_24h")],
+        )
+        registered_visitor = fs.register_feature_view(visitor_fv, "v1")
+
+        subscriber_fv = FeatureView(
+            name="subscriber_spend",
+            entities=[subscriber_entity],
+            rollup_config=RollupConfig(
+                source=registered_visitor,
+                mapping_df=self._get_mapping_df(),
+            ),
+            storage_config=StorageConfig(
+                format=StorageFormat.ICEBERG,
+                external_volume=_UNUSED_EXTERNAL_VOLUME,
+            ),
+        )
+
+        with self.assertRaisesRegex(Exception, "Iceberg storage is not supported for rollup feature views"):
+            fs.register_feature_view(subscriber_fv, "v1")
+
+        # The rollup FV must be completely absent — no Dynamic Table, no metadata row.
+        registered_fvs = fs.list_feature_views().filter("NAME = 'SUBSCRIBER_SPEND'").collect()
+        self.assertEqual(
+            len(registered_fvs),
+            0,
+            "Rollup FV with Iceberg storage must not appear in list_feature_views after a refused registration",
+        )
 
     def test_rollup_fv_registration(self) -> None:
         """Test that a rollup FV can be registered successfully."""

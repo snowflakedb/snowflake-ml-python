@@ -20,10 +20,31 @@ py_library(
     ],
 )
 
+py_library(
+    name = "registry_batch_inference_partitioned_test_lib",
+    testonly = True,
+    srcs = ["registry_batch_inference_partitioned_test.py"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
 py_test(
     name = "registry_batch_inference_functional_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_functional_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 6,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_smoke_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_smoke_test.py"],
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = [
@@ -32,7 +53,6 @@ py_test(
     ],
     deps = [
         ":registry_batch_inference_test_base",
-        "//snowflake/ml/jobs:job_manager",
     ],
 )
 
@@ -41,23 +61,12 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_task_test.py"],
     optional_dependencies = ["scikit-learn"],
+    shard_count = 4,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
         "//snowflake/ml/model/batch_inference",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_task_vllm_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_task_vllm_test.py"],
-    optional_dependencies = ["transformers"],
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/batch_inference",
     ],
 )
 
@@ -228,18 +237,10 @@ py_test(
     name = "registry_batch_inference_modeling_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_modeling_test.py"],
-    optional_dependencies = [
-        "lightgbm",
-    ],
-    shard_count = 5,
+    optional_dependencies = ["scikit-learn"],
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
-        "//snowflake/ml/modeling/lightgbm:lgbm_regressor",
-        "//snowflake/ml/modeling/linear_model:logistic_regression",
-        "//snowflake/ml/modeling/pipeline",
-        "//snowflake/ml/modeling/preprocessing:min_max_scaler",
-        "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
         "//snowflake/ml/modeling/xgboost:xgb_regressor",
     ],
 )
@@ -264,6 +265,19 @@ py_test(
     shard_count = 6,
     tags = ["feature:model_serving"],
     deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_partition_on_write_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_partition_on_write_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 6,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_partitioned_test_lib",
         ":registry_batch_inference_test_base",
     ],
 )

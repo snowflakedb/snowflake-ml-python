@@ -18,7 +18,10 @@ py_library(
         ":test_constants",
         ":test_file_helper",
         "//snowflake/ml/jobs",
+        "//snowflake/ml/jobs/_utils:runtime_env_utils",
         "//snowflake/ml/utils:sql_client",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 
@@ -87,6 +90,20 @@ py_test(
         "//snowflake/ml/jobs/_utils:runtime_env_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "runtime_env_integration_test",
+    timeout = "long",
+    srcs = ["runtime_env_integration_test.py"],
+    shard_count = 1,
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
+    deps = [
+        ":job_test_base",
     ],
 )
 

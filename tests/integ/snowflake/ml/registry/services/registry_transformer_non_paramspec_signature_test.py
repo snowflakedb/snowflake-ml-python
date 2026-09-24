@@ -16,7 +16,7 @@ Deployments: 2 signatures × 2 engines × local logging style = 4
 
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -234,7 +234,7 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
     def test_non_param_spec_signature(
         self,
         engine: InferenceEngine,
-        compute_pool_for_log: Optional[str],
+        compute_pool_for_log: str | None,
         signature: dict[str, model_signature.ModelSignature],
     ) -> None:
         """Test non-ParamSpec signatures where params are passed as input columns."""

@@ -12,9 +12,12 @@ snowflake.snowpark, or snowflake.connector.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from snowflake.ml.feature_store.decl.compiler import parse_duration_to_seconds
+from snowflake.ml.feature_store.decl.spec_models import (
+    _is_interval_duration_refresh_freq,
+)
 from snowflake.ml.feature_store.decl.types import AppliedState, ObjectKind
 
 _CLIENT_VERSION = "0.1.0"
@@ -185,7 +188,7 @@ def _entity_join_keys_from_payload(payload: Any) -> list[str]:
 
 def build_entity_join_key_map(
     spec_dicts: list[dict[str, Any]],
-    applied_state: Optional[AppliedState] = None,
+    applied_state: AppliedState | None = None,
 ) -> dict[str, list[str]]:
     """Build an entity-name → ordered join-key-columns map.
 
@@ -240,7 +243,7 @@ def build_entity_join_key_map(
 
 def resolve_ordered_entity_columns(
     entities: list[Any],
-    entity_join_keys: Optional[Mapping[str, list[str]]],
+    entity_join_keys: Mapping[str, list[str]] | None,
 ) -> list[str]:
     """Resolve authored entity references to ordered join-key columns.
 
@@ -294,7 +297,7 @@ def compile_to_spec(
     database: str,
     schema: str,
     *,
-    entity_join_keys: Optional[Mapping[str, list[str]]] = None,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Compile a YAML authoring-format spec dict into imperative FeatureViewSpec format.
 
@@ -426,18 +429,31 @@ def compile_to_spec(
     # constructor kwarg); the authoring ``target_lag`` field is OFT
     # staleness only and **does NOT** populate this wire field.
     #
-    # Streaming and realtime kinds are excluded entirely: the Snowflake
-    # runtime always stamps ``target_lag_sec: 0`` onto streaming /
-    # realtime SPECIFICATIONs regardless of the authored value, the
-    # Pydantic validator
-    # (``FeatureView._reject_refresh_freq_on_stream_or_realtime``)
-    # rejects authored ``refresh_freq`` on those kinds entirely, and
-    # emitting the key here would create a phantom drift against the
-    # runtime-stamped ``0`` (the planner's ``_full_spec_hash`` strips
-    # ``target_lag_sec`` via ``_RUNTIME_STAMPED_SPEC_KEYS`` from the
-    # deployed side, so stripping it from the authored side is the
-    # matching half of that hash-symmetry contract).
-    if kind == "BatchFeatureView" and spec_dict.get("refresh_freq"):
+    # Streaming and realtime kinds are excluded from this WIRE field: the
+    # Snowflake runtime always stamps ``target_lag_sec: 0`` onto streaming
+    # / realtime SPECIFICATIONs (it is the OFT staleness, not the DT
+    # cadence), so emitting a refresh_freq-derived value here would create
+    # a phantom drift against the runtime-stamped ``0`` (the planner's
+    # ``_full_spec_hash`` strips ``target_lag_sec`` via
+    # ``_RUNTIME_STAMPED_SPEC_KEYS`` from the deployed side, so stripping
+    # it from the authored side is the matching half of that hash-symmetry
+    # contract).  A *tiled* StreamingFeatureView still authors
+    # ``refresh_freq`` (the offline aggregate Dynamic Table cadence — the
+    # Pydantic validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
+    # accepts it there and rejects it on non-tiled streaming + realtime),
+    # but that value rides through as the authoring-form ``refresh_freq``
+    # key (round-tripped by the exporter / state helpers), never this wire
+    # ``target_lag_sec``.
+    # A CRON ``refresh_freq`` (used by append-only snapshot accumulation and any
+    # other CRON-scheduled BFV) drives the offline Dynamic Table via
+    # ``TARGET_LAG = 'DOWNSTREAM'`` plus a companion Task — there is no numeric
+    # per-refresh cadence to stamp here, and ``parse_duration_to_seconds`` would
+    # raise on the cron string.  Only duration cadences populate this wire field.
+    if (
+        kind == "BatchFeatureView"
+        and spec_dict.get("refresh_freq")
+        and _is_interval_duration_refresh_freq(spec_dict.get("refresh_freq"))
+    ):
         spec["target_lag_sec"] = parse_duration_to_seconds(spec_dict["refresh_freq"])
     elif kind == "StreamingFeatureView" and has_windows and spec_dict.get("refresh_freq"):
         # A tiled streaming FV schedules an offline tile Dynamic Table

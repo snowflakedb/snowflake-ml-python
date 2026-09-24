@@ -95,6 +95,7 @@ use_repo(
     "io_opentelemetry_go_otel_sdk",
     "io_opentelemetry_go_otel_sdk_log",
     "io_opentelemetry_go_otel_sdk_metric",
+    "io_opentelemetry_go_proto_otlp",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
     "org_golang_x_sync",

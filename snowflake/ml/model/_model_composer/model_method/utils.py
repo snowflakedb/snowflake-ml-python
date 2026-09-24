@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 
 def determine_explain_case_sensitive_from_method_options(
-    method_options: Mapping[str, Optional[Mapping[str, Any]]],
+    method_options: Mapping[str, Mapping[str, Any] | None],
     target_method: str,
     *,
     default: bool = False,

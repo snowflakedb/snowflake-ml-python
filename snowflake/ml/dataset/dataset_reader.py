@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -20,13 +20,13 @@ class DatasetReader(data_connector.DataConnector, mixins.SerializableSessionMixi
         self,
         ingestor: data_ingestor.DataIngestor,
         *,
-        snowpark_session: Optional[snowpark.Session] = None,
+        snowpark_session: snowpark.Session | None = None,
     ) -> None:
         super().__init__(ingestor)
 
         self._session = snowpark_session
-        self._fs_cached: Optional[snowfs.SnowFileSystem] = None
-        self._files: Optional[list[str]] = None
+        self._fs_cached: snowfs.SnowFileSystem | None = None
+        self._files: list[str] | None = None
 
     @property
     def _fs(self) -> snowfs.SnowFileSystem:
@@ -37,7 +37,7 @@ class DatasetReader(data_connector.DataConnector, mixins.SerializableSessionMixi
 
     @classmethod
     def from_dataframe(
-        cls, df: snowpark.DataFrame, ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None, **kwargs: Any
+        cls, df: snowpark.DataFrame, ingestor_class: type[data_ingestor.DataIngestor] | None = None, **kwargs: Any
     ) -> "DatasetReader":
         # Block superclass constructor from Snowpark DataFrames
         raise RuntimeError("Creating DatasetReader from DataFrames not supported")

@@ -1,5 +1,5 @@
 import io
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from packaging import version
@@ -19,7 +19,7 @@ class VisualQuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
     REQUIRES_PILLOW = True
 
     @override
-    def get_transformers_upper_bound(self) -> Optional[version.Version]:
+    def get_transformers_upper_bound(self) -> version.Version | None:
         return version.Version("5")
 
     @override

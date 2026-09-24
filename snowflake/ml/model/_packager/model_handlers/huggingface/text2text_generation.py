@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from packaging import version
@@ -15,7 +15,7 @@ class Text2TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles text2text generation pipelines, removed in transformers 5.x."""
 
     @override
-    def get_transformers_upper_bound(self) -> Optional[version.Version]:
+    def get_transformers_upper_bound(self) -> version.Version | None:
         return version.Version("5")
 
     @override

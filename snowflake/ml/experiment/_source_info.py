@@ -18,7 +18,7 @@ import re
 import socket
 import subprocess
 import sys
-from typing import Any, Optional
+from typing import Any
 from urllib import parse as urllib_parse, request as urllib_request
 
 _GIT_TIMEOUT_SEC = 2.0
@@ -58,9 +58,9 @@ class GitInfo:
     when no ``origin`` remote is configured, or ``branch`` on a detached HEAD).
     """
 
-    remote_url: Optional[str] = None
-    commit_hash: Optional[str] = None
-    branch: Optional[str] = None
+    remote_url: str | None = None
+    commit_hash: str | None = None
+    branch: str | None = None
 
     def is_empty(self) -> bool:
         return self.remote_url is None and self.commit_hash is None and self.branch is None
@@ -70,16 +70,16 @@ class GitInfo:
 class SourceInfo:
     """Best-effort provenance attached to a run when it is created."""
 
-    entry_point: Optional[str] = None
-    git: Optional[GitInfo] = None
+    entry_point: str | None = None
+    git: GitInfo | None = None
     # Provenance specific to Snowflake-managed files (notebooks or .py workspace
     # files), taken from the environment. The file's own path is carried by
     # ``entry_point``, not duplicated here.
-    snowflake_file_domain_type: Optional[str] = None
-    snowflake_file_domain_name: Optional[str] = None
+    snowflake_file_domain_type: str | None = None
+    snowflake_file_domain_name: str | None = None
     # The fully-qualified id of the ML job this run was created from, taken from
     # the environment. ``None`` when not running inside an ML job.
-    ml_job_id: Optional[str] = None
+    ml_job_id: str | None = None
 
     def is_empty(self) -> bool:
         """Return True when there is nothing useful to send."""
@@ -156,7 +156,7 @@ class SourceInfo:
             return cls()
 
 
-def _collect_ml_job_id() -> Optional[str]:
+def _collect_ml_job_id() -> str | None:
     """Collect the fully-qualified id of the enclosing ML job.
 
     Returns:
@@ -166,7 +166,7 @@ def _collect_ml_job_id() -> Optional[str]:
     return os.environ.get(_ML_JOB_ID_ENV) or None
 
 
-def _collect_snowflake_file() -> Optional[SourceInfo]:
+def _collect_snowflake_file() -> SourceInfo | None:
     """Collect source info when running inside a Snowflake-managed file.
 
     Snowflake exposes the active file's location (a notebook or a .py workspace
@@ -190,7 +190,7 @@ def _collect_snowflake_file() -> Optional[SourceInfo]:
     )
 
 
-def _git(*args: str, cwd: Optional[str] = None) -> Optional[str]:
+def _git(*args: str, cwd: str | None = None) -> str | None:
     """Run ``git <args>`` and return stripped stdout, or ``None`` on any failure."""
     try:
         out = subprocess.check_output(
@@ -206,7 +206,7 @@ def _git(*args: str, cwd: Optional[str] = None) -> Optional[str]:
     return out or None
 
 
-def _git_cwd(notebook_path: Optional[str] = None) -> Optional[str]:
+def _git_cwd(notebook_path: str | None = None) -> str | None:
     """Pick a working directory for git resolution.
 
     In a notebook kernel, anchors on the resolved notebook's own directory so the
@@ -258,7 +258,7 @@ def _scrub_url(url: str) -> str:
     return url
 
 
-def _collect_git(notebook_path: Optional[str] = None) -> Optional[GitInfo]:
+def _collect_git(notebook_path: str | None = None) -> GitInfo | None:
     """Collect commit hash, remote URL, and branch from the surrounding git repo.
 
     Args:
@@ -298,7 +298,7 @@ def _collect_git(notebook_path: Optional[str] = None) -> Optional[GitInfo]:
     )
 
 
-def _ipython_shell() -> Optional[Any]:
+def _ipython_shell() -> Any | None:
     """Return the active IPython shell instance, or ``None`` if there isn't one.
 
     Read-only: we never import IPython ourselves. If the ``IPython`` module is not
@@ -330,7 +330,7 @@ def _in_ipython_kernel() -> bool:
     return shell is not None and type(shell).__name__ == "ZMQInteractiveShell"
 
 
-def _jupyter_kernel_id() -> Optional[str]:
+def _jupyter_kernel_id() -> str | None:
     """Return this kernel's id from the ipykernel connection file, or ``None``.
 
     The connection file is named ``kernel-<id>.json``.
@@ -406,7 +406,7 @@ def _is_loopback_url(url: str) -> bool:
     return True
 
 
-def _jupyter_session_notebook_path() -> Optional[str]:
+def _jupyter_session_notebook_path() -> str | None:
     """Resolve the active notebook path via the Jupyter server sessions API.
 
     Matches this kernel's id against each running server's ``/api/sessions``
@@ -448,7 +448,7 @@ def _jupyter_session_notebook_path() -> Optional[str]:
     return None
 
 
-def _resolve_notebook_path() -> Optional[str]:
+def _resolve_notebook_path() -> str | None:
     """Best-effort resolution of the active notebook's absolute path.
 
     Supports VS Code's Jupyter extension (the ``__vsc_ipynb_file__`` namespace
@@ -472,7 +472,7 @@ def _resolve_notebook_path() -> Optional[str]:
     return _jupyter_session_notebook_path()
 
 
-def _detect_entry_point(notebook_path: Optional[str] = None) -> Optional[str]:
+def _detect_entry_point(notebook_path: str | None = None) -> str | None:
     """Identify the user's entry-point file, git-root-relative when possible.
 
     Falls back to a basename outside a repo to avoid leaking ``$HOME`` or

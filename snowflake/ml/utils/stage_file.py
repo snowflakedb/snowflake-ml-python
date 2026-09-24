@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import cast
 
 from snowflake.snowpark import DataFrame, Session, functions
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -9,7 +9,7 @@ def list_stage_files(
     session: Session,
     stage_path: str,
     *,
-    pattern: Optional[str] = None,
+    pattern: str | None = None,
     column_name: str = "FILE_PATH",
 ) -> DataFrame:
     """

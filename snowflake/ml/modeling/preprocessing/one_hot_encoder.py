@@ -931,7 +931,7 @@ class OneHotEncoder(base.BaseTransformer):
             replace=True,
             return_type=T.PandasSeriesType(T.ArrayType(T.MapType(T.FloatType(), T.FloatType()))),
             input_types=[T.PandasDataFrameType([T.StringType() for _ in range(len(self.input_cols))])],
-            packages=["numpy", "scikit-learn"],
+            packages=["numpy", "scikit-learn", "pandas"],
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def one_hot_encoder_sparse_transform(data: pd.DataFrame) -> list[list[Optional[dict[Any, Any]]]]:

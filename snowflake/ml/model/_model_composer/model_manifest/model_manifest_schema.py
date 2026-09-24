@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
 import enum
-from typing import Any, Literal, Optional, TypedDict, Union
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired, Required
 
@@ -20,7 +20,7 @@ class ModelMethodFunctionTypes(enum.Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
-    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
+    artifact_repository_map: NotRequired[dict[str, str] | None]
 
 
 class ModelRuntimeDict(TypedDict):
@@ -28,7 +28,7 @@ class ModelRuntimeDict(TypedDict):
     version: Required[str]
     imports: Required[list[str]]
     dependencies: Required[ModelRuntimeDependenciesDict]
-    resource_constraint: NotRequired[Optional[dict[str, str]]]
+    resource_constraint: NotRequired[dict[str, str] | None]
 
 
 class ModelMethodSignatureField(TypedDict):
@@ -49,7 +49,7 @@ class ModelFunctionMethodDict(TypedDict):
     type: Required[str]
     handler: Required[str]
     inputs: Required[list[ModelMethodSignatureFieldWithName]]
-    outputs: Required[Union[list[ModelMethodSignatureField], list[ModelMethodSignatureFieldWithName]]]
+    outputs: Required[list[ModelMethodSignatureField] | list[ModelMethodSignatureFieldWithName]]
     params: NotRequired[list[ModelMethodSignatureFieldWithNameAndDefault]]
     volatility: NotRequired[str]
 

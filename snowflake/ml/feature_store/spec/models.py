@@ -9,7 +9,7 @@ Uses Pydantic v2 (``BaseModel.model_dump()``).
 """
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -322,11 +322,11 @@ class FSColumn(BaseModel):
 
     name: str
     type: str  # e.g. "StringType", "DecimalType", "ArrayType" — from type(dt).__name__
-    length: Optional[int] = None  # StringType
-    precision: Optional[int] = None  # DecimalType
-    scale: Optional[int] = None  # DecimalType
-    timezone: Optional[str] = None  # TimestampType
-    element_type: Optional[str] = None
+    length: int | None = None  # StringType
+    precision: int | None = None  # DecimalType
+    scale: int | None = None  # DecimalType
+    timezone: str | None = None  # TimestampType
+    element_type: str | None = None
 
 
 class Source(BaseModel):
@@ -342,7 +342,7 @@ class Source(BaseModel):
     name: str
     source_type: SourceType
     columns: list[FSColumn]
-    source_version: Optional[str] = None
+    source_version: str | None = None
 
 
 class UDF(BaseModel):
@@ -375,12 +375,12 @@ class Feature(BaseModel):
 
     source_column: FSColumn
     output_column: FSColumn
-    function: Optional[str] = None
-    window_sec: Optional[int] = None
-    offset_sec: Optional[int] = None
-    function_params: Optional[dict[str, Any]] = None
-    source_name: Optional[str] = None
-    source_version: Optional[str] = None
+    function: str | None = None
+    window_sec: int | None = None
+    offset_sec: int | None = None
+    function_params: dict[str, Any] | None = None
+    source_name: str | None = None
+    source_version: str | None = None
 
 
 class OfflineTableConfig(BaseModel):
@@ -416,14 +416,14 @@ class Spec(BaseModel):
     """The core specification describing sources, features, and transformations."""
 
     ordered_entity_column_names: list[str]
-    ordered_secondary_key_column_names: Optional[list[str]] = None
+    ordered_secondary_key_column_names: list[str] | None = None
     sources: list[Source]
     features: list[Feature]
-    timestamp_field: Optional[str] = None
-    feature_granularity_sec: Optional[int] = None
-    feature_aggregation_method: Optional[FeatureAggregationMethod] = None
-    udf: Optional[UDF] = None
-    target_lag_sec: Optional[int] = None
+    timestamp_field: str | None = None
+    feature_granularity_sec: int | None = None
+    feature_aggregation_method: FeatureAggregationMethod | None = None
+    udf: UDF | None = None
+    target_lag_sec: int | None = None
 
 
 class FeatureViewSpec(BaseModel):
@@ -433,7 +433,7 @@ class FeatureViewSpec(BaseModel):
     metadata: Metadata
     offline_configs: list[OfflineTableConfig]
     spec: Spec
-    online_store_type: Optional[StoreType] = None
+    online_store_type: StoreType | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dict with ``omitempty`` and alias resolution.

@@ -14,11 +14,20 @@ from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import Feature
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
-from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewStatus,
+    StorageConfig,
+    StorageFormat,
+)
 from snowflake.ml.feature_store.metadata_manager import (
     _METADATA_TABLE_NAME as _FS_METADATA_TABLE,
 )
 from snowflake.ml.feature_store.tile_sql_generator import _SECONDARY_KEY_MAX_COUNT
+
+# The only Iceberg case in this file asserts that registration is refused, which happens
+# before any DDL runs, so this volume is never dereferenced and does not need to exist.
+_UNUSED_EXTERNAL_VOLUME = "ICEBERG_VOLUME_NEVER_CREATED"
 
 
 class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -36,16 +45,18 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             raise Exception(f"Test setup failed: {e}")
 
     def tearDown(self) -> None:
-        for fs in self._active_feature_store:
-            try:
-                fs._clear(dryrun=False)
-            except Exception as e:
-                if "Intentional Integ Test Error" not in str(e):
-                    raise Exception(f"Unexpected exception happens when clear: {e}")
-            self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
+        try:
+            for fs in self._active_feature_store:
+                try:
+                    fs._clear(dryrun=False)
+                except Exception as e:
+                    if "Intentional Integ Test Error" not in str(e):
+                        raise Exception(f"Unexpected exception happens when clear: {e}")
+                self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
 
-        self._session.sql(f"DROP TABLE IF EXISTS {self._events_table}").collect()
-        super().tearDown()
+            self._session.sql(f"DROP TABLE IF EXISTS {self._events_table}").collect()
+        finally:
+            super().tearDown()
 
     def _create_events_table(self) -> str:
         """Create a table with time-series event data for testing aggregations."""
@@ -974,6 +985,93 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(registered_fv.status, FeatureViewStatus.ACTIVE)
         self.assertEqual(registered_fv.aggregation_specs[0].function.value, "first_n")
 
+    @parameterized.parameters("last_n", "first_n", "last_distinct_n", "first_distinct_n")  # type: ignore[misc]
+    def test_iceberg_rejects_list_aggregation(self, function_name: str) -> None:
+        """Ordered-N list aggregations can be defined on Iceberg; register_feature_view refuses them.
+
+        Distinct-N is also covered by the spec-OFT bundle; this path does not need an
+        Online Service and asserts the same gate for every ordered-N function.
+
+        Args:
+            function_name: Ordered-N ``Feature`` factory to refuse on Iceberg.
+        """
+        fs = self._create_feature_store()
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        feature = getattr(Feature, function_name)("page_id", "2h", n=3).alias("recent_pages")
+        fv = FeatureView(
+            name="user_pages",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT user_id, event_ts, page_id FROM {self._events_table}"),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[feature],
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume=_UNUSED_EXTERNAL_VOLUME),
+        )
+        self.assertTrue(fv.is_tiled)
+
+        with self.assertRaisesRegex(Exception, f"Iceberg storage is not supported for the {function_name} aggregation"):
+            fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertEqual(len(fs.list_feature_views().filter("NAME = 'USER_PAGES'").collect()), 0)
+
+    def test_register_with_overwrite_rejects_iceberg_list_aggregation(self) -> None:
+        """overwrite=True is the supported way to change storage format and must be gated too."""
+        fs = self._create_feature_store()
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="user_pages",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT user_id, event_ts, page_id FROM {self._events_table}"),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[Feature.last_n("page_id", "2h", n=3).alias("recent_pages")],
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume=_UNUSED_EXTERNAL_VOLUME),
+        )
+
+        with self.assertRaisesRegex(Exception, "not supported for the last_n aggregation"):
+            fs.register_feature_view(feature_view=fv, version="v1", overwrite=True)
+        self.assertEqual(len(fs.list_feature_views().filter("NAME = 'USER_PAGES'").collect()), 0)
+
+    def test_update_rejects_iceberg_list_aggregation(self) -> None:
+        """A caller-supplied FeatureView mutated to Iceberg is refused on update.
+
+        ``update_feature_view`` uses a FeatureView argument as passed rather than
+        reloading it, so a locally switched ``storage_config`` can still reach the
+        recreate path and must be gated. The already-registered view is unchanged.
+        """
+        fs = self._create_feature_store()
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        registered = fs.register_feature_view(
+            feature_view=FeatureView(
+                name="user_pages",
+                entities=[e],
+                feature_df=self._session.sql(f"SELECT user_id, event_ts, page_id FROM {self._events_table}"),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=[Feature.last_n("page_id", "2h", n=3).alias("recent_pages")],
+            ),
+            version="v1",
+        )
+        original_desc = registered.desc
+
+        registered._storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG, external_volume=_UNUSED_EXTERNAL_VOLUME
+        )
+        with self.assertRaisesRegex(Exception, "not supported for the last_n aggregation"):
+            fs.update_feature_view(name=registered, desc="should not land")
+
+        reloaded = fs.get_feature_view("user_pages", "v1")
+        self.assertEqual(reloaded.desc, original_desc)
+        self.assertTrue(reloaded.storage_config is None or reloaded.storage_config.format != StorageFormat.ICEBERG)
+
     def test_mixed_aggregation_types(self) -> None:
         """Test mixing simple and list aggregations in one FV."""
         fs = self._create_feature_store()
@@ -1030,8 +1128,19 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(registered_fv.status, FeatureViewStatus.ACTIVE)
         self.assertEqual(registered_fv.aggregation_specs[0].function.value, "approx_count_distinct")
 
-    def test_approx_percentile_registration(self) -> None:
-        """Test APPROX_PERCENTILE aggregation can be registered."""
+    @parameterized.parameters(False, True)
+    def test_approx_percentile_registration(self, iceberg: bool) -> None:
+        """APPROX_PERCENTILE registers on native storage and is refused on Iceberg.
+
+        The two storage formats have deliberately different outcomes: the t-Digest tile column
+        (``APPROX_PERCENTILE_ACCUMULATE``) is an OBJECT, which ``CREATE ICEBERG TABLE`` rejects
+        with "Unsupported data type 'OBJECT' for iceberg tables", so registration refuses the
+        Iceberg case client-side instead. Both cases build the same feature view, so storage
+        format is the only difference between them.
+
+        Args:
+            iceberg: When True, request Iceberg storage and assert registration is refused.
+        """
         fs = self._create_feature_store()
 
         e = Entity("user", ["user_id"])
@@ -1051,7 +1160,19 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             refresh_freq="1h",
             feature_granularity="1h",
             features=features,
+            storage_config=(
+                StorageConfig(format=StorageFormat.ICEBERG, external_volume=_UNUSED_EXTERNAL_VOLUME)
+                if iceberg
+                else None
+            ),
         )
+
+        if iceberg:
+            # Refused before any Dynamic Table is created, so the feature view stays absent.
+            with self.assertRaisesRegex(Exception, "not supported for the approx_percentile aggregation"):
+                fs.register_feature_view(feature_view=fv, version="v1")
+            self.assertEqual(len(fs.list_feature_views().filter("NAME = 'USER_PERCENTILES'").collect()), 0)
+            return
 
         registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
 
@@ -1699,7 +1820,12 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         )
 
     def test_approx_percentile_values(self) -> None:
-        """Test APPROX_PERCENTILE aggregation produces reasonable values."""
+        """Test APPROX_PERCENTILE aggregation produces reasonable values on native storage.
+
+        Not parameterized over storage format: Iceberg cannot store the OBJECT t-Digest tile at
+        all, so registration refuses it and there is no round trip to assert. That refusal is
+        covered by ``test_approx_percentile_registration``.
+        """
         fs = self._create_feature_store()
 
         e = Entity("user", ["user_id"])

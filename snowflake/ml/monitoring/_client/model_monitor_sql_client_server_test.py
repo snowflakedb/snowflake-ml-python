@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import cast
 
 from absl.testing import absltest
 
@@ -41,9 +41,9 @@ class ModelMonitorSqlClientServerTest(absltest.TestCase):
     def _build_expected_create_model_monitor_sql(
         self,
         id_cols_sql: str,
-        baseline: Optional[str] = None,
-        db_override: Optional[str] = None,
-        schema_override: Optional[str] = None,
+        baseline: str | None = None,
+        db_override: str | None = None,
+        schema_override: str | None = None,
     ) -> str:
         fq_schema = (
             f"{db_override}.{schema_override}"

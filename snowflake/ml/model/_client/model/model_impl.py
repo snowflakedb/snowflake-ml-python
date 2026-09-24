@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 import pandas as pd
 
 from snowflake.ml._internal import telemetry
@@ -132,8 +130,9 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["version"],
     )
-    def default(self, version: Union[str, model_version_impl.ModelVersion]) -> None:
+    def default(self, version: str | model_version_impl.ModelVersion) -> None:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -170,6 +169,7 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["version_or_alias"],
     )
     def version(self, version_or_alias: str) -> model_version_impl.ModelVersion:
         """
@@ -275,6 +275,7 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["version_name"],
     )
     def delete_version(self, version_name: str) -> None:
         """Drop a version of the model.
@@ -315,8 +316,9 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["tag_name"],
     )
-    def get_tag(self, tag_name: str) -> Optional[str]:
+    def get_tag(self, tag_name: str) -> str | None:
         """Get the value of a tag attached to the model.
 
         Args:
@@ -344,6 +346,7 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["tag_name"],
     )
     def set_tag(self, tag_name: str, tag_value: str) -> None:
         """Set the value of a tag, attaching it to the model if not.
@@ -372,6 +375,7 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["tag_name"],
     )
     def unset_tag(self, tag_name: str) -> None:
         """Unset a tag attached to a model.
@@ -398,6 +402,7 @@ class Model:
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["model_name"],
     )
     def rename(self, model_name: str) -> None:
         """Rename a model. Can be used to move a model when a fully qualified name is provided.

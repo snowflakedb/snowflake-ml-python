@@ -7,7 +7,7 @@ import sys
 import tempfile
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 from unittest import mock
 
 import cloudpickle as cp
@@ -526,11 +526,11 @@ class TestInteropUtils(parameterized.TestCase):
     def test_load(
         self,
         data: dict[str, Any],
-        secondary_data: Optional[bytes] = None,
+        secondary_data: bytes | None = None,
         expected_value: Any = None,
-        expected_error: Optional[Exception] = None,
-        expected_cause: Optional[Exception] = None,
-        expected_context: Optional[Exception] = None,
+        expected_error: Exception | None = None,
+        expected_cause: Exception | None = None,
+        expected_context: Exception | None = None,
         wrap_exceptions: bool = False,
     ) -> None:
         result_path = "@dummy_stage/result.json"
@@ -603,9 +603,9 @@ class TestInteropUtils(parameterized.TestCase):
     )
     def test_load_negative(
         self,
-        data: Union[dict[str, Any], str],
+        data: dict[str, Any] | str,
         expected_error: Exception,
-        secondary_data: Optional[bytes] = None,
+        secondary_data: bytes | None = None,
     ) -> None:
         result_path = "@dummy_stage/result.json"
         if isinstance(data, dict):

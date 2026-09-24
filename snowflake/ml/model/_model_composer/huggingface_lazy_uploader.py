@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Generator, Optional, Union
+from typing import Any, Generator
 from urllib import parse
 
 from snowflake import snowpark
@@ -50,7 +50,7 @@ class LazyHFUpload:
     files: list[str]
     file_sizes: dict[str, int]
     relative_stage_dir: pathlib.PurePosixPath
-    download_token: Optional[str] = None
+    download_token: str | None = None
 
 
 class DiskBudget:
@@ -140,11 +140,11 @@ def _format_size(num_bytes: int) -> str:
 def _upload_single_file(
     *,
     session: snowpark.Session,
-    stage_path: Union[pathlib.PurePosixPath, parse.ParseResult],
+    stage_path: pathlib.PurePosixPath | parse.ParseResult,
     lazy: LazyHFUpload,
     filename: str,
     disk_budget: DiskBudget,
-    statement_params: Optional[dict[str, Any]],
+    statement_params: dict[str, Any] | None,
 ) -> None:
     """Download one HuggingFace file, upload it to stage, and free local disk space."""
     import huggingface_hub as hf_hub
@@ -183,11 +183,11 @@ def _upload_single_file(
 
 def stream_upload(
     session: snowpark.Session,
-    stage_path: Union[pathlib.PurePosixPath, parse.ParseResult],
+    stage_path: pathlib.PurePosixPath | parse.ParseResult,
     lazy: LazyHFUpload,
     *,
     max_workers: int = DEFAULT_MAX_WORKERS,
-    statement_params: Optional[dict[str, Any]] = None,
+    statement_params: dict[str, Any] | None = None,
 ) -> None:
     """Download HuggingFace repo files in parallel and upload each to stage.
 

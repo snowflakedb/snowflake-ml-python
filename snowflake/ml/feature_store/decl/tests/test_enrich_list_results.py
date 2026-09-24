@@ -564,5 +564,224 @@ class TestEnrichListResultsBackwardCompat:
         assert result == []
 
 
+# ---------------------------------------------------------------------------
+# OFT-less FeatureViews (feature_view_rows / list_feature_views discovery set)
+# ---------------------------------------------------------------------------
+
+# One row as produced by ``imperative_executor.fetch_feature_view_rows``
+# (the ``list_feature_views()`` discovery set).  Models an offline-only
+# ``BatchFeatureView`` (``online: false``) that ``SHOW ONLINE FEATURE
+# TABLES`` never returns, so it only reaches the list output via the
+# ``feature_view_rows`` merge (step 1b).
+_OFFLINE_BFV_ROW = {
+    "name": "MY_ADV_BFV_DECL",
+    "version": "V1",
+    "kind": "BATCH",
+    "database_name": "JKEW_DB",
+    "schema_name": "SNOWCLI_FS_ONLINE",
+    "entities": ["USER_ID"],
+    "online_enabled": False,
+    "source_refs": [
+        {
+            "name": "EVENTS_ADV_DECL",
+            "source_type": "Batch",
+            "columns": [
+                {"name": "user_id", "type": "StringType"},
+                {"name": "ts", "type": "TimestampType"},
+            ],
+        }
+    ],
+}
+
+
+class TestEnrichListResultsOfflineFeatureViews:
+    """OFT-less FeatureViews surfaced via the ``feature_view_rows``
+    (``list_feature_views()``) discovery set — offline-only
+    ``BatchFeatureView``s (``online: false``) and FVs whose OFT was
+    dropped but whose backing Dynamic Table is still listable.
+
+    The merge (step 1b in ``enrich_list_results``) is purely additive:
+    a FV already surfaced via an OFT ``show_row`` (matched on
+    ``(name, version)``) is not duplicated, and each OFT-less FV's
+    exclusive datasources are unioned into the Datasource section.
+    ``feature_view_rows=None`` preserves the legacy OFT-only behaviour
+    (``plans/bug_offline_bfv_invisible_in_list.md``).
+    """
+
+    def test_offline_bfv_surfaces_when_no_oft_row_exists(self) -> None:
+        """An offline-only BFV with no OFT ``show_row`` still produces a
+        FeatureView display row from ``feature_view_rows`` alone."""
+        result = enrich_list_results([], None, feature_view_rows=[_OFFLINE_BFV_ROW])
+
+        fv_rows = [r for r in result if r["type"] == "BatchFeatureView"]
+        assert len(fv_rows) == 1
+        row = fv_rows[0]
+        assert row["name"] == "MY_ADV_BFV_DECL"
+        assert row["feature_view"] == "MY_ADV_BFV_DECL"
+        assert row["version"] == "V1"
+        assert row["entities"] == "USER_ID"
+        assert row["database_name"] == "JKEW_DB"
+        assert row["schema_name"] == "SNOWCLI_FS_ONLINE"
+        # OFT-less rows carry an empty ``oft_name`` and surface the
+        # offline flag in ``details``.
+        assert row["oft_name"] == ""
+        assert row["details"]["online_enabled"] is False
+
+    def test_fv_with_oft_row_is_not_duplicated_by_feature_view_rows(self) -> None:
+        """When a FV already surfaced via an OFT ``show_row`` also appears
+        in ``feature_view_rows`` (same ``(name, version)``), the OFT/spec
+        row wins and the FV is emitted exactly once.
+
+        This pins the agreement between ``_parse_oft_name``'s
+        ``(base_name, version)`` (``USER_CLICKS$V1$ONLINE`` ->
+        ``("USER_CLICKS", "V1")``) and ``list_feature_views``'
+        ``(name, version)``.  A key mismatch would double-list every
+        online FV.
+        """
+        duplicate_row = {
+            "name": "USER_CLICKS",
+            "version": "V1",
+            "kind": "BATCH",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "entities": ["USER_ID"],
+            "online_enabled": True,
+        }
+        result = enrich_list_results(
+            [_SHOW_ROW],
+            {"USER_CLICKS$V1$ONLINE": _DESCRIBE_ROWS},
+            feature_view_rows=[duplicate_row],
+        )
+
+        matches = [r for r in result if r["name"] == "USER_CLICKS" and r["version"] == "V1"]
+        assert len(matches) == 1
+        # The surviving row is the OFT/spec row (non-empty ``oft_name``),
+        # not the ``feature_view_rows`` reconstruction.
+        assert matches[0]["oft_name"] == "USER_CLICKS$V1$ONLINE"
+
+    def test_offline_fv_exclusive_batch_source_appears_in_datasource_section(self) -> None:
+        """An offline BFV's exclusive ``BatchSource`` (carried on the
+        ``feature_view_rows`` entry's ``source_refs``) is unioned into
+        the Datasource section — otherwise ``EVENTS_ADV_DECL`` is
+        silently missing from ``snow feature list``."""
+        result = enrich_list_results([], None, feature_view_rows=[_OFFLINE_BFV_ROW])
+
+        ds_rows = [r for r in result if r["type"] == "Datasource"]
+        assert len(ds_rows) == 1
+        ds = ds_rows[0]
+        assert ds["name"] == "EVENTS_ADV_DECL"
+        assert ds["database_name"] == "JKEW_DB"
+        assert ds["schema_name"] == "SNOWCLI_FS_ONLINE"
+        assert ds["details"]["source_type"] == "Batch"
+        assert ds["details"]["column_count"] == 2
+
+    def test_feature_view_rows_none_preserves_legacy_oft_only_output(self) -> None:
+        """``feature_view_rows=None`` must produce identical output to
+        omitting the kwarg entirely — the legacy OFT-only behaviour."""
+        legacy = enrich_list_results(
+            [_SHOW_ROW],
+            {"USER_CLICKS$V1$ONLINE": _DESCRIBE_ROWS},
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        explicit_none = enrich_list_results(
+            [_SHOW_ROW],
+            {"USER_CLICKS$V1$ONLINE": _DESCRIBE_ROWS},
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            feature_view_rows=None,
+        )
+        assert explicit_none == legacy
+
+    def test_entities_parsing_list_json_and_bracket_fallback(self) -> None:
+        """The three ``entities`` shapes a ``feature_view_rows`` entry can
+        carry all render to the same comma-joined string:
+
+          1. a native Python ``list``
+          2. a JSON-encoded string (``'["A", "B"]'``)
+          3. a malformed bracketed string that fails ``json.loads`` and
+             falls back to ``strip("[]").split(",")`` (``'[A, B]'``)
+        """
+        # Heterogeneous ``entities`` values (list vs str) would otherwise
+        # make mypy infer ``list[object]`` and reject the kwarg.
+        rows: list[dict[str, Any]] = [
+            {
+                "name": "FV_LIST",
+                "version": "V1",
+                "kind": "BATCH",
+                "database_name": "MYDB",
+                "schema_name": "PUBLIC",
+                "entities": ["A", "B"],
+            },
+            {
+                "name": "FV_JSON",
+                "version": "V1",
+                "kind": "BATCH",
+                "database_name": "MYDB",
+                "schema_name": "PUBLIC",
+                "entities": '["A", "B"]',
+            },
+            {
+                "name": "FV_FALLBACK",
+                "version": "V1",
+                "kind": "BATCH",
+                "database_name": "MYDB",
+                "schema_name": "PUBLIC",
+                "entities": "[A, B]",
+            },
+        ]
+        result = enrich_list_results([], None, feature_view_rows=rows)
+
+        by_name = {r["name"]: r for r in result if r["type"] == "BatchFeatureView"}
+        assert by_name["FV_LIST"]["entities"] == "A, B"
+        assert by_name["FV_JSON"]["entities"] == "A, B"
+        assert by_name["FV_FALLBACK"]["entities"] == "A, B"
+
+    def test_unknown_kind_defaults_to_generic_featureview(self) -> None:
+        """A ``kind`` outside ``_FV_KIND_DISPLAY`` (unknown or empty)
+        falls back to the generic ``FeatureView`` type."""
+        rows = [
+            {
+                "name": "FV_UNKNOWN",
+                "version": "V1",
+                "kind": "WIDGET",
+                "database_name": "MYDB",
+                "schema_name": "PUBLIC",
+                "entities": [],
+            },
+            {
+                "name": "FV_EMPTY",
+                "version": "V1",
+                "kind": "",
+                "database_name": "MYDB",
+                "schema_name": "PUBLIC",
+                "entities": [],
+            },
+        ]
+        result = enrich_list_results([], None, feature_view_rows=rows)
+
+        by_name = {r["name"]: r for r in result if r["name"].startswith("FV_")}
+        assert by_name["FV_UNKNOWN"]["type"] == ObjectKind.FEATURE_VIEW
+        assert by_name["FV_UNKNOWN"]["type"] == "FeatureView"
+        assert by_name["FV_EMPTY"]["type"] == "FeatureView"
+
+    def test_offline_fv_without_source_refs_adds_no_datasource_row(self) -> None:
+        """An OFT-less FV with no ``source_refs`` (and no ``spec_text``)
+        still yields its FeatureView row but contributes no Datasource
+        row to the union."""
+        row = {
+            "name": "NO_SOURCE_BFV",
+            "version": "V1",
+            "kind": "BATCH",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "entities": ["USER_ID"],
+            "online_enabled": False,
+            "source_refs": None,
+        }
+        result = enrich_list_results([], None, feature_view_rows=[row])
+
+        assert any(r["type"] == "BatchFeatureView" and r["name"] == "NO_SOURCE_BFV" for r in result)
+        assert [r for r in result if r["type"] == "Datasource"] == []
+
+
 if __name__ == "__main__":
     pytest_driver.main()

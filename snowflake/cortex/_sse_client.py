@@ -1,5 +1,5 @@
 import json
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator
 
 _FIELD_SEPARATOR = ":"
 
@@ -9,11 +9,11 @@ class Event:
 
     def __init__(
         self,
-        id: Optional[str] = None,
+        id: str | None = None,
         event: str = "message",
         data: str = "",
-        comment: Optional[str] = None,
-        retry: Optional[int] = None,
+        comment: str | None = None,
+        retry: int | None = None,
     ) -> None:
         self.id = id
         self.event = event

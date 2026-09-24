@@ -6,6 +6,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml.model._client.model import (
     batch_inference_job_specs,
     model_version_impl,
+    telemetry_params,
 )
 from snowflake.ml.model._client.ops import service_ops
 
@@ -45,16 +46,7 @@ class BatchInferenceTask(DAGTask):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "name",
-            "compute_pool",
-            "input_spec",
-            "output_spec",
-            "resources_spec",
-            "inference_spec",
-            "image_build_spec",
-            "replicas",
-        ],
+        func_params_to_log=telemetry_params.BATCH_INFERENCE_TASK_FUNC_PARAMS_TO_LOG,
     )
     def __init__(
         self,

@@ -182,11 +182,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 )
             raise
 
-        if self.runtime_environment is None and feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
-            # Pass a JSON object for runtime versions so it serializes as nested JSON in options
-            self.runtime_environment = json.dumps(
-                {"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"}
-            )
+        if feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
+            runtime_dict = {"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"}
+            if self.runtime_environment is not None:
+                runtime_dict["runtimeEnvironment"] = self.runtime_environment
+            self.runtime_environment = json.dumps(runtime_dict)
 
         self.runtime_environment = runtime_env_utils.get_runtime_image(
             self.session, self.compute_pool, self.runtime_environment

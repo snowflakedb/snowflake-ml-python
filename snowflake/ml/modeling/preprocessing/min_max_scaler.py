@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Iterable, Optional, Union
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -71,10 +71,10 @@ class MinMaxScaler(base.BaseTransformer):
         *,
         feature_range: tuple[float, float] = (0, 1),
         clip: bool = False,
-        input_cols: Optional[Union[str, Iterable[str]]] = None,
-        output_cols: Optional[Union[str, Iterable[str]]] = None,
-        passthrough_cols: Optional[Union[str, Iterable[str]]] = None,
-        drop_input_cols: Optional[bool] = False,
+        input_cols: str | Iterable[str] | None = None,
+        output_cols: str | Iterable[str] | None = None,
+        passthrough_cols: str | Iterable[str] | None = None,
+        drop_input_cols: bool | None = False,
     ) -> None:
         """
         Transform features by scaling each feature to a given range.
@@ -141,7 +141,7 @@ class MinMaxScaler(base.BaseTransformer):
                         ),
                     )
 
-    def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "MinMaxScaler":
+    def _fit(self, dataset: snowpark.DataFrame | pd.DataFrame) -> "MinMaxScaler":
         """
         Compute min and max values of the dataset.
 
@@ -205,7 +205,7 @@ class MinMaxScaler(base.BaseTransformer):
         project=base.PROJECT,
         subproject=base.SUBPROJECT,
     )
-    def transform(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> Union[snowpark.DataFrame, pd.DataFrame]:
+    def transform(self, dataset: snowpark.DataFrame | pd.DataFrame) -> snowpark.DataFrame | pd.DataFrame:
         """
         Scale features according to feature_range.
 

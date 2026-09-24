@@ -2,11 +2,12 @@ import enum
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Callable, Union, overload
+from collections.abc import Callable
+from typing import Any, NoReturn, Union, overload
 
 import pandas as pd
 
-from snowflake.ml._internal import telemetry
+from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.feature_store import feature_view
@@ -17,9 +18,11 @@ from snowflake.ml.model._client.model import (
     _loaded_model_telemetry,
     batch_inference_job_specs,
     inference_engine_utils,
+    telemetry_params,
 )
 from snowflake.ml.model._client.model_spec import model_spec
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
+from snowflake.ml.model._client.service import model_deployment_spec_schema
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import utils as model_method_utils
@@ -291,6 +294,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["metric_name"],
     )
     def get_metric(self, metric_name: str) -> Any:
         """Get the value of a specific metric.
@@ -312,6 +316,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["metric_name"],
     )
     def set_metric(self, metric_name: str, value: Any) -> None:
         """Set the value of a specific metric.
@@ -338,6 +343,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["alias_name"],
     )
     def set_alias(self, alias_name: str) -> None:
         """Set alias to a model version.
@@ -362,6 +368,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["version_or_alias"],
     )
     def unset_alias(self, version_or_alias: str) -> None:
         """unset alias to a model version.
@@ -384,6 +391,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["metric_name"],
     )
     def delete_metric(self, metric_name: str) -> None:
         """Delete a metric from metric storage.
@@ -528,7 +536,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
-        func_params_to_log=["function_name", "service_name", "params"],
+        func_params_to_log=telemetry_params.RUN_FUNC_PARAMS_TO_LOG,
     )
     def run(
         self,
@@ -649,15 +657,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "compute_pool",
-            "input_spec",
-            "output_spec",
-            "resources_spec",
-            "inference_spec",
-            "image_build_spec",
-            "replicas",
-        ],
+        func_params_to_log=telemetry_params.RUN_BATCH_FUNC_PARAMS_TO_LOG,
     )
     def run_batch(
         self,
@@ -935,6 +935,8 @@ class ModelVersion(lineage_node.LineageNode):
                 options. Defaults to None.
 
         Raises:
+            SnowflakeMLException: [AttributeError] Raised when this is a LoRA adapter version, which cannot
+                be loaded locally.
             ValueError: Raised when the best-effort environment validation fails.
 
         Returns:
@@ -944,6 +946,14 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+        if self._is_peft_adapter_version():
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.METHOD_NOT_ALLOWED,
+                original_exception=AttributeError(
+                    "LoRA adapter versions cannot be loaded into the local process. "
+                    "Serve the adapter through an inference service instead."
+                ),
+            )
         self._enforce_owner_only("load", statement_params=statement_params)
         if not force:
             with tempfile.TemporaryDirectory() as tmp_workspace_for_validation:
@@ -1019,7 +1029,7 @@ class ModelVersion(lineage_node.LineageNode):
             model_name=self._model_name,
             statement_params=statement_params,
         )
-        current_role_raw = self._model_ops._session.get_current_role()
+        current_role_raw = self._executing_role_name()
         if not current_role_raw:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INSUFFICIENT_PRIVILEGES,
@@ -1027,7 +1037,10 @@ class ModelVersion(lineage_node.LineageNode):
                     f"model registry: cannot {operation} this model — no active role on the session."
                 ),
             )
-        current_role = sql_identifier.SqlIdentifier(current_role_raw)
+        if current_role_raw.startswith('"') and current_role_raw.endswith('"'):
+            current_role = sql_identifier.SqlIdentifier(current_role_raw)
+        else:
+            current_role = sql_identifier.SqlIdentifier(current_role_raw, case_sensitive=True)
         if current_role != owner:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INSUFFICIENT_PRIVILEGES,
@@ -1036,6 +1049,21 @@ class ModelVersion(lineage_node.LineageNode):
                     "You may use export() instead."
                 ),
             )
+
+    def _executing_role_name(self) -> str | None:
+        """Return the role that executes SQL in this session.
+
+        Prefers ``CURRENT_ROLE()`` so owner's-rights apps and ``EXECUTE AS OWNER``
+        procedures are checked as the owner (the executing role), not the caller.
+        Falls back to ``Session.get_current_role()`` when ``CURRENT_ROLE()`` is empty.
+
+        Returns:
+            The executing role name, or None if no role is active.
+        """
+        rows = self._model_ops._session.sql("SELECT CURRENT_ROLE()").collect()
+        if rows and rows[0][0]:
+            return str(rows[0][0])
+        return self._model_ops._session.get_current_role()
 
     @staticmethod
     def _load_from_lineage_node(session: Session, name: str, version: str) -> "ModelVersion":
@@ -1195,6 +1223,83 @@ class ModelVersion(lineage_node.LineageNode):
                 f"Found signatures: {signatures_dict}. "
             )
 
+    @staticmethod
+    def _adapter_invalid_argument(message: str) -> NoReturn:
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(message),
+        )
+
+    @staticmethod
+    def _lora_adapters_enabled() -> bool:
+        caps = platform_capabilities.PlatformCapabilities
+        if caps._mock_features is not None or caps._instance is not None:
+            return caps.get_instance().is_lora_adapters_enabled()
+        return caps(features={}).is_lora_adapters_enabled()
+
+    @staticmethod
+    def _require_lora_adapters_enabled() -> None:
+        if not ModelVersion._lora_adapters_enabled():
+            ModelVersion._adapter_invalid_argument(
+                "Creating a service with adapters is unavailable because ENABLE_LORA_ADAPTERS is not enabled "
+                "for this account."
+            )
+
+    def _is_peft_adapter_version(self) -> bool:
+        return self._get_model_spec().model_type == "peft_adapter"
+
+    def _resolve_adapter_pin(self) -> "ModelVersion":
+        upstream = [
+            node
+            for node in self.lineage(direction="upstream", domain_filter={"model"})
+            if isinstance(node, ModelVersion)
+        ]
+        if len(upstream) != 1:
+            self._adapter_invalid_argument(
+                "Cannot resolve the adapter pin: expected exactly one upstream model version "
+                "(MASKED, missing, or multiple upstream model versions are not allowed)."
+            )
+        return upstream[0]
+
+    def _normalize_adapters(
+        self,
+        adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None,
+    ) -> list[tuple[str | None, "ModelVersion"]] | None:
+        if adapters is None:
+            return None
+        if isinstance(adapters, dict):
+            if not adapters:
+                return None
+            normalized: list[tuple[str | None, "ModelVersion"]] = []
+            for alias, adapter_mv in adapters.items():
+                if not isinstance(adapter_mv, ModelVersion):
+                    self._adapter_invalid_argument(f"Adapter alias {alias!r} value must be a ModelVersion.")
+                normalized.append((alias, adapter_mv))
+            return normalized
+        if isinstance(adapters, list):
+            if not adapters:
+                return None
+            normalized_list: list[tuple[str | None, "ModelVersion"]] = []
+            for adapter_mv in adapters:
+                if not isinstance(adapter_mv, ModelVersion):
+                    self._adapter_invalid_argument("adapters list values must be ModelVersion objects.")
+                normalized_list.append((None, adapter_mv))
+            return normalized_list
+        self._adapter_invalid_argument("adapters must be a dict[str, ModelVersion] or a list[ModelVersion].")
+
+    @staticmethod
+    def _serialize_adapters(
+        adapters: list[tuple[str | None, "ModelVersion"]],
+    ) -> list[model_deployment_spec_schema.AdapterSpec]:
+        return [
+            model_deployment_spec_schema.AdapterSpec(
+                name=adapter_mv.fully_qualified_model_name,
+                version=adapter_mv.version_name,
+                alias=alias,
+            )
+            for alias, adapter_mv in adapters
+        ]
+
     @overload
     def create_service(
         self,
@@ -1218,6 +1323,7 @@ class ModelVersion(lineage_node.LineageNode):
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
         feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
@@ -1265,6 +1371,10 @@ class ModelVersion(lineage_node.LineageNode):
                 registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
                 service will fetch any missing feature columns from these sources before invoking the model. Currently
                 only one FeatureView per function is supported.
+            adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
+                :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
+                emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to
+                ``<FQN>/VERSIONS/<version>``). Omit, ``None``, ``{}``, or ``[]`` attaches none.
         """
         ...
 
@@ -1291,6 +1401,7 @@ class ModelVersion(lineage_node.LineageNode):
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
         feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
@@ -1338,23 +1449,17 @@ class ModelVersion(lineage_node.LineageNode):
                 registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
                 service will fetch any missing feature columns from these sources before invoking the model. Currently
                 only one FeatureView per function is supported.
+            adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
+                :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
+                emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to
+                ``<FQN>/VERSIONS/<version>``). Omit, ``None``, ``{}``, or ``[]`` attaches none.
         """
         ...
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
-        func_params_to_log=[
-            "service_name",
-            "image_build_compute_pool",
-            "service_compute_pool",
-            "image_repo_database",
-            "image_repo_schema",
-            "image_repo",
-            "gpu_requests",
-            "num_workers",
-            "max_batch_rows",
-        ],
+        func_params_to_log=telemetry_params.CREATE_SERVICE_FUNC_PARAMS_TO_LOG,
     )
     def create_service(
         self,
@@ -1379,6 +1484,7 @@ class ModelVersion(lineage_node.LineageNode):
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
         feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
 
@@ -1428,7 +1534,10 @@ class ModelVersion(lineage_node.LineageNode):
                 registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
                 service will fetch any missing feature columns from these sources before invoking the model. Currently
                 only one FeatureView per function is supported.
-
+            adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
+                :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
+                emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to
+                ``<FQN>/VERSIONS/<version>``). Omit, ``None``, ``{}``, or ``[]`` attaches none.
 
         Raises:
             ValueError: Illegal external access integration arguments.
@@ -1459,6 +1568,42 @@ class ModelVersion(lineage_node.LineageNode):
                 )
                 raise ValueError(msg)
             build_external_access_integrations = [build_external_access_integration]
+
+        normalized_adapters = self._normalize_adapters(adapters)
+        if normalized_adapters:
+            self._require_lora_adapters_enabled()
+
+        if self._is_peft_adapter_version():
+            self._require_lora_adapters_enabled()
+            if normalized_adapters:
+                self._adapter_invalid_argument(
+                    "create_service on an adapter version does not accept the adapters argument. "
+                    "The adapter is attached under its default FQN/VERSIONS alias."
+                )
+            pin = self._resolve_adapter_pin()
+            create_on_pin: Callable[..., str | async_job.AsyncJob] = pin.create_service
+            return create_on_pin(
+                service_name=service_name,
+                image_build_compute_pool=image_build_compute_pool,
+                service_compute_pool=service_compute_pool,
+                image_repo=image_repo,
+                ingress_enabled=ingress_enabled,
+                min_instances=min_instances,
+                max_instances=max_instances,
+                cpu_requests=cpu_requests,
+                memory_requests=memory_requests,
+                gpu_requests=gpu_requests,
+                num_workers=num_workers,
+                max_batch_rows=max_batch_rows,
+                force_rebuild=force_rebuild,
+                build_external_access_integrations=build_external_access_integrations,
+                block=block,
+                autocapture=autocapture,
+                inference_engine_options=inference_engine_options,
+                experimental_options=experimental_options,
+                feature_sources_per_function=feature_sources_per_function,
+                adapters=[self],
+            )
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
 
@@ -1537,6 +1682,7 @@ class ModelVersion(lineage_node.LineageNode):
                     inference_engine_args=inference_engine_args,
                     autocapture=autocapture,
                     feature_sources_per_function=feature_sources_per_function,
+                    adapters=self._serialize_adapters(normalized_adapters) if normalized_adapters else None,
                 )
                 status.update(label="Model service created successfully", state="complete", expanded=False)
                 return result
@@ -1552,6 +1698,22 @@ class ModelVersion(lineage_node.LineageNode):
                 else:
                     status.update(label="Service creation failed", state="error", expanded=False)
                     raise
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def get_adapters(self) -> list["ModelVersion"]:
+        """Return downstream distance-1 adapter versions the caller can see.
+
+        MASKED and deleted lineage nodes are omitted because they are not hydrated
+        ModelVersions. Neighbor versions that are not LoRA adapters are omitted.
+
+        Returns:
+            Adapter model versions linked downstream from this base, in lineage order.
+        """
+        nodes = self.lineage(direction="downstream", domain_filter={"model"})
+        return [node for node in nodes if isinstance(node, ModelVersion) and node._is_peft_adapter_version()]
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1589,6 +1751,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=["service_name"],
     )
     def delete_service(
         self,

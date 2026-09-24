@@ -1,9 +1,8 @@
 import json
 import logging
 import time
-import typing
 from io import BytesIO
-from typing import Any, Callable, Iterator, Optional, TypedDict, Union, cast
+from typing import Any, Callable, Iterator, TypedDict, cast
 from urllib.parse import urlunparse
 
 import requests
@@ -78,9 +77,9 @@ class MidStreamException(Exception):
 
     def __init__(
         self,
-        reason: typing.Optional[str] = None,
-        http_resp: typing.Optional[Any] = None,
-        request_id: typing.Optional[str] = None,
+        reason: str | None = None,
+        http_resp: Any | None = None,
+        request_id: str | None = None,
     ) -> None:
         message = ""
         if reason is not None:
@@ -107,7 +106,7 @@ _MAX_RETRY_SECONDS = 30
 
 def retry(func: Callable[..., requests.Response]) -> Callable[..., requests.Response]:
     def inner(*args: Any, **kwargs: Any) -> requests.Response:
-        deadline = cast(Optional[float], kwargs["deadline"])
+        deadline = cast(float | None, kwargs["deadline"])
         kwargs = {key: value for key, value in kwargs.items() if key != "deadline"}
         expRetrySeconds = 0.5
         while True:
@@ -141,7 +140,7 @@ def _make_common_request_headers() -> dict[str, str]:
     return headers
 
 
-def _get_request_id(resp: dict[str, Any]) -> Optional[Any]:
+def _get_request_id(resp: dict[str, Any]) -> Any | None:
     request_id = None
     if "headers" in resp:
         for key, value in resp["headers"].items():
@@ -181,8 +180,8 @@ def _validate_response_format_object(options: CompleteOptions) -> None:
 
 def _make_request_body(
     model: str,
-    prompt: Union[str, list[ConversationMessage]],
-    options: Optional[CompleteOptions] = None,
+    prompt: str | list[ConversationMessage],
+    options: CompleteOptions | None = None,
 ) -> dict[str, Any]:
     data = {
         "model": model,
@@ -249,11 +248,11 @@ def _xp_dict_to_response(raw_resp: dict[str, Any]) -> requests.Response:
 
 @retry
 def _call_complete_xp(
-    snow_api_xp_request_handler: Optional[Callable[..., dict[str, Any]]],
+    snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None,
     model: str,
-    prompt: Union[str, list[ConversationMessage]],
-    options: Optional[CompleteOptions] = None,
-    deadline: Optional[float] = None,
+    prompt: str | list[ConversationMessage],
+    options: CompleteOptions | None = None,
+    deadline: float | None = None,
 ) -> requests.Response:
     headers = _make_common_request_headers()
     body = _make_request_body(model, prompt, options)
@@ -265,9 +264,9 @@ def _call_complete_xp(
 @retry
 def _call_complete_rest(
     model: str,
-    prompt: Union[str, list[ConversationMessage]],
-    options: Optional[CompleteOptions] = None,
-    session: Optional[snowpark.Session] = None,
+    prompt: str | list[ConversationMessage],
+    options: CompleteOptions | None = None,
+    session: snowpark.Session | None = None,
 ) -> requests.Response:
     session = session or context.get_active_session()
     if session is None:
@@ -305,8 +304,8 @@ def _call_complete_rest(
 
 def _return_stream_response(
     response: requests.Response,
-    deadline: Optional[float],
-    session: Optional[snowpark.Session] = None,
+    deadline: float | None,
+    session: snowpark.Session | None = None,
 ) -> Iterator[str]:
     request_id = _get_request_id(dict(response.headers))
     client = SSEClient(response)
@@ -333,18 +332,18 @@ def _return_stream_response(
 
 
 def _complete_call_sql_function_snowpark(
-    function: str, *args: Union[str, snowpark.Column, CompleteOptions]
+    function: str, *args: str | snowpark.Column | CompleteOptions
 ) -> snowpark.Column:
     return cast(snowpark.Column, functions.builtin(function)(*args))
 
 
 def _complete_non_streaming_immediate(
-    snow_api_xp_request_handler: Optional[Callable[..., dict[str, Any]]],
+    snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None,
     model: str,
-    prompt: Union[str, list[ConversationMessage]],
-    options: Optional[CompleteOptions],
-    session: Optional[snowpark.Session] = None,
-    deadline: Optional[float] = None,
+    prompt: str | list[ConversationMessage],
+    options: CompleteOptions | None,
+    session: snowpark.Session | None = None,
+    deadline: float | None = None,
 ) -> str:
     response = _complete_rest(
         snow_api_xp_request_handler=snow_api_xp_request_handler,
@@ -358,14 +357,14 @@ def _complete_non_streaming_immediate(
 
 
 def _complete_non_streaming_impl(
-    snow_api_xp_request_handler: Optional[Callable[..., dict[str, Any]]],
+    snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None,
     function: str,
-    model: Union[str, snowpark.Column],
-    prompt: Union[str, list[ConversationMessage], snowpark.Column],
-    options: Optional[Union[CompleteOptions, snowpark.Column]],
-    session: Optional[snowpark.Session] = None,
-    deadline: Optional[float] = None,
-) -> Union[str, snowpark.Column]:
+    model: str | snowpark.Column,
+    prompt: str | list[ConversationMessage] | snowpark.Column,
+    options: CompleteOptions | snowpark.Column | None,
+    session: snowpark.Session | None = None,
+    deadline: float | None = None,
+) -> str | snowpark.Column:
     if isinstance(prompt, snowpark.Column):
         if options is not None:
             return _complete_call_sql_function_snowpark(function, model, prompt, options)
@@ -388,12 +387,12 @@ def _complete_non_streaming_impl(
 
 
 def _complete_rest(
-    snow_api_xp_request_handler: Optional[Callable[..., dict[str, Any]]],
+    snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None,
     model: str,
-    prompt: Union[str, list[ConversationMessage]],
-    options: Optional[CompleteOptions] = None,
-    session: Optional[snowpark.Session] = None,
-    deadline: Optional[float] = None,
+    prompt: str | list[ConversationMessage],
+    options: CompleteOptions | None = None,
+    session: snowpark.Session | None = None,
+    deadline: float | None = None,
 ) -> Iterator[str]:
     if options:
         _validate_response_format_object(options)
@@ -412,16 +411,16 @@ def _complete_rest(
 
 
 def _complete_impl(
-    model: Union[str, snowpark.Column],
-    prompt: Union[str, list[ConversationMessage], snowpark.Column],
-    snow_api_xp_request_handler: Optional[Callable[..., dict[str, Any]]] = None,
+    model: str | snowpark.Column,
+    prompt: str | list[ConversationMessage] | snowpark.Column,
+    snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None = None,
     function: str = "snowflake.cortex.complete",
-    options: Optional[CompleteOptions] = None,
-    session: Optional[snowpark.Session] = None,
+    options: CompleteOptions | None = None,
+    session: snowpark.Session | None = None,
     stream: bool = False,
-    timeout: Optional[float] = None,
-    deadline: Optional[float] = None,
-) -> Union[str, Iterator[str], snowpark.Column]:
+    timeout: float | None = None,
+    deadline: float | None = None,
+) -> str | Iterator[str] | snowpark.Column:
     if timeout is not None and deadline is not None:
         raise ValueError('only one of "timeout" and "deadline" must be set')
     if timeout is not None:
@@ -454,15 +453,15 @@ def _complete_impl(
     project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
 )
 def complete(
-    model: Union[str, snowpark.Column],
-    prompt: Union[str, list[ConversationMessage], snowpark.Column],
+    model: str | snowpark.Column,
+    prompt: str | list[ConversationMessage] | snowpark.Column,
     *,
-    options: Optional[CompleteOptions] = None,
-    session: Optional[snowpark.Session] = None,
+    options: CompleteOptions | None = None,
+    session: snowpark.Session | None = None,
     stream: bool = False,
-    timeout: Optional[float] = None,
-    deadline: Optional[float] = None,
-) -> Union[str, Iterator[str], snowpark.Column]:
+    timeout: float | None = None,
+    deadline: float | None = None,
+) -> str | Iterator[str] | snowpark.Column:
     """Complete calls into the LLM inference service to perform completion.
 
     Args:
