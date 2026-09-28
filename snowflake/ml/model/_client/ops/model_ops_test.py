@@ -1,6 +1,6 @@
 import json
 import pathlib
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 import numpy as np
@@ -3323,6 +3323,419 @@ class ModelOpsTest(parameterized.TestCase):
                 function_info_by_method["predict_table"]["target_method_function_type"],
                 model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
             )
+
+    def _patch_adapter_lineage(self, source_objects: list[dict[str, str]]) -> Any:
+        trace_df = mock.Mock()
+        trace_df.collect.return_value = [Row(SOURCE_OBJECT=json.dumps(obj)) for obj in source_objects]
+        mock_lineage = mock.Mock()
+        mock_lineage.trace.return_value = trace_df
+        return mock.patch.object(self.m_ops._session, "lineage", mock_lineage, create=True)
+
+    def _peft_adapter_spec(self, *, pin_name: str = 'TEMP."test".PIN') -> dict[str, object]:
+        return {
+            "signatures": {},
+            "model_type": "peft_adapter",
+            "models": {
+                "model": {
+                    "options": {
+                        "base_model_name": pin_name,
+                        "base_model_version": "V1",
+                    }
+                }
+            },
+        }
+
+    def _peft_pin_spec(self) -> dict[str, object]:
+        return {
+            "signatures": {"__call__": _DUMMY_SIG["predict"].to_dict()},
+            "model_type": "huggingface_pipeline",
+            "models": {},
+        }
+
+    def _call_get_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
+        return self.m_ops.get_functions(
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("V1"),
+            statement_params=self.m_statement_params,
+        )
+
+    def test_get_functions_peft_adapter_uses_pin_signatures(self) -> None:
+        pin_call_sig = _DUMMY_SIG["predict"]
+        adapter_spec = self._peft_adapter_spec()
+        pin_spec = self._peft_pin_spec()
+        adapter_show_versions = [Row(model_spec=yaml.safe_dump(adapter_spec))]
+        pin_show_versions = [Row(model_spec=yaml.safe_dump(pin_spec))]
+        show_functions_result = [Row(name="__CALL__", return_type="OBJECT")]
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() == "PIN":
+                return pin_show_versions
+            return adapter_show_versions
+
+        with (
+            self._patch_adapter_lineage([]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ) as mock_show_versions,
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=show_functions_result,
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            result = self._call_get_functions()
+
+        self.assertLen(result, 1)
+        self.assertEqual(result[0]["target_method"], "__call__")
+        self.assertEqual(result[0]["signature"], pin_call_sig)
+        self.assertEqual(
+            result[0]["target_method_function_type"],
+            model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+        )
+        self.assertTrue(result[0]["is_object_output"])
+        pin_calls = [
+            call for call in mock_show_versions.call_args_list if call.kwargs["model_name"].identifier() == "PIN"
+        ]
+        self.assertLen(pin_calls, 1)
+        self.assertEqual(pin_calls[0].kwargs["version_name"], sql_identifier.SqlIdentifier("V1"))
+
+    def test_get_functions_peft_adapter_lineage_pin_survives_blob_rename(self) -> None:
+        adapter_spec = self._peft_adapter_spec(pin_name='TEMP."test".PIN')
+        pin_spec = self._peft_pin_spec()
+        renamed_source = {
+            "domain": "MODEL",
+            "name": 'TEMP."test".RENAMED_PIN',
+            "version": "V1",
+            "status": "ACTIVE",
+        }
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            ident = model_name.identifier()
+            if ident == "PIN":
+                raise AssertionError("stale blob option pin name must not be fetched")
+            if ident == "RENAMED_PIN":
+                return [Row(model_spec=yaml.safe_dump(pin_spec))]
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage([renamed_source]) as mock_lineage,
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ) as mock_show_versions,
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            result = self._call_get_functions()
+
+        self.assertLen(result, 1)
+        self.assertEqual(result[0]["target_method"], "__call__")
+        self.assertEqual(result[0]["signature"], _DUMMY_SIG["predict"])
+        renamed_calls = [
+            call
+            for call in mock_show_versions.call_args_list
+            if call.kwargs["model_name"].identifier() == "RENAMED_PIN"
+        ]
+        self.assertLen(renamed_calls, 1)
+        mock_lineage.trace.assert_called_once()
+        self.assertEqual(mock_lineage.trace.call_args.kwargs["direction"], "upstream")
+        self.assertEqual(mock_lineage.trace.call_args.kwargs["distance"], 1)
+        self.assertEqual(mock_lineage.trace.call_args.kwargs["object_version"], "V1")
+
+    def test_get_functions_peft_adapter_masked_pin_does_not_use_blob_options(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+        masked_source = {
+            "domain": "MODEL",
+            "name": 'TEMP."test".PIN',
+            "version": "V1",
+            "status": "MASKED",
+        }
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() == "PIN":
+                raise AssertionError("MASKED lineage pin must not fall back to blob options")
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage([masked_source]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"adapter model: catalog methods exist but method signatures could not be resolved from the pin",
+            ):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_multiple_upstream_models_raises(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+        sources = [
+            {
+                "domain": "MODEL",
+                "name": 'TEMP."test".PIN',
+                "version": "V1",
+                "status": "ACTIVE",
+            },
+            {
+                "domain": "MODEL",
+                "name": 'TEMP."test".OTHER',
+                "version": "V1",
+                "status": "ACTIVE",
+            },
+        ]
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() in {"PIN", "OTHER"}:
+                raise AssertionError("multiple upstream models must not fetch a pin spec")
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage(sources),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"adapter model: catalog methods exist but method signatures could not be resolved from the pin",
+            ):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_unresolved_pin_raises(self) -> None:
+        adapter_spec = {
+            "signatures": {},
+            "model_type": "peft_adapter",
+            "models": {},
+        }
+        with (
+            self._patch_adapter_lineage([]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                return_value=[Row(model_spec=yaml.safe_dump(adapter_spec))],
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"adapter model: catalog methods exist but method signatures could not be resolved from the pin",
+            ):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_pin_lookup_failure_raises(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() == "PIN":
+                return []
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage([]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"adapter model: catalog methods exist but method signatures could not be resolved from the pin",
+            ):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_unexpected_lineage_error_propagates(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+        mock_lineage = mock.Mock()
+        mock_lineage.trace.side_effect = RuntimeError("lineage service failed")
+        with (
+            mock.patch.object(self.m_ops._session, "lineage", mock_lineage, create=True),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                return_value=[Row(model_spec=yaml.safe_dump(adapter_spec))],
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, r"lineage service failed"):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_unexpected_pin_error_propagates(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() == "PIN":
+                raise RuntimeError("unexpected pin failure")
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage([]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[Row(name="__CALL__", return_type="OBJECT")],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, r"unexpected pin failure"):
+                self._call_get_functions()
+
+    def test_get_functions_peft_adapter_catalog_signature_mismatch_raises(self) -> None:
+        adapter_spec = self._peft_adapter_spec()
+        pin_spec = self._peft_pin_spec()
+
+        def show_versions_side_effect(*args: object, **kwargs: object) -> list[Row]:
+            model_name = kwargs["model_name"]
+            assert isinstance(model_name, sql_identifier.SqlIdentifier)
+            if model_name.identifier() == "PIN":
+                return [Row(model_spec=yaml.safe_dump(pin_spec))]
+            return [Row(model_spec=yaml.safe_dump(adapter_spec))]
+
+        with (
+            self._patch_adapter_lineage([]),
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                autospec=True,
+                side_effect=show_versions_side_effect,
+            ),
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "show_functions",
+                autospec=True,
+                return_value=[
+                    Row(name="__CALL__", return_type="OBJECT"),
+                    Row(name="PREDICT", return_type="NUMBER"),
+                ],
+            ),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                autospec=True,
+                side_effect=lambda *args: args[-1],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"adapter model: catalog methods exist but method signatures could not be resolved from the pin",
+            ):
+                self._call_get_functions()
 
     @mock.patch.object(model_meta.ModelMetadata, "_validate_model_metadata", autospec=True)
     def test_get_functions_from_model_spec_v2_without_reading_stage(self, validate_model_metadata: mock.Mock) -> None:

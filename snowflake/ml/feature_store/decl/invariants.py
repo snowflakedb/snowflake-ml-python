@@ -489,7 +489,7 @@ def compute_source_diff_kind(
     * ``"recreate"`` — structural fingerprint differs (column
       addition / removal / type change, ``source_type`` / ``table`` /
       ``query`` / producer-``type`` swap).  Routes to
-      ``OpKind.RECREATE_SOURCE`` (destructive; ``--allow-recreate``).
+      ``OpKind.RECREATE_SOURCE`` (destructive; ``--destructive``).
     * ``"update_desc_only"`` — structural fingerprint matches but the
       description text differs.  Routes to ``OpKind.UPDATE_SOURCE``
       (non-destructive).

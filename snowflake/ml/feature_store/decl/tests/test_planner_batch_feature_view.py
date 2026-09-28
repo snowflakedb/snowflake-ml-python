@@ -299,7 +299,7 @@ def test_batch_fv_operational_drift_recovers_when_compile_to_spec_raises() -> No
 # §8 bug-bash regression: when the FV references its BatchSource by name only
 # (no inline ``table:``) and the BatchSource YAML's ``table:`` is edited, the
 # planner must emit RECREATE_FV (destructive) so ``snow feature apply --from .``
-# refuses without ``--allow-recreate``.  The verifier reports
+# refuses without ``--destructive``.  The verifier reports
 # ``[fail] plan missing RECREATE_FV after datasource table change (doc §8)``.
 # ---------------------------------------------------------------------------
 

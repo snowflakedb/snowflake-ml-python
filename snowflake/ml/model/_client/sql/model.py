@@ -9,6 +9,13 @@ from snowflake.snowpark import row
 _EMPTY_VERSION_RESULT_EXPECTED = "Expected 1 rows"
 _EMPTY_VERSION_RESULT_FOUND = "found: 0 rows"
 
+# Catalog propagation can take tens of seconds on a loaded account, so retries are bounded by elapsed
+# wall-clock time in addition to attempt count.
+SHOW_VERSIONS_RETRY_MAX_ATTEMPTS = 15
+SHOW_VERSIONS_RETRY_MAX_DELAY_MS = 60000
+SHOW_VERSIONS_RETRY_WAIT_MULTIPLIER_MS = 500
+SHOW_VERSIONS_RETRY_WAIT_MAX_MS = 5000
+
 
 def _is_empty_version_result(exc: BaseException) -> bool:
     if not isinstance(exc, connector.DataError):
@@ -104,9 +111,10 @@ class ModelSQLClient(_base._BaseSQLClient):
 
             versions: list[row.Row] = retrying.retry(
                 retry_on_exception=_is_empty_version_result,
-                stop_max_attempt_number=5,
-                wait_exponential_multiplier=100,
-                wait_exponential_max=10000,
+                stop_max_attempt_number=SHOW_VERSIONS_RETRY_MAX_ATTEMPTS,
+                stop_max_delay=SHOW_VERSIONS_RETRY_MAX_DELAY_MS,
+                wait_exponential_multiplier=SHOW_VERSIONS_RETRY_WAIT_MULTIPLIER_MS,
+                wait_exponential_max=SHOW_VERSIONS_RETRY_WAIT_MAX_MS,
             )(_execute)()
             return versions
         return _execute()

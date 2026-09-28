@@ -5,7 +5,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Literal, TypedDict, cast, overload
+from typing import Any, Literal, NoReturn, TypedDict, cast, overload
 
 import yaml
 from typing_extensions import NotRequired
@@ -31,7 +31,13 @@ from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model._signatures import snowpark_handler
-from snowflake.snowpark import dataframe, functions as F, row, session
+from snowflake.snowpark import (
+    dataframe,
+    exceptions as snowpark_exceptions,
+    functions as F,
+    row,
+    session,
+)
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
@@ -986,6 +992,220 @@ class ModelOperator:
         task_val = model_attributes.get("task", type_hints.Task.UNKNOWN.value)
         return type_hints.Task(task_val)
 
+    @staticmethod
+    def _is_peft_adapter_spec(parsed_model_spec: model_spec.ModelSpec) -> bool:
+        """Return whether the specification describes a PEFT adapter version.
+
+        Args:
+            parsed_model_spec: Parsed model specification from SHOW VERSIONS.
+
+        Returns:
+            True when the model type is peft_adapter or blob options name a pin.
+        """
+        try:
+            if parsed_model_spec.model_type == "peft_adapter":
+                return True
+        except (KeyError, ValueError):
+            pass
+        return any(
+            isinstance(options.get("base_model_name"), str)
+            and options.get("base_model_name")
+            and isinstance(options.get("base_model_version"), str)
+            and options.get("base_model_version")
+            for options in parsed_model_spec.model_options.values()
+        )
+
+    def _peft_pin_identity_from_lineage(
+        self,
+        *,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+    ) -> tuple[str, str] | Literal["absent", "blocked"]:
+        """Resolve the adapter pin's current name from upstream model lineage.
+
+        Args:
+            database_name: Database of the adapter version.
+            schema_name: Schema of the adapter version.
+            model_name: Adapter model name.
+            version_name: Adapter version name.
+
+        Returns:
+            Current pin fully-qualified name and version when exactly one ACTIVE
+            upstream model exists; ``absent`` when lineage has no model upstream
+            or cannot be read; ``blocked`` when the pin is MASKED, DELETED, incomplete,
+            or not unique.
+        """
+        try:
+            trace_df = self._session.lineage.trace(
+                self._model_client.fully_qualified_object_name(database_name, schema_name, model_name),
+                "MODEL",
+                object_version=version_name.identifier(),
+                direction="upstream",
+                distance=1,
+            )
+            rows = trace_df.collect()
+            model_nodes: list[tuple[str, str, str]] = []
+            for lineage_row in rows:
+                lineage_object = json.loads(lineage_row["SOURCE_OBJECT"])
+                if str(lineage_object.get("domain", "")).lower() != "model":
+                    continue
+                raw_name = lineage_object.get("name")
+                raw_version = lineage_object.get("version")
+                status = str(lineage_object.get("status", ""))
+                if not isinstance(raw_name, str) or not raw_name:
+                    model_nodes.append(("", "", status))
+                    continue
+                parsed_name = ".".join(
+                    identifier.rename_to_valid_snowflake_identifier(part)
+                    for part in identifier.parse_schema_level_object_identifier(raw_name)
+                    if part is not None
+                )
+                pin_version = raw_version if isinstance(raw_version, str) else ""
+                model_nodes.append((parsed_name, pin_version, status))
+        except (
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            snowpark_exceptions.SnowparkSQLException,
+        ) as err:
+            logger.debug("adapter model: could not read pin lineage: %s", err)
+            return "absent"
+        if not model_nodes:
+            return "absent"
+        if len(model_nodes) != 1:
+            return "blocked"
+        pin_name, pin_version, status = model_nodes[0]
+        if status.upper() != "ACTIVE" or not pin_name or not pin_version:
+            return "blocked"
+        return pin_name, pin_version
+
+    @staticmethod
+    def _peft_pin_identity_from_blob_options(
+        parsed_model_spec: model_spec.ModelSpec,
+    ) -> tuple[str, str] | None:
+        """Return the pin name and version from adapter blob options.
+
+        Args:
+            parsed_model_spec: Adapter specification whose blob options may name the pin.
+
+        Returns:
+            Pin fully-qualified name and version, or None when those options are missing.
+        """
+        for options in parsed_model_spec.model_options.values():
+            name = options.get("base_model_name")
+            version = options.get("base_model_version")
+            if isinstance(name, str) and name and isinstance(version, str) and version:
+                return name, version
+        return None
+
+    def _fetch_model_spec_for_pin(
+        self,
+        pin_name: str,
+        pin_version: str,
+        *,
+        statement_params: dict[str, Any] | None = None,
+    ) -> model_spec.ModelSpec | None:
+        """Load a pin specification by fully-qualified name and version.
+
+        Args:
+            pin_name: Fully-qualified pin model name.
+            pin_version: Pin version name.
+            statement_params: Optional dictionary of statement parameters.
+
+        Returns:
+            The pin specification, or None when the name is unparsable or the pin cannot be loaded.
+        """
+        try:
+            database_name, schema_name, model_name = sql_identifier.parse_fully_qualified_name(pin_name)
+        except ValueError:
+            return None
+        if database_name is None or schema_name is None:
+            return None
+        try:
+            return self._fetch_model_spec(
+                database_name=database_name,
+                schema_name=schema_name,
+                model_name=model_name,
+                version_name=sql_identifier.SqlIdentifier(pin_version),
+                statement_params=statement_params,
+            )
+        except (
+            IndexError,
+            KeyError,
+            TypeError,
+            ValueError,
+            yaml.YAMLError,
+            snowpark_exceptions.SnowparkSQLException,
+        ) as err:
+            logger.debug("adapter model: could not load pin specification: %s", err)
+            return None
+
+    def _fetch_peft_pin_spec(
+        self,
+        parsed_model_spec: model_spec.ModelSpec,
+        *,
+        database_name: sql_identifier.SqlIdentifier | None,
+        schema_name: sql_identifier.SqlIdentifier | None,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: dict[str, Any] | None = None,
+    ) -> model_spec.ModelSpec | None:
+        """Load the pin model specification for an adapter version.
+
+        Prefers the current names from the adapter's upstream model lineage so a pin
+        rename still resolves. Blob options are used only when lineage has no model
+        upstream (the pin edge is not visible yet).
+
+        Args:
+            parsed_model_spec: Adapter specification whose blob options may name the pin.
+            database_name: Database of the adapter version.
+            schema_name: Schema of the adapter version.
+            model_name: Adapter model name.
+            version_name: Adapter version name.
+            statement_params: Optional dictionary of statement parameters.
+
+        Returns:
+            The pin specification, or None when the pin cannot be resolved or loaded.
+        """
+        lineage_pin = self._peft_pin_identity_from_lineage(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+        )
+        if lineage_pin == "blocked":
+            return None
+        if lineage_pin == "absent":
+            blob_pin = ModelOperator._peft_pin_identity_from_blob_options(parsed_model_spec)
+            if blob_pin is None:
+                return None
+            pin_name, pin_version = blob_pin
+        else:
+            pin_name, pin_version = lineage_pin
+        return self._fetch_model_spec_for_pin(
+            pin_name,
+            pin_version,
+            statement_params=statement_params,
+        )
+
+    @staticmethod
+    def _raise_unresolved_adapter_pin_signatures() -> NoReturn:
+        """Raise when adapter catalog methods cannot be mapped onto pin signatures.
+
+        Raises:
+            SnowflakeMLException: Always. Catalog methods exist but pin signatures could not be used.
+        """
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "adapter model: catalog methods exist but method signatures could not be resolved from the pin."
+            ),
+        )
+
     def get_functions(
         self,
         *,
@@ -1058,20 +1278,47 @@ class ModelOperator:
                 )
 
         signatures = parsed_model_spec.signatures
+        signature_spec = parsed_model_spec
+        is_peft_adapter = False
+        if not signatures and function_names_and_types:
+            is_peft_adapter = ModelOperator._is_peft_adapter_spec(parsed_model_spec)
+            if is_peft_adapter:
+                pin_spec = self._fetch_peft_pin_spec(
+                    parsed_model_spec,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    model_name=model_name,
+                    version_name=version_name,
+                    statement_params=statement_params,
+                )
+                if pin_spec is None or not pin_spec.signatures:
+                    ModelOperator._raise_unresolved_adapter_pin_signatures()
+                signatures = pin_spec.signatures
+                signature_spec = pin_spec
+
         function_names = [name for name, _, _ in function_names_and_types]
-        function_name_mapping = ModelOperator._match_model_spec_with_sql_functions(
-            function_names, list(signatures.keys())
-        )
+        try:
+            function_name_mapping = ModelOperator._match_model_spec_with_sql_functions(
+                function_names, list(signatures.keys())
+            )
+        except AssertionError:
+            if is_peft_adapter:
+                ModelOperator._raise_unresolved_adapter_pin_signatures()
+            raise
 
         model_func_info = []
 
         for function_name, function_type, is_object_output in function_names_and_types:
+            if function_name not in function_name_mapping:
+                if is_peft_adapter:
+                    ModelOperator._raise_unresolved_adapter_pin_signatures()
+                raise KeyError(function_name)
             target_method = function_name_mapping[function_name]
 
             is_partitioned = False
             if function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
                 # better to set default True here because worse case it will be slow but not error out
-                is_partitioned = parsed_model_spec.is_partitioned(target_method)
+                is_partitioned = signature_spec.is_partitioned(target_method)
 
             model_func_info.append(
                 model_manifest_schema.ModelFunctionInfo(

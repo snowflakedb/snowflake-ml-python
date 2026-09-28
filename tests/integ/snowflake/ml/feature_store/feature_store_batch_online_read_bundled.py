@@ -2299,10 +2299,9 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         ``EVENT_TIME`` is the feature view ``timestamp_col`` and is excluded from the online schema.
         ``LAST_SEEN_TIME`` is the TimestampNTZ feature that can be checked online.
 
-        Source values are TIMESTAMP_NTZ(9). On native storage the offline dynamic table keeps
-        all nine digits, since the batch path never leaves the SQL engine. Iceberg caps
-        ``TIMESTAMP_NTZ`` at scale 6, so the Iceberg offline table holds microseconds.
-        Only the online value is reduced further, and how much depends on
+        The batch offline table selects the source columns unchanged, so an Iceberg source must declare
+        TIMESTAMP_NTZ(6) up front: Iceberg rejects scale 9, and nothing in the BFV registration path
+        narrows it. In GS, the online value is reduced further, and how much depends on
         ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS``: the ETL truncates to microseconds when
         it is on and to milliseconds when it is off.
 
@@ -2324,13 +2323,15 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
             else "2024-06-01 12:34:57.987000000"
         )
 
+        timestamp_type = "TIMESTAMP_NTZ(6)" if iceberg else "TIMESTAMP_NTZ"
+
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.ALL_TYPES_SRC_{s}"
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
                 USER_ID VARCHAR,
-                EVENT_TIME TIMESTAMP_NTZ(9),
-                LAST_SEEN_TIME TIMESTAMP_NTZ(9),
+                EVENT_TIME {timestamp_type},
+                LAST_SEEN_TIME {timestamp_type},
                 SCORE FLOAT,
                 RANK INT,
                 PRICE NUMBER(10,2),
@@ -2341,7 +2342,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         self._session.sql(
             f"""
             INSERT INTO {table_name} VALUES
-            ({entity_key!r}, '{event_time_src}'::TIMESTAMP_NTZ(9), '{last_seen_src}'::TIMESTAMP_NTZ(9),
+            ({entity_key!r}, '{event_time_src}', '{last_seen_src}',
              3.14, 42, 99.95, TRUE)
         """
         ).collect()

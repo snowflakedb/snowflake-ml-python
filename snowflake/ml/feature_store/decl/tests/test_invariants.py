@@ -1163,7 +1163,7 @@ class TestContentChangedAtSameVersion:
     ``compile_to_spec(local)`` and the live ``DESCRIBE`` payload.  The
     fix tightens the rule to ``version < applied_version`` only, so
     same-version + different-content surfaces as a destructive
-    ``RECREATE_FV`` plan op (gated by ``--allow-recreate``) rather
+    ``RECREATE_FV`` plan op (gated by ``--destructive``) rather
     than a validator error.
     """
 
@@ -1201,7 +1201,7 @@ class TestContentChangedAtSameVersion:
     def test_planner_emits_recreate_fv_when_content_differs_at_same_version(self) -> None:
         """Same-version + different content surfaces as destructive RECREATE_FV.
 
-        The destructive flag forces an ``--allow-recreate`` opt-in at
+        The destructive flag forces a ``--destructive`` opt-in at
         apply time and serves the friction role that ``VERSION_CONFLICT``
         used to play, but without false-positives on hash drift.
         """

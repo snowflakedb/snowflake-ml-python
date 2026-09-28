@@ -1428,7 +1428,7 @@ def execute_plan(
     # opt-in that gates *apply*, not plan generation — refusing here
     # (before any FV side-effect or even ``FeatureStore`` construction)
     # leaves the plan file unrenamed under L5 (Mark-Failed-Stays-
-    # Unapplied) so a follow-up ``snow feature apply --allow-recreate``
+    # Unapplied) so a follow-up ``snow feature apply --destructive``
     # consumes the same plan.  See BUG_BASH §14 and
     # plans/apply_allow_recreate_destructive_gate_*.plan.md.
     if not options.allow_recreate:
@@ -1442,8 +1442,8 @@ def execute_plan(
                 warnings=list(plan.warnings),
                 errors=[
                     f"Apply refused: {len(destructive_ops)} destructive "
-                    f"operation(s) require --allow-recreate. "
-                    f"Re-run with `snow feature apply --allow-recreate <path>`."
+                    f"operation(s) require --destructive. "
+                    f"Re-run with `snow feature apply --destructive <path>`."
                 ],
             )
 
@@ -1653,7 +1653,7 @@ def _execute_create_feature_group(fs: Any, op: Any) -> None:
     Two variants share this entry point:
 
     * **Non-destructive create** (``op.destructive is False``): register the
-      newly-built ``FeatureGroup`` directly.  The ``--allow-recreate`` gate
+      newly-built ``FeatureGroup`` directly.  The ``--destructive`` gate
       did not refuse the plan because no existing FG is being clobbered.
     * **Destructive recreate** (``op.destructive is True``): delete-then-
       register pair.  ``delete_feature_group`` is best-effort — a missing
@@ -1662,7 +1662,7 @@ def _execute_create_feature_group(fs: Any, op: Any) -> None:
       schema where the OFT was already dropped manually still has to
       succeed).  Mirrors the FV-level ``RECREATE_FV`` pattern.
 
-    The ``--allow-recreate`` gate at :func:`execute_plan` already refused
+    The ``--destructive`` gate at :func:`execute_plan` already refused
     destructive FG plans before calling this function, so by the time we
     get here the operator has explicitly opted in.
 
@@ -2392,7 +2392,7 @@ def _execute_recreate_stream_source(fs: Any, op: Any) -> Any:
     :func:`_execute_update_stream_source` — the actual recreate flows
     through the consuming FVs' ``RECREATE_FV`` ops.
 
-    The ``--allow-recreate`` gate at the top of :func:`execute_plan`
+    The ``--destructive`` gate at the top of :func:`execute_plan`
     refuses the plan when ``destructive=True`` and the operator did not
     opt in, so by the time this function runs the operator has already
     consented to the destructive change.

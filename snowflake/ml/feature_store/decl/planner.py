@@ -71,11 +71,11 @@ _RECREATE_OP: dict[str, OpKind] = {
     # Stream-source path lands the same destructive recreate semantics
     # used for FVs: drop the runtime stream-source via
     # ``FeatureStore.delete_stream_source`` and re-register from the
-    # local YAML.  Gated by ``--allow-recreate`` at execute time.
+    # local YAML.  Gated by ``--destructive`` at execute time.
     # BatchSource recreate is informational at the executor boundary
     # because the imperative API has no batch-source DDL, but the
     # planner still emits ``RECREATE_SOURCE`` (destructive) so the
-    # --allow-recreate gate captures the operator intent.
+    # --destructive gate captures the operator intent.
     "StreamingSource": OpKind.RECREATE_SOURCE,
     "BatchSource": OpKind.RECREATE_SOURCE,
 }
@@ -734,7 +734,7 @@ def generate_plan(
                         depends_on=[],
                         destructive=True,
                         reason="Source schema or binding changed; dropping and "
-                        "re-registering. Requires --allow-recreate.",
+                        "re-registering. Requires --destructive.",
                         payload=data,
                     )
                 )
@@ -844,7 +844,7 @@ def generate_plan(
             # ``snow feature apply`` would never call register_feature_view —
             # the imperative ``overwrite=True`` semantics would be unreachable.
             # We emit a destructive CREATE_FV (re-register with overwrite=True
-            # at the executor boundary) so the existing --allow-recreate gate
+            # at the executor boundary) so the existing --destructive gate
             # in execute_plan refuses plain apply for this destructive intent.
             backfill_block = data.get("backfill") if isinstance(data.get("backfill"), dict) else None
             backfill_overwrite = bool(backfill_block.get("overwrite")) if backfill_block else False
@@ -857,7 +857,7 @@ def generate_plan(
                         destructive=True,
                         reason="FV-level backfill.overwrite=True forces re-materialisation; "
                         "re-registering via FeatureStore.register_feature_view(overwrite=True). "
-                        "Requires --allow-recreate.",
+                        "Requires --destructive.",
                         payload=data,
                     )
                 )
@@ -929,7 +929,7 @@ def generate_plan(
             # with ``destructive=True`` rather than minting a new
             # ``RECREATE_FG`` enum.  The imperative side is a delete +
             # register pair; the executor walks both at apply time.  Gated
-            # by ``--allow-recreate`` via the existing ``execute_plan`` gate.
+            # by ``--destructive`` via the existing ``execute_plan`` gate.
             ops.append(
                 PlanOp(
                     kind=OpKind.CREATE_FG,
@@ -938,7 +938,7 @@ def generate_plan(
                     destructive=True,
                     reason="FeatureGroup content hash changed (desc, auto_prefix, or "
                     "feature_views[]); dropping and re-registering "
-                    "(no imperative update_feature_group). Requires --allow-recreate.",
+                    "(no imperative update_feature_group). Requires --destructive.",
                     payload=data,
                 )
             )

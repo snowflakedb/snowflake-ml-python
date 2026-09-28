@@ -229,6 +229,10 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
                 _NON_PARAM_SPEC_SIGNATURES,
                 ["object" if _is_object_content(s) else "string" for s in _NON_PARAM_SPEC_SIGNATURES],
             )
+            # Engine and content format are independent here, so each value is covered once
+            # rather than as a full cross product. VLLM takes "object" because VLLM with
+            # "string" is the combination tracked as flaky.
+            if (engine, fmt) in ((InferenceEngine.VLLM, "object"), (InferenceEngine.PYTHON_GENERIC, "string"))
         ]
     )
     def test_non_param_spec_signature(
@@ -239,8 +243,6 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
     ) -> None:
         """Test non-ParamSpec signatures where params are passed as input columns."""
         content_fmt = "object" if _is_object_content(signature) else "string"
-        if engine == InferenceEngine.VLLM and compute_pool_for_log is None and content_fmt == "string":
-            self.skipTest("This test is flaky and fails with the combination, ignoring until we fix it")
         messages = _get_messages(signature)
         input_df = pd.DataFrame.from_records([{"messages": messages, **_FULL_PARAMS}])
         logging_style = "remote" if compute_pool_for_log else "local"

@@ -684,6 +684,7 @@ py_library(
     name = "decl_lib_state",
     srcs = [
         "exporter.py",
+        "python_codegen.py",
         "queries.py",
         "state.py",
     ],
@@ -1305,6 +1306,23 @@ py_test(
         ":decl_loader_test_fixtures",
     ],
     main = "tests/test_exporter.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "exporter_sync_filter_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_exporter_sync_filter.py",
+    ],
+    main = "tests/test_exporter_sync_filter.py",
     tags = [
         "feature:feature_store",
         "short_regress",

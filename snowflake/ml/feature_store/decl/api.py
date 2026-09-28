@@ -333,8 +333,10 @@ def export_specs(
     specification_map: dict[str, dict[str, Any]] | None = None,
     entity_rows: list[dict[str, Any]] | None = None,
     feature_group_rows: list[dict[str, Any]] | None = None,
+    feature_view_rows: list[dict[str, Any]] | None = None,
     applied_state: Any | None = None,
     layout: str = "db_schema",
+    name_filter: str | None = None,
 ) -> dict[str, Any]:
     """Reconstruct YAML specs from raw SHOW/DESCRIBE results and write to disk.
 
@@ -369,6 +371,13 @@ def export_specs(
             materialises a YAML in
             ``<base>/feature_groups/<NAME>.yaml``.  ``None`` and ``[]``
             are treated identically — no FG YAMLs are written.
+        feature_view_rows: Optional rows produced by
+            :func:`fetch_feature_view_rows` (the imperative
+            ``FeatureStore.list_feature_views()`` discovery set).  When
+            provided, forwarded to the exporter so ``SHOW ONLINE
+            FEATURE TABLES`` is cross-checked against it and any OFT
+            with no matching listed feature view surfaces a diagnostic
+            warning.  ``None`` disables the opt-in cross-check.
         applied_state: Optional reconstructed
             :class:`~snowflake.ml.feature_store.decl.state.AppliedState`
             snapshot to drive full-fidelity exporter overlays (BatchFV
@@ -386,6 +395,9 @@ def export_specs(
             writes directly to ``<output_dir>/sources/{...}/`` so the
             result drops into the manifest project tree consumed by
             ``snow feature plan`` / ``apply``.
+        name_filter: Optional exact-match, case-insensitive object name
+            filter forwarded verbatim to
+            :func:`decl.exporter.export_specs`.
 
     Returns:
         Dict with keys ``status``, ``directory``, and ``files``.
@@ -401,8 +413,72 @@ def export_specs(
         specification_map=specification_map,
         entity_rows=entity_rows,
         feature_group_rows=feature_group_rows,
+        feature_view_rows=feature_view_rows,
         applied_state=applied_state,
         layout=layout,
+        name_filter=name_filter,
+    )
+
+
+def export_specs_as_python(
+    show_rows: list[dict[str, Any]],
+    describe_rows_by_oft: dict[str, list[dict[str, Any]]],
+    output_dir: str,
+    database: str,
+    schema: str,
+    *,
+    specification_map: dict[str, dict[str, Any]] | None = None,
+    entity_rows: list[dict[str, Any]] | None = None,
+    feature_group_rows: list[dict[str, Any]] | None = None,
+    feature_view_rows: list[dict[str, Any]] | None = None,
+    applied_state: Any | None = None,
+    layout: str = "db_schema",
+    name_filter: str | None = None,
+) -> dict[str, Any]:
+    """Reconstruct Python-form spec files from raw SHOW/DESCRIBE results.
+
+    Identical calling convention to :func:`export_specs` but writes ``.py``
+    files instead of ``.yaml`` files.  Each file is directly loadable by
+    :func:`loader.load_python_file` and will plan as ``NO_CHANGE`` after a
+    round-trip through ``snow feature plan``.
+
+    Args:
+        show_rows: Rows from ``SHOW ONLINE FEATURE TABLES``.
+        describe_rows_by_oft: Map of OFT name → ``DESCRIBE`` rows.
+        output_dir: Base output directory.
+        database: Connection database name.
+        schema: Connection schema name.
+        specification_map: Optional map of OFT name → parsed spec JSON.
+        entity_rows: Optional entity-tag SHOW rows.
+        feature_group_rows: Optional feature-group list rows.
+        feature_view_rows: Optional ``list_feature_views()`` discovery
+            rows for the orphan-OFT diagnostic cross-check.
+        applied_state: Optional :class:`~state.AppliedState` snapshot.
+        layout: ``"db_schema"`` or ``"sources"``.
+        name_filter: Optional exact-match, case-insensitive object name
+            filter forwarded verbatim to
+            :func:`decl.exporter.export_specs_as_python`.
+
+    Returns:
+        Dict with keys ``status``, ``directory``, and ``files``.
+    """
+    from snowflake.ml.feature_store.decl.exporter import (
+        export_specs_as_python as _export_as_python,
+    )
+
+    return _export_as_python(
+        show_rows,
+        describe_rows_by_oft,
+        output_dir,
+        database,
+        schema,
+        specification_map=specification_map,
+        entity_rows=entity_rows,
+        feature_group_rows=feature_group_rows,
+        feature_view_rows=feature_view_rows,
+        applied_state=applied_state,
+        layout=layout,
+        name_filter=name_filter,
     )
 
 

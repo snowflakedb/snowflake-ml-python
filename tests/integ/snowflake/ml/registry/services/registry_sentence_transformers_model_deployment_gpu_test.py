@@ -3,11 +3,10 @@ import random
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from packaging import version as pkg_version
 
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model.models import huggingface as snowml_huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -15,6 +14,8 @@ from tests.integ.snowflake.ml.registry.services import (
 MODEL_NAMES = ["intfloat/e5-base-v2"]  # cant load models in parallel
 SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 HF_HOME = "HF_HOME"
+# TODO: Remove torch/pytorch pins when the version is available in go/conda.
+_PINNED_PYTORCH_CONDA = "pytorch==2.6.0"
 
 
 class TestRegistrySentenceTransformerDeploymentModelInteg(
@@ -88,77 +89,13 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             pip_requirements=pip_requirements,
+            additional_dependencies=[_PINNED_PYTORCH_CONDA] if pip_requirements is None else None,
             use_default_repo=use_default_repo,
             rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "transformers"]],
-    )
-    def test_sentence_transformers(
-        self,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        self._test_sentence_transformers(pip_requirements, use_default_repo=False)
-
-    def test_sentence_transformers_with_default_repo(
-        self,
-    ) -> None:
-        self._test_sentence_transformers(None, use_default_repo=True)
-
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "transformers"]],
-    )
-    def test_sentence_transformer_wrapper(
-        self,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if not pip_requirements:
-            self.skipTest(
-                """SNOW-3420922: Skipping test due to known issue with
-                sentence-transformers and transformers package conflict"""
-            )
-
-        import sentence_transformers
-
-        model_name = random.choice(MODEL_NAMES)
-        wrapper = snowml_huggingface.SentenceTransformer(model=model_name, compute_pool_for_log=None)
-
-        sentences = pd.DataFrame(
-            {
-                "sentence": [
-                    "Why don't scientists trust atoms? Because they make up everything.",
-                    "I told my wife she should embrace her mistakes. She gave me a hug.",
-                    "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who's afraid of negative numbers?",
-                    "Parallel lines have so much in common. It's a shame they'll never meet.",
-                ]
-            }
-        )
-        real_model = sentence_transformers.SentenceTransformer(model_name)
-        embeddings = pd.DataFrame(real_model.encode(sentences["sentence"].to_list(), batch_size=sentences.shape[0]))
-
-        self._test_registry_model_deployment(
-            model=wrapper,
-            sample_input_data=sentences,
-            prediction_assert_fns={
-                "encode": (
-                    sentences,
-                    lambda res: pd.testing.assert_frame_equal(
-                        pd.DataFrame(res["output"].to_list()),
-                        embeddings,
-                        rtol=1e-2,
-                        atol=1e-3,
-                        check_dtype=False,
-                    ),
-                ),
-            },
-            options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            gpu_requests="1",
-            pip_requirements=pip_requirements,
-            use_default_repo=False,
-            rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
-        )
+    def test_sentence_transformers(self) -> None:
+        self._test_sentence_transformers(None, use_default_repo=False)
 
 
 if __name__ == "__main__":

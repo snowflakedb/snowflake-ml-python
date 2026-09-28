@@ -825,7 +825,7 @@ class TestStep8RecreateFv:
     ``table:`` from ``RAW_EVENTS_BATCH_DECL`` to
     ``RAW_EVENTS_BATCH_DECL_V2``, then asserts the plan emits
     ``RECREATE_FV`` for ``MY_BATCH_FV_BATCH_DECL`` and that plain
-    apply refuses (must be ``--allow-recreate``-gated).  The SQL FV
+    apply refuses (must be ``--destructive``-gated).  The SQL FV
     is untouched in §8.
     """
 
@@ -860,7 +860,7 @@ class TestStep8RecreateFv:
     def test_step8_destructive_flag_present(self, tmp_path: Path) -> None:
         """Apply-time gate: the destructive flag is what makes the CLI
         emit ``Status: refused`` on plain apply and ``Status: applied``
-        on ``--allow-recreate``.  The bug-bash §8 cascade
+        on ``--destructive``.  The bug-bash §8 cascade
         (``Status: applied`` then ``Status: no_plan``) is the symptom of
         this flag being absent because the planner emitted NO_CHANGE.
 

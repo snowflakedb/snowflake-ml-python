@@ -576,7 +576,7 @@ class TestDestructiveCheckNestedFeatures:
     against destructive function/aggregation edits.  Without this fix
     a UDF source change on a SPECIFICATION-backed FV slips past the
     plain ``snow feature apply`` flow and runs without the
-    ``--allow-recreate`` operator opt-in.
+    ``--destructive`` operator opt-in.
     """
 
     def _deployed_fv_payload(self) -> dict[str, Any]:

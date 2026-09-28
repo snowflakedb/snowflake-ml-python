@@ -972,7 +972,7 @@ class TestPlannerBackfillBlock:
       block reaches the executor as part of ``op.payload``).
     * Mark a backfill-driven re-materialisation (``backfill.overwrite=True``
       against an existing FV) as **destructive** so apply requires
-      ``--allow-recreate`` even when the structural hash matches.
+      ``--destructive`` even when the structural hash matches.
     """
 
     def test_streaming_fv_backfill_only_edit_is_no_change(self) -> None:
@@ -1039,7 +1039,7 @@ class TestPlannerBackfillBlock:
     def test_existing_batch_fv_with_backfill_overwrite_emits_destructive_op(self) -> None:
         """Adding ``backfill.overwrite=True`` to an unchanged existing batch FV
         must emit a destructive op so plain ``snow feature apply`` refuses
-        the plan and the operator must explicitly pass ``--allow-recreate``.
+        the plan and the operator must explicitly pass ``--destructive``.
 
         The op kind itself can be CREATE_FV (re-register with overwrite=True)
         or RECREATE_FV (drop + register) — both achieve re-materialisation.
@@ -1062,14 +1062,14 @@ class TestPlannerBackfillBlock:
         )
         assert any(op.destructive for op in actionable_ops), (
             "backfill.overwrite=True implies re-materialisation; the op MUST "
-            "be marked destructive=True so the --allow-recreate gate fires "
+            "be marked destructive=True so the --destructive gate fires "
             "at apply time."
         )
 
     def test_new_fv_with_backfill_overwrite_is_not_destructive(self) -> None:
         """A brand-new FV with ``backfill.overwrite=True`` is benign — there
         is nothing to overwrite, so the CREATE_FV op stays non-destructive
-        and a plain ``snow feature apply`` (no --allow-recreate) succeeds."""
+        and a plain ``snow feature apply`` (no --destructive) succeeds."""
         local_dict = _batch_fv_with_backfill_dict(backfill={"overwrite": True})
         local_fv = FeatureView.model_validate(local_dict)
         plan = generate_plan(_batch(local_fv), _empty_applied(), _opts())

@@ -604,6 +604,56 @@ class ExperimentTrackingTest(absltest.TestCase):
             # Verify registry.log_model was called with original arguments
             self.mock_registry.log_model.assert_called_once_with(mock_model, model_name="test", version_name="v1")
 
+    def test_log_model_with_model_registry(self) -> None:
+        """Test that log_model uses the user-provided model_registry when set"""
+        mock_model_registry = MagicMock()
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, model_registry=mock_model_registry)
+
+        mock_run = MagicMock()
+        mock_experiment_info = MagicMock()
+        exp._experiment = MagicMock()
+        exp._run = mock_run
+        mock_run._get_experiment_info.return_value = mock_experiment_info
+        mock_model = MagicMock()
+
+        with patch("snowflake.ml.experiment._experiment_info.ExperimentInfoPatcher") as mock_patcher_class:
+            mock_patcher = MagicMock()
+            mock_patcher_class.return_value = mock_patcher
+
+            exp.log_model(mock_model, model_name="test", version_name="v1")  # type: ignore[call-arg]
+
+            mock_model_registry.log_model.assert_called_once_with(mock_model, model_name="test", version_name="v1")
+            self.mock_registry.log_model.assert_not_called()
+
+    def test_log_model_without_model_registry_uses_default(self) -> None:
+        """Test that log_model constructs a registry from the experiment db/schema when no model_registry is set"""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        self.assertIsNone(exp._registry)
+
+        mock_run = MagicMock()
+        mock_experiment_info = MagicMock()
+        exp._experiment = MagicMock()
+        exp._run = mock_run
+        mock_run._get_experiment_info.return_value = mock_experiment_info
+        mock_model = MagicMock()
+
+        with patch("snowflake.ml.experiment._experiment_info.ExperimentInfoPatcher") as mock_patcher_class:
+            mock_patcher = MagicMock()
+            mock_patcher_class.return_value = mock_patcher
+
+            exp.log_model(mock_model, model_name="test", version_name="v1")  # type: ignore[call-arg]
+
+            self.mock_registry.log_model.assert_called_once_with(mock_model, model_name="test", version_name="v1")
+
+    def test_model_registry_not_affected_by_set_experiment(self) -> None:
+        """Test that set_experiment changing db/schema does not affect the user-provided model_registry"""
+        mock_model_registry = MagicMock()
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, model_registry=mock_model_registry)
+
+        exp.set_experiment("TEST_EXPERIMENT", database_name="NEW_DB", schema_name="NEW_SCHEMA")
+
+        self.assertIs(exp._registry, mock_model_registry)
+
     def test_log_artifact(self) -> None:
         """Test logging artifact with nested artifact path"""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)

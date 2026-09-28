@@ -16,7 +16,7 @@ against the new runtime-derived applied-state ``Datasource`` entry that
 * ``applied is not None`` + ``"update_desc_only"`` → ``UPDATE_SOURCE``
   (non-destructive).
 * ``applied is not None`` + ``"recreate"`` → ``RECREATE_SOURCE``
-  (destructive; ``--allow-recreate``).
+  (destructive; ``--destructive``).
 
 The orphan-drop pass adds a sixth contract: any applied ``Datasource``
 key that is not present in the local batch must emit ``DROP_SOURCE``

@@ -2035,6 +2035,87 @@ class ModelManagerTest(parameterized.TestCase):
             mock_create_from_stage.assert_called_once()
             self.assertEqual(mv, self.m_mv)
 
+    def test_is_create_model_object_already_exists_error(self) -> None:
+        self.assertTrue(
+            model_manager._is_create_model_object_already_exists_error(
+                snowpark_exceptions.SnowparkSQLException("100132: object already exists")
+            )
+        )
+        self.assertTrue(
+            model_manager._is_create_model_object_already_exists_error(
+                snowpark_exceptions.SnowparkSQLException("Object already exists", sql_error_code=100132)
+            )
+        )
+        self.assertFalse(
+            model_manager._is_create_model_object_already_exists_error(
+                snowpark_exceptions.SnowparkSQLException("Cannot create model because it already exists")
+            )
+        )
+
+    def test_log_model_retries_on_create_model_object_already_exists(self) -> None:
+        m_model = mock.MagicMock()
+        m_sample_input_data = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        snow_exc = snowpark_exceptions.SnowparkSQLException(
+            "Object already exists.",
+            sql_error_code=100132,
+        )
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", side_effect=[False, True, False]),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(
+                self.m_r._model_ops,
+                "create_from_stage",
+                side_effect=[snow_exc, None],
+            ) as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                version_name="V1",
+                sample_input_data=m_sample_input_data,
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+        self.assertEqual(mv, self.m_mv)
+        self.assertEqual(mock_save.call_count, 2)
+        self.assertEqual(mock_create_from_stage.call_count, 2)
+
+    def test_log_model_does_not_retry_on_other_snowpark_sql_exception(self) -> None:
+        m_model = mock.MagicMock()
+        m_sample_input_data = mock.MagicMock()
+        snow_exc = snowpark_exceptions.SnowparkSQLException("Compilation error unrelated to existence")
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r, "_log_model", side_effect=snow_exc) as mock_inner_log_model,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with self.assertRaises(snowpark_exceptions.SnowparkSQLException):
+                self.m_r.log_model(
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="V1",
+                    sample_input_data=m_sample_input_data,
+                    statement_params=self.base_statement_params,
+                    progress_status=create_mock_progress_status(),
+                )
+        mock_inner_log_model.assert_called_once()
+
 
 if __name__ == "__main__":
     absltest.main()

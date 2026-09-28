@@ -362,13 +362,29 @@ class MLJob(Generic[T], SerializableSessionMixin):
         """
         if self._result is None:
             self.wait(timeout)
+            # Retrying would push the call past the caller's timeout, so only retry when unbounded.
+            remaining = _INSTANCE_RECORD_TIMEOUT_SECONDS if timeout < 0 else 0
             try:
-                self._result = interop_utils.load(
-                    self._result_path, session=self._session, path_transform=self._transform_path
-                )
+                while True:
+                    try:
+                        self._result = interop_utils.load(
+                            self._result_path, session=self._session, path_transform=self._transform_path
+                        )
+                        break
+                    except (OSError, json.JSONDecodeError) as error:
+                        if remaining <= 0:
+                            raise
+                        logger.warning(
+                            "job result retrieval: result is not yet readable: %s; retrying in %d second(s)",
+                            error,
+                            _INSTANCE_RECORD_POLL_INTERVAL_SECONDS,
+                        )
+                        time.sleep(_INSTANCE_RECORD_POLL_INTERVAL_SECONDS)
+                        remaining -= _INSTANCE_RECORD_POLL_INTERVAL_SECONDS
             except Exception as e:
                 raise RuntimeError(f"Failed to retrieve result for job, error: {e!r}") from e
 
+        assert self._result is not None
         return cast(T, self._result.get_value())
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])

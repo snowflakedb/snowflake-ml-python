@@ -3,7 +3,7 @@
 ``cluster_by`` is *structural*: editing the value alters the Dynamic Table's
 ``CLUSTER BY (...)`` clause, which Snowflake cannot apply in-place.  The
 planner must therefore emit ``RECREATE_FV`` (``destructive=True``,
-``--allow-recreate`` gated) instead of ``UPDATE_FV``.
+``--destructive`` gated) instead of ``UPDATE_FV``.
 
 Coverage map:
 

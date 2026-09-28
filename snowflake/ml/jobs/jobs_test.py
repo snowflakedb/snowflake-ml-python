@@ -22,6 +22,47 @@ spec:
 
 
 class JobTest(parameterized.TestCase):
+    def test_result_retries_stage_visibility_errors_then_succeeds(self) -> None:
+        malformed_result = json.JSONDecodeError("Extra data", "{}{}", 2)
+        missing_result = OSError("result is not visible")
+        expected_result = MagicMock()
+        expected_result.get_value.return_value = "result"
+        result_job = jobs.MLJob[None]("db.schema.job", session=MagicMock())
+        with patch(
+            "snowflake.ml.jobs.job.interop_utils.load",
+            autospec=True,
+            side_effect=[missing_result, malformed_result, expected_result],
+        ) as load_result, patch("snowflake.ml.jobs.job.time.sleep", autospec=True) as sleep, patch.object(
+            result_job, "wait", autospec=True
+        ), patch.object(
+            job.MLJob, "_result_path", new_callable=PropertyMock, return_value="@stage/result"
+        ):
+            actual_result = result_job.result()
+
+        self.assertEqual(actual_result, "result")
+        self.assertEqual(load_result.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 2])
+
+    def test_result_does_not_retry_when_timeout_is_set(self) -> None:
+        malformed_result = json.JSONDecodeError("Extra data", "{}{}", 2)
+        result_job = jobs.MLJob[None]("db.schema.job", session=MagicMock())
+        with patch(
+            "snowflake.ml.jobs.job.interop_utils.load",
+            autospec=True,
+            side_effect=malformed_result,
+        ) as load_result, patch("snowflake.ml.jobs.job.time.sleep", autospec=True) as sleep, patch.object(
+            result_job, "wait", autospec=True
+        ), patch.object(
+            job.MLJob, "_result_path", new_callable=PropertyMock, return_value="@stage/result"
+        ), self.assertRaises(
+            RuntimeError
+        ) as raised:
+            result_job.result(timeout=1)
+
+        self.assertIs(raised.exception.__cause__, malformed_result)
+        load_result.assert_called_once()
+        sleep.assert_not_called()
+
     @parameterized.named_parameters(  # type: ignore[misc]
         ("target_instances=2", [Row(target_instances=2)], 2),
     )
