@@ -409,6 +409,59 @@ class ModelMethodTest(parameterized.TestCase):
             method_dict = mm.save(pathlib.Path(workspace))
             self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
 
+    def test_model_method_object_input_is_plain_object(self) -> None:
+        """FeatureSpec(OBJECT) registers as bare OBJECT, not OBJECT(field TYPE, ...)."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        object_input_sig = {
+            "predict": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.OBJECT, name="payload")],
+                outputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT)],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=object_input_sig
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["inputs"], [{"name": "PAYLOAD", "type": "OBJECT"}])
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+            self.assertFalse(method_dict["inputs"][0]["type"].startswith("OBJECT("))
+
+    def test_model_method_array_object_input_is_array(self) -> None:
+        """FeatureSpec(OBJECT, shape=(-1,)) registers as ARRAY, not OBJECT(field TYPE, ...)."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        array_object_sig = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.OBJECT, name="payload", shape=(-1,))
+                ],
+                outputs=[
+                    model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,))
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=array_object_sig
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(meta, "predict", "python_runtime", fg)
+            method_dict = mm.save(pathlib.Path(workspace))
+            self.assertEqual(method_dict["inputs"], [{"name": "PAYLOAD", "type": "ARRAY"}])
+            self.assertEqual(method_dict["outputs"], [{"type": "OBJECT"}])
+
     def test_model_method_single_object_output_stays_object(self) -> None:
         """A single OBJECT-typed output stays packed (no native unwrap), even when the capability is enabled."""
         fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))

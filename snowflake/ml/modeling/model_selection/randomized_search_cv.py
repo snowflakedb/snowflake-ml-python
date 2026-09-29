@@ -3,6 +3,7 @@ from typing import Any, Iterable, Union
 import cloudpickle as cp
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import sklearn
 import sklearn.model_selection
 from sklearn.utils.metaestimators import available_if
@@ -259,6 +260,7 @@ class RandomizedSearchCV(BaseTransformer):
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
             f"pandas=={pd.__version__}",
+            f"pyarrow=={pa.__version__}",
         }
         deps = deps | gather_dependencies(estimator)
         self._deps = list(deps)

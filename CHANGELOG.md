@@ -4,6 +4,12 @@
 
 ### New Features
 
+* Registry: `FeatureSpec(dtype=DataType.OBJECT)` now accepts schema-free Python dictionaries as a
+  model input or output (SQL `OBJECT`). Callers can pass a dict to `ModelVersion.run`, an object
+  literal in SQL, or a JSON object over REST, without stringifying to JSON. Use `shape=(-1,)` for
+  a list of dictionaries (`ARRAY(OBJECT)`). Closed structs with a fixed field list remain
+  `FeatureGroupSpec`.
+
 * Experiment Tracking: `ExperimentTracking` accepts an optional `model_registry` parameter. When provided,
   `log_model` stores models in the registry's database and schema instead of the experiment's, so experiments
   and models can live in separate schemas.
@@ -48,6 +54,8 @@
 ## 2.1.0 (2026-09-14)
 
 ### New Features
+
+* Generic: Support Python 3.14.
 
 * Experiment Tracking: Added `ExperimentTracking.get_metric_history`, which returns every logged step of a
   metric instead of only the value at the highest step reported by `list_metrics`. Pass a metric name to scope

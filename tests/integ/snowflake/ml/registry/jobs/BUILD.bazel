@@ -34,7 +34,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_functional_test.py"],
     optional_dependencies = ["scikit-learn"],
-    shard_count = 6,
+    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
