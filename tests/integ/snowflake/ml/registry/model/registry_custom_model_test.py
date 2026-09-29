@@ -8,7 +8,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities
-from snowflake.ml.model import custom_model
+from snowflake.ml.model import custom_model, model_signature
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
@@ -104,6 +104,17 @@ class DemoModelWithPdSeriesOutPut(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.Series:
         return input["c1"]
+
+
+class EchoModel(custom_model.CustomModel):
+    """Echoes an open OBJECT map so callers can keep caller-chosen keys."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"payload": input["payload"]})
 
 
 class DemoModelPassthrough(custom_model.CustomModel):
@@ -463,6 +474,72 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    _validate,
+                )
+            },
+        )
+
+    def test_custom_echo_model_object(self) -> None:
+        lm = EchoModel(custom_model.ModelContext())
+        pd_df = pd.DataFrame(
+            {
+                "payload": [
+                    {"route": "delivery", "confidence": 0.94},
+                    {"urgent": True},
+                ]
+            }
+        )
+        object_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT)],
+            outputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT)],
+        )
+
+        def _validate(res: pd.DataFrame) -> None:
+            self.assertEqual(res.iloc[0]["payload"], {"route": "delivery", "confidence": 0.94})
+            self.assertEqual(res.iloc[1]["payload"], {"urgent": True})
+
+        self._test_registry_model(
+            model=lm,
+            sample_input_data=pd_df,
+            signatures={"predict": object_sig},
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    _validate,
+                )
+            },
+            is_object_output_assert={"predict": True},
+        )
+
+    def test_custom_echo_model_array_object(self) -> None:
+        lm = EchoModel(custom_model.ModelContext())
+        pd_df = pd.DataFrame(
+            {
+                "payload": [
+                    [{"route": "delivery", "confidence": 0.94}, {"urgent": True}],
+                    [{"score": 0.9}],
+                ]
+            }
+        )
+        array_object_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,))],
+            outputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,))],
+        )
+
+        def _validate(res: pd.DataFrame) -> None:
+            self.assertEqual(
+                res.iloc[0]["payload"],
+                [{"route": "delivery", "confidence": 0.94}, {"urgent": True}],
+            )
+            self.assertEqual(res.iloc[1]["payload"], [{"score": 0.9}])
+
+        self._test_registry_model(
+            model=lm,
+            sample_input_data=pd_df,
+            signatures={"predict": array_object_sig},
             prediction_assert_fns={
                 "predict": (
                     pd_df,

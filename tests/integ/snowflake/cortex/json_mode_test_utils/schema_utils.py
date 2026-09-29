@@ -1,6 +1,6 @@
 """JSON-mode Complete test fixtures.
 
-Keep in sync with tests/integ/snowflake/cortex/json_mode_test_utils/schema_utils.py.
+Keep in sync with snowflake/cortex/json_mode_test_utils/schema_utils.py.
 """
 
 from dataclasses import dataclass

@@ -1,6 +1,28 @@
 # Release History
 
-## 2.3.0
+## 2.4.0
+
+### New Features
+
+* Generic: Support Python 3.14.
+
+* Registry: `FeatureSpec(dtype=DataType.OBJECT)` now accepts schema-free Python dictionaries as a
+  model input or output (SQL `OBJECT`). Callers can pass a dict to `ModelVersion.run`, an object
+  literal in SQL, or a JSON object over REST, without stringifying to JSON. Use `shape=(-1,)` for
+  a list of dictionaries (`ARRAY(OBJECT)`). Closed structs with a fixed field list remain
+  `FeatureGroupSpec`.
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Registry: `log_model` no longer raises when `options={'relax_version': True}` is used with pip
+  requirements or Snowpark Container Services-only targets. The option is ignored, a warning is
+  emitted, and exact pip version specifications are kept.
+
+### Deprecations
+
+## 2.3.0 (2026-09-28)
 
 ### New Features
 

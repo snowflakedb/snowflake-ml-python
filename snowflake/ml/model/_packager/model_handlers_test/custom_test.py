@@ -117,6 +117,17 @@ class DemoModelWithManyArtifacts(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"] + self.bias})
 
 
+class EchoModel(custom_model.CustomModel):
+    """Echoes an open OBJECT map so callers can keep caller-chosen keys."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"payload": input["payload"]})
+
+
 class CustomHandlerTest(absltest.TestCase):
     def test_custom_model_with_multiple_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -439,6 +450,72 @@ class CustomHandlerTest(absltest.TestCase):
             sig = pk.meta.signatures["predict"]
             self.assertEqual(len(sig.params), 1)
             self.assertEqual(sig.params[0].name, "custom_param")
+
+    def test_echo_model_object_signature(self) -> None:
+        lm = EchoModel(custom_model.ModelContext())
+        payload_rows = [{"route": "delivery"}, {"urgent": True, "score": 0.9}]
+        d = pd.DataFrame({"payload": payload_rows})
+        object_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT)],
+            outputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT)],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "echo")).save(
+                name="echo",
+                model=lm,
+                signatures={"predict": object_sig},
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.CustomModelSaveOption(),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "echo"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, EchoModel)
+            saved_sig = pk.meta.signatures["predict"]
+            input_spec = saved_sig.inputs[0]
+            output_spec = saved_sig.outputs[0]
+            assert isinstance(input_spec, model_signature.FeatureSpec)
+            assert isinstance(output_spec, model_signature.FeatureSpec)
+            self.assertEqual(input_spec._dtype, model_signature.DataType.OBJECT)
+            self.assertEqual(output_spec._dtype, model_signature.DataType.OBJECT)
+            self.assertNotIsInstance(input_spec, model_signature.FeatureGroupSpec)
+            res = pk.model.predict(d)
+            self.assertEqual(res.iloc[0]["payload"], payload_rows[0])
+            self.assertEqual(res.iloc[1]["payload"], payload_rows[1])
+
+    def test_echo_model_array_object_signature(self) -> None:
+        lm = EchoModel(custom_model.ModelContext())
+        payload_rows = [[{"route": "delivery"}, {"urgent": True}], [{"score": 0.9}]]
+        d = pd.DataFrame({"payload": payload_rows})
+        array_object_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,))],
+            outputs=[model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,))],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "echo")).save(
+                name="echo",
+                model=lm,
+                signatures={"predict": array_object_sig},
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.CustomModelSaveOption(),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "echo"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, EchoModel)
+            saved_sig = pk.meta.signatures["predict"]
+            input_spec = saved_sig.inputs[0]
+            output_spec = saved_sig.outputs[0]
+            assert isinstance(input_spec, model_signature.FeatureSpec)
+            assert isinstance(output_spec, model_signature.FeatureSpec)
+            self.assertEqual(input_spec._dtype, model_signature.DataType.OBJECT)
+            self.assertEqual(input_spec._shape, (-1,))
+            self.assertEqual(output_spec._shape, (-1,))
+            res = pk.model.predict(d)
+            self.assertEqual(res.iloc[0]["payload"], payload_rows[0])
+            self.assertEqual(res.iloc[1]["payload"], payload_rows[1])
 
 
 if __name__ == "__main__":

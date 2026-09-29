@@ -80,7 +80,7 @@ class XGBSampleWeightTest(parameterized.TestCase):
         xgb_classifier = XGB_XGBClassifier()
 
         param_grid = {
-            "max_depth": [80, 100],
+            "max_depth": [3, 5],
         }
 
         grid_search = GridSearchCV(

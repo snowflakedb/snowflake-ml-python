@@ -1,8 +1,17 @@
-load("//bazel:py_rules.bzl", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = [
     "//bazel:snowml_public_common",
 ])
+
+py_library(
+    name = "json_mode_test_utils",
+    testonly = True,
+    srcs = ["json_mode_test_utils/schema_utils.py"],
+    deps = [
+        "//snowflake/cortex:complete",
+    ],
+)
 
 py_test(
     name = "complete_test",
@@ -13,8 +22,8 @@ py_test(
         "short_regress",
     ],
     deps = [
+        ":json_mode_test_utils",
         "//snowflake/cortex:init",
-        "//snowflake/cortex:schema_utils",
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",

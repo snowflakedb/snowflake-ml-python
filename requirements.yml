@@ -98,7 +98,7 @@
   dev_version: 3.1.1
   version_requirements: '>=2.0.0'
 - name: coverage
-  dev_version: 7.11.0
+  dev_version: 7.14.1
 - name_pypi: datasets
   dev_version_pypi: 3.3.2
   tags:

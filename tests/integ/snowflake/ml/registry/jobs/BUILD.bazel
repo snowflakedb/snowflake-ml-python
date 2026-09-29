@@ -34,7 +34,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_functional_test.py"],
     optional_dependencies = ["scikit-learn"],
-    shard_count = 6,
+    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -48,7 +48,7 @@ py_test(
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = [
-        "feature:model_serving",
+        "feature:none",
         "smoke_test",
     ],
     deps = [
@@ -262,7 +262,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_partitioned_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 6,
+    shard_count = 4,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -274,7 +274,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_batch_inference_partition_on_write_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 6,
+    shard_count = 4,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_partitioned_test_lib",

@@ -161,6 +161,34 @@ elif [[ -n "${BUILD_SPCS_IMAGES}" ]]; then
     WITH_SPCS_IMAGE=true
 fi
 
+# Bazelisk downloads the Bazel release pinned in .bazelversion on first invocation, so
+# every mode depends on reaching that public download host before any local work starts.
+# A transient failure there says nothing about the code under test, so probe it up front
+# and retry with linear backoff rather than letting the first real Bazel command abort
+# the run. Exhausting the retries is a setup failure (exit 2), not a test failure.
+readonly BAZEL_BOOTSTRAP_ATTEMPTS=3
+readonly BAZEL_BOOTSTRAP_BACKOFF_SECONDS=60
+
+ensure_bazel_available() {
+    local attempt=1
+    local delay
+    while [[ ${attempt} -le ${BAZEL_BOOTSTRAP_ATTEMPTS} ]]; do
+        if "${bazel}" --version; then
+            return 0
+        fi
+        if [[ ${attempt} -lt ${BAZEL_BOOTSTRAP_ATTEMPTS} ]]; then
+            delay=$((attempt * BAZEL_BOOTSTRAP_BACKOFF_SECONDS))
+            echo "Bazel is not usable yet (attempt ${attempt}/${BAZEL_BOOTSTRAP_ATTEMPTS}); retrying in ${delay}s..." >&2
+            sleep "${delay}"
+        fi
+        attempt=$((attempt + 1))
+    done
+    echo "ERROR: Bazel is still unusable after ${BAZEL_BOOTSTRAP_ATTEMPTS} attempts; the pinned release could not be downloaded." >&2
+    exit 2
+}
+
+ensure_bazel_available
+
 if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
     if [[ -z "${target}" ]]; then
         help 1

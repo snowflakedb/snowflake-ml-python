@@ -11,18 +11,6 @@ cd /path/to/snowml
 python -m pytest snowflake/ml/feature_store/decl/tests/ -v
 ```
 
-Focused batch FV pytest slice (no Snowflake):
-
-```bash
-bash /path/to/snowcli_fs/scripts/verify_batch_fv_bug_bash.sh --pytest-only
-```
-
-Live walkthrough of the operator doc `docs/BATCH_FV_BUG_BASH.md` at the snowcli_fs
-workspace root: run `bash …/scripts/verify_batch_fv_bug_bash.sh` (no env required
-unless you need overrides); the script reads **CURRENT_DATABASE** /
-**CURRENT_SCHEMA** from the connection for `snow sql`. Use `--pytest-only` for
-unit tests only. On failure it may inject HTML TODO markers into that doc only.
-
 Run a specific test file:
 
 ```bash
@@ -56,6 +44,8 @@ Each test file is named `test_<module>.py` where `<module>` is the module it cov
 | `test_planner.py` | `planner.py` | Plan generation: CREATE, UPDATE, RECREATE, NO_CHANGE *(Phase 1)* |
 | `test_planner_batch_feature_view.py` | `planner.py` | Batch FV plan ops (`UPDATE_FV`, `RECREATE_FV`, drift) — also covers `_batch_fv_operational_drift` recovery on `compile_to_spec` failure and the `refresh_freq + target_lag` co-set case from BUG_BASH §7 |
 | `test_batch_feature_view_validation.py` | `invariants.py` | Batch FV validation (no UDF, sources, tiles) |
+| `test_append_only_bfv_validation.py` | `spec_models.py` | Append-only BFV load-time validation (`refresh_mode: FULL`, CRON `refresh_freq`, `timestamp_col`, no tiling / overwrite) + `_is_cron_refresh_freq` |
+| `test_advanced_bvt_append_only.py` | `spec_compiler.py` / `invariants.py` / `imperative_executor.py` / `state.py` / `exporter.py` / `planner.py` | End-to-end `append_only` field flow: compile → hash → plan → executor kwarg → exporter / state round-trip. `TestPlannerAppendOnlyEvolveRouting` pins the planner routing: a schema-preserving edit (source-only / trailing-feature append) → non-destructive `EVOLVE_FV`; a validator-legal breaking edit (feature retype) → destructive `RECREATE_FV` (breaking edits must keep `refresh_mode: FULL`, since a `refresh_mode` flip is rejected at load time and never reaches the planner) |
 | `test_imperative_executor_entity_resolution.py` | `imperative_executor.py` | FV entity ref: name vs join-key fallback |
 | `test_imperative_executor_update_batch_fv.py` | `imperative_executor.py` | Batch UPDATE_FV → `update_feature_view`; `OnlineConfig.target_lag` propagation from `target_lag` and `target_lag_sec` (BUG_BASH §6 latent fix) |
 | `test_batch_fv_project_integration.py` | cross-module | Load → validate → plan → serialize round-trip; pins fixture `target_lag` / `refresh_freq` shape from BUG_BASH §5 |
@@ -64,7 +54,7 @@ Each test file is named `test_<module>.py` where `<module>` is the module it cov
 | `test_queries.py` | `queries.py` | `state_queries` / `list_state_queries` SQL factories + new `dynamic_tables_query` (BUG_BASH §7/§8 DT-text recovery) |
 | `test_state.py` | `state.py` | Applied-state parsing; `TestFetchAppliedStateWithDtTextMap` + `TestExtractSourceTableFromDtText` cover the DT-DDL → `BatchFV.sources[0].table` injection; `TestExtractDtBodyFromText` + `TestClassifyDtBody` + `TestInjectBatchFvSourceQueryShape` cover the `query:`-shape recovery path that emits a synthetic `<FV>__SOURCE` source name when the deployed body is anything other than a flat `SELECT * FROM <single qualified table>` |
 | `test_invariants.py` | `invariants.py` | `TestBatchFvFullSpecHashParity` pins the BatchFV hash/structural-equivalent normalisation: `spec.sources` projected to sorted `[{binding}]`, 1:1 auto-derived features stripped, explicit aggregation surfaces preserved |
-| `test_object_hashing.py` | `invariants.py` (+ `spec_compiler.py`) | Canonical hash table per object kind. `TestThreeShapeParity` pins authoring ↔ compiled ↔ applied hash equality for each of the 11 kind variants (Entity, two Source flavours, two StreamingFV variants, three BatchFV variants, RealtimeFV, FeatureGroup). `TestEditSensitivity` is the parametrised MUST-bump / MUST-NOT-bump matrix — every documented edit (UDF body, source-table swap, advanced BFV fields, FG slice/alias) is exercised once and the reason text surfaces in the failure message. `TestVolatileMetadataStripped` pins that bumping `client_version` / `oft_id` / `spec_format_version` on the applied side does not change the hash, so an operator upgrade cannot trigger a recreate storm. Live counterpart: `declarative_feature_store/tests/verify_roundtrip.sh` |
+| `test_object_hashing.py` | `invariants.py` (+ `spec_compiler.py`) | Canonical hash table per object kind. `TestThreeShapeParity` pins authoring ↔ compiled ↔ applied hash equality for each of the 11 kind variants (Entity, two Source flavours, two StreamingFV variants, three BatchFV variants, RealtimeFV, FeatureGroup). `TestEditSensitivity` is the parametrised MUST-bump / MUST-NOT-bump matrix — every documented edit (UDF body, source-table swap, advanced BFV fields, FG slice/alias) is exercised once and the reason text surfaces in the failure message. `TestVolatileMetadataStripped` pins that bumping `client_version` / `oft_id` / `spec_format_version` on the applied side does not change the hash, so an operator upgrade cannot trigger a recreate storm. |
 | `test_sql_generator.py` | `sql_generator.py` | SQL DDL string generation from Plan *(Phase 1)* |
 | `test_integration.py` | cross-module | End-to-end pipeline: loader → compiler → invariants → planner *(Phase 1)* |
 

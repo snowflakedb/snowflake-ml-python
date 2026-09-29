@@ -308,7 +308,7 @@ py_test(
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = [
-        "feature:model_serving",
+        "feature:none",
         "smoke_test",
     ],
     deps = [

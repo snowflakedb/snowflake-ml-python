@@ -1,8 +1,14 @@
 import cloudpickle as cp
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 from snowflake.ml.modeling._internal.estimator_utils import get_module_name
+
+# The Snowflake connector only enables its pandas fetch path when both pandas and pyarrow are
+# importable, and reports a missing pyarrow as "Optional dependency: 'pandas' is not installed".
+# Stored procedures that call DataFrame.to_pandas() must therefore declare both packages.
+_PANDAS_FETCH_DEPENDENCIES = [f"pandas=={pd.__version__}", f"pyarrow=={pa.__version__}"]
 
 
 class ModelSpecifications:
@@ -25,7 +31,7 @@ class SKLearnModelSpecifications(ModelSpecifications):
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
-            f"pandas=={pd.__version__}",
+            *_PANDAS_FETCH_DEPENDENCIES,
         ]
 
         # A change from previous implementation.
@@ -62,7 +68,7 @@ class XGBoostModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"xgboost=={xgboost.__version__}",
             f"cloudpickle=={cp.__version__}",
-            f"pandas=={pd.__version__}",
+            *_PANDAS_FETCH_DEPENDENCIES,
         ]
         super().__init__(imports=imports, pkgDependencies=pkgDependencies)
 
@@ -78,7 +84,7 @@ class LightGBMModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"lightgbm=={lightgbm.__version__}",
             f"cloudpickle=={cp.__version__}",
-            f"pandas=={pd.__version__}",
+            *_PANDAS_FETCH_DEPENDENCIES,
         ]
         super().__init__(imports=imports, pkgDependencies=pkgDependencies)
 
@@ -94,7 +100,7 @@ class SklearnModelSelectionModelSpecifications(ModelSpecifications):
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
             f"xgboost=={xgboost.__version__}",
-            f"pandas=={pd.__version__}",
+            *_PANDAS_FETCH_DEPENDENCIES,
         ]
 
         # Only include lightgbm in the dependencies if it is installed.

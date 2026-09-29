@@ -383,14 +383,14 @@ class ModelParameterReconciler:
         if relax_version and (
             packaged_as_pip_model or only_spcs or (has_explicit_pip_without_conda and not force_conda_defaults)
         ):
-            raise exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    "Setting `relax_version=True` is only allowed for models to be run in Warehouse with "
-                    "Snowflake Conda Channel dependencies. It cannot be used with pip requirements or when "
-                    "targeting only Snowpark Container Services."
-                ),
+            warnings.warn(
+                "`relax_version=True` is ignored for models that use pip requirements or that target only "
+                "Snowpark Container Services. Exact pip version specifications will be kept. "
+                "Set `options={'relax_version': False}` to avoid this warning.",
+                category=UserWarning,
+                stacklevel=2,
             )
+            options["relax_version"] = False
 
         return options
 

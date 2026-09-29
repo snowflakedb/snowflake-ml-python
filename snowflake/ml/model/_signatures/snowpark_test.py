@@ -36,6 +36,18 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         ):
             snowpark_handler.SnowparkDataFrameHandler.validate(df)
 
+        object_schema = spt.StructType([spt.StructField('"payload"', spt.MapType(spt.StringType(), spt.VariantType()))])
+        object_df = self._session.create_dataframe([[{"route": "delivery"}]], object_schema)
+        snowpark_handler.SnowparkDataFrameHandler.validate(object_df)
+
+        array_object_schema = spt.StructType(
+            [spt.StructField('"payload"', spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType())))]
+        )
+        array_object_df = self._session.create_dataframe(
+            [[[{"route": "delivery"}, {"urgent": True}]]], array_object_schema
+        )
+        snowpark_handler.SnowparkDataFrameHandler.validate(array_object_df)
+
     def test_infer_schema_snowpark_df(self) -> None:
         schema = spt.StructType([spt.StructField('"a"', spt.LongType()), spt.StructField('"b"', spt.StringType())])
         df = self._session.create_dataframe([[1, "snow"], [3, "flake"]], schema)
@@ -368,6 +380,36 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         pd.testing.assert_frame_equal(
             pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False
         )
+
+        object_features = [
+            model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT),
+        ]
+        pd_df = pd.DataFrame({"payload": [{"route": "delivery"}, {"urgent": True}]})
+        sp_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+            self._session,
+            pd_df,
+            keep_order=False,
+            features=object_features,
+        )
+        snowpark_handler.SnowparkDataFrameHandler.validate(sp_df)
+        converted = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df, features=object_features)
+        self.assertEqual(converted.iloc[0]["payload"], {"route": "delivery"})
+        self.assertEqual(converted.iloc[1]["payload"], {"urgent": True})
+
+        array_object_features = [
+            model_signature.FeatureSpec(name="payload", dtype=model_signature.DataType.OBJECT, shape=(-1,)),
+        ]
+        pd_df = pd.DataFrame({"payload": [[{"route": "delivery"}, {"urgent": True}], [{"score": 0.9}]]})
+        sp_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+            self._session,
+            pd_df,
+            keep_order=False,
+            features=array_object_features,
+        )
+        snowpark_handler.SnowparkDataFrameHandler.validate(sp_df)
+        converted = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df, features=array_object_features)
+        self.assertEqual(converted.iloc[0]["payload"], [{"route": "delivery"}, {"urgent": True}])
+        self.assertEqual(converted.iloc[1]["payload"], [{"score": 0.9}])
 
     def test_is_quoted_identifiers_ignore_case_enabled(self) -> None:
         def create_mock_row(value: str) -> mock.Mock:

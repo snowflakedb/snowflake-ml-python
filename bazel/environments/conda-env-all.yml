@@ -15,7 +15,7 @@ dependencies:
   - catboost==1.2.10
   - cloudpickle==3.1.1
   - cmdstanpy==1.1.0
-  - coverage==7.11.0
+  - coverage==7.14.1
   - flask-cors==3.0.10
   - flask==3.1.2
   - fsspec==2025.10.0

@@ -6,7 +6,7 @@ from unittest import mock
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import env_utils
-from snowflake.ml._internal.exceptions import error_codes, exceptions
+from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env as packager_model_env
@@ -490,26 +490,18 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             self.assertTrue(result.options["relax_version"])
 
         reconciler = self._create_reconciler(pip_requirements=["xgboost==1.2.3"], options={"relax_version": True})
-        with self.assertRaises(exceptions.SnowflakeMLException) as cm:
-            reconciler.reconcile()
-        self.assertEqual(cm.exception.error_code, error_codes.INVALID_ARGUMENT)
-        self.assertIn(
-            "Setting `relax_version=True` is only allowed for models to be run in Warehouse with "
-            "Snowflake Conda Channel dependencies",
-            str(cm.exception),
-        )
+        with self.assertWarnsRegex(UserWarning, "`relax_version=True` is ignored"):
+            result = reconciler.reconcile()
+        assert result.options is not None
+        self.assertFalse(result.options["relax_version"])
 
         reconciler = self._create_reconciler(
             target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES], options={"relax_version": True}
         )
-        with self.assertRaises(exceptions.SnowflakeMLException) as cm:
-            reconciler.reconcile()
-        self.assertEqual(cm.exception.error_code, error_codes.INVALID_ARGUMENT)
-        self.assertIn(
-            "Setting `relax_version=True` is only allowed for models to be run in Warehouse with "
-            "Snowflake Conda Channel dependencies",
-            str(cm.exception),
-        )
+        with self.assertWarnsRegex(UserWarning, "`relax_version=True` is ignored"):
+            result = reconciler.reconcile()
+        assert result.options is not None
+        self.assertFalse(result.options["relax_version"])
 
         _mock_pip_only_packaging.return_value = True
         with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
@@ -518,10 +510,10 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 target_platforms=[model_types.TargetPlatform.WAREHOUSE],
                 options={"relax_version": True},
             )
-            with self.assertRaises(exceptions.SnowflakeMLException) as cm:
-                reconciler.reconcile()
-            self.assertEqual(cm.exception.error_code, error_codes.INVALID_ARGUMENT)
-            self.assertIn("pip requirements", str(cm.exception))
+            with self.assertWarnsRegex(UserWarning, "`relax_version=True` is ignored"):
+                result = reconciler.reconcile()
+            assert result.options is not None
+            self.assertFalse(result.options["relax_version"])
 
     def test_relax_version_defaults_true_when_pip_only_enabled_but_local_conda(self) -> None:
         """Capability on while packaging from a conda env keeps conda defaults (relax_version=True)."""

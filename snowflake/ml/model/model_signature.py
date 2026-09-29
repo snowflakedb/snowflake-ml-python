@@ -156,6 +156,60 @@ def _has_fixed_dimensions(shape: tuple[int, ...]) -> bool:
     return any(d != -1 for d in shape)
 
 
+def _is_null_cell(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, dict, np.ndarray)):
+        return False
+    try:
+        return bool(pd.isna(value))
+    except (ValueError, TypeError):
+        return False
+
+
+def _validate_nested_object_maps(
+    *,
+    value: Any,
+    remaining_shape: tuple[int, ...],
+    feature_name: str,
+    feature_shape: tuple[int, ...],
+) -> None:
+    if not remaining_shape:
+        if not isinstance(value, dict):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    f"Data Validation Error in feature {feature_name}: "
+                    + f"Feature type {core.DataType.OBJECT} is not met by all elements."
+                ),
+            )
+        return
+    if not isinstance(value, list):
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA,
+            original_exception=ValueError(
+                f"Data Validation Error in feature {feature_name}: "
+                + f"Feature shape {feature_shape} is not met by all elements."
+            ),
+        )
+    dim = remaining_shape[0]
+    if dim != -1 and len(value) != dim:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_DATA,
+            original_exception=ValueError(
+                f"Data Validation Error in feature {feature_name}: "
+                + f"Feature shape {feature_shape} is not met by all elements."
+            ),
+        )
+    for item in value:
+        _validate_nested_object_maps(
+            value=item,
+            remaining_shape=remaining_shape[1:],
+            feature_name=feature_name,
+            feature_shape=feature_shape,
+        )
+
+
 def _validate_array_or_series_type(
     arr: type_hints._SupportedNumpyArray | pd.Series, feature_type: core.DataType, strict: bool = False
 ) -> bool:
@@ -299,6 +353,18 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
+                if ft_type == core.DataType.OBJECT:
+                    for data_row in data_col:
+                        if _is_null_cell(data_row):
+                            continue
+                        _validate_nested_object_maps(
+                            value=data_row,
+                            remaining_shape=ft_shape,
+                            feature_name=ft_name,
+                            feature_shape=ft_shape,
+                        )
+                    continue
+
                 converted_data_list = [utils.convert_list_to_ndarray(data_row) for data_row in data_col]
 
                 if not all(
@@ -354,6 +420,25 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                                 + f"Feature shape {ft_shape} is not met by all elements in {data_col}."
                             ),
                         )
+
+            elif isinstance(data_col.iloc[0], dict):
+                if ft_shape is not None:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + "Feature is a array type feature while scalar data is provided."
+                        ),
+                    )
+
+                if ft_type != core.DataType.OBJECT:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_DATA,
+                        original_exception=ValueError(
+                            f"Data Validation Error in feature {ft_name}: "
+                            + f"Feature type {ft_type} is not met by all elements in {data_col}."
+                        ),
+                    )
 
             elif isinstance(data_col.iloc[0], str):
                 if ft_shape is not None:
