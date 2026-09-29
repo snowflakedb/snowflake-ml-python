@@ -195,7 +195,7 @@ class ApplyResult(BaseModel):
             (the plan carried at least one ``destructive=True`` op and
             ``PlanOptions.allow_recreate`` was False — no op was
             executed; the operator must re-run with
-            ``--allow-recreate`` to consume the same plan file under
+            ``--destructive`` to consume the same plan file under
             L5), ``"partial_failure"`` (one or more ops raised at
             execution time), or ``"validation_failed"`` (planner-side
             ERROR severities surfaced before execution).
@@ -207,7 +207,7 @@ class ApplyResult(BaseModel):
         errors: Blocking errors. For ``"validation_failed"`` these are
             the planner-side ERROR severities; for ``"refused"`` it is
             a single human-readable directive naming the destructive
-            op count and the ``--allow-recreate`` remediation.
+            op count and the ``--destructive`` remediation.
     """
 
     status: str = "applied"

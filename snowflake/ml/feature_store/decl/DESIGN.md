@@ -46,7 +46,8 @@ Enforced by `tests/test_wheel_isolation.py::TestNarrowedSpecIsolation`.
 | `invariants.py` | Validation; hashes (`_full_spec_hash`, `structural_fingerprint_hash`, `fg_content_hash`) |
 | `planner.py` | Diffs `SpecBatch` vs `AppliedState` → `Plan` (ordered `PlanOp` list) |
 | `state.py` | Builds `AppliedState` from raw `SHOW`/`DESCRIBE` rows and imperative FS rows |
-| `exporter.py` | Reconstructs authoring YAML from `AppliedState` (`snow feature init`) |
+| `exporter.py` | Reconstructs authoring YAML/Python from `AppliedState`; one `_export` driver + `_ExportRenderer` |
+| `python_codegen.py` | Renders authoring-format spec dicts as loadable `.py` modules (`export_specs_as_python`) |
 | `dependencies.py` | `topological_sort` (create order); `order_specs_for_drop` (reverse-topo teardown order) |
 | `udf_loader.py` | UDF source-string → callable (satisfies `StreamConfig.__post_init__` inspection guard) |
 | `imperative_executor.py` | **Only Snowflake I/O in decl/** — lazy bridge to `FeatureStore`; executes `PlanOp`s |
@@ -73,9 +74,52 @@ All `FeatureStore` / `FeatureView` / `Entity` imports are lazy (inside functions
   because `online` is present. Genuinely changing a streaming FV's online routing requires
   a destructive `RECREATE_FV`.
 - **Source ops:** dispatch by `payload["kind"]`. `BatchSource` ops are virtual no-ops (no API).
-- **`--allow-recreate` gate:** `execute_plan` short-circuits before any DDL when destructive ops
+- **`--destructive` gate:** `execute_plan` short-circuits before any DDL when destructive ops
   are present but `PlanOptions.allow_recreate=False`. Returns `status="refused"` for the whole
   plan (atomic — no partial apply).
+
+### `exporter.py`
+
+`export_specs` (YAML) and `export_specs_as_python` (Python) are thin wrappers
+over one shared `_export` driver. The driver walks feature groups, feature
+views, entities, and datasources once and owns stem-collision detection and
+per-object file writes; all per-format behavior lives behind the
+`_ExportRenderer` Protocol — `render` (file body), `write` (persist; the Python
+form guards against clobbering non-spec modules), `check_stem` (path / Python
+identifier safety), `fv_sidecar` / `ds_sidecar` (externalize a UDF / query,
+YAML only), and `suffix`. `_YamlRenderer` emits `.yaml` with `.py` / `.sql`
+sidecars; `_PythonRenderer` emits `.py` and inlines both. Add a new export
+format by writing one renderer, not a second copy of the walk.
+
+`_append_only_export_blocker` gates `append_only: true` emission on the loader's
+companion contract (`BatchFeatureView`, `refresh_mode: FULL`, a CRON
+`refresh_freq`, a `timestamp_col`, non-tiled); when unmet the flag is dropped and
+a warning surfaced rather than writing a spec `loader._dict_to_spec` would reject
+and skip (a skipped file becomes a spurious `DROP_FV`).
+
+`_collect_datasources` takes a keyword-only `name_filter` so a filtered
+`sync --name` skips non-matching sources before validating them; without it an
+unrelated FV's malformed source (`source_type` or cross-FV conflict) would abort
+the whole export. `None` collects schema-wide with the strict conflict checks.
+
+`_oft_name_matches_filter(raw_name, name_filter)` is the shared OFT-identity
+filter (parsed `<base>$<version>$ONLINE`, case-insensitive) used by the FV write
+loop, the orphan-OFT diagnostic, and `_orphaned_entity_column_warnings`, so a
+filtered export only warns about OFTs it may actually emit. The known-FV set fed
+to `orphaned_oft_warnings` stays schema-wide (an OFT is judged orphaned against
+the full registry, not the filtered slice).
+
+Each per-kind subdirectory (`entities/`, `feature_views/`, `feature_groups/`,
+`datasources/`) is created lazily on the first write of that kind, so a filtered
+export that matches nothing scaffolds no empty directories and returns an empty
+`directory` — the same noop envelope as an empty schema.
+
+### `python_codegen.py`
+
+A UDF block without `function_definition` (or whose body has no `def`) is
+unrecoverable: `_render_feature_view` raises rather than emitting
+`function_definition=,` / an undefined name. YAML `_extract_udf_to_py_file`
+may skip a missing body; the Python renderer must not.
 
 ### `planner.py`
 
@@ -85,7 +129,7 @@ phantom `RECREATE` ops on a clean round-trip.
 
 Source ops use a four-way decision: `NO_CHANGE` (virtual override for sources whose FVs
 are unchanged), `CREATE_SOURCE`, `UPDATE_SOURCE` (desc-only, non-destructive), or
-`RECREATE_SOURCE` (structural, `--allow-recreate` gated).
+`RECREATE_SOURCE` (structural, `--destructive` gated).
 
 In `full_directory_mode`, orphan `DROP_*` ops are ordered by `order_specs_for_drop`
 (reverse-topo: FeatureGroup → FeatureView → Source → Entity). After the diff and orphan
@@ -170,7 +214,7 @@ the error; otherwise raise `SpecLoadError`.
 
 `backfill` is excluded from `_full_spec_hash` (`_OPERATIONAL_FV_KEYS`). The planner emits
 `NO_CHANGE` for backfill-only edits, except `backfill.overwrite=True` on a batch FV, which
-produces a destructive `CREATE_FV` (requires `--allow-recreate`). The exporter does not
+produces a destructive `CREATE_FV` (requires `--destructive`). The exporter does not
 recover `backfill:` — it is write-only.
 
 | FV `kind` | Backfill field | Imperative target |
@@ -192,7 +236,7 @@ recover `backfill:` — it is write-only.
 8. Add tests and update `docs/CHANGES.md`
 
 **`FeatureGroup` note:** No `UPDATE_FG` op exists — every FG edit is destructive recreate
-(`CREATE_FG(destructive=True)`, `--allow-recreate` gated). Do not introduce `_OPERATIONAL_FG_KEYS`.
+(`CREATE_FG(destructive=True)`, `--destructive` gated). Do not introduce `_OPERATIONAL_FG_KEYS`.
 
 ### How to Add a New BFV Field
 

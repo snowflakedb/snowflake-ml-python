@@ -1946,6 +1946,223 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(len(result_pd), 1)
         self.assertIn("FIRST_PAGES", result_pd.columns)
 
+    def test_list_feature_with_no_values_does_not_drop_other_list_features(self) -> None:
+        """A list feature with no values must not erase another list feature's array.
+
+        Each list feature becomes its own subquery in ``LIST_MERGED`` and keeps only
+        its own non-NULL flattened values, so a feature whose source column has no
+        values in the window emits no row at all. Presence of the merged row must not
+        hinge on any single feature. Both features share the same window here, so
+        only the source column differs -- the empty one is declared first, which is
+        the position that decides row presence whenever the join chain is driven by a
+        subquery rather than by the unique (entity, boundary) rows.
+
+        A second entity with no events at all covers the other end of the same
+        contract: when every feature misses, both arrays must still come back NULL.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # Dedicated table so the all-NULL column stays isolated from the shared
+        # events table, whose page_id and category are never NULL.
+        #
+        # Source rows (all 2024-01-01, TIMESTAMP_NTZ; EMAIL is NULL throughout):
+        # ------------------------------------------------
+        # |"USER_ID"  |"EVENT_TS"  |"EMAIL"  |"PHONE"   |
+        # ------------------------------------------------
+        # |1          |01:15:00    |NULL     |p1        |
+        # |1          |01:45:00    |NULL     |p2        |
+        # ------------------------------------------------
+        contact_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.contact_events_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {contact_table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, email VARCHAR(64), phone VARCHAR(64))
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {contact_table} (user_id, event_ts, email, phone)
+                VALUES
+                (1, '2024-01-01 01:15:00', NULL, 'p1'),
+                (1, '2024-01-01 01:45:00', NULL, 'p2')
+            """
+        ).collect()
+
+        try:
+            # The all-NULL EMAIL feature is declared first so it leads the chain.
+            features = [
+                Feature.last_n("email", "2h", n=3).alias("last_emails"),
+                Feature.last_n("phone", "2h", n=3).alias("last_phones"),
+            ]
+
+            sql = f"SELECT user_id, event_ts, email, phone FROM {contact_table}"
+            fv = FeatureView(
+                name="user_contacts",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            # User 2 has no events at all, so neither feature matches it. Merged rows
+            # are keyed off the unique (entity, boundary) pairs, which include user 2,
+            # so this is the multi-feature form of the all-miss case.
+            spine_df = self._session.create_dataframe(
+                [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 3, 0, 0))],
+                schema=["user_id", "query_ts"],
+            )
+            result_pd = (
+                fs.generate_training_set(
+                    spine_df=spine_df,
+                    features=[registered_fv],
+                    spine_timestamp_col="query_ts",
+                    join_method="cte",
+                )
+                .to_pandas()
+                .sort_values("USER_ID")
+                .reset_index(drop=True)
+            )
+
+            self.assertEqual(len(result_pd), 2)
+
+            # At query_ts=03:00 the 2h window covers complete tile 01:00, which holds
+            # both of user 1's events. Expected (last_n emits oldest-first):
+            # ---------------------------------------------
+            # |"USER_ID"  |"LAST_EMAILS"  |"LAST_PHONES" |
+            # ---------------------------------------------
+            # |1          |NULL           |["p1", "p2"]  |
+            # |2          |NULL           |NULL          |
+            # ---------------------------------------------
+            #
+            # LAST_EMAILS is NULL by design: no non-NULL email exists in the window,
+            # and the list path encodes "no data" as NULL rather than [].
+            user1 = result_pd.iloc[0]
+            emails = user1["LAST_EMAILS"]
+            self.assertTrue(emails is None or pd.isna(emails), f"expected a NULL emails array, got {emails!r}")
+
+            phones = user1["LAST_PHONES"]
+            self.assertIsNotNone(
+                phones,
+                "LAST_PHONES came back NULL: the empty EMAIL subquery dropped the merged row",
+            )
+            self.assertEqual(json.loads(phones), ["p1", "p2"])
+
+            # Both features miss, so the merged row carries only NULLs. Unlike the
+            # secondary-key path there is no COALESCE, so NULL is the correct output.
+            user2 = result_pd.iloc[1]
+            for column in ("LAST_EMAILS", "LAST_PHONES"):
+                cell = user2[column]
+                self.assertTrue(
+                    cell is None or pd.isna(cell),
+                    f"expected {column} to be NULL for an entity with no events, got {cell!r}",
+                )
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {contact_table}").collect()
+
+    def test_list_feature_with_empty_window_does_not_drop_other_list_features(self) -> None:
+        """A list feature whose window covers no tiles must not erase another's array.
+
+        A list subquery emits no row for two independent reasons: its window covers no
+        tiles, or none of its values are non-NULL. The sibling test covers the second;
+        this one covers the first, since the window filter is built per feature from
+        that feature's own window. Both source columns are fully populated here, so
+        only the window differs, and the narrow one is declared first because that is
+        the position that decides row presence when the join chain is driven by a
+        subquery rather than by the unique (entity, boundary) rows.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # A dedicated table is required: the shared fixture has events at 02:30 and
+        # 03:00 which land inside the 2h window, so it cannot express "narrow window
+        # empty while wide window has data".
+        #
+        # Source rows (all 2024-01-01, TIMESTAMP_NTZ; both columns always populated):
+        # ------------------------------------------------
+        # |"USER_ID"  |"EVENT_TS"  |"EMAIL"  |"PHONE"   |
+        # ------------------------------------------------
+        # |1          |00:30:00    |e1       |p1        |
+        # |1          |00:45:00    |e2       |p2        |
+        # |1          |01:15:00    |e3       |p3        |
+        # ------------------------------------------------
+        windowed_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.contact_windows_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {windowed_table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, email VARCHAR(64), phone VARCHAR(64))
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {windowed_table} (user_id, event_ts, email, phone)
+                VALUES
+                (1, '2024-01-01 00:30:00', 'e1', 'p1'),
+                (1, '2024-01-01 00:45:00', 'e2', 'p2'),
+                (1, '2024-01-01 01:15:00', 'e3', 'p3')
+            """
+        ).collect()
+
+        try:
+            # The 2h feature is declared first so it leads the chain.
+            features = [
+                Feature.last_n("phone", "2h", n=3).alias("recent_phones"),
+                Feature.last_n("email", "4h", n=3).alias("older_emails"),
+            ]
+
+            sql = f"SELECT user_id, event_ts, email, phone FROM {windowed_table}"
+            fv = FeatureView(
+                name="user_contact_windows",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            spine_df = self._session.create_dataframe(
+                [(1, datetime(2024, 1, 1, 4, 0, 0))],
+                schema=["user_id", "query_ts"],
+            )
+            result_pd = fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            ).to_pandas()
+
+            self.assertEqual(len(result_pd), 1)
+
+            # At query_ts=04:00 with hourly granularity:
+            #   2h window -> tiles [02:00, 04:00) -> no tiles exist -> NULL
+            #   4h window -> tiles [00:00, 04:00) -> both tiles     -> all three values
+            # Expected (last_n emits oldest-first):
+            # ------------------------------------------------------
+            # |"USER_ID"  |"RECENT_PHONES"  |"OLDER_EMAILS"        |
+            # ------------------------------------------------------
+            # |1          |NULL             |["e1", "e2", "e3"]    |
+            # ------------------------------------------------------
+            user1 = result_pd.iloc[0]
+            recent_phones = user1["RECENT_PHONES"]
+            self.assertTrue(
+                recent_phones is None or pd.isna(recent_phones),
+                f"expected a NULL phones array for a window covering no tiles, got {recent_phones!r}",
+            )
+
+            older_emails = user1["OLDER_EMAILS"]
+            self.assertIsNotNone(
+                older_emails,
+                "OLDER_EMAILS came back NULL: the empty 2h subquery dropped the merged row",
+            )
+            self.assertEqual(json.loads(older_emails), ["e1", "e2", "e3"])
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {windowed_table}").collect()
+
     def _register_fv_pinned_version(self, fs: FeatureStore, fv: FeatureView, version: str, legacy: bool) -> FeatureView:
         """Register an FV, optionally simulating a genuine legacy (pre-1.42.0) FV.
 
@@ -4448,6 +4665,120 @@ class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestC
         self.assertEqual(user2_impressions_2h, {"ad_a": 1, "ad_b": 1})
         # 4h window (tiles [00:00, 04:00)): ad_a (100+200=300), ad_b (300)
         self.assertEqual(user2_amount_4h, {"ad_a": 300.0, "ad_b": 300.0})
+
+    def test_secondary_key_empty_window_does_not_drop_other_windows(self) -> None:
+        """A window with no tiles in range must not erase a populated window's arrays.
+
+        Each ``(window, offset)`` group becomes its own subquery in
+        ``SECONDARY_KEY_MERGED`` and applies a row-level window filter, so a group
+        with no tiles in range emits no row at all. Presence of the merged row must
+        not hinge on any single group. The empty window is declared first here on
+        purpose: that is the position which decides row presence whenever the join
+        chain is driven by a subquery rather than by the unique (entity, boundary)
+        rows.
+
+        A second entity with no events at all covers the other end of the same
+        contract: when every group misses, the arrays must still come back as [].
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # A dedicated table is required: the shared fixture has events at 02:30 and
+        # 03:00 which land inside the 2h window, so it cannot express "narrow window
+        # empty while wide window has data".
+        #
+        # Source rows (all 2024-01-01, TIMESTAMP_NTZ):
+        # ---------------------------------------------------------------
+        # |"USER_ID"  |"EVENT_TS"  |"AD_ID"  |"IMPRESSION"  |"AMOUNT"  |
+        # ---------------------------------------------------------------
+        # |1          |00:30:00    |ad_a     |1             |10.0      |
+        # |1          |00:45:00    |ad_b     |1             |20.0      |
+        # |1          |01:15:00    |ad_a     |1             |30.0      |
+        # ---------------------------------------------------------------
+        stale_events_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.ad_events_stale_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {stale_events_table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, ad_id VARCHAR(64), impression INT, amount FLOAT)
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {stale_events_table} (user_id, event_ts, ad_id, impression, amount)
+                VALUES
+                (1, '2024-01-01 00:30:00', 'ad_a', 1, 10.0),
+                (1, '2024-01-01 00:45:00', 'ad_b', 1, 20.0),
+                (1, '2024-01-01 01:15:00', 'ad_a', 1, 30.0)
+            """
+        ).collect()
+
+        try:
+            # The 2h window is declared first so it becomes the leading subquery.
+            features = [
+                Feature.count("impression", "2h").alias("impressions_2h"),
+                Feature.sum("amount", "4h").alias("amount_4h"),
+            ]
+
+            sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {stale_events_table}"
+            fv = FeatureView(
+                name="user_ad_empty_window",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+                aggregation_secondary_keys=["ad_id"],
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            # User 2 has no events at all, so no group matches it. Merged rows are
+            # keyed off the unique (entity, boundary) pairs, which include user 2,
+            # so this is the multi-group form of the all-miss case.
+            spine_df = self._session.create_dataframe(
+                [(1, datetime(2024, 1, 1, 4, 0, 0)), (2, datetime(2024, 1, 1, 4, 0, 0))],
+                schema=["user_id", "query_ts"],
+            )
+            result_pd = (
+                fs.generate_training_set(
+                    spine_df=spine_df,
+                    features=[registered_fv],
+                    spine_timestamp_col="query_ts",
+                    join_method="cte",
+                )
+                .to_pandas()
+                .sort_values("USER_ID")
+                .reset_index(drop=True)
+            )
+
+            self.assertEqual(len(result_pd), 2)
+
+            # At query_ts=04:00 with hourly granularity:
+            #   2h window -> tiles [02:00, 04:00) -> no tiles exist -> empty arrays
+            #   4h window -> tiles [00:00, 04:00) -> both tiles     -> ad_a 10+30, ad_b 20
+            #
+            # Expected (keys ordered AD_ID ASC, values element-aligned):
+            # -------------------------------------------------------------------------------------
+            # |"USER_ID"  |"AD_ID_KEYS_2H"  |"IMPRESSIONS_2H"  |"AD_ID_KEYS_4H"   |"AMOUNT_4H"   |
+            # -------------------------------------------------------------------------------------
+            # |1          |[]               |[]                |["ad_a", "ad_b"]  |[40.0, 20.0]  |
+            # |2          |[]               |[]                |[]                |[]            |
+            # -------------------------------------------------------------------------------------
+            user1 = result_pd.iloc[0]
+            self.assertEqual(json.loads(user1["AD_ID_KEYS_2H"]), [])
+            self.assertEqual(json.loads(user1["IMPRESSIONS_2H"]), [])
+            self.assertEqual(
+                self._zip_keys_values(user1["AD_ID_KEYS_4H"], user1["AMOUNT_4H"]),
+                {"ad_a": 40.0, "ad_b": 20.0},
+            )
+
+            # Every group misses, so the merged row carries only NULLs; the combined
+            # CTE's COALESCE must still turn each column into [] rather than NULL.
+            user2 = result_pd.iloc[1]
+            for column in ("AD_ID_KEYS_2H", "IMPRESSIONS_2H", "AD_ID_KEYS_4H", "AMOUNT_4H"):
+                self.assertEqual(json.loads(user2[column]), [], f"{column} should be [] for an entity with no events")
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {stale_events_table}").collect()
 
     def test_secondary_key_same_window_different_offset(self) -> None:
         """Two SK features with the same window but different offsets get

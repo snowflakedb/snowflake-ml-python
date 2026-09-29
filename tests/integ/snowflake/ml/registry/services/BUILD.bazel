@@ -82,12 +82,8 @@ py_test(
     srcs = ["registry_sentence_transformers_model_deployment_gpu_test.py"],
     data = ["data/living-with-cats-dogs.jpg"],
     optional_dependencies = ["transformers"],
-    shard_count = 2,
     tags = ["feature:model_serving"],
-    deps = [
-        ":registry_model_deployment_test_base",
-        "//snowflake/ml/model/models:huggingface",
-    ],
+    deps = [":registry_model_deployment_test_base"],
 )
 
 py_test(
@@ -108,6 +104,7 @@ py_test(
     name = "registry_huggingface_pipeline_model_deployment_gpu_test",
     timeout = "eternal",
     srcs = ["registry_huggingface_pipeline_model_deployment_gpu_test.py"],
+    data = ["data/living-with-cats-dogs.jpg"],
     optional_dependencies = ["llm"],
     shard_count = 4,
     tags = ["feature:model_serving"],
@@ -118,12 +115,10 @@ py_test(
     ],
 )
 
-py_test(
-    name = "registry_model_garden_deployment_test",
-    timeout = "eternal",
+py_library(
+    name = "registry_model_garden_deployment_test_lib",
+    testonly = True,
     srcs = ["registry_model_garden_deployment_test.py"],
-    optional_dependencies = ["llm"],
-    tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/_internal/utils:connection_params",
@@ -133,6 +128,54 @@ py_test(
         "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "registry_model_garden_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_model_garden_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_garden_deployment_test_lib",
+    ],
+)
+
+py_test(
+    name = "registry_model_garden_prelogged_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_model_garden_prelogged_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    tags = [
+        "feature:model_serving",
+        "manual",
+    ],
+    deps = [
+        ":registry_model_garden_deployment_test_lib",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
+    ],
+)
+
+py_test(
+    name = "registry_lora_adapter_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_lora_adapter_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/model",
+        "//snowflake/ml/model:inference_engine",
+        "//snowflake/ml/model:openai_signatures",
+        "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 
@@ -204,10 +247,7 @@ py_test(
     srcs = ["registry_pip_only_model_deployment_test.py"],
     optional_dependencies = ["torch"],
     shard_count = 1,
-    tags = [
-        "feature:model_serving",
-        "short_regress",
-    ],
+    tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model:custom_model",

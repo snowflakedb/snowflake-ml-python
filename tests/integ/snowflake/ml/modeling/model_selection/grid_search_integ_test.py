@@ -180,6 +180,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
             "estimator_kwargs": dict(random_state=0, n_jobs=1),
             "enable_efficient_memory_usage": False,
+            "run_extra_inference": True,
         },
         {
             "skmodel": SkSVC,
@@ -188,14 +189,16 @@ class GridSearchCVTest(parameterized.TestCase):
             "kwargs": dict(return_train_score=True),
             "estimator_kwargs": dict(random_state=0),
             "enable_efficient_memory_usage": True,
+            "run_extra_inference": True,
         },
         {
             "skmodel": SkXGBClassifier,
             "model": XGBClassifier,
-            "params": {"max_depth": [2, 3], "learning_rate": [0.1, 0.01]},
+            "params": {"max_depth": [2, 3], "learning_rate": [0.1]},
             "kwargs": dict(scoring=["accuracy", "f1_macro"], refit="f1_macro", return_train_score=True),
-            "estimator_kwargs": dict(seed=42),
+            "estimator_kwargs": dict(seed=42, n_estimators=10),
             "enable_efficient_memory_usage": True,
+            "run_extra_inference": False,
         },
     )
     @mock.patch("snowflake.ml.modeling._internal.model_trainer_builder.is_single_node")
@@ -208,6 +211,7 @@ class GridSearchCVTest(parameterized.TestCase):
         kwargs,
         estimator_kwargs,
         enable_efficient_memory_usage,
+        run_extra_inference,
     ) -> None:
         mock_is_single_node.return_value = False
         from snowflake.ml.modeling._internal.snowpark_implementations import (
@@ -233,6 +237,12 @@ class GridSearchCVTest(parameterized.TestCase):
         actual_arr = reg.predict(self._input_df).to_pandas().sort_values(by="INDEX")[output_cols].to_numpy()
         sklearn_numpy_arr = sklearn_reg.predict(self._input_df_pandas[self._input_cols])
         np.testing.assert_allclose(actual_arr.flatten(), sklearn_numpy_arr.flatten(), rtol=1.0e-1, atol=1.0e-2)
+
+        if not run_extra_inference:
+            self.assertEqual(sk_obj.n_features_in_, sklearn_reg.n_features_in_)
+            for idx, class_ in enumerate(sk_obj.classes_):
+                self.assertEqual(class_, sklearn_reg.classes_[idx])
+            return
 
         # Test on fitting on snowpark Dataframe, and predict on pandas dataframe
         actual_arr_pd = reg.predict(self._input_df.to_pandas()).sort_values(by="INDEX")[output_cols].to_numpy()

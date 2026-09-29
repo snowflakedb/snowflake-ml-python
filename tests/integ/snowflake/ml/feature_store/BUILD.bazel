@@ -401,6 +401,7 @@ py_library(
     testonly = True,
     srcs = ["feature_store_streaming_fv_integ_base.py"],
     deps = [
+        ":common_utils",
         ":fs_integ_test_base",
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",

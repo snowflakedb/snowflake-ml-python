@@ -1,6 +1,24 @@
 # Release History
 
-## 2.2.0
+## 2.3.0
+
+### New Features
+
+* Experiment Tracking: `ExperimentTracking` accepts an optional `model_registry` parameter. When provided,
+  `log_model` stores models in the registry's database and schema instead of the experiment's, so experiments
+  and models can live in separate schemas.
+
+### Bug Fixes
+
+* Feature Store: Offline reads of a feature view with several list aggregations or several secondary-key
+  aggregation windows used to return incomplete results in some scenarios. The bug has been fixed
+  and the existing feature views pick up the fix on their next read, with no re-registration or backfill required.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.2.0 (2026-09-21)
 
 ### New Features
 
@@ -14,7 +32,16 @@
 
 ### Bug Fixes
 
+* Registry: `ModelVersion.load()` now compares the model owner to `CURRENT_ROLE()` (the role that
+  executes SQL) instead of `Session.get_current_role()`. Owner's-rights Streamlit apps and
+  `EXECUTE AS OWNER` procedures can load when statements run as the owner even if the caller's
+  primary role is not the owner.
+
 ### Behavior Changes
+
+* Dependencies: `scipy` is no longer a required dependency of `snowflake-ml-python`. It is still
+  installed transitively with `pip install snowflake-ml-python[scikit-learn]`. Direct `scipy` usage
+  in `snowflake.ml.modeling.preprocessing` already requires that extra.
 
 ### Deprecations
 
@@ -37,20 +64,11 @@
 
 ### Bug Fixes
 
-* Registry: `ModelVersion.load()` now compares the model owner to `CURRENT_ROLE()` (the role that
-  executes SQL) instead of `Session.get_current_role()`. Owner's-rights Streamlit apps and
-  `EXECUTE AS OWNER` procedures can load when statements run as the owner even if the caller's
-  primary role is not the owner.
-
 * Registry: Fixed logging of MLflow models created with `mlflow.sklearn.save_model()`. The model is
   now re-logged from the scikit-learn estimator using the serialization format it was saved with,
   instead of from MLflow's PyFunc wrapper with the version-dependent default format.
 
 ### Behavior Changes
-
-* Dependencies: `scipy` is no longer a required dependency of `snowflake-ml-python`. It is still
-  installed transitively with `pip install snowflake-ml-python[scikit-learn]`. Direct `scipy` usage
-  in `snowflake.ml.modeling.preprocessing` already requires that extra.
 
 ### Deprecations
 

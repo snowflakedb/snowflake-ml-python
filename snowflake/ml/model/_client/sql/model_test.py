@@ -1,5 +1,6 @@
 import copy
-from typing import cast
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -10,10 +11,12 @@ from snowflake.ml.model._client.sql import model as model_sql
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Row, Session
 
+_Fn = TypeVar("_Fn", bound=Callable[..., Any])
 
-def _fake_retry(**kwargs):  # type: ignore[no-untyped-def]
-    def decorator(fn):  # type: ignore[no-untyped-def]
-        def wrapped(*args, **inner_kwargs):  # type: ignore[no-untyped-def]
+
+def _fake_retry(**kwargs: Any) -> Callable[[_Fn], _Fn]:
+    def decorator(fn: _Fn) -> _Fn:
+        def wrapped(*args: Any, **inner_kwargs: Any) -> Any:
             last_exc: BaseException | None = None
             for _ in range(int(kwargs.get("stop_max_attempt_number", 5))):
                 try:
@@ -25,7 +28,7 @@ def _fake_retry(**kwargs):  # type: ignore[no-untyped-def]
             assert last_exc is not None
             raise last_exc
 
-        return wrapped
+        return cast(_Fn, wrapped)
 
     return decorator
 
@@ -319,6 +322,50 @@ class ModelSQLTest(absltest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["name"], "v1")
 
+    def test_show_versions_retry_is_bounded_by_attempts_and_elapsed_time(self) -> None:
+        m_statement_params = {"test": "1"}
+        query = """SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL"""
+        success_df = mock_data_frame.MockDataFrame(
+            collect_result=[
+                Row(
+                    create_on="06/01",
+                    name="v1",
+                    comment="This is a comment",
+                    model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
+                    is_default_version=True,
+                ),
+            ],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql(query, success_df)
+        c_session = cast(Session, self.m_session)
+        client = model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        )
+        retry_kwargs: dict[str, Any] = {}
+
+        def capturing_retry(**kwargs: Any) -> Callable[[_Fn], _Fn]:
+            retry_kwargs.update(kwargs)
+            return _fake_retry(**kwargs)
+
+        with mock.patch("retrying.retry", capturing_retry):
+            client.show_versions(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                statement_params=m_statement_params,
+                retry=True,
+            )
+        self.assertEqual(retry_kwargs["stop_max_attempt_number"], model_sql.SHOW_VERSIONS_RETRY_MAX_ATTEMPTS)
+        self.assertEqual(retry_kwargs["stop_max_delay"], model_sql.SHOW_VERSIONS_RETRY_MAX_DELAY_MS)
+        self.assertEqual(retry_kwargs["wait_exponential_multiplier"], model_sql.SHOW_VERSIONS_RETRY_WAIT_MULTIPLIER_MS)
+        self.assertEqual(retry_kwargs["wait_exponential_max"], model_sql.SHOW_VERSIONS_RETRY_WAIT_MAX_MS)
+
     def test_show_versions_empty_result_without_retry(self) -> None:
         m_statement_params = {"test": "1"}
         query = """SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL"""
@@ -345,7 +392,7 @@ class ModelSQLTest(absltest.TestCase):
     def test_show_versions_empty_result_exhausted_retries(self) -> None:
         m_statement_params = {"test": "1"}
         query = """SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL"""
-        for _ in range(5):
+        for _ in range(model_sql.SHOW_VERSIONS_RETRY_MAX_ATTEMPTS):
             empty_df = mock_data_frame.MockDataFrame()
             empty_df.add_collect_result([], m_statement_params)
             self.m_session.add_mock_sql(query, empty_df)

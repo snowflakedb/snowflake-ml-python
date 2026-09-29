@@ -1027,6 +1027,81 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         # Display oldest-first; FIRST_N tiles are stored oldest-first so idx stays ASC.
         self.assertIn("ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key ASC, idx_key ASC)", body)
 
+    def _multi_feature_list_body(self, features: list[AggregationSpec]) -> str:
+        """Return the LIST_MERGED CTE body for several list specs.
+
+        Args:
+            features: The list aggregation specs, in declaration order.
+
+        Returns:
+            The LIST_MERGED CTE body.
+        """
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+        )
+        ctes = generator.generate_all_ctes()
+        return next(cte for cte in ctes if cte[0] == "LIST_MERGED_FV0")[1]
+
+    def test_multiple_list_features_are_joined_off_unique_bounds(self) -> None:
+        """Multi-feature list merge drives the join chain from the unique bounds.
+
+        Each feature's subquery keeps only its own non-NULL flattened values, so a
+        feature with no values in the window emits no row at all. Were it in the
+        driving position, the other features' arrays would vanish with it, so every
+        feature -- the first included -- is left-joined onto UNIQUE_BOUNDS. Both
+        features share a window here, so only the source column differs.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="EMAIL",
+                window="24h",
+                output_column="LAST_EMAILS",
+                params={"n": 3},
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="PHONE",
+                window="24h",
+                output_column="LAST_PHONES",
+                params={"n": 3},
+            ),
+        ]
+        body = self._multi_feature_list_body(features)
+
+        self.assertTrue(
+            body.startswith("SELECT UB.USER_ID, UB.TILE_BOUNDARY, sq0.LAST_EMAILS, sq1.LAST_PHONES"),
+            body,
+        )
+        self.assertIn("FROM UNIQUE_BOUNDS_FV0 UB", body)
+        # The superseded shape projected the driving subquery wholesale.
+        self.assertNotIn("SELECT sq0.*", body)
+        # Both features sit on the nullable side of their own LEFT JOIN.
+        self.assertEqual(body.count("LEFT JOIN"), 2)
+        for index in (0, 1):
+            self.assertIn(
+                f"ON UB.USER_ID = sq{index}.USER_ID AND UB.TILE_BOUNDARY = sq{index}.TILE_BOUNDARY",
+                body,
+            )
+
+    def test_single_list_feature_keeps_its_standalone_shape(self) -> None:
+        """One list feature short-circuits: no unique-bounds join is introduced.
+
+        A lone feature cannot exhibit the row-drop problem, since every output
+        column belongs to it and a miss correctly yields NULL. The generated SQL
+        is therefore unchanged for the common single-feature case.
+        """
+        body = self._nondistinct_merge_body(AggregationType.LAST_N)
+
+        self.assertNotIn("UNIQUE_BOUNDS_FV0 UB", body)
+        self.assertNotIn("LEFT JOIN", body)
+
 
 class RollupSqlGeneratorTest(parameterized.TestCase):
     """Unit tests for RollupSqlGenerator class."""
@@ -1200,6 +1275,38 @@ class RollupSqlGeneratorTest(parameterized.TestCase):
         # One DESC for LAST_N, one ASC for FIRST_N
         self.assertIn("DESC", sql)
         self.assertIn("ASC", sql)
+
+    def test_mixed_rollup_keeps_simple_rollup_as_driver(self) -> None:
+        """Test that simple_rollup stays the driver when simple features exist."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_COUNT",
+                params={},
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="EMAIL",
+                window="24h",
+                output_column="LAST_EMAILS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # simple_rollup is an unfiltered GROUP BY, so it is already a valid spine.
+        self.assertIn("FROM simple_rollup s", sql)
+        self.assertNotIn("tile_spine", sql)
+        self.assertIn("LEFT JOIN list_rollup_0 l0", sql)
 
     def test_dedup_shared_tile_columns_in_rollup(self) -> None:
         """Test that LAST_N and LAST_DISTINCT_N on same column share one CTE."""
@@ -2548,6 +2655,103 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         )
         # Bare ARRAY_AGG(AD_ID) form (which would drop NULL slots) is gone.
         self.assertNotIn("ARRAY_AGG(AD_ID) ", body)
+
+    def test_multi_window_groups_are_joined_off_unique_bounds(self) -> None:
+        """Multi-window merge drives the join chain from the unique bounds.
+
+        Each group filters to its own window, so a group covering no tiles emits no
+        row at all. Were such a group in the driving position, every other group's
+        arrays would disappear with it, so all groups -- the first included -- are
+        left-joined onto UNIQUE_BOUNDS. Missing groups then surface as [] via the
+        combined CTE's COALESCE.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_1D",
+            ),
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="72h",
+                output_column="IMPRESSIONS_3D",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # Join keys come from the driving side; both groups' columns hang off it.
+        self.assertTrue(
+            body.startswith(
+                "SELECT UB.USER_ID, UB.TILE_BOUNDARY, "
+                "sq0.AD_ID_KEYS_24H, sq0.IMPRESSIONS_1D, sq1.AD_ID_KEYS_72H, sq1.IMPRESSIONS_3D"
+            ),
+            body,
+        )
+        self.assertIn("FROM UNIQUE_BOUNDS_FV0 UB", body)
+        self.assertEqual(body.count("LEFT JOIN"), 2)
+        for index in (0, 1):
+            self.assertIn(
+                f"ON UB.USER_ID = sq{index}.USER_ID AND UB.TILE_BOUNDARY = sq{index}.TILE_BOUNDARY",
+                body,
+            )
+
+    def test_disjoint_offset_groups_are_joined_symmetrically(self) -> None:
+        """Offset groups need not nest, so neither one may drive the join chain.
+
+        ``window=24h offset=0`` covers ``[T-24h, T)`` while ``window=24h
+        offset=48h`` covers ``[T-72h, T-48h)``. The two are disjoint, so neither is
+        a superset of the other and either can be the empty one -- ruling out any
+        "drive from the widest window" shortcut.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_NOW",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_PREV",
+                offset="48h",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        self.assertIn("FROM UNIQUE_BOUNDS_FV0 UB", body)
+        self.assertIn("sq0.AD_ID_KEYS_24H, sq0.AMOUNT_NOW", body)
+        self.assertIn("sq1.AD_ID_KEYS_24H_OFFSET_48H, sq1.AMOUNT_PREV", body)
+        self.assertEqual(body.count("LEFT JOIN"), 2)
+        for index in (0, 1):
+            self.assertIn(
+                f"ON UB.USER_ID = sq{index}.USER_ID AND UB.TILE_BOUNDARY = sq{index}.TILE_BOUNDARY",
+                body,
+            )
+
+    def test_single_window_group_keeps_its_standalone_shape(self) -> None:
+        """One window group short-circuits: no unique-bounds join is introduced.
+
+        A lone group cannot exhibit the row-drop problem, since every output column
+        belongs to it and a miss correctly yields []. The generated SQL is therefore
+        unchanged for the common single-window case.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_1D",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        self.assertNotIn("UNIQUE_BOUNDS_FV0 UB", body)
+        self.assertNotIn("LEFT JOIN", body)
+        self.assertTrue(body.startswith("(SELECT"), body)
 
 
 class HasLegacyDistinctNAggregationsTest(parameterized.TestCase):

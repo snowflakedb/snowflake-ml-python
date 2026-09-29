@@ -71,6 +71,23 @@ py_test(
 )
 
 py_test(
+    name = "experiment_tracking_model_registry_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_model_registry_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:connection_params",
+        "//snowflake/ml/experiment",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
     name = "experiment_tracking_artifact_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_artifact_integ_test.py"],

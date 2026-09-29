@@ -131,9 +131,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(
         1. Model prediction works correctly
         2. Environment uses a pip-only path (venv) instead of conda
         """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
-
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
         pip_only_model = PipOnlyModel(custom_model.ModelContext())
 
@@ -159,38 +156,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(
             conda_dependencies=[],
         )
 
-    def test_pip_only_gpu_model(self) -> None:
-        """Test pip-only GPU deployment: verifies cuda_version flows through to image builder
-        and that a GPU model runs inference correctly on a GPU compute pool.
-        """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
-
-        test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
-        pip_only_model = PipOnlyModel(custom_model.ModelContext())
-
-        self._test_registry_model_deployment(
-            model=pip_only_model,
-            sample_input_data=test_input,
-            prediction_assert_fns={
-                "predict": (
-                    test_input,
-                    lambda res: pd.testing.assert_frame_equal(
-                        res,
-                        pip_only_model.predict(test_input),
-                        check_dtype=False,
-                    ),
-                ),
-            },
-            pip_requirements=["requests>=2.28.0"],
-            options={
-                "cuda_version": model_env.DEFAULT_CUDA_VERSION,
-                "enable_explainability": False,
-            },
-            gpu_requests="1",
-            conda_dependencies=[],
-        )
-
     def test_pip_only_pytorch_gpu_model(self) -> None:
         """E2E test: deploy a pip-only PyTorch model on GPU and verify CUDA is available.
 
@@ -199,9 +164,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(
         2. The GPU image builder downloads the correct CUDA-enabled PyTorch wheel
         3. torch.cuda.is_available() returns True on the deployed service
         """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
-
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         model = PipOnlyPyTorchModel(custom_model.ModelContext())
 

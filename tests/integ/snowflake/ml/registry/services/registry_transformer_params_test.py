@@ -470,6 +470,10 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
                 _PARAM_SPEC_SIGNATURES,
                 ["object" if _is_object_content(s) else "string" for s in _PARAM_SPEC_SIGNATURES],
             )
+            # Logging style and content format are independent: the signature is fixed at log
+            # time and the content format only affects payload shape. Pairing each value once
+            # covers both axes with half the deployments instead of the full cross product.
+            if (log, fmt) in (("local", "object"), ("remote", "string"))
         ]
     )
     @pytest.mark.conda_incompatible

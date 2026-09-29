@@ -1627,7 +1627,7 @@ class TestExecutePlanBatchBackfillOverwrite:
 
     This is the operator opt-in for the imperative "backfill cost" path —
     it forces a full re-materialization of the offline DT and online OFT.
-    The destructive nature is gated by ``--allow-recreate`` at the planner
+    The destructive nature is gated by ``--destructive`` at the planner
     level (covered in invariants/planner tests, Agent C).
     """
 
@@ -2592,11 +2592,11 @@ class TestExecutePlanAllowRecreateGate:
     consumes it.  Refusing here (before any FV side-effect) keeps
     the plan file unrenamed under the L5 invariant
     (Mark-Failed-Stays-Unapplied) so a follow-up
-    ``snow feature apply --allow-recreate`` consumes the same plan.
+    ``snow feature apply --destructive`` consumes the same plan.
 
     Bug context: BUG_BASH §14 plain ``apply`` was silently executing
     the destructive ``RECREATE_FV`` and renaming the plan file to
-    ``.applied``; the subsequent ``apply --allow-recreate`` then
+    ``.applied``; the subsequent ``apply --destructive`` then
     discovered no unapplied plan and reported ``Status: no_plan``.
     """
 
@@ -2609,7 +2609,7 @@ class TestExecutePlanAllowRecreateGate:
         - ``FeatureStore`` is NEVER constructed (so the destructive
           ``delete_feature_view`` / ``register_feature_view`` calls
           cannot happen).
-        - ``errors`` mentions ``--allow-recreate`` so the operator
+        - ``errors`` mentions ``--destructive`` so the operator
           knows the remediation.
         - The op renders with ``status="refused"`` for downstream
           display.
@@ -2644,8 +2644,8 @@ class TestExecutePlanAllowRecreateGate:
             f"plans/apply_allow_recreate_destructive_gate_*.plan.md."
         )
         mock_fs.assert_not_called()
-        assert any("--allow-recreate" in e for e in result.errors), (
-            f"Refused error must direct operator at --allow-recreate.  " f"Got errors={result.errors!r}."
+        assert any("--destructive" in e for e in result.errors), (
+            f"Refused error must direct operator at --destructive.  " f"Got errors={result.errors!r}."
         )
         assert len(result.ops) == 1
         assert result.ops[0]["operation"] == "RECREATE_FV"
@@ -2689,7 +2689,7 @@ class TestExecutePlanAllowRecreateGate:
             result = execute_plan(plan, session, "DB", "SCH", "WH", options)
 
         assert result.status == "applied", (
-            f"Apply with --allow-recreate must execute the destructive op.  " f"Got status={result.status!r}."
+            f"Apply with --destructive must execute the destructive op.  " f"Got status={result.status!r}."
         )
         fs_instance.delete_feature_view.assert_called_once_with("USER_CLICK_STATS_DECL", "V1")
         fs_instance.register_feature_view.assert_called_once()

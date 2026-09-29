@@ -14,7 +14,7 @@ Three contracts are pinned here:
    ``fs.delete_feature_group`` (delete-then-register pair on the
    destructive variant).
 
-3. The existing ``--allow-recreate`` gate in ``execute_plan`` refuses a
+3. The existing ``--destructive`` gate in ``execute_plan`` refuses a
    plan whose only op is a destructive ``CREATE_FG``.
 """
 
@@ -341,7 +341,7 @@ class TestExecutePlanDestructiveCreateFG:
 
 
 # ---------------------------------------------------------------------------
-# --allow-recreate gate
+# --destructive gate
 # ---------------------------------------------------------------------------
 
 

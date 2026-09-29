@@ -204,7 +204,7 @@ def _warn_if_sources_unrecovered(spec_payload: dict[str, Any], name: str, versio
     Call this after every source-recovery path has run. A still-empty
     ``sources`` list means the FV pre-dates the ``FV_SOURCE_REFS`` metadata
     row, so the planner will hash-mismatch and route a destructive
-    ``RECREATE_FV`` (gated on ``--allow-recreate``) that stamps the metadata.
+    ``RECREATE_FV`` (gated on ``--destructive``) that stamps the metadata.
     Gating on the empty result (not on a missing metadata cell) avoids a
     false alarm when another path already populated the source.
 
@@ -219,7 +219,7 @@ def _warn_if_sources_unrecovered(spec_payload: dict[str, Any], name: str, versio
     logger.warning(
         "decl.state: feature view %s/%s: source bindings not preserved from original "
         "deployment (no FV_SOURCE_REFS metadata); the feature view will be recreated on "
-        "the next apply (requires --allow-recreate) to stamp the metadata. Once stamped, "
+        "the next apply (requires --destructive) to stamp the metadata. Once stamped, "
         "replans recover the source without a recreate.",
         name,
         version,
@@ -857,6 +857,17 @@ def _build_offline_fv_object(
         # B1 — cluster_by / refresh_mode / initialize from metadata.
         fv_obj = fv_obj_provider() if callable(fv_obj_provider) else None
         _inject_batch_fv_fields_from_list_row(spec_payload, fv_row, fv_obj=fv_obj)
+        # Plumb the deployed DT cadence onto ``spec.refresh_freq``.  The
+        # ``spec_text`` branch above adopts the enriched SPECIFICATION dict
+        # verbatim, discarding the row-derived ``inner_spec`` that carried
+        # ``refresh_freq``; ``_serialize_batch_fv_spec`` never emits the key
+        # either.  Without this an append-only BFV (whose required CRON
+        # ``refresh_freq`` stamps no ``target_lag_sec``) recovers with no
+        # cadence at all, and the exporter cannot write a loadable spec.
+        # Mirrors the DESCRIBE-path injection in ``fetch_applied_state``.
+        # Hash-neutral: ``refresh_freq`` is an ``_OPERATIONAL_FV_KEYS`` member
+        # stripped from the structural hash on both sides.
+        _inject_fv_refresh_freq_from_list_row(spec_payload, fv_row)
         _warn_if_sources_unrecovered(spec_payload, name, version)
 
     content_hash = _full_spec_hash(spec_payload)

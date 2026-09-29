@@ -33,6 +33,36 @@ FS_INTEG_TEST_WINE_QUALITY_DATA = "wine_quality_data"
 DB_OBJECT_EXPIRE_HOURS = 24
 
 
+def parse_semver_prefix(value: str) -> tuple[int, int, int] | None:
+    """Parse a leading ``X.Y`` or ``X.Y.Z`` from a version or image tag.
+
+    Accepts an optional ``v``/``V`` prefix and ignores pre-release or build
+    suffixes (``-rc1``, ``+build``). Returns ``None`` when the string is not
+    a two- or three-part numeric version.
+
+    Args:
+        value: Version or image tag, for example ``0.12.1`` or ``v0.13.0-rc1``.
+
+    Returns:
+        ``(major, minor, patch)``, with patch defaulting to 0 for ``X.Y``,
+        or ``None`` if ``value`` is not a semantic version prefix.
+    """
+    token = value.strip()
+    if token.startswith(("v", "V")) and len(token) > 1 and token[1].isdigit():
+        token = token[1:]
+    token = token.split("-", 1)[0].split("+", 1)[0]
+    parts = token.split(".")
+    if not (2 <= len(parts) <= 3):
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError:
+        return None
+    return (major, minor, patch)
+
+
 def create_random_schema(
     session: Session, prefix: str, database: str = FS_INTEG_TEST_DB, additional_options: str = ""
 ) -> str:

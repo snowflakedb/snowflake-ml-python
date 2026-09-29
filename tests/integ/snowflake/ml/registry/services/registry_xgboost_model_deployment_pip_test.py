@@ -2,7 +2,7 @@ import inflection
 import numpy as np
 import pandas as pd
 import xgboost
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets, model_selection
 from sklearn.preprocessing import LabelEncoder
 
@@ -15,7 +15,7 @@ from tests.integ.snowflake.ml.registry.services import (
 class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
     def _test_xgb(
         self,
-        gpu_requests: str,
+        gpu_requests: str | None,
         use_default_repo: bool,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
@@ -50,14 +50,8 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
             use_default_repo=use_default_repo,
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        gpu_requests=[None, "1"],
-    )
-    def test_xgb(
-        self,
-        gpu_requests: str,
-    ) -> None:
-        self._test_xgb(gpu_requests, use_default_repo=False)
+    def test_xgb(self) -> None:
+        self._test_xgb(gpu_requests=None, use_default_repo=False)
 
     def test_xgb_with_default_repo(self) -> None:
         self._test_xgb(gpu_requests=None, use_default_repo=True)

@@ -1613,11 +1613,15 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         - Backfill rows pass through a vectorized Python UDTF whose timestamp transport is
           microsecond-resolution, so ``$UDF_TRANSFORMED`` and the offline dynamic table that
-          selects from it hold microseconds however the account is configured.
-        - Ingested rows pass through the Online Service ingest UDF, and every online value
-          passes through the OFT ETL. Both keep microseconds when
-          ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and fall back to milliseconds when
-          it is off.
+          selects from it hold microseconds however the account is configured. Reverse-ETL
+          into the Postgres OFT copies that warehouse precision; ``FEATURE_STORE_IMAGE_TAG``
+          does not truncate this path.
+        - Stream-ingest rows are written by the Feature Store runtime, so the same image
+          truncates both the Postgres OFT and the ingested ``$UDF_TRANSFORMED`` row (and
+          the offline object that selects from it). They keep microseconds when
+          ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and
+          ``FEATURE_STORE_IMAGE_TAG`` is 0.13.0 or newer, and fall back to milliseconds
+          when the flag is off or the image is 0.12.0 / 0.12.1.
 
         An ingest is acknowledged before its row is queryable in the warehouse, so the
         ingested-row assertions poll.
@@ -1631,10 +1635,9 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         last_seen_src = "2024-06-01 12:34:57.987654321"
         event_time_backfill = "2024-06-01 12:34:56.123456000"
         last_seen_backfill = "2024-06-01 12:34:57.987654000"
-        micros_enabled = self._oft_pg_etl_microsecond_timestamps_enabled()
-        event_time_ingested = event_time_backfill if micros_enabled else "2024-06-01 12:34:56.123000000"
-        last_seen_ingested = last_seen_backfill if micros_enabled else "2024-06-01 12:34:57.987000000"
-        last_seen_online = last_seen_ingested
+        ingest_micros = self._stream_ingest_microsecond_timestamps_enabled()
+        event_time_ingested = event_time_backfill if ingest_micros else "2024-06-01 12:34:56.123000000"
+        last_seen_ingested = last_seen_backfill if ingest_micros else "2024-06-01 12:34:57.987000000"
         s = uuid.uuid4().hex[:8]
         label = "ICEBERG" if iceberg else "NATIVE"
         stream = f"ALL_TYPES_{s}"
@@ -1689,7 +1692,7 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertEqual(backfill_offline["EVENT_TIME"], event_time_backfill)
         self.assertEqual(backfill_offline["LAST_SEEN_TIME"], last_seen_backfill)
 
-        def _validate(pdf):
+        def _validate(pdf, expected_last_seen: str) -> None:
             row = pdf.iloc[0]
             # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
             # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
@@ -1703,10 +1706,16 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             actual = pd.Timestamp(row["LAST_SEEN_TIME"])
             if actual.tz is not None:
                 actual = actual.tz_localize(None)
-            self.assertEqual(actual, pd.Timestamp(last_seen_online))
+            self.assertEqual(actual, pd.Timestamp(expected_last_seen))
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types SFV"
+            fs,
+            fv_name,
+            "v1",
+            keys=[["u1"]],
+            validate_fn=lambda pdf: _validate(pdf, last_seen_backfill),
+            timeout=300.0,
+            desc="all types SFV",
         )
 
         ingested_key = f"U_ALL_INGEST_{s}"
@@ -1729,7 +1738,9 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             fv_name,
             "v1",
             keys=[[ingested_key]],
-            validate_fn=_validate,
+            validate_fn=lambda pdf: _validate(
+                pdf, last_seen_backfill if ingest_micros else "2024-06-01 12:34:57.987000000"
+            ),
             timeout=300.0,
             desc="all types SFV ingest",
         )
@@ -1774,10 +1785,14 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         here read a view and see no refresh lag. The OFT hydrates from the same table.
 
         Timestamp precision follows the same two writers as the DT-backed case: backfill rows are
-        microseconds unconditionally, because the vectorized Python UDTF truncates there, while
-        ingested rows and every online value keep microseconds only when
-        ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and fall back to milliseconds when it
-        is off. An ingest is acknowledged before its row is queryable, so those assertions poll.
+        microseconds unconditionally, because the vectorized Python UDTF truncates there, and
+        reverse-ETL copies that warehouse precision into the Postgres OFT regardless of image
+        tag. Stream-ingest rows are written by the Feature Store runtime, so ingested
+        ``$UDF_TRANSFORMED`` / offline rows and the Postgres OFT all keep microseconds only
+        when ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS`` is on and
+        ``FEATURE_STORE_IMAGE_TAG`` is 0.13.0 or newer; 0.12.0 and 0.12.1 images return
+        milliseconds on that path. An ingest is acknowledged before its row is queryable, so
+        those assertions poll.
 
         Args:
             iceberg: When True, back both landing tables with Iceberg storage. A View has no
@@ -1789,10 +1804,9 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         last_seen_src = "2024-06-01 12:34:57.987654321"
         event_time_backfill = "2024-06-01 12:34:56.123456000"
         last_seen_backfill = "2024-06-01 12:34:57.987654000"
-        micros_enabled = self._oft_pg_etl_microsecond_timestamps_enabled()
-        event_time_ingested = event_time_backfill if micros_enabled else "2024-06-01 12:34:56.123000000"
-        last_seen_ingested = last_seen_backfill if micros_enabled else "2024-06-01 12:34:57.987000000"
-        last_seen_online = last_seen_ingested
+        ingest_micros = self._stream_ingest_microsecond_timestamps_enabled()
+        event_time_ingested = event_time_backfill if ingest_micros else "2024-06-01 12:34:56.123000000"
+        last_seen_ingested = last_seen_backfill if ingest_micros else "2024-06-01 12:34:57.987000000"
         s = uuid.uuid4().hex[:8]
         label = "ICEBERG" if iceberg else "NATIVE"
         stream = f"ALL_TYPES_VIEW_{s}"
@@ -1861,7 +1875,7 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertEqual(backfill_offline["EVENT_TIME"], event_time_backfill)
         self.assertEqual(backfill_offline["LAST_SEEN_TIME"], last_seen_backfill)
 
-        def _validate(pdf):
+        def _validate(pdf, expected_last_seen: str) -> None:
             row = pdf.iloc[0]
             # Iceberg writes Snowflake FLOAT as IEEE binary32 (3.14 -> 3.140000104904175).
             # PRICE is NUMBER(10,2) but pandas materializes it as float. 3.14 and 99.95 are
@@ -1871,15 +1885,24 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             self.assertEqual(int(row["RANK"]), 42)
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
             self.assertEqual(str(row["CATEGORY"]), ALL_TYPES_CATEGORY)
-            online_holder["pdf"] = pdf
             self.assertNotIn("EVENT_TIME", pdf.columns)
             actual = pd.Timestamp(row["LAST_SEEN_TIME"])
             if actual.tz is not None:
                 actual = actual.tz_localize(None)
-            self.assertEqual(actual, pd.Timestamp(last_seen_online))
+            self.assertEqual(actual, pd.Timestamp(expected_last_seen))
+
+        def _validate_backfill(pdf) -> None:
+            _validate(pdf, last_seen_backfill)
+            online_holder["pdf"] = pdf
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=300.0, desc="all types view SFV"
+            fs,
+            fv_name,
+            "v1",
+            keys=[["u1"]],
+            validate_fn=_validate_backfill,
+            timeout=300.0,
+            desc="all types view SFV",
         )
         self._assert_all_types_offline_matches_postgres(offline_pdf, online_holder["pdf"])
 
@@ -1903,7 +1926,9 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             fv_name,
             "v1",
             keys=[[ingested_key]],
-            validate_fn=_validate,
+            validate_fn=lambda pdf: _validate(
+                pdf, last_seen_backfill if ingest_micros else "2024-06-01 12:34:57.987000000"
+            ),
             timeout=300.0,
             desc="all types view SFV ingest",
         )

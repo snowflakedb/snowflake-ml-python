@@ -674,6 +674,87 @@ class TestExportSpecsOmitsTargetLagForStreamingAndRealtime:
         assert streaming[0].target_lag_sec is None
 
 
+class TestExportSpecsEmitsRefreshFreqForTiledStreaming:
+    """Pin :func:`export_specs` emits ``refresh_freq`` for a *tiled*
+    ``StreamingFeatureView`` (and only when the applied inner spec carries
+    an explicit cadence).
+
+    A tiled streaming FV materialises its aggregate as an offline Dynamic
+    Table whose refresh cadence is ``refresh_freq``;
+    ``state._inject_fv_refresh_freq_from_list_row`` populates
+    ``spec.refresh_freq`` from the deployed DT's ``REFRESH_FREQ`` before
+    export.  The exporter must round-trip that value so
+    ``snow feature init`` → ``snow feature plan`` stays ``NO_CHANGE``.
+    Unlike ``BatchFeatureView``, streaming FVs must NEVER derive
+    ``refresh_freq`` from the wire-form ``target_lag_sec`` — the runtime
+    stamps that at ``0`` for all streaming kinds.
+    """
+
+    def _tiled_streaming_spec(self, *, refresh_freq: str | None) -> dict[str, Any]:
+        import copy
+
+        spec = copy.deepcopy(_FULL_SPEC)
+        # ``_FULL_SPEC`` is already tiled (feature_granularity_sec + tiles).
+        spec["spec"]["target_lag_sec"] = 0
+        if refresh_freq is not None:
+            spec["spec"]["refresh_freq"] = refresh_freq
+        return spec
+
+    def test_emits_refresh_freq_when_inner_carries_it(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": self._tiled_streaming_spec(refresh_freq="5 minutes")},
+        )
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+        assert data.get("refresh_freq") == "5 minutes"
+        assert "target_lag_sec" not in data
+        assert "target_lag" not in data
+
+    def test_no_refresh_freq_fallback_from_target_lag_sec_zero(self, tmp_path: Path) -> None:
+        # No explicit cadence on the inner spec → the exporter must NOT
+        # synthesize ``refresh_freq: "0 seconds"`` from the streaming
+        # ``target_lag_sec: 0``; that would fail the validator on reload.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": self._tiled_streaming_spec(refresh_freq=None)},
+        )
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+        assert "refresh_freq" not in data
+
+    def test_exported_tiled_streaming_refresh_freq_roundtrips_through_loader(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+        from snowflake.ml.feature_store.decl.loader import load_specs
+        from snowflake.ml.feature_store.decl.spec_models import StreamingFeatureView
+
+        export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": self._tiled_streaming_spec(refresh_freq="5 minutes")},
+        )
+        export_root = tmp_path / "MYDB.PUBLIC"
+        batch = load_specs([f"{export_root}/..."])
+        streaming = [s for s in batch.specs if isinstance(s, StreamingFeatureView)]
+        assert len(streaming) == 1
+        assert streaming[0].refresh_freq == "5 minutes"
+
+
 class TestExportSpecsOmitsOnlineForStreamingAndRealtime:
     """Pin :func:`export_specs` omits ``online`` from exported streaming /
     realtime FV YAML.
@@ -1607,6 +1688,7 @@ class TestExportSpecsEntityRows:
 
         ds_files = [f for f in result["files"] if Path(f).parent.name == "datasources"]
         assert ds_files, "datasource YAML must still be emitted regardless of entity_rows"
+        assert result["warnings"] == [], "no orphaned-OFT warnings when the subset check is skipped"
 
     def test_entity_rows_empty_list_emits_no_warning_and_no_entity_yamls(self, tmp_path: Path) -> None:
         """``entity_rows=[]`` matches the None case exactly — silent, no entity YAMLs."""
@@ -1636,6 +1718,7 @@ class TestExportSpecsEntityRows:
 
         entity_files = [f for f in result["files"] if Path(f).parent.name == "entities"]
         assert entity_files == [], "with the legacy fallback removed, entity_rows=[] must produce no entity YAMLs"
+        assert result["warnings"] == [], "no orphaned-OFT warnings when entity_rows is empty"
 
     def test_entity_rows_none_skips_strict_subset_check(self, tmp_path: Path) -> None:
         """When ``entity_rows`` is empty the FV ⊆ entity_rows check is vacuous and must be skipped."""
@@ -1655,6 +1738,7 @@ class TestExportSpecsEntityRows:
             entity_rows=None,
         )
         assert result["status"] == "exported"
+        assert result["warnings"] == []
 
     def test_entity_rows_none_still_returns_noop_for_empty_schema(self, tmp_path: Path) -> None:
         """``show_rows=[]`` + ``entity_rows=None`` is the genuine empty-schema case."""
@@ -1668,29 +1752,157 @@ class TestExportSpecsEntityRows:
             schema="PUBLIC",
             entity_rows=None,
         )
-        assert result == {"status": "exported", "directory": "", "files": []}
+        assert result == {"status": "exported", "directory": "", "files": [], "warnings": []}
 
-    def test_fv_references_unknown_entity_strict_raises(self, tmp_path: Path) -> None:
-        """An FV referencing an entity column absent from entity_rows is a hard error."""
+    def test_fv_references_unknown_entity_warns_but_exports(self, tmp_path: Path) -> None:
+        """An OFT referencing an entity column absent from entity_rows still exports (with a warning)."""
+        # The FV is a real deployed object whose definition (sources, features,
+        # schema) is fully recoverable.  Skipping its YAML would make the planner
+        # see it in applied state with no local spec and emit a spurious
+        # ``DROP_FV``.  The orphaned-entity warning is preserved, but the FV YAML
+        # is written so an unmodified init -> plan cycle reports ``NO_CHANGE``.
         from snowflake.ml.feature_store.decl.exporter import export_specs
 
-        with pytest.raises(ValueError) as exc_info:
-            export_specs(
-                show_rows=[_SHOW_ROW_1],
-                describe_rows_by_oft={},
-                output_dir=str(tmp_path),
-                database="MYDB",
-                schema="PUBLIC",
-                specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
-                entity_rows=[_entity_row("OTHER_KEY", join_keys=["OTHER_KEY"])],
-            )
-        msg = str(exc_info.value)
+        result = export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("OTHER_KEY", join_keys=["OTHER_KEY"])],
+        )
+
+        warnings = result["warnings"]
+        assert len(warnings) == 1, f"expected exactly one orphaned-OFT warning, got {warnings!r}"
+        msg = warnings[0]
         assert "USER_ID" in msg.upper()
-        assert "user_clicks".upper() in msg.upper() or "USER_CLICKS$V1$ONLINE" in msg
-        # No partial state: entities/ dir either missing or empty.
-        ent_dir = tmp_path / "MYDB.PUBLIC" / "entities"
-        if ent_dir.exists():
-            assert list(ent_dir.glob("*.yaml")) == []
+        assert "USER_CLICKS$V1$ONLINE" in msg
+
+        # The orphaned OFT is still exported to a YAML despite the warning.
+        fv_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views")
+        assert "user_clicks_v1.yaml" in fv_files, f"orphaned OFT must still emit a FV YAML; got {fv_files!r}"
+
+        # The unrelated registered entity tag still exports normally.
+        entity_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "entities")
+        assert entity_files == ["OTHER_KEY.yaml"]
+
+    def test_mixed_registered_and_orphaned_ofts(self, tmp_path: Path) -> None:
+        """A schema with one consistent OFT and one orphaned OFT exports both; the orphan still warns."""
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        orphan_show_row: dict[str, Any] = {
+            "name": "AD_METRICS$V1$ONLINE",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "scheduling_state": "ACTIVE",
+        }
+        orphan_spec = json.loads(json.dumps(_FULL_SPEC))
+        orphan_spec["metadata"]["name"] = "ad_metrics"
+        orphan_spec["spec"]["ordered_entity_column_names"] = ["ad_id"]
+
+        result = export_specs(
+            show_rows=[_SHOW_ROW_1, orphan_show_row],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "USER_CLICKS$V1$ONLINE": _FULL_SPEC,
+                "AD_METRICS$V1$ONLINE": orphan_spec,
+            },
+            entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
+        )
+
+        warnings = result["warnings"]
+        assert len(warnings) == 1
+        assert "AD_METRICS$V1$ONLINE" in warnings[0]
+        assert "AD_ID" in warnings[0].upper()
+
+        # Both the consistent OFT and the orphaned OFT export their FV YAML.
+        fv_yamls = sorted(
+            Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views" and f.endswith(".yaml")
+        )
+        assert fv_yamls == ["ad_metrics_v1.yaml", "user_clicks_v1.yaml"], f"both OFTs should export; got {fv_yamls!r}"
+
+    def test_orphaned_oft_warns_but_exports_python_form(self, tmp_path: Path) -> None:
+        """The Python-form export path mirrors the YAML path: warn but still export orphaned OFTs."""
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("OTHER_KEY", join_keys=["OTHER_KEY"])],
+        )
+
+        warnings = result["warnings"]
+        assert len(warnings) == 1
+        assert "USER_CLICKS$V1$ONLINE" in warnings[0]
+        fv_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views")
+        assert "user_clicks_v1.py" in fv_files, f"orphaned OFT must still emit a .py file; got {fv_files!r}"
+
+    def test_orphaned_oft_roundtrips_to_no_change(self, tmp_path: Path) -> None:
+        """An exported orphaned-OFT FV validates as NO_CHANGE, not MISSING_ENTITY."""
+        # The exported FV references its (unregistered) entity column, so a naive
+        # dependency check would flag ``MISSING_ENTITY``.  But ``validate_specs``
+        # runs the content-hash idempotency check first and short-circuits before
+        # ``_check_dependencies`` when the local compiled spec hashes identically
+        # to the deployed one — so an unmodified orphaned FV plans cleanly.
+        from snowflake.ml.feature_store.decl import api as decl_api
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+        from snowflake.ml.feature_store.decl.loader import load_specs
+        from snowflake.ml.feature_store.decl.state import fetch_applied_state
+
+        # entity_rows carries an unrelated tag (OTHER_KEY) so the orphaned-OFT
+        # check fires for the FV's ``user_id`` column, which has no tag.
+        entity_rows = [_entity_row("OTHER_KEY", join_keys=["OTHER_KEY"])]
+
+        export_result = export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=entity_rows,
+        )
+        assert len(export_result["warnings"]) == 1, "orphaned-OFT warning must still be emitted"
+
+        # Applied state: the deployed FV is present, but ``user_id`` is NOT
+        # registered as an entity tag (it is orphaned).
+        applied_state = fetch_applied_state(
+            [_SHOW_ROW_1],
+            None,
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=entity_rows,
+            default_database="MYDB",
+            default_schema="PUBLIC",
+        )
+
+        export_root = tmp_path / "MYDB.PUBLIC"
+        batch = load_specs([f"{export_root}/..."])
+        decl_api.resolve_datasource_columns(batch)
+        results = decl_api.validate_specs(
+            batch,
+            applied_state,
+            target_database="MYDB",
+            target_schema="PUBLIC",
+        )
+
+        errors = [r for r in results if r.severity == "ERROR"]
+        assert errors == [], f"orphaned-OFT round-trip must not produce validation errors; got {errors!r}"
+        missing_entity = [r for r in results if getattr(r, "code", "") == "MISSING_ENTITY"]
+        assert missing_entity == [], f"idempotency short-circuit must suppress MISSING_ENTITY; got {missing_entity!r}"
+        no_change_fv = [
+            r
+            for r in results
+            if getattr(r, "code", "") == "NO_CHANGE" and "user_clicks" in str(getattr(r, "object_name", "")).lower()
+        ]
+        assert no_change_fv, f"exported orphaned FV must report NO_CHANGE; got {results!r}"
 
     def test_emitted_orphan_entity_yaml_round_trips_to_no_change(self, tmp_path: Path) -> None:
         """The fingerprint of the loaded orphan-stub matches the applied entity hash."""
@@ -1754,6 +1966,82 @@ class TestExportSpecsEntityRows:
         assert len(entity_files) == 1
         entity_path = tmp_path / "MYDB.PUBLIC" / "entities" / "LONELY_KEY.yaml"
         assert entity_path.exists()
+
+    def test_entity_name_differs_from_join_key_column_exports_without_warning(self, tmp_path: Path) -> None:
+        """The pre-validation set is join-key columns, not entity names."""
+        # Regression pin for
+        # ``plans/bug_exporter_entity_prevalidation_name_vs_joinkey_mismatch.md``:
+        # an entity named ``NOTEBOOK_SYNC_USER`` whose join-key column is
+        # ``USER_ID`` is the overwhelmingly common shape (name != column).  The
+        # FV's ``ordered_entity_column_names`` carries the *column* (``USER_ID``),
+        # so the pre-check must compare it against the entity's declared join keys
+        # (via ``_join_keys_from_row``) — never the entity *name* (via
+        # ``_entity_name_from_row``).  Comparing against the name would flag this
+        # valid pairing as orphaned and (historically) abort the export.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        # _FULL_SPEC's ``ordered_entity_column_names`` is ["user_id"], matching
+        # the join-key column USER_ID — but NOT the entity name NOTEBOOK_SYNC_USER.
+        result = export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("NOTEBOOK_SYNC_USER", join_keys=["USER_ID"])],
+        )
+
+        assert result["warnings"] == [], (
+            "an entity whose name differs from its join-key column must NOT be "
+            f"flagged as orphaned; got warnings {result['warnings']!r}"
+        )
+
+        # The FV YAML is still written.
+        fv_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views")
+        assert "user_clicks_v1.yaml" in fv_files, f"FV YAML must be written; got {fv_files!r}"
+
+        # The entity YAML is named after the entity NAME (correct namespace for
+        # the tag), and carries the join-key COLUMN.
+        entity_path = tmp_path / "MYDB.PUBLIC" / "entities" / "NOTEBOOK_SYNC_USER.yaml"
+        assert entity_path.exists(), "entity YAML must be named after the entity name"
+        ent = yaml.safe_load(entity_path.read_text())
+        assert ent["name"].upper() == "NOTEBOOK_SYNC_USER"
+        join_keys = ent.get("join_keys") or []
+        assert [jk["name"].upper() for jk in join_keys] == ["USER_ID"]
+
+    def test_prevalidation_compares_join_keys_not_names(self, tmp_path: Path) -> None:
+        """A miss is judged on join keys even when an entity name matches the column."""
+        # Trap for the original defect's inverse: here an entity is *named*
+        # ``USER_ID`` (which equals the FV's entity column) but its actual
+        # join-key column is ``OTHER_COL``.  Because the FV column ``USER_ID`` is
+        # absent from the registered *join keys*, the OFT is genuinely orphaned
+        # and must be warned (yet still exported).  A name-based comparison would
+        # wrongly treat this as consistent and emit no warning — this test fails
+        # in that case.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("USER_ID", join_keys=["OTHER_COL"])],
+        )
+
+        warnings = result["warnings"]
+        assert len(warnings) == 1, (
+            "FV column USER_ID is absent from the registered join keys "
+            f"(OTHER_COL), so exactly one orphan warning is expected; got {warnings!r}"
+        )
+        assert "USER_ID" in warnings[0].upper()
+        assert "USER_CLICKS$V1$ONLINE" in warnings[0]
+
+        # Still exported despite the warning.
+        fv_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views")
+        assert "user_clicks_v1.yaml" in fv_files, f"orphaned OFT must still export; got {fv_files!r}"
 
 
 # ===========================================================================
@@ -2775,6 +3063,60 @@ class TestExportSpecsWithAppliedState:
         assert data["refresh_mode"] == "INCREMENTAL"
         assert data["initialize"] == "ON_CREATE"
 
+    @pytest.mark.parametrize("auto_value", ["AUTO", "auto"])
+    def test_applied_state_suppresses_refresh_mode_auto(self, tmp_path: Path, auto_value: str) -> None:
+        """``refresh_mode: AUTO`` is Snowflake's runtime default sentinel —
+        the exporter must omit it (never emit ``refresh_mode:`` at all).
+
+        Snowflake's ``DESCRIBE … TYPE = SPECIFICATION`` stamps ``"AUTO"``
+        on any BFV whose operator never pinned ``FULL`` / ``INCREMENTAL``.
+        The declarative spec models reject ``AUTO`` (only ``None`` / ``FULL``
+        / ``INCREMENTAL`` are valid), so exporting it verbatim crashes the
+        next ``snow feature plan``.  ``AUTO`` is semantically equivalent to
+        an unset field, so the exported YAML must simply omit the key.
+
+        Args:
+            tmp_path: pytest tmpdir fixture — receives the exported tree.
+            auto_value: the sentinel spelling recovered from Snowflake
+                (case-insensitive).
+        """
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        recovered = _applied_object_dict(
+            name="MY_ADV_BFV",
+            version="V1",
+            database="MYDB",
+            schema="PUBLIC",
+            kind="BatchFeatureView",
+            sources=[{"name": "RAW_EVENTS", "source_type": "Batch", "table": "RAW_EVENTS"}],
+            extra_inner={"refresh_mode": auto_value},
+        )
+        applied_state = _applied_state_with(recovered)
+
+        export_specs(
+            show_rows=[
+                {
+                    "name": "MY_ADV_BFV$V1$ONLINE",
+                    "database_name": "MYDB",
+                    "schema_name": "PUBLIC",
+                    "scheduling_state": "ACTIVE",
+                }
+            ],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            applied_state=applied_state,
+        )
+
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "MY_ADV_BFV_V1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+        assert "refresh_mode" not in data, (
+            "refresh_mode: AUTO is Snowflake's runtime default and must be "
+            f"omitted from the exported YAML; got {data.get('refresh_mode')!r}"
+        )
+
     def test_export_without_applied_state_kwarg_still_works(self, tmp_path: Path) -> None:
         """Legacy callers that don't pass ``applied_state`` still get the
         ``specification_map`` codepath unchanged.
@@ -2934,6 +3276,1229 @@ class TestRefreshFreqEmitted:
         data = yaml.safe_load(fv_path.read_text())
         assert "refresh_freq" not in data
         assert "batch_schedule" not in data
+
+
+# ---------------------------------------------------------------------------
+# Python-form export tests
+# ---------------------------------------------------------------------------
+
+
+class TestExportSpecsAsPythonEmptyInput:
+    def test_empty_show_rows_returns_early(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="DB",
+            schema="SCH",
+        )
+        assert result["status"] == "exported"
+        assert result["files"] == []
+        assert result["directory"] == ""
+
+
+class TestExportSpecsAsPythonFVWithUDF:
+    """StreamingFV with UDF: inline def block, no YAML, no sidecar .py."""
+
+    def test_writes_py_not_yaml(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        fv_py = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py"
+        fv_yaml = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
+        assert fv_py.exists(), ".py file must be written in python mode"
+        assert not fv_yaml.exists(), "no .yaml file must be written in python mode"
+
+    def test_no_udf_sidecar_written(self, tmp_path: Path) -> None:
+        """Python mode must not write a separate UDF sidecar .py file."""
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        # Only user_clicks.py should exist; no additional sidecar
+        py_files = list(fv_dir.glob("*.py"))
+        assert len(py_files) == 1, f"expected exactly 1 .py file, got {[f.name for f in py_files]}"
+        assert py_files[0].name == "user_clicks_v1.py"
+
+    def test_udf_def_block_inline_in_py_file(self, tmp_path: Path) -> None:
+        """UDF source code must appear as a `def` block inside the .py file."""
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        src = (tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py").read_text()
+        assert "def transform" in src, "UDF def block must appear in the .py file"
+        # The UDF constructor must reference the callable name, not a string
+        assert "function_definition=transform" in src, "UDF ctor must reference callable by name"
+        assert 'function_definition="' not in src, "UDF ctor must not inline source as a string"
+        assert "file:" not in src, "python mode must not emit YAML-style file: references"
+
+    def test_py_file_has_import_and_assignment(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        src = (tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py").read_text()
+        assert "from snowflake.ml.feature_store.decl import" in src
+        assert "StreamingFeatureView(" in src
+        assert "user_clicks" in src  # variable assignment name
+
+    def test_py_file_in_returned_files_list(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        fv_py = str(tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py")
+        assert fv_py in result["files"]
+
+    def test_py_file_loadable_by_load_python_file(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+        )
+        fv_py = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.py"
+        specs = load_python_file(str(fv_py))
+        assert len(specs) >= 1
+        names = [name for name, _ in specs]
+        assert "user_clicks_v1" in names
+
+
+class TestExportSpecsAsPythonEntityRows:
+    def test_entity_writes_py_not_yaml(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
+        )
+        entity_py = tmp_path / "MYDB.PUBLIC" / "entities" / "USER_ID.py"
+        entity_yaml = tmp_path / "MYDB.PUBLIC" / "entities" / "USER_ID.yaml"
+        assert entity_py.exists(), "entity .py file must be written"
+        assert not entity_yaml.exists(), "no entity .yaml in python mode"
+
+    def test_entity_py_file_loadable(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
+        )
+        entity_py = tmp_path / "MYDB.PUBLIC" / "entities" / "USER_ID.py"
+        specs = load_python_file(str(entity_py))
+        assert len(specs) >= 1
+        assert any(obj.__class__.__name__ == "Entity" for _, obj in specs)
+
+    def test_entity_py_has_import_and_constructor(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("USER_ID", join_keys=["USER_ID"])],
+        )
+        src = (tmp_path / "MYDB.PUBLIC" / "entities" / "USER_ID.py").read_text()
+        assert "Entity(" in src
+        assert "from snowflake.ml.feature_store.decl import" in src
+
+    def test_entity_name_differs_from_join_key_column_exports_without_warning(self, tmp_path: Path) -> None:
+        """Python-form mirror of the YAML pre-validation join-key regression."""
+        # Pins the same contract as the YAML-form
+        # ``test_entity_name_differs_from_join_key_column_exports_without_warning``
+        # for ``export_specs_as_python``: an entity whose name differs from its
+        # join-key column (``NOTEBOOK_SYNC_USER`` / ``USER_ID``) must not be
+        # flagged as orphaned, because the pre-check compares the FV's entity
+        # columns against the declared join keys, not the entity name.
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            entity_rows=[_entity_row("NOTEBOOK_SYNC_USER", join_keys=["USER_ID"])],
+        )
+
+        assert result["warnings"] == [], (
+            "an entity whose name differs from its join-key column must NOT be "
+            f"flagged as orphaned; got warnings {result['warnings']!r}"
+        )
+        entity_py = tmp_path / "MYDB.PUBLIC" / "entities" / "NOTEBOOK_SYNC_USER.py"
+        assert entity_py.exists(), "entity .py file must be named after the entity name"
+        fv_files = sorted(Path(f).name for f in result["files"] if Path(f).parent.name == "feature_views")
+        assert "user_clicks_v1.py" in fv_files, f"FV .py must be written; got {fv_files!r}"
+
+
+class TestExportSpecsAsPythonFeatureGroups:
+    _FG_ROW: dict[str, Any] = {
+        "name": "user_metrics",
+        "version": "v1",
+        "desc": "user metrics group",
+        "auto_prefix": True,
+        "sources": [{"fv_name": "user_clicks", "fv_version": "v1"}],
+        "database_name": "MYDB",
+        "schema_name": "PUBLIC",
+    }
+
+    def test_fg_writes_py_not_yaml(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            feature_group_rows=[self._FG_ROW],
+        )
+        fg_py = tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.py"
+        fg_yaml = tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.yaml"
+        assert fg_py.exists(), "FG .py file must be written"
+        assert not fg_yaml.exists(), "no FG .yaml in python mode"
+
+    def test_fg_py_file_loadable(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        export_specs_as_python(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            feature_group_rows=[self._FG_ROW],
+        )
+        fg_py = tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.py"
+        specs = load_python_file(str(fg_py))
+        assert len(specs) >= 1
+        assert any(obj.__class__.__name__ == "FeatureGroup" for _, obj in specs)
+
+    def test_fg_py_has_import_and_constructor(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            feature_group_rows=[self._FG_ROW],
+        )
+        src = (tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.py").read_text()
+        assert "FeatureGroup(" in src
+        assert "FeatureViewRef(" in src
+        assert "from snowflake.ml.feature_store.decl import" in src
+
+
+class TestExportSpecsAsPythonDatasources:
+    """Datasources in python mode: .py files, inline query= (no .sql sidecar)."""
+
+    _BATCH_FV_SPEC: dict[str, Any] = {
+        "kind": "BatchFeatureView",
+        "metadata": {
+            "database": "MYDB",
+            "schema": "PUBLIC",
+            "name": "order_features",
+            "version": "v1",
+        },
+        "offline_configs": [],
+        "spec": {
+            "ordered_entity_column_names": ["order_id"],
+            "sources": [
+                {
+                    "name": "order_table",
+                    "source_type": "Batch",
+                    "table": "RAW_ORDERS",
+                    "columns": [
+                        {"name": "order_id", "type": "StringType"},
+                        {"name": "amount", "type": "DoubleType"},
+                    ],
+                }
+            ],
+            "features": [
+                {
+                    "source_column": {"name": "amount", "type": "DoubleType"},
+                    "output_column": {"name": "order_amount", "type": "DoubleType"},
+                }
+            ],
+            "refresh_freq": "1 day",
+        },
+        "online_store_type": "postgres",
+    }
+
+    _BATCH_SHOW_ROW: dict[str, Any] = {
+        "name": "ORDER_FEATURES$V1$ONLINE",
+        "database_name": "MYDB",
+        "schema_name": "PUBLIC",
+        "scheduling_state": "ACTIVE",
+    }
+
+    def test_datasource_writes_py_not_yaml(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[self._BATCH_SHOW_ROW],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"ORDER_FEATURES$V1$ONLINE": self._BATCH_FV_SPEC},
+        )
+        ds_dir = tmp_path / "MYDB.PUBLIC" / "datasources"
+        py_files = list(ds_dir.glob("*.py"))
+        yaml_files = list(ds_dir.glob("*.yaml"))
+        assert len(py_files) >= 1, f"expected datasource .py file, got {list(ds_dir.iterdir())}"
+        assert len(yaml_files) == 0, "no .yaml datasource files in python mode"
+
+    def test_datasource_py_file_loadable(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        export_specs_as_python(
+            show_rows=[self._BATCH_SHOW_ROW],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"ORDER_FEATURES$V1$ONLINE": self._BATCH_FV_SPEC},
+        )
+        ds_dir = tmp_path / "MYDB.PUBLIC" / "datasources"
+        py_files = list(ds_dir.glob("*.py"))
+        assert py_files, "at least one datasource .py file must exist"
+        specs = load_python_file(str(py_files[0]))
+        assert len(specs) >= 1
+
+    def test_datasource_py_no_sql_sidecar(self, tmp_path: Path) -> None:
+        """Python mode must not write a .sql sidecar for batch query sources."""
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        spec_with_query = dict(self._BATCH_FV_SPEC)
+        spec_with_query = {
+            **self._BATCH_FV_SPEC,
+            "spec": {
+                **self._BATCH_FV_SPEC["spec"],
+                "sources": [
+                    {
+                        "name": "order_table",
+                        "source_type": "Batch",
+                        "query": "SELECT order_id, amount FROM raw_orders",
+                        "columns": [
+                            {"name": "order_id", "type": "StringType"},
+                            {"name": "amount", "type": "DoubleType"},
+                        ],
+                    }
+                ],
+            },
+        }
+        export_specs_as_python(
+            show_rows=[self._BATCH_SHOW_ROW],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"ORDER_FEATURES$V1$ONLINE": spec_with_query},
+        )
+        ds_dir = tmp_path / "MYDB.PUBLIC" / "datasources"
+        sql_files = list(ds_dir.glob("*.sql"))
+        assert sql_files == [], f"python mode must not write .sql sidecars, got {[f.name for f in sql_files]}"
+        # The query must be inline in the .py file
+        py_files = list(ds_dir.glob("*.py"))
+        assert py_files, "datasource .py must exist"
+        src = py_files[0].read_text()
+        assert "SELECT order_id" in src, "inline query must appear in .py file"
+
+
+class TestExportSpecsAsPythonLayout:
+    """Python mode must respect the ``layout='sources'`` parameter."""
+
+    def test_sources_layout_writes_to_sources_subdir(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            layout="sources",
+        )
+        fv_py = tmp_path / "sources" / "feature_views" / "user_clicks_v1.py"
+        assert fv_py.exists(), f"expected {fv_py}, sources layout not applied"
+
+
+class TestExporterOrphanOftDiagnostic:
+    """FV-retrieval unification: SHOW OFT is a diagnostic side channel.
+
+    When ``feature_view_rows`` (the list_feature_views discovery set) is
+    supplied, ``export_specs`` cross-checks the OFT show-rows against it
+    and surfaces a named warning for any OFT with no matching listed FV
+    (the backing Dynamic Table was dropped but the OFT lingered).  The FV
+    is still exported when its DESCRIBE spec is available — the warning is
+    additive, never a silent skip.
+    """
+
+    def _batch_spec(self, name: str, version: str) -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "spec": {
+                "ordered_entity_column_names": ["user_id"],
+                "sources": [{"name": f"{name}_SRC", "source_type": "Batch", "table": f"{name}_TBL"}],
+                "features": [],
+                "target_lag_sec": 60,
+            },
+        }
+
+    def _oft_row(self, name: str, version: str) -> dict[str, Any]:
+        return {
+            "name": f"{name}${version}$ONLINE",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "scheduling_state": "ACTIVE",
+        }
+
+    def _fv_row(self, name: str, version: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "version": version,
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "kind": "BATCH",
+            "entities": ["user_id"],
+            "online_enabled": True,
+            "physical_dt_name": f"{name}${version}",
+        }
+
+    def test_orphan_oft_emits_named_warning(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("GOOD_FV", "V1"), self._oft_row("GHOST_FV", "V1")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "GOOD_FV$V1$ONLINE": self._batch_spec("GOOD_FV", "V1"),
+                "GHOST_FV$V1$ONLINE": self._batch_spec("GHOST_FV", "V1"),
+            },
+            feature_view_rows=[self._fv_row("GOOD_FV", "V1")],
+        )
+        warnings = result.get("warnings", [])
+        assert any("GHOST_FV" in w for w in warnings), f"expected orphan-OFT warning naming GHOST_FV; got {warnings!r}"
+        assert not any("GOOD_FV" in w for w in warnings), f"consistent OFT must not warn; got {warnings!r}"
+
+    def test_no_warning_when_feature_view_rows_absent(self, tmp_path: Path) -> None:
+        # Back-compat: callers that do not thread ``feature_view_rows`` get
+        # no orphan diagnostic — the check is opt-in, never false-flagging.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("GOOD_FV", "V1")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"GOOD_FV$V1$ONLINE": self._batch_spec("GOOD_FV", "V1")},
+        )
+        assert result.get("warnings", []) == []
+
+    def test_lowercase_list_fv_version_not_flagged_as_orphan(self, tmp_path: Path) -> None:
+        # ``_parse_oft_name`` preserves the OFT name's case (``V1`` from
+        # ``GOOD_FV$V1$ONLINE``) while ``list_feature_views`` reports the
+        # authored case (``v1``).  Folding the name but not the version made a
+        # healthy FV look orphaned.  Driven through ``export_specs`` so the test
+        # is agnostic to the shim vs the canonical ``state.orphaned_oft_warnings``.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("GOOD_FV", "V1")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"GOOD_FV$V1$ONLINE": self._batch_spec("GOOD_FV", "V1")},
+            feature_view_rows=[self._fv_row("GOOD_FV", "v1")],
+        )
+        assert result.get("warnings", []) == [], (
+            "a list-FV row whose version differs only in case from the OFT must "
+            f"not be flagged as an orphan; got {result.get('warnings', [])!r}"
+        )
+
+    def test_lowercase_list_fg_version_not_flagged_as_orphan(self, tmp_path: Path) -> None:
+        # Feature-group rows feed the same ``(name, version)`` identity; a
+        # case-only version difference must not false-flag a healthy FG OFT.
+        # ``feature_view_rows=[]`` (not ``None``) keeps the diagnostic active.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("MY_FG", "V1")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "MY_FG$V1$ONLINE": {
+                    "kind": "FeatureGroup",
+                    "metadata": {"database": "MYDB", "schema": "PUBLIC", "name": "my_fg", "version": "V1"},
+                    "spec": {},
+                }
+            },
+            feature_view_rows=[],
+            feature_group_rows=[
+                {
+                    "name": "my_fg",
+                    "version": "v1",
+                    "desc": "",
+                    "auto_prefix": True,
+                    "sources": [{"fv_name": "x", "fv_version": "v1"}],
+                    "database_name": "MYDB",
+                    "schema_name": "PUBLIC",
+                }
+            ],
+        )
+        assert not any("MY_FG" in w for w in result.get("warnings", [])), (
+            "a list-FG row whose version differs only in case from the OFT must "
+            f"not be flagged as an orphan; got {result.get('warnings', [])!r}"
+        )
+
+
+class TestPyIsExportedSpecModule:
+    """Unit coverage for the content classifier behind the overwrite guard."""
+
+    def test_exported_stub_is_recognized(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _py_is_spec_module
+
+        stub = (
+            "from snowflake.ml.feature_store.decl import StreamingFeatureView\n\n"
+            "USER_CLICK_BACKFILL_DECL = StreamingFeatureView(\n"
+            "    name='USER_CLICK_BACKFILL_DECL',\n"
+            "    version='V1',\n"
+            ")\n"
+        )
+        assert _py_is_spec_module(stub) is True
+
+    def test_udf_body_is_not_a_spec_module(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _py_is_spec_module
+
+        udf_body = "def compute_backfill_engagement(clickstream):\n" "    df = clickstream.copy()\n" "    return df\n"
+        assert _py_is_spec_module(udf_body) is False
+
+    def test_syntax_error_is_not_a_spec_module(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _py_is_spec_module
+
+        assert _py_is_spec_module("def broken(:\n    pass\n") is False
+
+    def test_all_spec_constructors_recognized(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _py_is_spec_module
+
+        for ctor in (
+            "Entity",
+            "BatchSource",
+            "StreamingSource",
+            "BatchFeatureView",
+            "StreamingFeatureView",
+            "RealtimeFeatureView",
+            "FeatureGroup",
+        ):
+            src = f"X = {ctor}(name='X')\n"
+            assert _py_is_spec_module(src) is True, ctor
+
+
+class TestExportSpecsAsPythonOverwriteGuard:
+    """`snow feature init` (python form) must not clobber non-spec .py files.
+
+    A pre-existing ``<FV_NAME>.py`` that holds a UDF function body (the
+    ``udf.file:`` sidecar referenced by a sibling YAML) shares its name
+    with the Python-form FV stub the exporter would write.  The guard
+    preserves the on-disk UDF body, warns, and omits it from the
+    returned ``files`` list; genuine exporter-generated stubs are still
+    refreshed.
+    """
+
+    _UDF_BODY = (
+        "def compute_backfill_engagement(clickstream):\n"
+        '    """Compute engagement metrics from click-stream events."""\n'
+        "    df = clickstream.copy()\n"
+        "    return df\n"
+    )
+
+    def _seed(self, tmp_path: Path, contents: str) -> Path:
+        fv_dir = tmp_path / "sources" / "feature_views"
+        fv_dir.mkdir(parents=True, exist_ok=True)
+        target = fv_dir / "user_clicks_v1.py"
+        target.write_text(contents)
+        return target
+
+    def test_udf_body_is_preserved_not_overwritten(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        target = self._seed(tmp_path, self._UDF_BODY)
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            layout="sources",
+        )
+
+        assert target.read_text() == self._UDF_BODY, "on-disk UDF body must be preserved"
+        assert str(target) not in result["files"], "skipped file must be absent from files list"
+        warnings = result["warnings"]
+        assert any("user_clicks_v1.py" in w for w in warnings), f"expected a skip warning; got {warnings!r}"
+
+    def test_existing_exported_stub_is_overwritten(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        stub = (
+            "from snowflake.ml.feature_store.decl import StreamingFeatureView\n\n"
+            "user_clicks = StreamingFeatureView(name='user_clicks', version='v0')\n"
+        )
+        target = self._seed(tmp_path, stub)
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            layout="sources",
+        )
+
+        assert target.read_text() != stub, "exporter-generated stub must be refreshed"
+        assert "def transform" in target.read_text(), "refreshed stub must carry the current UDF def"
+        assert str(target) in result["files"], "overwritten stub must appear in files list"
+
+    def test_new_file_is_written_when_no_collision(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            layout="sources",
+        )
+        target = tmp_path / "sources" / "feature_views" / "user_clicks_v1.py"
+        assert target.exists()
+        assert str(target) in result["files"]
+        assert result["warnings"] == []
+
+
+class TestExporterFeatureGroupOftLeak:
+    """Symptom 1: FeatureGroup-kind OFTs must never leak into ``feature_views/``.
+
+    A FeatureGroup is a real Online Feature Table and therefore appears in
+    ``SHOW ONLINE FEATURE TABLES`` with a ``DESCRIBE ... TYPE = SPECIFICATION``
+    whose ``kind == "FeatureGroup"``.  The FV write loop must skip such rows —
+    FeatureGroups are authoritatively emitted from ``feature_group_rows`` (the
+    ``list_feature_groups()`` metadata), where their member ``FeatureViewRef``s
+    are recoverable.  Rendering an FG OFT through the FV path produces a broken
+    ``FeatureGroup(... feature_views=[])`` stub that fails ``snow feature plan``.
+    """
+
+    _FG_OFT_SPEC: dict[str, Any] = {
+        "kind": "FeatureGroup",
+        "metadata": {
+            "database": "MYDB",
+            "schema": "PUBLIC",
+            "name": "user_metrics",
+            "version": "v1",
+        },
+        "spec": {},
+    }
+
+    _FG_ROW: dict[str, Any] = {
+        "name": "user_metrics",
+        "version": "v1",
+        "desc": "user metrics group",
+        "auto_prefix": True,
+        "sources": [{"fv_name": "user_clicks", "fv_version": "v1"}],
+        "database_name": "MYDB",
+        "schema_name": "PUBLIC",
+    }
+
+    def _oft_row(self, name: str, version: str = "V1") -> dict[str, Any]:
+        return {
+            "name": f"{name}${version}$ONLINE",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "scheduling_state": "ACTIVE",
+        }
+
+    def _batch_spec(self, name: str, version: str = "v1") -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "spec": {
+                "ordered_entity_column_names": ["user_id"],
+                "sources": [{"name": f"{name}_SRC", "source_type": "Batch", "table": f"{name}_TBL"}],
+                "features": [],
+                "target_lag_sec": 60,
+            },
+        }
+
+    # ---- YAML form -------------------------------------------------------
+
+    def test_yaml_fg_oft_not_written_under_feature_views(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        export_specs(
+            show_rows=[self._oft_row("USER_METRICS"), self._oft_row("GOOD_FV")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "USER_METRICS$V1$ONLINE": self._FG_OFT_SPEC,
+                "GOOD_FV$V1$ONLINE": self._batch_spec("GOOD_FV"),
+            },
+            feature_group_rows=[self._FG_ROW],
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "user_metrics_v1.yaml").exists(), "FG OFT must not leak into feature_views/"
+        assert (fv_dir / "GOOD_FV_v1.yaml").exists(), "normal FV alongside the FG OFT must still write"
+        assert (
+            tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.yaml"
+        ).exists(), "FG must still emit from feature_group_rows"
+
+    def test_yaml_orphan_fg_oft_warns_and_skips(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("USER_METRICS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_METRICS$V1$ONLINE": self._FG_OFT_SPEC},
+            feature_group_rows=[],
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "user_metrics_v1.yaml").exists()
+        warnings = result.get("warnings", [])
+        assert any(
+            "USER_METRICS" in w and "FeatureGroup" in w for w in warnings
+        ), f"expected unrecoverable-FG warning naming the OFT; got {warnings!r}"
+
+    # ---- Python form -----------------------------------------------------
+
+    def test_py_fg_oft_not_written_under_feature_views(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        export_specs_as_python(
+            show_rows=[self._oft_row("USER_METRICS"), self._oft_row("GOOD_FV")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "USER_METRICS$V1$ONLINE": self._FG_OFT_SPEC,
+                "GOOD_FV$V1$ONLINE": self._batch_spec("GOOD_FV"),
+            },
+            feature_group_rows=[self._FG_ROW],
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "user_metrics.py").exists(), "FG OFT must not leak into feature_views/"
+        assert (fv_dir / "GOOD_FV_v1.py").exists(), "normal FV alongside the FG OFT must still write"
+        assert (
+            tmp_path / "MYDB.PUBLIC" / "feature_groups" / "user_metrics_v1.py"
+        ).exists(), "FG must still emit from feature_group_rows"
+
+    def test_py_orphan_fg_oft_warns_and_skips(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[self._oft_row("USER_METRICS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_METRICS$V1$ONLINE": self._FG_OFT_SPEC},
+            feature_group_rows=[],
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "user_metrics.py").exists()
+        warnings = result.get("warnings", [])
+        assert any(
+            "USER_METRICS" in w and "FeatureGroup" in w for w in warnings
+        ), f"expected unrecoverable-FG warning naming the OFT; got {warnings!r}"
+
+
+class TestExporterLegacyBatchFvMissingSources:
+    """Symptom 2: legacy BatchFVs with no recoverable source are warned + skipped.
+
+    A ``BatchFeatureView`` registered by an older client can lack both
+    ``FV_SOURCE_REFS`` metadata and any ``spec.sources``.  Rather than write a
+    source-less (and therefore non-round-trippable) file, the exporter emits an
+    actionable warning and skips it.  A BatchFV that *does* carry sources
+    exports normally with no warning.
+    """
+
+    def _oft_row(self, name: str, version: str = "V1") -> dict[str, Any]:
+        return {
+            "name": f"{name}${version}$ONLINE",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "scheduling_state": "ACTIVE",
+        }
+
+    def _sourceless_spec(self, name: str, version: str = "v1") -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "spec": {
+                "ordered_entity_column_names": ["order_id"],
+                "sources": [],
+                "features": [],
+                "target_lag_sec": 60,
+            },
+        }
+
+    def _sourced_spec(self, name: str, version: str = "v1") -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "spec": {
+                "ordered_entity_column_names": ["order_id"],
+                "sources": [{"name": f"{name}_SRC", "source_type": "Batch", "table": f"{name}_TBL"}],
+                "features": [],
+                "target_lag_sec": 60,
+            },
+        }
+
+    def _passthrough_spec(self, name: str, version: str = "v1") -> dict[str, Any]:
+        # A passthrough BatchFV: empty ``spec.sources`` but a recoverable
+        # ``BatchSource`` binding in ``offline_configs`` (see the
+        # ``USER_PROFILE_INFO_BATCH`` golden).  Must export, never skip.
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "offline_configs": [
+                {
+                    "store_type": "snowflake",
+                    "table_type": "BatchSource",
+                    "database": "MYDB",
+                    "schema": "PUBLIC",
+                    "table": f"{name}$v1",
+                    "columns": [
+                        {"name": "order_id", "type": "StringType"},
+                        {"name": "amount", "type": "DoubleType"},
+                    ],
+                }
+            ],
+            "online_store_type": "postgres",
+            "spec": {
+                "ordered_entity_column_names": ["order_id"],
+                "sources": [],
+                "features": [
+                    {
+                        "source_column": {"name": "amount", "type": "DoubleType"},
+                        "output_column": {"name": "amount", "type": "DoubleType"},
+                    }
+                ],
+                "target_lag_sec": 60,
+            },
+        }
+
+    def test_yaml_passthrough_batchfv_with_offline_batchsource_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("PASSTHRU_ORDERS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"PASSTHRU_ORDERS$V1$ONLINE": self._passthrough_spec("passthru_orders")},
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert (fv_dir / "passthru_orders_v1.yaml").exists(), "passthrough BatchFV with offline BatchSource must export"
+        assert not any("passthru_orders" in w for w in result.get("warnings", []))
+
+    def test_py_passthrough_batchfv_with_offline_batchsource_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[self._oft_row("PASSTHRU_ORDERS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"PASSTHRU_ORDERS$V1$ONLINE": self._passthrough_spec("passthru_orders")},
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert (fv_dir / "passthru_orders_v1.py").exists(), "passthrough BatchFV with offline BatchSource must export"
+        assert not any("passthru_orders" in w for w in result.get("warnings", []))
+
+    def test_yaml_sourceless_batchfv_warns_and_skips_control_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("LEGACY_ORDERS"), self._oft_row("GOOD_ORDERS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "LEGACY_ORDERS$V1$ONLINE": self._sourceless_spec("legacy_orders"),
+                "GOOD_ORDERS$V1$ONLINE": self._sourced_spec("good_orders"),
+            },
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "legacy_orders.yaml").exists(), "source-less BatchFV must not be written"
+        assert (fv_dir / "good_orders_v1.yaml").exists(), "BatchFV with sources must write normally"
+        warnings = result.get("warnings", [])
+        assert any(
+            "legacy_orders" in w and "source" in w.lower() for w in warnings
+        ), f"expected source-less BatchFV warning; got {warnings!r}"
+        assert not any("good_orders" in w for w in warnings), f"sourced BatchFV must not warn; got {warnings!r}"
+
+    def test_py_sourceless_batchfv_warns_and_skips_control_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[self._oft_row("LEGACY_ORDERS"), self._oft_row("GOOD_ORDERS")],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "LEGACY_ORDERS$V1$ONLINE": self._sourceless_spec("legacy_orders"),
+                "GOOD_ORDERS$V1$ONLINE": self._sourced_spec("good_orders"),
+            },
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "legacy_orders.py").exists(), "source-less BatchFV must not be written"
+        assert (fv_dir / "good_orders_v1.py").exists(), "BatchFV with sources must write normally"
+        warnings = result.get("warnings", [])
+        assert any(
+            "legacy_orders" in w and "source" in w.lower() for w in warnings
+        ), f"expected source-less BatchFV warning; got {warnings!r}"
+        assert not any("good_orders" in w for w in warnings), f"sourced BatchFV must not warn; got {warnings!r}"
+
+
+class TestExportSpecsAsPythonVersionedStems:
+    """P1: the python-form export must version-qualify FeatureView / FeatureGroup
+    stems and guard residual collisions, matching ``export_specs`` (the YAML
+    path).  Two versions of one name must land in distinct ``.py`` files rather
+    than one silently overwriting / skipping the other.
+    """
+
+    @staticmethod
+    def _fv_spec(name: str, version: str) -> dict[str, Any]:
+        return {
+            "kind": "StreamingFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": name, "version": version},
+            "spec": {
+                "ordered_entity_column_names": ["USER_ID"],
+                "timestamp_field": "TS",
+                "features": [
+                    {
+                        "source_column": {"name": "C", "type": "IntType"},
+                        "output_column": {"name": "C", "type": "IntType"},
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def _fg_row(version: str, desc: str) -> dict[str, Any]:
+        return {
+            "name": "FG",
+            "version": version,
+            "desc": desc,
+            "auto_prefix": True,
+            "sources": [{"fv_name": "CLICKS", "fv_version": version}],
+            "database_name": "DB",
+            "schema_name": "SCH",
+        }
+
+    def test_py_two_versions_of_one_fv_write_distinct_files(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        rows = [
+            {"name": "CLICKS$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+            {"name": "CLICKS$V2$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+        ]
+        result = export_specs_as_python(
+            rows,
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            specification_map={
+                "CLICKS$V1$ONLINE": self._fv_spec("CLICKS", "V1"),
+                "CLICKS$V2$ONLINE": self._fv_spec("CLICKS", "V2"),
+            },
+        )
+        written = sorted(p.name for p in (tmp_path / "DB.SCH" / "feature_views").glob("*.py"))
+        assert written == ["CLICKS_V1.py", "CLICKS_V2.py"]
+        assert len(set(result["files"])) == len(result["files"]), "no path written twice"
+
+    def test_py_two_versions_of_one_fv_both_loadable_with_own_version(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        rows = [
+            {"name": "CLICKS$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+            {"name": "CLICKS$V2$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+        ]
+        export_specs_as_python(
+            rows,
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            specification_map={
+                "CLICKS$V1$ONLINE": self._fv_spec("CLICKS", "V1"),
+                "CLICKS$V2$ONLINE": self._fv_spec("CLICKS", "V2"),
+            },
+        )
+        fv_dir = tmp_path / "DB.SCH" / "feature_views"
+        versions: set[str] = set()
+        for p in sorted(fv_dir.glob("*.py")):
+            specs = load_python_file(str(p))
+            assert len(specs) == 1
+            versions.add(specs[0][1].version)
+        assert versions == {"V1", "V2"}
+
+    def test_py_two_versions_of_one_fg_write_distinct_files(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            [],
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            feature_group_rows=[self._fg_row("V1", "d1"), self._fg_row("V2", "d2")],
+        )
+        written = sorted(p.name for p in (tmp_path / "DB.SCH" / "feature_groups").glob("*.py"))
+        assert written == ["FG_V1.py", "FG_V2.py"]
+        assert len(set(result["files"])) == len(result["files"]), "no path written twice"
+
+
+class TestExporterP12Cleanups:
+    """P12: hardening and parity cleanups in exporter.py."""
+
+    def test_guarded_write_preserves_non_utf8_file(self, tmp_path: Path) -> None:
+        # A non-UTF-8 destination must be treated as non-spec content (preserve +
+        # warn), not raise UnicodeDecodeError out of the whole export.
+        from snowflake.ml.feature_store.decl import exporter
+
+        dest = tmp_path / "FV.py"
+        dest.write_bytes(b"\xff\xfe not utf-8")
+        warnings: list[str] = []
+        assert exporter._guarded_write_py(dest, "x = 1", warnings) is False
+        assert dest.read_bytes().startswith(b"\xff\xfe"), "existing file must be preserved"
+        assert warnings
+
+    def test_name_filter_warning_agrees_with_written_file(self, tmp_path: Path) -> None:
+        # The write loop keys name_filter on the parsed OFT name, but the
+        # orphaned-entity warning helper keyed on metadata["name"]. When they
+        # differ, an exported FV could go unwarned. Pin that the warning set
+        # agrees with the written file set.
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        spec = json.loads(json.dumps(_FULL_SPEC))
+        spec["metadata"]["name"] = "authored_fv"  # differs from the deployed OFT name
+        result = export_specs_as_python(
+            show_rows=[
+                {
+                    "name": "DEPLOYED$V1$ONLINE",
+                    "database_name": "MYDB",
+                    "schema_name": "PUBLIC",
+                    "scheduling_state": "ACTIVE",
+                }
+            ],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"DEPLOYED$V1$ONLINE": spec},
+            entity_rows=[_entity_row("OTHER_KEY", join_keys=["OTHER_KEY"])],
+            name_filter="DEPLOYED",
+        )
+        fv_files = [f for f in result["files"] if Path(f).parent.name == "feature_views"]
+        assert len(fv_files) == 1, "the OFT matching name_filter must be exported"
+        # Because the FV was exported under name_filter, its orphaned-entity
+        # warning must also fire — helper and write loop must key on the same name.
+        assert any("USER_ID" in w.upper() for w in result["warnings"])
+
+
+class TestExportSpecsAsPythonStemSafety:
+    """P6: the python-form export derives each ``.py`` filename *and* the
+    generated module-level variable name from unvalidated Snowflake metadata.
+    A traversal-shaped name must not escape the export directory (CWE-22), and a
+    name that is not a valid Python identifier must be warned-and-skipped rather
+    than written as an unparsable module reported as successfully created.
+    """
+
+    @staticmethod
+    def _fv_spec(name: str, version: str) -> dict[str, Any]:
+        return {
+            "kind": "StreamingFeatureView",
+            "metadata": {"database": "DB", "schema": "SCH", "name": name, "version": version},
+            "spec": {
+                "ordered_entity_column_names": ["USER_ID"],
+                "timestamp_field": "TS",
+                "features": [
+                    {
+                        "source_column": {"name": "C", "type": "IntType"},
+                        "output_column": {"name": "C", "type": "IntType"},
+                    }
+                ],
+            },
+        }
+
+    def test_py_export_refuses_traversal_stem(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            [{"name": "../../evil$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"}],
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            specification_map={"../../evil$V1$ONLINE": self._fv_spec("../../evil", "V1")},
+        )
+        assert result["files"] == []
+        assert any("evil" in w for w in result["warnings"])
+        # Nothing may be written outside the export directory.
+        assert not list(tmp_path.glob("**/evil*.py"))
+        assert not (tmp_path.parent / "evil_V1.py").exists()
+
+    def test_py_export_skips_non_identifier_stem(self, tmp_path: Path) -> None:
+        # "my-clicks" is a legal Snowflake quoted identifier but not a Python one:
+        # the emitted ``my-clicks_V1 = StreamingFeatureView(...)`` would not parse.
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            [{"name": "my-clicks$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"}],
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            specification_map={"my-clicks$V1$ONLINE": self._fv_spec("my-clicks", "V1")},
+        )
+        assert result["files"] == []
+        assert any("my-clicks" in w for w in result["warnings"])
+        assert not list((tmp_path / "DB.SCH" / "feature_views").glob("*.py"))
+
+    def test_py_export_bad_stem_does_not_block_good_siblings(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        result = export_specs_as_python(
+            [
+                {"name": "my-clicks$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+                {"name": "GOOD_FV$V1$ONLINE", "database_name": "DB", "schema_name": "SCH"},
+            ],
+            {},
+            str(tmp_path),
+            "DB",
+            "SCH",
+            specification_map={
+                "my-clicks$V1$ONLINE": self._fv_spec("my-clicks", "V1"),
+                "GOOD_FV$V1$ONLINE": self._fv_spec("GOOD_FV", "V1"),
+            },
+        )
+        written = sorted(p.name for p in (tmp_path / "DB.SCH" / "feature_views").glob("*.py"))
+        assert written == ["GOOD_FV_V1.py"]
+        assert any("my-clicks" in w for w in result["warnings"])
+        # Every path reported as written must load cleanly.
+        for path in result["files"]:
+            assert load_python_file(path)
 
 
 if __name__ == "__main__":

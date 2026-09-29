@@ -20,6 +20,7 @@ import uuid
 from typing import Any, Callable
 
 import pandas as pd
+from common_utils import parse_semver_prefix
 
 from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
 from snowflake.connector.errors import DatabaseError
@@ -876,6 +877,48 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         """Return whether OFT PG-ETL timestamps are stored at microsecond precision."""
         rows = self._session.sql("SHOW PARAMETERS LIKE 'ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS' IN ACCOUNT").collect()
         return bool(rows) and str(rows[0]["value"]).lower() == "true"
+
+    def _feature_store_image_tag(self) -> str:
+        """Return the Feature Store runtime image tag, or empty if unset.
+
+        Prefers ``FEATURE_STORE_IMAGE_TAG_OVERRIDE`` (the tag the test actually
+        deployed) and otherwise reads ``SHOW PARAMETERS LIKE 'FEATURE_STORE_IMAGE_TAG'
+        IN ACCOUNT``.
+
+        Returns:
+            The image tag string, or empty when neither source is set.
+        """
+        override = get_feature_store_image_tag_override()
+        if override:
+            return override
+        rows = self._session.sql("SHOW PARAMETERS LIKE 'FEATURE_STORE_IMAGE_TAG' IN ACCOUNT").collect()
+        if not rows:
+            return ""
+        return str(rows[0]["value"]).strip()
+
+    def _stream_ingest_microsecond_timestamps_enabled(self) -> bool:
+        """Return whether stream-ingest rows keep microseconds through the runtime image.
+
+        Stream ingest is written by the Feature Store runtime, so this gate applies
+        to every table that ingest lands in: the Postgres OFT and
+        ``$UDF_TRANSFORMED`` (and therefore the offline object that selects from
+        it). Reverse-ETL of backfill rows is warehouse UDTF output and keeps
+        microseconds regardless of image tag.
+
+        Stream-ingest microseconds require ``ENABLE_OFT_PG_ETL_MICROSECOND_TIMESTAMPS``
+        and a Feature Store image of 0.13.0 or newer. Images such as 0.12.0 and
+        0.12.1 return milliseconds on that path. A missing or non-semver tag is
+        treated as current (microseconds when the ETL flag is on).
+
+        Returns:
+            True when stream-ingest rows are expected to keep microseconds.
+        """
+        if not self._oft_pg_etl_microsecond_timestamps_enabled():
+            return False
+        parsed = parse_semver_prefix(self._feature_store_image_tag())
+        if parsed is None:
+            return True
+        return parsed >= (0, 13, 0)
 
     def _make_stream_source(self, fs: FeatureStore, stream_name: str) -> None:
         fs.register_stream_source(

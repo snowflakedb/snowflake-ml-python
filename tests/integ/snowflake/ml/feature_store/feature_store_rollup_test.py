@@ -695,6 +695,186 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         col_names = [row["name"].upper() for row in desc_result]
         self.assertIn("_PARTIAL_FIRST_TS_ORDER_VALUE", col_names, "Rolled-up tile should have companion TS column")
 
+    # A rollup with no simple features drives its join chain off list_rollup_0, so a
+    # tile whose first list is empty is dropped along with every other list's array.
+    # This test is technically overly-strict because it enforces certain representation
+    # invariant on the tile table that is not required for correctness of the final aggregation.
+    # However, we believe that this condition is a requirement to guarantee optimal performance.
+    # NOTE(okharatsidi): this bug needs to be fixed without a significant performance impact.
+    @absltest.skip("bug: rollup list-only join chain is not yet driven by a spine")  # type: ignore[misc]
+    def test_list_only_rollup_keeps_tile_when_one_list_is_empty(self) -> None:
+        """Test that an empty list column does not drop the tile from a list-only rollup.
+
+        The rollup has two list features and no simple features. Visitor v5 has a NULL
+        order_value but a real product_id, so the ORDER_VALUE list contributes no rows
+        for subscriber s5 while the PRODUCT_ID list does. The s5 tile, and its surviving
+        PRODUCT_ID array, must still reach the materialized rollup.
+
+        Visitor v6 covers the opposite end: every list is empty for it, so the rollup
+        has nothing to carry and omits the tile rather than materializing an all-NULL
+        row. That row would be dead weight on every refresh, and downstream reads
+        flatten these arrays again, so its absence is invisible to aggregation.
+
+        Source events (added to the shared fixture):
+          visitor | subscriber | event_ts | order_value | product_id
+          --------+------------+----------+-------------+-----------
+          v5      | s5         | 10:00    | NULL        | p9
+          v5      | s5         | 10:30    | NULL        | p8
+          v6      | s6         | 10:00    | NULL        | NULL
+
+        Expected rollup tiles (list tile columns are stored newest-first):
+          subscriber_id | _PARTIAL_LAST_ORDER_VALUE | _PARTIAL_LAST_PRODUCT_ID
+          --------------+---------------------------+-------------------------
+          s5            | NULL                      | [p8, p9]
+          s6            | (no row at all)           | (no row at all)
+        """
+        self._session.sql(
+            f"""INSERT INTO {self._events_table} (visitor_id, company_id, event_ts, order_value, product_id)
+                VALUES
+                ('v5', 'c1', '2024-01-01 10:00:00', NULL, 'p9'),
+                ('v5', 'c1', '2024-01-01 10:30:00', NULL, 'p8'),
+                ('v6', 'c1', '2024-01-01 10:00:00', NULL, NULL)
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {self._mapping_table} (visitor_id, company_id, subscriber_id)
+                VALUES ('v5', 'c1', 's5'), ('v6', 'c1', 's6')
+            """
+        ).collect()
+
+        fs = self._create_feature_store()
+
+        visitor_entity = self._create_visitor_entity()
+        subscriber_entity = self._create_subscriber_entity()
+        fs.register_entity(visitor_entity)
+        fs.register_entity(subscriber_entity)
+
+        visitor_fv = FeatureView(
+            name="visitor_list_only",
+            entities=[visitor_entity],
+            feature_df=self._get_events_df(),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[
+                Feature.last_n("order_value", "24h", n=5).alias("last_orders"),
+                Feature.last_n("product_id", "24h", n=5).alias("last_products"),
+            ],
+        )
+        registered_visitor = fs.register_feature_view(visitor_fv, "v1")
+
+        subscriber_fv = FeatureView(
+            name="subscriber_list_only",
+            entities=[subscriber_entity],
+            rollup_config=RollupConfig(
+                source=registered_visitor,
+                mapping_df=self._get_mapping_df(),
+            ),
+        )
+        registered_subscriber = fs.register_feature_view(subscriber_fv, "v1")
+
+        rollup_tiles = self._session.sql(f"SELECT * FROM {registered_subscriber.fully_qualified_name()}").collect()
+        rows_by_subscriber = {row["SUBSCRIBER_ID"]: row for row in rollup_tiles}
+
+        self.assertIn("s5", rows_by_subscriber, "Tile dropped for a subscriber whose first list is empty")
+        s5_row = rows_by_subscriber["s5"]
+        self.assertIsNone(s5_row["_PARTIAL_LAST_ORDER_VALUE"], "ORDER_VALUE list should be NULL when it has no values")
+        self.assertEqual(json.loads(s5_row["_PARTIAL_LAST_PRODUCT_ID"]), ["p8", "p9"])
+
+        # Subscribers with values in both lists are unaffected.
+        self.assertIn("s2", rows_by_subscriber)
+        self.assertEqual(json.loads(rows_by_subscriber["s2"]["_PARTIAL_LAST_PRODUCT_ID"]), ["p2"])
+
+        # Every list is empty for s6, so the rollup carries no tile for it.
+        self.assertNotIn("s6", rows_by_subscriber, "an all-NULL tile should not be materialized")
+
+    # A tile's value array omits NULL-valued rows while its companion timestamp array
+    # keeps them, so the rollup pairs each value after a NULL with an earlier row's
+    # timestamp and interleaves the children on those wrong timestamps.
+    # NOTE(okharatsidi): this bug needs to be fixed without a significant performance impact.
+    @absltest.skip("bug: rollup pairs list values with companion timestamps by position")  # type: ignore[misc]
+    def test_rollup_list_ordering_with_interleaved_nulls(self) -> None:
+        """Test that a NULL between two values does not misorder the rolled-up list.
+
+        A rollup interleaves its children's values by timestamp, and it recovers each
+        value's timestamp by position: it flattens the value array and reads the
+        companion timestamp array at the same index. That pairing only holds while the
+        two arrays line up. A tile whose source column is NULL for some row keeps the
+        row's timestamp but not its value, so every value after the NULL is paired
+        with a timestamp belonging to an earlier row, and the interleave orders them
+        against the other child on those wrong timestamps.
+
+        Source events (all 2024-01-01 in the 10:00 tile, both visitors map to s7):
+          visitor | event_ts | product_id
+          --------+----------+-----------
+          v7      | 10:00    | a
+          v7      | 10:50    | NULL
+          v7      | 10:55    | b
+          v8      | 10:30    | c
+
+        v7's tile therefore holds three timestamps but only two values:
+          _PARTIAL_LAST_PRODUCT_ID    = [b, a]
+          _PARTIAL_LAST_TS_PRODUCT_ID = [10:55, 10:50, 10:00]
+
+        Expected rollup tile for s7, newest-first on the true timestamps
+        (b at 10:55, c at 10:30, a at 10:00):
+          _PARTIAL_LAST_PRODUCT_ID = [b, c, a]
+
+        Pairing a with 10:50 instead of 10:00 lifts it above c and yields [b, a, c].
+        """
+        self._session.sql(
+            f"""INSERT INTO {self._events_table} (visitor_id, company_id, event_ts, order_value, product_id)
+                VALUES
+                ('v7', 'c1', '2024-01-01 10:00:00', 10.0, 'a'),
+                ('v7', 'c1', '2024-01-01 10:50:00', 20.0, NULL),
+                ('v7', 'c1', '2024-01-01 10:55:00', 30.0, 'b'),
+                ('v8', 'c1', '2024-01-01 10:30:00', 40.0, 'c')
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {self._mapping_table} (visitor_id, company_id, subscriber_id)
+                VALUES ('v7', 'c1', 's7'), ('v8', 'c1', 's7')
+            """
+        ).collect()
+
+        fs = self._create_feature_store()
+
+        visitor_entity = self._create_visitor_entity()
+        subscriber_entity = self._create_subscriber_entity()
+        fs.register_entity(visitor_entity)
+        fs.register_entity(subscriber_entity)
+
+        visitor_fv = FeatureView(
+            name="visitor_null_gap",
+            entities=[visitor_entity],
+            feature_df=self._get_events_df(),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[Feature.last_n("product_id", "24h", n=5).alias("last_products")],
+        )
+        registered_visitor = fs.register_feature_view(visitor_fv, "v1")
+
+        subscriber_fv = FeatureView(
+            name="subscriber_null_gap",
+            entities=[subscriber_entity],
+            rollup_config=RollupConfig(
+                source=registered_visitor,
+                mapping_df=self._get_mapping_df(),
+            ),
+        )
+        registered_subscriber = fs.register_feature_view(subscriber_fv, "v1")
+
+        rollup_tiles = self._session.sql(f"SELECT * FROM {registered_subscriber.fully_qualified_name()}").collect()
+        s7_rows = [row for row in rollup_tiles if row["SUBSCRIBER_ID"] == "s7"]
+        self.assertEqual(len(s7_rows), 1, f"expected exactly one rolled-up tile for s7, got {len(s7_rows)}")
+
+        self.assertEqual(
+            json.loads(s7_rows[0]["_PARTIAL_LAST_PRODUCT_ID"]),
+            ["b", "c", "a"],
+            "rolled-up list is ordered on timestamps misread from the companion array",
+        )
+
     # =========================================================================
     # Aggregation Correctness Tests - APPROX_COUNT_DISTINCT
     # =========================================================================

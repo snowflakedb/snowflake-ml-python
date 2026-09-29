@@ -26,6 +26,7 @@
 #   --build-spcs-images: comma-separated list of specific images to build and push. Implies --with-spcs-image.
 #   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")
 #   --test-filter: filter to run specific test class/method (e.g., "TestClassName.test_method")
+#   --test-env: KEY=VALUE passed to Bazel as --test_env (repeatable)
 #
 
 set -o pipefail
@@ -42,6 +43,7 @@ TAG_FILTERS=""
 PYTHON_VERSION=""
 TARGETED_BAZEL_TARGETS=""
 TEST_FILTER=""
+TEST_ENVS=()
 PROG=$0
 
 action=$1 && shift
@@ -57,6 +59,7 @@ help() {
     echo "  --build-spcs-images <images> Build and push only these SPCS images (comma-separated). Implies --with-spcs-image."
     echo "  --targets <targets>    Comma-separated Bazel targets for targeted mode (e.g., '//path:target,//path/...')"
     echo "  --test-filter <filter> Filter to run specific test class/method (e.g., 'TestClassName.test_method')"
+    echo "  --test-env KEY=VALUE    Extra Bazel --test_env (repeatable)"
     echo ""
     echo "Modes:"
     echo "  merge_gate      Run affected tests only"
@@ -129,6 +132,10 @@ while (($#)); do
     --test-filter)
         shift
         TEST_FILTER="$1"
+        ;;
+    --test-env)
+        shift
+        TEST_ENVS+=("$1")
         ;;
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
@@ -207,6 +214,12 @@ elif [[ "${mode}" = "targeted" ]]; then
             exit 1
         fi
     fi
+    for test_env in "${TEST_ENVS[@]+"${TEST_ENVS[@]}"}"; do
+        if [[ ! "${test_env}" =~ ^[A-Za-z_][A-Za-z0-9_]+= ]]; then
+            echo "Error: Invalid --test-env '${test_env}'. Expected KEY=VALUE with a valid env name."
+            exit 1
+        fi
+    done
 elif [[ "${mode}" = "smoke_test" ]]; then
     # Smoke mode deliberately skips "bazel clean" so the narrow tier stays fast. Test
     # results are still never reused: cache_test_results defaults to no, so the smoke
@@ -388,6 +401,11 @@ if [[ -n "${TEST_FILTER}" ]]; then
     test_filter_flag="--test_filter=${TEST_FILTER}"
 fi
 
+test_env_flags=()
+for test_env in "${TEST_ENVS[@]+"${TEST_ENVS[@]}"}"; do
+    test_env_flags+=("--test_env=${test_env}")
+done
+
 # Query all test targets
 all_test_targets_file=${working_dir}/all_test_targets
 all_test_targets_query_file=${working_dir}/all_test_targets_query
@@ -514,6 +532,7 @@ if [[ "${action}" = "test" ]]; then
             "${cache_test_results}" \
             ${TEST_OUTPUT_FLAG} \
             ${action_env[@]+"${action_env[@]}"} \
+            ${test_env_flags[@]+"${test_env_flags[@]}"} \
             "${tag_filter}" \
             ${test_filter_flag} \
             --target_pattern_file "${group_test_targets_files[$i]}"

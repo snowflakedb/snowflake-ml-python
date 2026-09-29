@@ -38,6 +38,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Retry once because another session can create the model between existence validation and model creation.
+_MAX_LOG_MODEL_ATTEMPTS_FOR_CREATE_MODEL_RACE = 2
+_OBJECT_ALREADY_EXISTS_SQL_ERROR_CODE = "100132"
+
+
+def _is_create_model_object_already_exists_error(
+    exc: snowpark_exceptions.SnowparkSQLException,
+) -> bool:
+    """True when Snowflake reports object already exists from CREATE MODEL (concurrent creation race)."""
+    return (
+        str(exc.sql_error_code) == _OBJECT_ALREADY_EXISTS_SQL_ERROR_CODE
+        or _OBJECT_ALREADY_EXISTS_SQL_ERROR_CODE in exc.message
+    )
+
+
 # Query-level custom_tags so telemetry can distinguish log_model SQL paths.
 MODEL_LOG_PATH_TAG = "model_log_path"
 MODEL_LOG_PATH_LIVE_COMMIT = "live_commit"
@@ -295,6 +310,69 @@ class ModelManager:
         model_name: str,
         progress_status: type_hints.ProgressStatus,
         version_name: str | None = None,
+        comment: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        conda_dependencies: list[str] | None = None,
+        pip_requirements: list[str] | None = None,
+        artifact_repository_map: dict[str, str] | None = None,
+        resource_constraint: dict[str, str] | None = None,
+        target_platforms: list[type_hints.SupportedTargetPlatformType] | None = None,
+        python_version: str | None = None,
+        signatures: dict[str, model_signature.ModelSignature] | None = None,
+        sample_input_data: type_hints.SupportedDataType | None = None,
+        user_files: dict[str, list[str]] | None = None,
+        code_paths: list[type_hints.CodePathLike] | None = None,
+        ext_modules: list[ModuleType] | None = None,
+        task: type_hints.Task = task.Task.UNKNOWN,
+        experiment_info: "ExperimentInfo | None" = None,
+        options: type_hints.ModelSaveOption | None = None,
+        statement_params: dict[str, Any] | None = None,
+    ) -> model_version_impl.ModelVersion:
+        for attempt_index in range(_MAX_LOG_MODEL_ATTEMPTS_FOR_CREATE_MODEL_RACE):
+            try:
+                return self._log_model_after_existence_checks(
+                    model=model,
+                    model_name=model_name,
+                    version_name=version_name,
+                    progress_status=progress_status,
+                    comment=comment,
+                    metrics=metrics,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    artifact_repository_map=artifact_repository_map,
+                    resource_constraint=resource_constraint,
+                    target_platforms=target_platforms,
+                    python_version=python_version,
+                    signatures=signatures,
+                    sample_input_data=sample_input_data,
+                    user_files=user_files,
+                    code_paths=code_paths,
+                    ext_modules=ext_modules,
+                    task=task,
+                    experiment_info=experiment_info,
+                    options=options,
+                    statement_params=statement_params,
+                )
+            except snowpark_exceptions.SnowparkSQLException as exc:
+                if (
+                    attempt_index + 1 < _MAX_LOG_MODEL_ATTEMPTS_FOR_CREATE_MODEL_RACE
+                    and _is_create_model_object_already_exists_error(exc)
+                ):
+                    logger.info(
+                        "Model creation encountered a concurrent creation; retrying: %s",
+                        exc,
+                    )
+                    continue
+                raise
+        raise AssertionError("Model logging reached an unreachable state after exhausting retries.")  # pragma: no cover
+
+    def _log_model_after_existence_checks(
+        self,
+        *,
+        model: type_hints.SupportedModelType | model_version_impl.ModelVersion,
+        model_name: str,
+        version_name: str | None,
+        progress_status: type_hints.ProgressStatus,
         comment: str | None = None,
         metrics: dict[str, Any] | None = None,
         conda_dependencies: list[str] | None = None,

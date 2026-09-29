@@ -28,10 +28,12 @@ from typing import Any
 
 from snowflake.ml.feature_store.decl import state
 from snowflake.ml.feature_store.decl.enums import OpKind
+from snowflake.ml.feature_store.decl.exporter import _build_full_fidelity_fv
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
     compute_local_spec_hash,
 )
+from snowflake.ml.feature_store.decl.loader import _dict_to_spec
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 from snowflake.ml.feature_store.decl.spec_models import (
@@ -196,6 +198,151 @@ def test_append_only_bfv_recovered_state_replan_is_no_change() -> None:
     applied = AppliedState(objects={applied_obj.key: applied_obj})
     ent, src = _entity_and_source()
     fv = FeatureView.model_validate(local)
+    plan = generate_plan(
+        SpecBatch(specs=[ent, src, fv]),
+        applied,
+        PlanOptions(),
+        database="DB1",
+        schema="SC1",
+    )
+    fv_ops = [op for op in plan.ops if op.name == "BFV_AO"]
+    assert len(fv_ops) == 1
+    assert fv_ops[0].kind is OpKind.NO_CHANGE
+
+
+def _recover_offline(local: dict[str, Any], *, append_only_col: bool) -> AppliedObject:
+    """Recover a BatchFV via the offline ``spec_text`` path from a list-FV row.
+
+    Simulates the production gap: ``compile_to_spec`` does not carry the CRON
+    ``refresh_freq`` on the inner wire spec (a CRON cadence stamps no
+    ``target_lag_sec``), and ``_serialize_batch_fv_spec`` never re-adds it, so
+    the ``spec_text`` fed to ``_build_offline_fv_object`` has no cadence.  The
+    deployed DT's ``REFRESH_FREQ`` (and the ``append_only`` BooleanType column)
+    ride on the list-FV row instead.
+
+    Args:
+        local: The local authoring dict the deployed FV was created from.
+        append_only_col: Whether the list-FV row carries the ``append_only``
+            column (the ``6d1`` list projection).  When ``True`` the recovered
+            inner spec gains ``append_only: True`` via
+            ``_inject_batch_fv_fields_from_list_row``.
+
+    Returns:
+        The recovered ``AppliedObject``.
+    """
+    compiled = compile_to_spec(local, "DB1", "SC1")
+    # Sanity: the CRON cadence is not carried on the compiled inner wire spec.
+    assert "refresh_freq" not in compiled.get("spec", {})
+
+    row: dict[str, Any] = {
+        "name": "BFV_AO",
+        "version": "V1",
+        "database_name": "DB1",
+        "schema_name": "SC1",
+        "kind": "BATCH",
+        "entities": ["USER_ID"],
+        "physical_dt_name": "BFV_AO$V1",
+        "refresh_freq": "0 0 * * * UTC",
+        "target_lag": "",
+        "refresh_mode": "FULL",
+        "source_refs": json.dumps({"source_refs": [{"name": "SRC1", "table": "RAW_EVENTS"}]}),
+        "spec_text": compiled,
+    }
+    if append_only_col:
+        row["append_only"] = True
+    applied_obj = state._build_offline_fv_object(row, default_database="DB1", default_schema="SC1")
+    assert applied_obj is not None
+    return applied_obj
+
+
+def test_offline_recovery_injects_cron_refresh_freq() -> None:
+    """``_build_offline_fv_object`` plumbs the deployed CRON cadence onto ``spec``.
+
+    Without the injection an append-only BFV recovers with no ``refresh_freq``
+    at all, so the exporter cannot write a loadable spec.
+    """
+    applied_obj = _recover_offline(_minimal_append_only_authoring(), append_only_col=True)
+    inner = applied_obj.spec_payload["spec"]
+    assert inner.get("refresh_freq") == "0 0 * * * UTC"
+    # The ``append_only`` BooleanType column rode in on the list-FV row.
+    assert inner.get("append_only") is True
+
+
+def test_recovered_append_only_exports_loadable_spec() -> None:
+    """Recovered append-only payload exports a spec the loader accepts.
+
+    Regression for the reported blocker: before the CRON recovery + export
+    gate, the exported YAML carried ``append_only: true`` with no (or a
+    synthesised duration) cadence, so ``loader._dict_to_spec`` re-raised
+    ``"is not valid on"``, ``load_specs`` skipped the file, and the planner
+    proposed a destructive ``DROP_FV``.
+
+    Note: full ``NO_CHANGE`` round-trip for the ``append_only`` flag itself
+    depends on the compile-side emission / hash-strip that lands on the
+    ``6e1`` slice; on this slice the loaded spec is exported and *accepted*
+    (never skipped), which is what removes the spurious ``DROP_FV``.
+    """
+    applied_obj = _recover_offline(_minimal_append_only_authoring(), append_only_col=True)
+    applied = AppliedState(objects={applied_obj.key: applied_obj})
+
+    warnings: list[str] = []
+    doc = _build_full_fidelity_fv(
+        applied_obj.spec_payload,
+        fallback_name="BFV_AO",
+        fallback_version="V1",
+        fallback_database="DB1",
+        fallback_schema="SC1",
+        warnings=warnings,
+    )
+    # The full companion contract is satisfied, so the flag is emitted with a
+    # CRON cadence and no warning.
+    assert doc.get("append_only") is True
+    assert doc.get("refresh_freq") == "0 0 * * * UTC"
+    assert warnings == []
+
+    # The exported doc loads instead of being skipped, so the planner sees a
+    # local spec for the deployed FV and never proposes the spurious DROP_FV.
+    fv = _dict_to_spec(doc)
+    ent, src = _entity_and_source()
+    plan = generate_plan(
+        SpecBatch(specs=[ent, src, fv]),
+        applied,
+        PlanOptions(),
+        database="DB1",
+        schema="SC1",
+    )
+    fv_ops = [op for op in plan.ops if op.name == "BFV_AO"]
+    assert len(fv_ops) == 1
+    assert fv_ops[0].kind is not OpKind.DROP_FV
+
+
+def test_recovered_cron_bfv_replans_no_change() -> None:
+    """A plain CRON BatchFV round-trips export -> load -> plan as NO_CHANGE.
+
+    Pins the hash-neutrality of the recovered ``refresh_freq`` injection: the
+    cadence is operational (stripped before hashing), so recovering it closes
+    the export gap without perturbing the structural hash.
+    """
+    local = _minimal_append_only_authoring(append_only=False)
+    applied_obj = _recover_offline(local, append_only_col=False)
+    assert applied_obj.content_hash == compute_local_spec_hash(local, "DB1", "SC1")
+    applied = AppliedState(objects={applied_obj.key: applied_obj})
+
+    warnings: list[str] = []
+    doc = _build_full_fidelity_fv(
+        applied_obj.spec_payload,
+        fallback_name="BFV_AO",
+        fallback_version="V1",
+        fallback_database="DB1",
+        fallback_schema="SC1",
+        warnings=warnings,
+    )
+    assert doc.get("refresh_freq") == "0 0 * * * UTC"
+    assert "append_only" not in doc
+    assert warnings == []
+
+    fv = _dict_to_spec(doc)
+    ent, src = _entity_and_source()
     plan = generate_plan(
         SpecBatch(specs=[ent, src, fv]),
         applied,

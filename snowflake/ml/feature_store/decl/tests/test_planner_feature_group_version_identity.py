@@ -11,7 +11,7 @@ never collide and the planner treats an unchanged, still-deployed FG as both:
 
 * ``CREATE_FG`` (diff loop: batch key misses in ``applied_state.objects``), and
 * ``DROP_FG`` (orphan pass under ``full_directory_mode``: applied key absent
-  from ``batch_keys``) — a destructive op gated by ``--allow-recreate``.
+  from ``batch_keys``) — a destructive op gated by ``--destructive``.
 
 A clean re-plan of an unchanged FG must be a single ``NO_CHANGE`` with no
 ``CREATE_FG`` and no ``DROP_FG``. This file is additive so it propagates

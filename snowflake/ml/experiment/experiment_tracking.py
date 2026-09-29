@@ -52,6 +52,7 @@ class ExperimentTracking:
         database_name: str | None = None,
         schema_name: str | None = None,
         capture_source_info: bool = True,
+        model_registry: registry.Registry | None = None,
     ) -> None:
         """
         Initializes experiment tracking within a pre-created schema.
@@ -68,6 +69,12 @@ class ExperimentTracking:
                 of the enclosing ML job when running inside one. Set to False to skip collection
                 entirely. Collection is always non-fatal and never blocks run creation. Defaults to
                 True.
+            model_registry: An optional Registry instance to use for ``log_model``. When provided,
+                models are logged to the database and schema owned by this registry instead of the
+                experiment's database and schema. This is useful when the experiment lives in one
+                schema (e.g. ``analytics.experiments``) but models should be stored in another
+                (e.g. ``ml.models``). If None, models are logged to the same location as the
+                experiment. Defaults to None.
 
         Raises:
             ValueError: If no database is provided and no active database exists in the session.
@@ -109,11 +116,7 @@ class ExperimentTracking:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
-        self._registry = registry.Registry(
-            session=session,
-            database_name=self._database_name,
-            schema_name=self._schema_name,
-        )
+        self._registry = model_registry
         self._session = session
 
         # The experiment in context
@@ -139,7 +142,10 @@ class ExperimentTracking:
         else:
             state = dict(self.__dict__)
 
-        # Remove unpicklable attributes
+        # Remove unpicklable attributes; save registry coordinates for reconstruction.
+        if self._registry is not None:
+            state["_registry_database_name"] = self._registry._database_name
+            state["_registry_schema_name"] = self._registry._schema_name
         state["_session"] = None
         state["_sql_client"] = None
         state["_registry"] = None
@@ -168,11 +174,14 @@ class ExperimentTracking:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
-        self._registry = registry.Registry(
-            session=self._session,
-            database_name=self._database_name,
-            schema_name=self._schema_name,
-        )
+        registry_db = state.pop("_registry_database_name", None)
+        registry_schema = state.pop("_registry_schema_name", None)
+        if registry_db is not None:
+            self._registry = registry.Registry(
+                session=self._session,
+                database_name=registry_db,
+                schema_name=registry_schema,
+            )
         if self._run:
             self._patch_stdout_and_stderr()
             # _patch_stdout_and_stderr sets _logging_context if live logging is enabled
@@ -277,8 +286,17 @@ class ExperimentTracking:
         **kwargs: Any,
     ) -> ml_model.ModelVersion:
         run = self._get_or_start_run()
+        target_registry = (
+            self._registry
+            if self._registry is not None
+            else registry.Registry(
+                session=self._session,
+                database_name=self._database_name,
+                schema_name=self._schema_name,
+            )
+        )
         with experiment_info.ExperimentInfoPatcher(experiment_info=run._get_experiment_info()):
-            return self._registry.log_model(model, model_name=model_name, **kwargs)
+            return target_registry.log_model(model, model_name=model_name, **kwargs)
 
     def list_model_versions(self, run_name: str | None = None) -> list[ml_model.ModelVersion]:
         """
@@ -780,11 +798,6 @@ class ExperimentTracking:
         self._database_name = database_name
         self._schema_name = schema_name
         self._sql_client = sql_client.ExperimentTrackingSQLClient(
-            session=self._session,
-            database_name=database_name,
-            schema_name=schema_name,
-        )
-        self._registry = registry.Registry(
             session=self._session,
             database_name=database_name,
             schema_name=schema_name,

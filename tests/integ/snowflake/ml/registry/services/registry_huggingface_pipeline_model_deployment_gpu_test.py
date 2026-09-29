@@ -9,29 +9,43 @@ import pytest
 from absl.testing import absltest, parameterized
 from pydantic import BaseModel
 
-from snowflake.ml.model import openai_signatures
-from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model.inference_engine import InferenceEngine
-from snowflake.ml.model.models import huggingface, huggingface_pipeline
-from tests.integ.snowflake.ml.registry.services import (
+# Bazel sandboxes mount $HOME read-only. huggingface_hub resolves HF_HOME / HF_HUB_CACHE at
+# import time, so these must be set before snowml huggingface modules are imported.
+_ORIGINAL_TRANSFORMERS_CACHE = os.getenv("TRANSFORMERS_CACHE")
+_ORIGINAL_HF_HOME = os.getenv("HF_HOME")
+_ORIGINAL_HF_HUB_CACHE = os.getenv("HF_HUB_CACHE")
+_HF_CACHE_DIR = tempfile.TemporaryDirectory()
+os.environ["HF_HOME"] = _HF_CACHE_DIR.name
+os.environ["HF_HUB_CACHE"] = os.path.join(_HF_CACHE_DIR.name, "hub")
+os.environ["TRANSFORMERS_CACHE"] = _HF_CACHE_DIR.name
+
+from snowflake.ml.model import openai_signatures  # noqa: E402
+from snowflake.ml.model._packager.model_env import model_env  # noqa: E402
+from snowflake.ml.model.inference_engine import InferenceEngine  # noqa: E402
+from snowflake.ml.model.models import huggingface, huggingface_pipeline  # noqa: E402
+from tests.integ.snowflake.ml.registry.services import (  # noqa: E402
     registry_model_deployment_test_base,
 )
+
+# TODO: Remove torch/pytorch pins when the version is available in go/conda.
+_PINNED_TORCH_PIP = "torch==2.6.0"
+_PINNED_PYTORCH_CONDA = "pytorch==2.6.0"
 
 
 class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     registry_model_deployment_test_base.RegistryModelDeploymentTestBase
 ):
     cache_dir: tempfile.TemporaryDirectory
-    _original_cache_dir: str | None = None
     _original_hf_endpoint: str | None = None
     hf_token: str | None = None
 
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
-        cls.cache_dir = tempfile.TemporaryDirectory()
-        cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
+        cls.cache_dir = _HF_CACHE_DIR
         os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+        os.environ["HF_HOME"] = cls.cache_dir.name
+        os.environ["HF_HUB_CACHE"] = os.path.join(cls.cache_dir.name, "hub")
         # Get HF token if available (used for gated models)
         cls.hf_token = os.getenv("HF_TOKEN", None)
         # Unset HF_ENDPOINT to avoid artifactory errors
@@ -42,8 +56,18 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
     @classmethod
     def tearDownClass(cls) -> None:
-        if cls._original_cache_dir is not None:
-            os.environ["TRANSFORMERS_CACHE"] = cls._original_cache_dir
+        if _ORIGINAL_TRANSFORMERS_CACHE is not None:
+            os.environ["TRANSFORMERS_CACHE"] = _ORIGINAL_TRANSFORMERS_CACHE
+        else:
+            os.environ.pop("TRANSFORMERS_CACHE", None)
+        if _ORIGINAL_HF_HOME is not None:
+            os.environ["HF_HOME"] = _ORIGINAL_HF_HOME
+        else:
+            os.environ.pop("HF_HOME", None)
+        if _ORIGINAL_HF_HUB_CACHE is not None:
+            os.environ["HF_HUB_CACHE"] = _ORIGINAL_HF_HUB_CACHE
+        else:
+            os.environ.pop("HF_HUB_CACHE", None)
         cls.cache_dir.cleanup()
         if cls._original_hf_endpoint is not None:
             os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
@@ -138,7 +162,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
         x_df_single = (
             input_data
-            if input_data
+            if input_data is not None
             else pd.DataFrame.from_records(
                 [
                     {
@@ -201,11 +225,14 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            additional_dependencies=[_PINNED_PYTORCH_CONDA],
+            gpu_requests="1",
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(
                 inference_engine,
                 base_inference_engine_options,
             ),
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+            params={"n": 3},
         )
 
         test_prompts = [
@@ -266,11 +293,15 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         endpoint = self._ensure_ingress_url(mv)
         jwt_token_generator = self._get_jwt_token_generator()
 
-        res_service = mv.run(x_df_batch, function_name="__call__", service_name=service_name)
+        res_service = mv.run(x_df_batch, function_name="__call__", service_name=service_name, params={"n": 2})
         check_batch_res(res_service)
 
         res_api = self._inference_using_rest_api(
-            self._to_external_data_format(x_df_batch),
+            self._build_rest_inference_request_payload(
+                registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS,
+                x_df_batch,
+                {"n": 2},
+            ),
             endpoint=endpoint,
             jwt_token_generator=jwt_token_generator,
             target_method="__call__",
@@ -320,13 +351,14 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
+            additional_dependencies=[_PINNED_PYTORCH_CONDA] if pip_requirements is None else None,
             use_default_repo=use_default_repo,
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(inference_engine),
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
         )
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["transformers"]],
+        pip_requirements=[None, ["transformers", _PINNED_TORCH_PIP]],
     )
     def test_text_generation(
         self,
@@ -431,6 +463,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            additional_dependencies=[_PINNED_PYTORCH_CONDA],
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
             params={"response_format": response_format},
             rest_inference_formats=(
@@ -548,6 +581,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            additional_dependencies=[_PINNED_PYTORCH_CONDA],
             # intentionally not setting gpu_requests to test that the model is deployed to the GPU compute pool
             # picks the GPU base image and uses it in the service
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
@@ -612,6 +646,8 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            additional_dependencies=[_PINNED_PYTORCH_CONDA],
+            gpu_requests="1",
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(InferenceEngine.VLLM),
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,

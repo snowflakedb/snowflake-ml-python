@@ -1143,6 +1143,34 @@ class MergingSqlGenerator:
 
         return cte_name, cte_body.strip()
 
+    def _left_join_subqueries_on_bounds(self, subqueries: list[tuple[str, list[str]]]) -> str:
+        """LEFT JOIN each per-subquery result onto the unique (entity, boundary) rows.
+
+        Driving from UNIQUE_BOUNDS rather than from the first subquery keeps row
+        presence independent of any single window or feature: each subquery applies
+        its own row-level filter, so one with no qualifying tiles must contribute
+        NULLs for its own columns instead of dropping the entity from the CTE and
+        taking every other subquery's results with it.
+
+        Args:
+            subqueries: One (subquery_sql, output_columns) pair per window group or
+                feature. Each subquery must be grouped by the join keys plus
+                TILE_BOUNDARY so the joins stay one-to-one.
+
+        Returns:
+            SQL string selecting the join keys plus every subquery's output columns.
+        """
+        group_by_cols = list(self._join_keys) + [_TILE_BOUNDARY_COL]
+        projected = [f"UB.{col}" for col in group_by_cols]
+        for index, (_, output_cols) in enumerate(subqueries):
+            projected.extend(f"sq{index}.{col}" for col in output_cols)
+
+        result = f"SELECT {', '.join(projected)}\n    FROM UNIQUE_BOUNDS_FV{self._fv_index} UB"
+        for index, (query, _) in enumerate(subqueries):
+            join_cond = " AND ".join(f"UB.{col} = sq{index}.{col}" for col in group_by_cols)
+            result += f"\n    LEFT JOIN {query} sq{index}\n    ON {join_cond}"
+        return result
+
     def _generate_secondary_key_merged_cte(self) -> tuple[str, str]:
         """Generate the CTE for secondary-key aggregations.
 
@@ -1315,22 +1343,13 @@ class MergingSqlGenerator:
         if len(subqueries) == 1:
             cte_body = subqueries[0][2].strip()
         else:
-            # Multiple (sk, window) groups — LEFT JOIN on (entity_keys, boundary).
-            _, _, first_query = subqueries[0]
-            projected: list[str] = [f"sq0.{col}" for col in group_by_cols]
-            projected.append(f"sq0.{subqueries[0][0]}")
-            for col in subqueries[0][1]:
-                projected.append(f"sq0.{col}")
-            for i, (keys_col, value_cols, _) in enumerate(subqueries[1:], 1):
-                projected.append(f"sq{i}.{keys_col}")
-                for col in value_cols:
-                    projected.append(f"sq{i}.{col}")
-
-            result = f"SELECT {', '.join(projected)}\n    FROM {first_query} sq0"
-            for i, (_, _, query) in enumerate(subqueries[1:], 1):
-                join_cond = " AND ".join(f"sq0.{col} = sq{i}.{col}" for col in group_by_cols)
-                result += f"\n    LEFT JOIN {query} sq{i}\n    ON {join_cond}"
-            cte_body = result
+            # Multiple (sk, window) groups: a group whose window covers no tiles
+            # emits no row, so the chain is driven from the unique (entity,
+            # boundary) rows to keep each group's arrays independent. Missing
+            # groups surface as [] via the combined CTE's COALESCE.
+            cte_body = self._left_join_subqueries_on_bounds(
+                [(query, [keys_col, *value_cols]) for keys_col, value_cols, query in subqueries]
+            )
 
         return cte_name, cte_body.strip()
 
@@ -1574,21 +1593,11 @@ class MergingSqlGenerator:
         if len(feature_subqueries) == 1:
             return feature_subqueries[0][1]
 
-        # Multiple list features: join them together
-        first_name, first_query = feature_subqueries[0]
-        result = "SELECT sq0.*, "
-        for i, (name, _) in enumerate(feature_subqueries[1:], 1):
-            result += f"sq{i}.{name}"
-            if i < len(feature_subqueries) - 1:
-                result += ", "
-
-        result += f"\n    FROM {first_query} sq0"
-
-        for i, (_name, query) in enumerate(feature_subqueries[1:], 1):
-            join_cond = " AND ".join(f"sq0.{col} = sq{i}.{col}" for col in group_by_cols)
-            result += f"\n    LEFT JOIN {query} sq{i}\n    ON {join_cond}"
-
-        return result
+        # Multiple list features: a feature with no non-NULL values in the window
+        # emits no row, so the chain is driven from the unique (entity, boundary)
+        # rows to keep each feature's array independent of the others. A missing
+        # feature stays NULL, which is this path's "no data" encoding.
+        return self._left_join_subqueries_on_bounds([(query, [name]) for name, query in feature_subqueries])
 
     def _generate_combined_cte(self) -> tuple[str, str]:
         """Generate the final CTE that combines and expands results.

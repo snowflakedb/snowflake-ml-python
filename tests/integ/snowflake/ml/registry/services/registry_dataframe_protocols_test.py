@@ -210,8 +210,9 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         self.assertLen(services_df, 0)
         logger.info("Service cleanup completed successfully")
 
+    # DataFrame protocol handling lives in the client and proxy, above the engine, so one
+    # engine is enough to cover it.
     @parameterized.parameters(  # type: ignore[misc]
-        (InferenceEngine.PYTHON_GENERIC,),
         (InferenceEngine.VLLM,),
     )
     @pytest.mark.conda_incompatible
