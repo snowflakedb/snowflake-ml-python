@@ -1,5 +1,6 @@
+import functools
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import yaml
@@ -12,7 +13,11 @@ try:
 except ModuleNotFoundError:
     _HAS_SNOWFLAKE_CORE = False
 
+from snowflake.ml._internal import platform_capabilities as pc
+from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.model.batch_inference_job_specs import (
+    AdapterSpec,
     ImageBuildSpec,
     InferenceSpec,
     InputSpec,
@@ -20,6 +25,24 @@ from snowflake.ml.model._client.model.batch_inference_job_specs import (
     ResourcesSpec,
     SaveMode,
 )
+from snowflake.ml.model._client.ops import model_ops, service_ops
+from snowflake.ml.test_utils import mock_session
+from snowflake.snowpark import Session
+
+
+def _enable_lora_adapters(fn: Any) -> Any:
+    @mock.patch.object(
+        pc.PlatformCapabilities,
+        "is_lora_adapters_enabled",
+        return_value=True,
+        autospec=True,
+    )
+    @functools.wraps(fn)
+    def wrapped(self: Any, mock_enabled: mock.MagicMock, *args: Any, **kwargs: Any) -> Any:
+        return fn(self, mock_enabled, *args, **kwargs)
+
+    return wrapped
+
 
 _QUERY = "SELECT C1, C2 FROM MY_DB.MY_SCHEMA.MY_TABLE"
 
@@ -37,6 +60,24 @@ class BatchInferenceTaskTest(absltest.TestCase):
         mv.fully_qualified_model_name = "MY_DB.MY_SCHEMA.MY_MODEL"
         mv.version_name = "V1"
         mv._validate_batch_inference_request.return_value = {"target_method": target_method}
+
+        def _passthrough_prepare(
+            *,
+            adapters: Any | None = None,
+            input_spec: Any | None = None,
+            input_spec_cls: Any = None,
+        ) -> tuple[Any, Any | None, Any]:
+            return (mv, adapters if adapters else None, input_spec)
+
+        mv._prepare_lora_batch.side_effect = _passthrough_prepare
+        mv._serialize_batch_adapters.side_effect = lambda ads: [
+            AdapterSpec(
+                name=adapter_mv.fully_qualified_model_name,
+                version=adapter_mv.version_name,
+                alias=alias,
+            )
+            for alias, adapter_mv in ads
+        ]
         session = mv._service_ops._session
         session.get_current_database.return_value = current_database
         session.get_current_schema.return_value = current_schema
@@ -240,6 +281,154 @@ class BatchInferenceTaskTest(absltest.TestCase):
         self.assertEqual(task.warehouse, "OVERRIDE_WH")
         self.assertEqual(task.session_parameters, {"QUERY_TAG": "BATCH"})
         self.assertEqual(task.user_task_timeout_ms, 600000)
+
+    def _make_mv(self, model_name: str, version_name: str) -> model_version_impl.ModelVersion:
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        c_session = cast(Session, m_session)
+        with (
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
+        ):
+            return model_version_impl.ModelVersion._ref(
+                model_ops.ModelOperator(
+                    c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                service_ops=service_ops.ServiceOperator(
+                    c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                model_name=sql_identifier.SqlIdentifier(model_name),
+                version_name=sql_identifier.SqlIdentifier(version_name),
+            )
+
+    @staticmethod
+    def _default_adapter_alias(mv: model_version_impl.ModelVersion) -> str:
+        return f"{mv.fully_qualified_model_name}/VERSIONS/{mv.version_name}"
+
+    @_enable_lora_adapters
+    def test_adapter_target_forwards_one_item_list(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        pin = self._make_mv("LLAMA3_8B", "BASE")
+        with (
+            mock.patch.object(adapter, "_is_peft_adapter_version", return_value=True, autospec=True),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(
+                pin, "_validate_batch_inference_request", return_value={"target_method": "predict"}, autospec=True
+            ),
+        ):
+            task = self._build_task(model_version=adapter)
+        spec = self._spec_from_sql(task.definition)
+        self.assertIn(f"MODEL = {pin.fully_qualified_model_name}", task.definition)
+        self.assertNotIn("adapters", spec)
+        self.assertEqual(
+            spec["inference"]["adapters"],
+            [{"name": adapter.fully_qualified_model_name, "version": adapter.version_name}],
+        )
+        self.assertNotIn("alias", spec["inference"]["adapters"][0])
+
+    @_enable_lora_adapters
+    def test_adapter_target_defaults_params_model(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        pin = self._make_mv("LLAMA3_8B", "BASE")
+        alias = self._default_adapter_alias(adapter)
+        with (
+            mock.patch.object(adapter, "_is_peft_adapter_version", return_value=True, autospec=True),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(
+                pin, "_validate_batch_inference_request", return_value={"target_method": "predict"}, autospec=True
+            ),
+        ):
+            omitted = self._build_task(model_version=adapter)
+            without_model = self._build_task(model_version=adapter, input_spec=InputSpec(params={"temperature": 0.2}))
+        self.assertEqual(self._spec_from_sql(omitted.definition)["input"]["params"]["model"], alias)
+        spec = self._spec_from_sql(without_model.definition)
+        self.assertEqual(spec["input"]["params"]["model"], alias)
+        self.assertEqual(spec["input"]["params"]["temperature"], 0.2)
+
+    @_enable_lora_adapters
+    def test_adapter_target_leaves_params_model_when_set(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        pin = self._make_mv("LLAMA3_8B", "BASE")
+        original = {"model": "already", "temperature": 0.2}
+        with (
+            mock.patch.object(adapter, "_is_peft_adapter_version", return_value=True, autospec=True),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(
+                pin, "_validate_batch_inference_request", return_value={"target_method": "predict"}, autospec=True
+            ),
+        ):
+            task = self._build_task(model_version=adapter, input_spec=InputSpec(params=original))
+        spec = self._spec_from_sql(task.definition)
+        self.assertEqual(spec["input"]["params"]["model"], "already")
+        self.assertEqual(spec["input"]["params"]["temperature"], 0.2)
+        self.assertEqual(original["model"], "already")
+        self.assertEqual(original["temperature"], 0.2)
+
+    @_enable_lora_adapters
+    def test_adapter_target_rejects_extra_adapters(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        pin = self._make_mv("LLAMA3_8B", "BASE")
+        extra = self._make_mv("OTHER", "V1")
+        with (
+            mock.patch.object(adapter, "_is_peft_adapter_version", return_value=True, autospec=True),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True) as mock_lineage,
+            mock.patch.object(pin, "_validate_batch_inference_request", autospec=True) as mock_validate,
+        ):
+            with self.assertRaisesRegex(ValueError, r"does not accept adapters on the inference spec"):
+                self._build_task(
+                    model_version=adapter,
+                    inference_spec=InferenceSpec(adapters={"other": extra}),
+                )
+        mock_validate.assert_not_called()
+        mock_lineage.assert_not_called()
+
+    @_enable_lora_adapters
+    def test_base_target_dict_adapters_in_specification(self, _mock_enabled: mock.MagicMock) -> None:
+        base = self._make_mv("LLAMA3_8B", "BASE")
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        with (
+            mock.patch.object(base, "_is_peft_adapter_version", return_value=False, autospec=True),
+            mock.patch.object(
+                base, "_validate_batch_inference_request", return_value={"target_method": "predict"}, autospec=True
+            ),
+        ):
+            task = self._build_task(model_version=base, inference_spec=InferenceSpec(adapters={"support": adapter}))
+        self.assertTrue(task.definition.startswith("EXECUTE INFERENCE JOB SERVICE"))
+        spec = self._spec_from_sql(task.definition)
+        self.assertNotIn("adapters", spec)
+        self.assertEqual(
+            spec["inference"]["adapters"],
+            [
+                {
+                    "name": adapter.fully_qualified_model_name,
+                    "version": adapter.version_name,
+                    "alias": "support",
+                }
+            ],
+        )
+
+    @_enable_lora_adapters
+    def test_base_target_list_adapters_omits_alias(self, _mock_enabled: mock.MagicMock) -> None:
+        base = self._make_mv("LLAMA3_8B", "BASE")
+        adapter = self._make_mv("SUPPORT_TONE", "V1")
+        with (
+            mock.patch.object(base, "_is_peft_adapter_version", return_value=False, autospec=True),
+            mock.patch.object(
+                base, "_validate_batch_inference_request", return_value={"target_method": "predict"}, autospec=True
+            ),
+        ):
+            task = self._build_task(model_version=base, inference_spec=InferenceSpec(adapters=[adapter]))
+        self.assertTrue(task.definition.startswith("EXECUTE INFERENCE JOB SERVICE"))
+        spec = self._spec_from_sql(task.definition)
+        self.assertNotIn("adapters", spec)
+        self.assertEqual(
+            spec["inference"]["adapters"],
+            [{"name": adapter.fully_qualified_model_name, "version": adapter.version_name}],
+        )
+        self.assertNotIn("alias", spec["inference"]["adapters"][0])
 
 
 if __name__ == "__main__":

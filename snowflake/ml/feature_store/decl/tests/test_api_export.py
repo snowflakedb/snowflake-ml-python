@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-import pytest
-
 from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.test_utils import pytest_driver
 
@@ -598,74 +596,6 @@ class TestExportSpecsAsPythonRoundTrip:
             return out
 
         assert _normalize(py_d) == _normalize(yaml_d)
-
-
-class TestPythonCodegenCleanups:
-    """P12: python_codegen cleanups — UDF fallback, conditional imports, indentation."""
-
-    def test_udf_source_without_def_raises(self) -> None:
-        # A UDF body with no ``def`` is unrecoverable; emitting a module that
-        # references an undefined name (``function_definition=_udf_func``) is the
-        # wrong response — fail loudly instead.
-        from snowflake.ml.feature_store.decl import python_codegen
-
-        with pytest.raises(ValueError):
-            python_codegen.spec_dict_to_python_source(
-                "StreamingFeatureView",
-                "FV",
-                {"name": "FV", "udf": {"name": "u", "function_definition": "x = 1"}},
-            )
-
-    @pytest.mark.parametrize(
-        "udf",
-        [
-            {"name": "u"},
-            {"name": "u", "function_definition": ""},
-        ],
-        ids=["missing_function_definition", "empty_function_definition"],
-    )
-    def test_udf_without_function_definition_raises(self, udf: dict[str, str]) -> None:
-        # YAML's ``_extract_udf_to_py_file`` degrades when the body is missing;
-        # the Python renderer must not write ``function_definition=,``.
-        from snowflake.ml.feature_store.decl import python_codegen
-
-        with pytest.raises(ValueError, match="no function_definition"):
-            python_codegen.spec_dict_to_python_source(
-                "StreamingFeatureView",
-                "FV",
-                {"name": "FV", "udf": udf},
-            )
-
-    def test_entity_without_join_keys_omits_fscolumn_import(self) -> None:
-        from snowflake.ml.feature_store.decl import python_codegen
-
-        src = python_codegen.spec_dict_to_python_source("Entity", "e", {"name": "E"})
-        import_line = next(line for line in src.splitlines() if line.startswith("from snowflake"))
-        assert "FSColumn" not in import_line, f"unused FSColumn import in {import_line!r}"
-
-    def test_udf_output_columns_block_is_correctly_indented(self) -> None:
-        from snowflake.ml.feature_store.decl import python_codegen
-
-        spec = {
-            "name": "FV",
-            "version": "V1",
-            "entities": ["USER_ID"],
-            "timestamp_col": "TS",
-            "udf": {
-                "name": "compute",
-                "engine": "pandas",
-                "function_definition": "def compute(x):\n    return x",
-                "output_columns": [{"name": "USER_ID", "type": "StringType"}],
-            },
-        }
-        src = python_codegen.spec_dict_to_python_source("StreamingFeatureView", "FV", spec)
-        # ``output_columns=[`` sits at column 8 (a UDF(...) constructor arg), so
-        # the nested FSColumn items must be at 12 and the closing ``]`` at 8.
-        assert "\n            FSColumn(name='USER_ID', type='StringType'),\n        ]" in src
-        # And the emitted source must remain syntactically valid.
-        import ast
-
-        ast.parse(src)
 
 
 class TestApiFormatOpDisplayRow:

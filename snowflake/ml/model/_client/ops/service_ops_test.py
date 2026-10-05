@@ -5,6 +5,7 @@ import uuid
 from typing import Any, cast
 from unittest import mock
 
+import yaml
 from absl.testing import absltest, parameterized
 from packaging import version
 
@@ -2198,6 +2199,45 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=None,
             )
         self.assertEqual(result.id, "DB.SCHEMA.SRV_GEN")
+
+    def test_execute_inference_job_service_forwards_adapters(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        adapters = [
+            batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support"),
+            batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SQL_GEN", version="V2", alias="sql_gen"),
+        ]
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+            return_value=("query_id", m_async_job),
+        ) as mock_execute:
+            self.m_ops.execute_inference_job_service(
+                input_stage_location="@DB.SCHEMA.STAGE/input/",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=None,
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=batch_inference_job_specs.InferenceSpec(adapters=adapters),
+                image_build_spec=None,
+                function_name=None,
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+        yaml_body = mock_execute.call_args.kwargs["yaml_body"]
+        parsed = yaml.safe_load(yaml_body)
+        self.assertNotIn("adapters", parsed)
+        self.assertEqual(
+            parsed["inference"]["adapters"],
+            [
+                {"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1", "alias": "support"},
+                {"name": "DB.SCHEMA.SQL_GEN", "version": "V2", "alias": "sql_gen"},
+            ],
+        )
 
     def test_execute_inference_job_service_unparsable_response_raises(self) -> None:
         m_async_job = self._create_mock_async_job()

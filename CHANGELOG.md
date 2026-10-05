@@ -1,6 +1,39 @@
 # Release History
 
-## 2.3.0
+## 2.4.0
+
+### New Features
+
+* Generic: Support Python 3.14.
+
+* Registry: `FeatureSpec(dtype=DataType.OBJECT)` now accepts schema-free Python dictionaries as a
+  model input or output (SQL `OBJECT`). Callers can pass a dict to `ModelVersion.run`, an object
+  literal in SQL, or a JSON object over REST, without stringifying to JSON. Use `shape=(-1,)` for
+  a list of dictionaries (`ARRAY(OBJECT)`). Closed structs with a fixed field list remain
+  `FeatureGroupSpec`.
+
+* Experiment Tracking: Added `snowflake.ml.experiment.callback.catboost.SnowflakeCatboostCallback`, a
+  CatBoost training callback that logs metrics and, optionally, parameters to a Snowflake experiment.
+  Pass `params=model.get_params()` to log parameters. Model logging is handled separately after
+  training via ``ExperimentTracking.log_model``.
+
+* Experiment Tracking: `ExperimentTracking` accepts an optional `warnings_as_errors` parameter. When True,
+  conditions that are normally reported as warnings are raised instead.
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Experiment Tracking: Re-constructing the `ExperimentTracking` singleton now logs an informational
+  message instead of emitting a `UserWarning`.
+
+* Registry: `log_model` no longer raises when `options={'relax_version': True}` is used with pip
+  requirements or Snowpark Container Services-only targets. The option is ignored, a warning is
+  emitted, and exact pip version specifications are kept.
+
+### Deprecations
+
+## 2.3.0 (2026-09-28)
 
 ### New Features
 
@@ -15,6 +48,11 @@
   and the existing feature views pick up the fix on their next read, with no re-registration or backfill required.
 
 ### Behavior Changes
+
+* Feature Store: `update_feature_view()` now rejects a `target_lag` change on a feature view whose online store
+  is `POSTGRES`, instead of reporting success for a change that is not applied. Set `target_lag` when online
+  storage is first enabled, or delete and re-register the feature view to change it. Enabling or disabling
+  online storage, and `target_lag` changes on hybrid-table online stores, are unaffected.
 
 ### Deprecations
 

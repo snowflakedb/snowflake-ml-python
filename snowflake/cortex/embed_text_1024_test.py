@@ -1,3 +1,5 @@
+from unittest import mock
+
 import _test_util
 from absl.testing import absltest
 
@@ -37,7 +39,7 @@ class EmbedTest1024Test(absltest.TestCase):
             session=self._session,
         )
         out = self.embed_text_1024_for_test(self.model, self.text)
-        self.assertEqual(out, res), f"Expected ({type(out)}) {out}, got ({type(res)}) {res}"
+        self.assertEqual(out, res, f"Expected ({type(out)}) {out}, got ({type(res)}) {res}")
 
     def test_embed_text_1024_column(self) -> None:
         df_in = self._session.create_dataframe([snowpark.Row(model=self.model, text=self.text)])
@@ -53,6 +55,13 @@ class EmbedTest1024Test(absltest.TestCase):
         out = self.embed_text_1024_for_test(self.model, self.text)
 
         self.assertEqual(out, res)
+
+    @mock.patch("snowflake.cortex._embed_text_1024.call_sql_function", autospec=True)
+    def test_embed_text_1024_retargets_to_ai_embed(self, mock_call_sql_function: mock.Mock) -> None:
+        mock_call_sql_function.return_value = [0.0] * 1024
+        result = _embed_text_1024.embed_text_1024("multilingual-e5-large", "hello", session=None)
+        mock_call_sql_function.assert_called_once_with("AI_EMBED", None, "multilingual-e5-large", "hello")
+        self.assertEqual([0.0] * 1024, result)
 
 
 if __name__ == "__main__":

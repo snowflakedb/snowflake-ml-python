@@ -27,6 +27,7 @@
 #   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")
 #   --test-filter: filter to run specific test class/method (e.g., "TestClassName.test_method")
 #   --test-env: KEY=VALUE passed to Bazel as --test_env (repeatable)
+#   --local-test-jobs: override the number of concurrent Bazel test jobs.
 #
 
 set -o pipefail
@@ -44,13 +45,14 @@ PYTHON_VERSION=""
 TARGETED_BAZEL_TARGETS=""
 TEST_FILTER=""
 TEST_ENVS=()
+LOCAL_TEST_JOBS=""
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression|smoke_test] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression|smoke_test] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>] [--local-test-jobs <n>]"
     echo ""
     echo "Options:"
     echo "  -p <version>           Specify Python version (e.g., 3.10, 3.11, 3.12, 3.13, 3.14)"
@@ -60,6 +62,7 @@ help() {
     echo "  --targets <targets>    Comma-separated Bazel targets for targeted mode (e.g., '//path:target,//path/...')"
     echo "  --test-filter <filter> Filter to run specific test class/method (e.g., 'TestClassName.test_method')"
     echo "  --test-env KEY=VALUE    Extra Bazel --test_env (repeatable)"
+    echo "  --local-test-jobs <n>  Concurrent Bazel test jobs"
     echo ""
     echo "Modes:"
     echo "  merge_gate      Run affected tests only"
@@ -137,6 +140,14 @@ while (($#)); do
         shift
         TEST_ENVS+=("$1")
         ;;
+    --local-test-jobs)
+        shift
+        if [[ ! "$1" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Error: --local-test-jobs must be a positive integer, got '${1}'."
+            help 1
+        fi
+        LOCAL_TEST_JOBS="$1"
+        ;;
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
@@ -160,6 +171,34 @@ if [[ -n "${BUILD_SPCS_IMAGES}" && "${WITH_SPCS_IMAGE}" = true ]]; then
 elif [[ -n "${BUILD_SPCS_IMAGES}" ]]; then
     WITH_SPCS_IMAGE=true
 fi
+
+# Bazelisk downloads the Bazel release pinned in .bazelversion on first invocation, so
+# every mode depends on reaching that public download host before any local work starts.
+# A transient failure there says nothing about the code under test, so probe it up front
+# and retry with linear backoff rather than letting the first real Bazel command abort
+# the run. Exhausting the retries is a setup failure (exit 2), not a test failure.
+readonly BAZEL_BOOTSTRAP_ATTEMPTS=3
+readonly BAZEL_BOOTSTRAP_BACKOFF_SECONDS=60
+
+ensure_bazel_available() {
+    local attempt=1
+    local delay
+    while [[ ${attempt} -le ${BAZEL_BOOTSTRAP_ATTEMPTS} ]]; do
+        if "${bazel}" --version; then
+            return 0
+        fi
+        if [[ ${attempt} -lt ${BAZEL_BOOTSTRAP_ATTEMPTS} ]]; then
+            delay=$((attempt * BAZEL_BOOTSTRAP_BACKOFF_SECONDS))
+            echo "Bazel is not usable yet (attempt ${attempt}/${BAZEL_BOOTSTRAP_ATTEMPTS}); retrying in ${delay}s..." >&2
+            sleep "${delay}"
+        fi
+        attempt=$((attempt + 1))
+    done
+    echo "ERROR: Bazel is still unusable after ${BAZEL_BOOTSTRAP_ATTEMPTS} attempts; the pinned release could not be downloaded." >&2
+    exit 2
+}
+
+ensure_bazel_available
 
 if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
     if [[ -z "${target}" ]]; then
@@ -519,14 +558,24 @@ trap - ERR
 
 set +e
 if [[ "${action}" = "test" ]]; then
+    bazel_jobs=6
+    if [[ -n "${LOCAL_TEST_JOBS}" ]]; then
+        local_test_jobs="${LOCAL_TEST_JOBS}"
+    elif [[ "${mode}" == "continuous_run" ]]; then
+        local_test_jobs=3
+    else
+        local_test_jobs=6
+    fi
+    echo "Test parallelism: jobs=${bazel_jobs} local_test_jobs=${local_test_jobs} (env=${SF_ENV}, mode=${mode})"
+
     # Run tests for each group
     for i in "${!groups[@]}"; do
         group="${groups[$i]}"
         # Set default test output verbosity (can be overridden via BAZEL_TEST_OUTPUT)
         TEST_OUTPUT_FLAG="--test_output=${BAZEL_TEST_OUTPUT:-errors}"
         "${bazel}" test \
-            --jobs=6 \
-            --local_test_jobs=6 \
+            --jobs="${bazel_jobs}" \
+            --local_test_jobs="${local_test_jobs}" \
             --config="${group}" \
             ${python_config} \
             "${cache_test_results}" \

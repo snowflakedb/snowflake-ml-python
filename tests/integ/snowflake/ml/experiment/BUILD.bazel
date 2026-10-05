@@ -151,6 +151,23 @@ py_library(
 )
 
 py_test(
+    name = "autolog_catboost_integ_test",
+    timeout = "long",
+    srcs = ["autolog_catboost_integ_test.py"],
+    optional_dependencies = [
+        "catboost",
+    ],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":autolog_integ_test_base",
+        "//snowflake/ml/experiment/callback:catboost",
+    ],
+)
+
+py_test(
     name = "autolog_keras_integ_test",
     timeout = "long",
     srcs = ["autolog_keras_integ_test.py"],

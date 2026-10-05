@@ -132,6 +132,20 @@ class EngineOptions(BaseModel):
         return engine.name if engine is not None else None
 
 
+class AdapterSpec(BaseModel):
+    """Serialized adapter identity nested under ``inference.adapters``.
+
+    ``alias`` is optional. Dict keys from the Python API set it; list items and
+    adapter-as-target omit it so the server can default to ``{name}/VERSIONS/{version}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: str
+    alias: str | None = None
+
+
 class InferenceSpec(BaseModel):
     """Inference block of the batch inference job specification.
 
@@ -141,13 +155,79 @@ class InferenceSpec(BaseModel):
         max_batch_rows (Optional[int]): Maximum number of rows to process in a single batch.
             Auto determined if None. Larger values may improve throughput.
         engine_options (Optional[EngineOptions]): Options for a custom inference engine.
+        adapters (Optional[dict[str, ModelVersion] | list[ModelVersion]]): Adapter versions for
+            this job. A dict maps job alias (``input.params.model``) to adapter versions; keys
+            become ``alias`` on each emitted list item. A nonempty list and adapter-as-target omit
+            ``alias``. Empty ``{}`` / ``[]`` are treated as unset so the YAML key is omitted.
+            ``run_batch`` serializes these to name/version identities before writing the job spec.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     num_workers: int | None = None
     max_batch_rows: int | None = None
     engine_options: EngineOptions | None = None
+    adapters: dict[str, Any] | list[Any] | None = None
+
+    @field_validator("adapters", mode="before")
+    @classmethod
+    def _empty_adapters_to_none(cls, value: Any) -> Any:
+        if value == [] or value == {}:
+            return None
+        return value
+
+    @field_serializer("adapters")
+    def _serialize_adapters(self, value: Any) -> list[dict[str, Any]] | None:
+        if not value:
+            return None
+        if not isinstance(value, list) or not all(isinstance(item, AdapterSpec) for item in value):
+            raise ValueError(
+                "batch inference: adapter versions cannot be written into the job spec until they are "
+                "resolved to name and version."
+            )
+        return [item.model_dump(mode="json", exclude_none=True) for item in value]
+
+
+def split_inference_adapters(
+    inference_spec: InferenceSpec | None,
+) -> tuple[InferenceSpec | None, dict[str, Any] | list[Any] | None]:
+    """Peel ``adapters`` off ``inference_spec`` without mutating the caller object.
+
+    Args:
+        inference_spec: Existing inference block, or None.
+
+    Returns:
+        The spec with ``adapters`` cleared (or None if that leaves an empty spec), and the
+        peeled adapters value (or None when unset).
+    """
+    if inference_spec is None or inference_spec.adapters is None:
+        return inference_spec, None
+    raw = inference_spec.adapters
+    stripped = inference_spec.model_copy(update={"adapters": None})
+    if not stripped.model_dump(exclude_none=True):
+        return None, raw
+    return stripped, raw
+
+
+def inference_spec_with_adapters(
+    inference_spec: InferenceSpec | None,
+    adapters: dict[str, Any] | list[Any] | None,
+) -> InferenceSpec | None:
+    """Return ``inference_spec`` with ``adapters`` set when nonempty.
+
+    Args:
+        inference_spec: Existing inference block, or None.
+        adapters: Adapter versions or serialized identities. Empty or None leaves
+            ``inference_spec`` unchanged.
+
+    Returns:
+        The original spec when ``adapters`` is empty, otherwise a spec that includes them.
+    """
+    if not adapters:
+        return inference_spec
+    if inference_spec is None:
+        return InferenceSpec(adapters=adapters)
+    return inference_spec.model_copy(update={"adapters": adapters})
 
 
 class ImageBuildSpec(BaseModel):

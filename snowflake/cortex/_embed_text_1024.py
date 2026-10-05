@@ -1,10 +1,16 @@
-from typing import Union, cast
+from typing import cast
 
 from typing_extensions import deprecated
 
 from snowflake import snowpark
-from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
+from snowflake.cortex._util import (
+    CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
+    call_sql_function,
+    warn_cortex_deprecated,
+)
 from snowflake.ml._internal import telemetry
+
+_AI_EMBED_FUNCTION_NAME = "AI_EMBED"
 
 
 @telemetry.send_api_usage_telemetry(
@@ -26,8 +32,8 @@ def embed_text_1024(
     Returns:
         A column of vectors containing embeddings.
     """
-
-    return _embed_text_1024_impl("snowflake.cortex.embed_text_1024", model, text, session=session)
+    warn_cortex_deprecated("embed_text_1024", "ai_embed")
+    return _embed_text_1024_impl(_AI_EMBED_FUNCTION_NAME, model, text, session=session)
 
 
 def _embed_text_1024_impl(
@@ -36,7 +42,7 @@ def _embed_text_1024_impl(
     text: str | snowpark.Column,
     session: snowpark.Session | None = None,
 ) -> list[float] | snowpark.Column:
-    return cast(Union[list[float], snowpark.Column], call_sql_function(function, session, model, text))
+    return cast(list[float] | snowpark.Column, call_sql_function(function, session, model, text))
 
 
 EmbedText1024 = deprecated(

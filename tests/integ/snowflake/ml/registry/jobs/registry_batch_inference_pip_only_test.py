@@ -63,21 +63,26 @@ class PipOnlyModel(custom_model.CustomModel):
         )
 
 
-@absltest.skip("SNOW-3691688")
 class TestBatchInferencePipOnlyInteg(
     pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase,
 ):
     """Integration tests for batch inference with pip-only models.
 
-    Set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, and
-    MODEL_LOGGER_PATH together to run with image overrides.
+    Requires image overrides: set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH,
+    BASE_BATCH_GPU_IMAGE_PATH, and MODEL_LOGGER_PATH together. Without them the tests skip.
     """
 
-    def _get_batch_image_override_session_params(self) -> dict[str, str]:
-        params = super()._get_batch_image_override_session_params()
-        params.pop("SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS", None)
-        return params
+    _BATCH_IMAGE_OVERRIDE_MODE: registry_batch_inference_test_base.BatchImageOverrideMode = "pip_only_batch"
+
+    def setUp(self) -> None:
+        # The pip-only image build installs the batch base image's own requirements before the
+        # model's, so the base image must be one that bounds snowflake-connector-python itself;
+        # an unbounded resolve there selects a release with no wheel for the runtime Python.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
+        super().setUp()
 
     def _prepare_pip_only_test(
         self,
@@ -129,6 +134,7 @@ class TestBatchInferencePipOnlyInteg(
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="check_env",
+            model_name="model_pip_only_env_check",
             job_name=job_name,
             replicas=1,
             pip_requirements=pip_requirements,
@@ -158,6 +164,7 @@ class TestBatchInferencePipOnlyInteg(
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
             inference_spec=batch_inference_job_specs.InferenceSpec(num_workers=1),
             function_name="predict",
+            model_name="model_pip_only_predict",
             job_name=job_name,
             replicas=1,
             pip_requirements=["requests>=2.28.0"],

@@ -1,10 +1,16 @@
-from typing import Union, cast
+from typing import cast
 
 from typing_extensions import deprecated
 
 from snowflake import snowpark
-from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
+from snowflake.cortex._util import (
+    CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
+    call_sql_function,
+    warn_cortex_deprecated,
+)
 from snowflake.ml._internal import telemetry
+
+_AI_TRANSLATE_FUNCTION_NAME = "AI_TRANSLATE"
 
 
 @telemetry.send_api_usage_telemetry(
@@ -27,8 +33,8 @@ def translate(
     Returns:
         A column of string translations.
     """
-
-    return _translate_impl("snowflake.cortex.translate", text, from_language, to_language, session=session)
+    warn_cortex_deprecated("translate", "ai_translate")
+    return _translate_impl(_AI_TRANSLATE_FUNCTION_NAME, text, from_language, to_language, session=session)
 
 
 def _translate_impl(
@@ -38,7 +44,7 @@ def _translate_impl(
     to_language: str | snowpark.Column,
     session: snowpark.Session | None = None,
 ) -> str | snowpark.Column:
-    return cast(Union[str, snowpark.Column], call_sql_function(function, session, text, from_language, to_language))
+    return cast(str | snowpark.Column, call_sql_function(function, session, text, from_language, to_language))
 
 
 Translate = deprecated("Translate() is deprecated and will be removed in a future release. Use translate() instead")(

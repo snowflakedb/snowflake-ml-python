@@ -12,16 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regression net for the streaming-FV authored-cadence rejection contract.
+"""Regression net for the streaming-FV authored-cadence contract.
 
-Pinned contract (post `batch_schedule` → `refresh_freq` rename):
+Pinned contract (post `batch_schedule` → `refresh_freq` rename, and post
+tiled-streaming carve-out):
 
-* `StreamingFeatureView` rejects authored `refresh_freq` (the new
-  declarative key) with a validator error pointing at the kind.  The
-  Snowflake runtime stamps `target_lag_sec=0` onto every streaming FV
-  SPECIFICATION regardless of any authored cadence, so an authored
-  value would have no runtime effect — the validator surfaces this
-  loudly instead of silently dropping it at deploy time.
+* A *non-tiled* `StreamingFeatureView` rejects authored `refresh_freq`
+  (the new declarative key) with a validator error pointing at the kind.
+  A non-tiled streaming FV compiles to a zero-lag VIEW over the
+  `$UDF_TRANSFORMED` pipeline, so an authored refresh cadence would have
+  no runtime effect — the validator surfaces this loudly instead of
+  silently dropping it at deploy time.
+* A *tiled* `StreamingFeatureView` (with `feature_granularity` +
+  `features`) ACCEPTS `refresh_freq`: its aggregate materialises as an
+  offline Dynamic Table whose refresh cadence is `refresh_freq`, exactly
+  as the imperative `FeatureView(refresh_freq=...)` constructor accepts
+  it.  (The OFT `target_lag_sec` is a *separate* field that the runtime
+  forces to 0 for all streaming kinds — it is not the DT cadence.)
 * `StreamingFeatureView` also rejects authored `batch_schedule` (the
   legacy key) with the migration error pointing at `refresh_freq`,
   even though the field is not valid on the kind at all — the rename
@@ -42,8 +49,9 @@ shape that is no longer constructable post-rename.
 
 References:
 
-* `decl/spec_models.py::FeatureView._reject_refresh_freq_on_stream_or_realtime` —
-  validator that rejects `refresh_freq` on streaming / realtime FVs.
+* `decl/spec_models.py::FeatureView._validate_streaming_refresh_freq` —
+  validator that allows `refresh_freq` on tiled streaming FVs and rejects
+  it on non-tiled streaming / realtime FVs.
 * `decl/spec_models.py::FeatureView._reject_legacy_authoring_keys` —
   validator that translates legacy `batch_schedule` into the
   migration error pointing at `refresh_freq`.
@@ -140,6 +148,36 @@ class TestStreamingFvRejectsLegacyBatchSchedule:
         assert "batch_schedule" in msg
         assert "has been renamed to" in msg
         assert "refresh_freq" in msg
+
+
+class TestTiledStreamingFvAcceptsRefreshFreq:
+    """A tiled `StreamingFeatureView` accepts authored `refresh_freq`."""
+
+    @staticmethod
+    def _tiled_payload(extra: dict[str, Any]) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "kind": "StreamingFeatureView",
+            "name": "MY_TILED_STREAM_FV",
+            "entities": ["USER_ID"],
+            "timestamp_col": "TIMESTAMP",
+            "sources": [{"name": "src", "source_type": "Stream"}],
+            "feature_granularity": "1 hour",
+            "feature_aggregation_method": "tiles",
+            "features": [{"function": "sum", "window": "1h"}],
+        }
+        base.update(extra)
+        return base
+
+    def test_python_form_accepts_refresh_freq_when_tiled(self) -> None:
+        """`FeatureView.model_validate` keeps `refresh_freq` for a tiled FV."""
+        fv = FeatureView.model_validate(self._tiled_payload({"refresh_freq": "5 minutes"}))
+        assert fv.refresh_freq == "5 minutes"
+
+    def test_yaml_loader_accepts_refresh_freq_when_tiled(self) -> None:
+        """The YAML / JSON authoring path via `_dict_to_spec` keeps it too."""
+        spec = _dict_to_spec(self._tiled_payload({"refresh_freq": "5 minutes"}))
+        assert isinstance(spec, FeatureView)
+        assert spec.refresh_freq == "5 minutes"
 
 
 if __name__ == "__main__":

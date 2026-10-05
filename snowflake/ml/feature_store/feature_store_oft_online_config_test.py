@@ -604,5 +604,166 @@ class UpdateFeatureViewPreservesTiledIdentityTest(absltest.TestCase):
         self.assertEqual(temp_fv.online_config.store_type, OnlineStoreType.POSTGRES)
 
 
+def _make_online_fv(*, store_type: OnlineStoreType, current_lag: str | None, online: bool) -> FeatureView:
+    """Build a registered-looking FV whose online config is set without re-running validation."""
+    schema = StructType([StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())])
+    mock_df = MagicMock()
+    mock_df.columns = [f.name for f in schema.fields]
+    mock_df.schema = schema
+    mock_df.queries = {"queries": ["SELECT * FROM SRC"]}
+    fv = FeatureView(
+        name="LAG_FV",
+        entities=[Entity(name="user", join_keys=["USER_ID"])],
+        feature_df=mock_df,
+    )
+    fv._version = FeatureViewVersion("v1")
+    fv._infer_schema_df = mock_df
+    fv._status = FeatureViewStatus.ACTIVE
+    fv._online_config = OnlineConfig(enable=online, target_lag=current_lag, store_type=store_type)
+    return fv
+
+
+def _make_store_for_update(feature_view: FeatureView) -> Any:
+    """Build a FeatureStore whose update planning and execution are stubbed out.
+
+    The caller-supplied FeatureView is returned by the name/version lookup so the update
+    runs against the given online config instead of reloading it from Snowflake.
+    """
+    # Typed loosely because planning and execution are replaced with mocks, which is an
+    # assignment mypy rejects against the real method types.
+    fs: Any = object.__new__(FeatureStore)
+    fs._session = MagicMock()
+    fs._session.get_current_role.return_value = "ROLE_1"
+    fs._session.get_current_warehouse.return_value = "WH_1"
+    fs._metadata_manager = MagicMock()
+    fs._config = fs_mod._FeatureStoreConfig(
+        database=SqlIdentifier("TEST_DB"),
+        schema=SqlIdentifier("TEST_SCHEMA"),
+    )
+    fs._default_warehouse = SqlIdentifier("WH_1")
+    fs._telemetry_stmp = {}
+    fs._asof_join_enabled = None
+
+    fs._validate_feature_view_name_and_version_input = MagicMock(return_value=feature_view)
+    fs._plan_feature_view_update_operations = MagicMock(return_value=([], []))
+    fs._execute_atomic_operations = MagicMock()
+    fs.get_feature_view = MagicMock(return_value=feature_view)
+    return fs
+
+
+class OnlineTargetLagChangeTest(parameterized.TestCase):
+    """A Postgres-backed online feature table keeps the target lag it was created with.
+
+    The backend acknowledges ALTER ONLINE FEATURE TABLE ... SET TARGET_LAG on such a table
+    without applying it, so ``update_feature_view`` rejects the change rather than reporting a
+    success that did not happen.
+    """
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("lag_only", None),
+        ("enable_true", True),
+    )
+    def test_update_rejects_postgres_lag_change(self, enable: bool | None) -> None:
+        """enable=None (lag-only) and enable=True both reach the ALTER on an existing table."""
+        fv = _make_online_fv(store_type=OnlineStoreType.POSTGRES, current_lag="10s", online=True)
+        fs = _make_store_for_update(fv)
+
+        with self.assertRaises(Exception) as cm:
+            fs.update_feature_view(name=fv, online_config=OnlineConfig(enable=enable, target_lag="30s"))
+
+        self.assertIn("target_lag cannot be changed", str(cm.exception))
+        # The lag in effect is named so the caller knows what they are left with.
+        self.assertIn("'10s'", str(cm.exception))
+        # Nothing may be planned or executed once the change is refused.
+        fs._plan_feature_view_update_operations.assert_not_called()
+        fs._execute_atomic_operations.assert_not_called()
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        # The update is already a no-op, so callers re-sending a whole config stay unaffected.
+        dict(
+            testcase_name="same_lag",
+            store_type=OnlineStoreType.POSTGRES,
+            online=True,
+            current_lag="10s",
+            requested=OnlineConfig(target_lag="10s"),
+        ),
+        dict(
+            testcase_name="no_lag_requested",
+            store_type=OnlineStoreType.POSTGRES,
+            online=True,
+            current_lag="10s",
+            requested=OnlineConfig(enable=True),
+        ),
+        dict(
+            testcase_name="hybrid_store",
+            store_type=OnlineStoreType.HYBRID_TABLE,
+            online=True,
+            current_lag="10s",
+            requested=OnlineConfig(target_lag="30s"),
+        ),
+        # An online feature table may report a lag in units the caller did not use, so an
+        # unchanged lag must be recognized through either spelling.
+        dict(
+            testcase_name="same_lag_other_unit",
+            store_type=OnlineStoreType.POSTGRES,
+            online=True,
+            current_lag="300 SECONDS",
+            requested=OnlineConfig(target_lag="5 minutes"),
+        ),
+        dict(
+            testcase_name="same_lag_short_form",
+            store_type=OnlineStoreType.POSTGRES,
+            online=True,
+            current_lag="10 seconds",
+            requested=OnlineConfig(target_lag="10s"),
+        ),
+        # Not online yet: the table is created with the requested lag, which Postgres supports.
+        dict(
+            testcase_name="not_yet_online",
+            store_type=OnlineStoreType.POSTGRES,
+            online=False,
+            current_lag=None,
+            requested=OnlineConfig(enable=True, target_lag="30s"),
+        ),
+    )
+    def test_update_allows_other_online_changes(
+        self,
+        store_type: OnlineStoreType,
+        online: bool,
+        current_lag: str | None,
+        requested: OnlineConfig,
+    ) -> None:
+        fv = _make_online_fv(store_type=store_type, current_lag=current_lag, online=online)
+        fs = _make_store_for_update(fv)
+
+        fs.update_feature_view(name=fv, online_config=requested)
+
+        fs._plan_feature_view_update_operations.assert_called_once()
+
+    def test_update_is_not_refused_on_an_unreadable_lag(self) -> None:
+        """OnlineConfig accepts any non-empty string, and this check does not police syntax.
+
+        Were the unreadable value to surface here, a malformed lag would fail differently
+        depending on the online store type rather than reaching the same rejection.
+        """
+        fv = _make_online_fv(store_type=OnlineStoreType.POSTGRES, current_lag="10 seconds", online=True)
+        fs = _make_store_for_update(fv)
+
+        fs.update_feature_view(name=fv, online_config=OnlineConfig(target_lag="banana"))
+
+        fs._plan_feature_view_update_operations.assert_called_once()
+
+    def test_update_rejects_a_real_change_expressed_in_another_unit(self) -> None:
+        """Comparing on seconds must still catch a change that only differs in unit."""
+        fv = _make_online_fv(store_type=OnlineStoreType.POSTGRES, current_lag="10 seconds", online=True)
+        fs = _make_store_for_update(fv)
+
+        with self.assertRaises(Exception) as cm:
+            fs.update_feature_view(name=fv, online_config=OnlineConfig(target_lag="5 minutes"))
+
+        self.assertIn("target_lag cannot be changed", str(cm.exception))
+        fs._plan_feature_view_update_operations.assert_not_called()
+
+
 if __name__ == "__main__":
     absltest.main()

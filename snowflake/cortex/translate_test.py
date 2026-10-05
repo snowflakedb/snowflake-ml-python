@@ -1,3 +1,5 @@
+from unittest import mock
+
 import _test_util
 from absl.testing import absltest
 
@@ -52,6 +54,13 @@ class TranslateTest(absltest.TestCase):
         )
         res = df_out.collect()[0][0]
         self.assertEqual(self.translate_for_test(self.text, self.from_language, self.to_language), res)
+
+    @mock.patch("snowflake.cortex._translate.call_sql_function", autospec=True)
+    def test_translate_retargets_to_ai_translate(self, mock_call_sql_function: mock.Mock) -> None:
+        mock_call_sql_function.return_value = "Hola"
+        result = _translate.translate("Hello", "en", "es", session=None)
+        mock_call_sql_function.assert_called_once_with("AI_TRANSLATE", None, "Hello", "en", "es")
+        self.assertEqual("Hola", result)
 
 
 if __name__ == "__main__":

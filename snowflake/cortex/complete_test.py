@@ -794,5 +794,37 @@ class CompleteRESTBackendTest(unittest.TestCase):
         )
 
 
+class CompleteMigrationTest(absltest.TestCase):
+    def test_complete_impl_defaults_to_ai_complete(self) -> None:
+        defaults = _complete._complete_impl.__defaults__
+        self.assertIsNotNone(defaults)
+        assert defaults is not None
+        self.assertEqual("AI_COMPLETE", defaults[1])
+
+    def test_sql_args_split_response_format_from_model_parameters(self) -> None:
+        response_format: _complete.ResponseFormat = {
+            "type": "json",
+            "schema": {"type": "object", "properties": {}},
+        }
+        options = _complete.CompleteOptions(temperature=0.2, max_tokens=16, response_format=response_format)
+        args = _complete._sql_ai_complete_args("mistral-7b", "hello", options)
+        self.assertEqual(("mistral-7b", "hello", {"max_tokens": 16, "temperature": 0.2}, response_format), args)
+
+    def test_sql_args_split_column_options_in_sql(self) -> None:
+        # When options is a Column we can't introspect keys in Python, so response_format is split out
+        # in SQL via OBJECT_DELETE / GET so it is never routed into model_parameters by mistake.
+        args = _complete._sql_ai_complete_args("mistral-7b", "hello", functions.col("opts"))
+        self.assertEqual(len(args), 4)
+        self.assertEqual(("mistral-7b", "hello"), args[:2])
+        # model_parameters = options with response_format removed; response_format read out separately.
+        # (The "response_format" key renders as a masked LITERAL(), so assert on the SQL functions used.)
+        model_parameters_sql = args[2]._expression.sql.upper()
+        response_format_sql = args[3]._expression.sql.upper()
+        self.assertIn("OBJECT_DELETE", model_parameters_sql)
+        self.assertIn('"OPTS"', model_parameters_sql)
+        self.assertIn("GET", response_format_sql)
+        self.assertIn('"OPTS"', response_format_sql)
+
+
 if __name__ == "__main__":
     absltest.main()

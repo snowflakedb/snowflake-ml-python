@@ -98,7 +98,7 @@
   dev_version: 3.1.1
   version_requirements: '>=2.0.0'
 - name: coverage
-  dev_version: 7.11.0
+  dev_version: 7.14.1
 - name_pypi: datasets
   dev_version_pypi: 3.3.2
   tags:
@@ -135,7 +135,12 @@
   requirements_extra_tags:
     - feature_store
 - name: httpx
+  # build_test_env for the same reason as h2 above: the release entry below puts httpx under
+  # run_constrained, so the conda integ test env must install it explicitly. Nothing in that
+  # env is guaranteed to pull httpx in transitively (snowflake.core does not depend on it).
   dev_version: 0.28.1
+  tags:
+    - build_test_env
 # Release-only entry: exposes httpx as the optional ``feature_store`` pip extra (and conda
 # run_constrained) without adding it to the base install. The plain entry above keeps httpx
 # available in the standard dev/test environments.

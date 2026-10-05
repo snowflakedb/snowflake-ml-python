@@ -1770,6 +1770,8 @@ class FeatureStore:
                     error_code=error_codes.INVALID_ARGUMENT, original_exception=e
                 ) from e
 
+            self._validate_online_target_lag_change(feature_view, online_config)
+
         if updated_feature_df is not None:
             if not feature_view.append_only:
                 raise snowml_exceptions.SnowflakeMLException(
@@ -4542,6 +4544,59 @@ class FeatureStore:
         operations: list[tuple[str, str | FeatureView]]
         rollback_operations: list[tuple[str, str | FeatureView]]
         final_config: fv_mod.OnlineConfig | None
+
+    @staticmethod
+    def _validate_online_target_lag_change(feature_view: FeatureView, online_config: fv_mod.OnlineConfig) -> None:
+        """Reject a target_lag change on an online feature table backed by Postgres.
+
+        Postgres-backed online feature tables accept the target lag they are created with but
+        not a later change to it: the ALTER is acknowledged without being applied. Rejecting the
+        change here keeps the call from reporting a success that did not happen.
+
+        Only a change that would otherwise be attempted is rejected. Enabling online storage
+        creates the table with the requested lag, disabling it ignores the lag, and a lag equal
+        to the current one is already a no-op.
+
+        Args:
+            feature_view: The registered feature view being updated.
+            online_config: The caller-supplied target online configuration.
+
+        Raises:
+            SnowflakeMLException: [ValueError] The feature view's online store is Postgres and
+                the requested target_lag differs from the current one.
+        """
+        existing_config = feature_view.online_config
+        if online_config.target_lag is None or online_config.enable is False:
+            return
+        if not feature_view.online or existing_config is None:
+            return
+        if existing_config.store_type != OnlineStoreType.POSTGRES:
+            return
+        deployed_lag = existing_config.target_lag
+        if deployed_lag is None:
+            return
+
+        # Neither lag is canonical: the table may report "300 SECONDS" where the caller asked
+        # for "5 minutes", so an unchanged lag is only recognizable on seconds. An unreadable
+        # lag lets the call through, because OnlineConfig accepts any non-empty string and
+        # reporting malformed intervals is not this check's job.
+        try:
+            if interval_utils.interval_to_seconds(online_config.target_lag) == interval_utils.interval_to_seconds(
+                deployed_lag
+            ):
+                return
+        except ValueError:
+            return
+
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"target_lag cannot be changed for a feature view whose online store is "
+                f"{OnlineStoreType.POSTGRES.name}; it is fixed at "
+                f"'{existing_config.target_lag}'. Delete and re-register the feature view with "
+                f"the desired target_lag."
+            ),
+        )
 
     def _plan_online_update(
         self, feature_view: FeatureView, online_config: fv_mod.OnlineConfig | None

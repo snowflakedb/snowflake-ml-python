@@ -3,6 +3,15 @@ load("//bazel:py_rules.bzl", "py_library")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "catboost",
+    srcs = ["catboost.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/experiment:utils",
+    ],
+)
+
+py_library(
     name = "keras",
     srcs = ["keras.py"],
     deps = [
@@ -35,6 +44,7 @@ py_library(
 py_library(
     name = "callback",
     deps = [
+        ":catboost",
         ":keras",
         ":lightgbm",
         ":xgboost",

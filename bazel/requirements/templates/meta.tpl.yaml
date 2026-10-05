@@ -14,7 +14,7 @@ requirements:
     - bazel==7.6.1
     - pip
   run:
-    - python>=3.10,<3.14
+    - python>=3.10,<3.15
 
 test:
   imports:
@@ -25,6 +25,10 @@ test:
     - pip check
   requires:
     - pip
+    # conda-forge snowflake-snowpark-python 1.52.0 py314 build 1 requires protobuf 7
+    # while its wheel still requires protobuf<6.34. Constrain the conda-build test
+    # env only; published run dependencies are unchanged.
+    - protobuf >=6.31,<7
 
 about:
   home: https://github.com/snowflakedb/snowflake-ml-python

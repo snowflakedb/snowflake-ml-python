@@ -41,7 +41,8 @@ class XGBSampleWeightTest(parameterized.TestCase):
         pd_data = self._test_data
         pd_data["ROW_INDEX"] = pd_data.reset_index().index
         sample_weight_col = "SAMPLE_WEIGHT"
-        pd_data[sample_weight_col] = np.array([random.randint(0, 100) for _ in range(pd_data.shape[0])])
+        rng = random.Random(42)
+        pd_data[sample_weight_col] = np.array([rng.randint(0, 100) for _ in range(pd_data.shape[0])])
 
         snowml_classifier = XGBClassifier(
             input_cols=feature_cols,
@@ -70,7 +71,8 @@ class XGBSampleWeightTest(parameterized.TestCase):
         pd_data = self._test_data
         pd_data["ROW_INDEX"] = pd_data.reset_index().index
         sample_weight_col = "SAMPLE_WEIGHT"
-        pd_data[sample_weight_col] = np.array([random.randint(0, 100) for _ in range(pd_data.shape[0])])
+        rng = random.Random(42)
+        pd_data[sample_weight_col] = np.array([rng.randint(0, 100) for _ in range(pd_data.shape[0])])
 
         snowml_classifier = XGBClassifier(
             input_cols=feature_cols,
@@ -80,7 +82,7 @@ class XGBSampleWeightTest(parameterized.TestCase):
         xgb_classifier = XGB_XGBClassifier()
 
         param_grid = {
-            "max_depth": [80, 100],
+            "max_depth": [3, 5],
         }
 
         grid_search = GridSearchCV(

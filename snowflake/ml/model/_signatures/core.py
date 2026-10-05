@@ -156,10 +156,15 @@ class DataType(Enum):
         Returns:
             Corresponding DataType.
         """
-        if isinstance(snowpark_type, spt.ArrayType):
-            actual_sp_type = snowpark_type.element_type
-        else:
-            actual_sp_type = snowpark_type
+        actual_sp_type: spt.DataType = snowpark_type
+        while isinstance(actual_sp_type, spt.ArrayType):
+            element_type = actual_sp_type.element_type
+            if element_type is None:
+                break
+            actual_sp_type = element_type
+
+        if isinstance(actual_sp_type, spt.MapType):
+            return DataType.OBJECT
 
         snowpark_to_snowml_type_mapping: dict[type[spt.DataType], DataType] = {
             i._snowpark_type: i

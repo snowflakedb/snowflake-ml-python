@@ -33,6 +33,12 @@ py_test(
     deps = [
         ":batch_inference_job_specs",
         ":batch_inference_task",
+        ":model_version_impl",
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/ops:model_ops",
+        "//snowflake/ml/model/_client/ops:service_ops",
+        "//snowflake/ml/test_utils:mock_session",
     ],
 )
 

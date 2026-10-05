@@ -79,7 +79,13 @@ class BatchInferenceTask(DAGTask):
                 one of ``query`` or ``input_stage_location``.
             input_spec: Optional input block.
             resources_spec: Optional resources block.
-            inference_spec: Optional inference block.
+            inference_spec: Optional inference block. Optional ``adapters`` is a mapping from
+                job alias (``input.params.model``) to adapter ``ModelVersion``s, or a list of
+                adapter versions. Dict keys become ``alias`` on each emitted list item. A
+                nonempty list and adapter-as-target omit ``alias``. Omit, ``None``, ``{}``, or
+                ``[]`` attaches none. Constructing the task on an adapter version is equivalent
+                to running the lineage pin with a one-item list, and defaults job-level
+                ``params.model`` to the defaulted alias when unset.
             image_build_spec: Optional image build block.
             function_name: Model function name. Resolved against the model's function list
                 when omitted.
@@ -125,24 +131,36 @@ class BatchInferenceTask(DAGTask):
         if (self._query is None) == (self._input_stage_location is None):
             raise ValueError("Exactly one of query or input_stage_location must be provided.")
 
-        target_function_info = self._model_version._validate_batch_inference_request(
+        inference_spec, raw_adapters = batch_inference_job_specs.split_inference_adapters(self._inference_spec)
+        deploy_target, adapters_map, input_spec = self._model_version._prepare_lora_batch(
+            adapters=raw_adapters,
             input_spec=self._input_spec,
+            input_spec_cls=batch_inference_job_specs.InputSpec,
+        )
+
+        target_function_info = deploy_target._validate_batch_inference_request(
+            input_spec=input_spec,
             resources_spec=self._resources_spec,
             function_name=self._function_name,
         )
 
+        inference_spec = batch_inference_job_specs.inference_spec_with_adapters(
+            inference_spec,
+            deploy_target._serialize_batch_adapters(adapters_map) if adapters_map else None,
+        )
+
         return service_ops.build_batch_inference_task_definition(
             session=self._model_version._service_ops._session,
-            model_fqn=self._model_version.fully_qualified_model_name,
-            version_name=self._model_version.version_name,
+            model_fqn=deploy_target.fully_qualified_model_name,
+            version_name=deploy_target.version_name,
             compute_pool=self._compute_pool,
             function_name=target_function_info["target_method"],
             query=self._query,
             input_stage_location=self._input_stage_location,
-            input_spec=self._input_spec,
+            input_spec=input_spec,
             output_spec=self._output_spec,
             resources_spec=self._resources_spec,
-            inference_spec=self._inference_spec,
+            inference_spec=inference_spec,
             image_build_spec=self._image_build_spec,
             replicas=self._replicas,
         )

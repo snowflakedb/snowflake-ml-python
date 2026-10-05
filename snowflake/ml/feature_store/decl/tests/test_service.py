@@ -360,6 +360,68 @@ class TestFormatStatusDisplayEndpoints:
 
 
 # ---------------------------------------------------------------------------
+# format_status_display — endpoint URL scheme handling
+# ---------------------------------------------------------------------------
+
+
+# The runtime advertises the SPCS-internal endpoint as a bare ``http://``
+# URL (no TLS on the pod-internal port), and can advertise the public /
+# PrivateLink endpoints host-only (no scheme at all).  The display prefixes
+# a scheme only when the value has none — it must not blindly prepend
+# ``https://`` to a value that already carries a scheme, or the internal
+# row renders the malformed doubled scheme ``https://http://…``.
+_RAW_STATUS_WITH_MIXED_ENDPOINT_SCHEMES = json.dumps(
+    {
+        "status": "RUNNING",
+        "message": "Feature Store Online Service is running",
+        "runtime_id": "rt-scheme-1",
+        "endpoints": [
+            {
+                "name": "ingest",
+                # Host-only public URL (no scheme) — the runtime can return
+                # these until it starts sending full https URLs.
+                "url": "jiyyezv-sfengineering-feature-store-vnext2.awsuswest2qa6.test-snowflakecomputing.app",
+                # Already fully-qualified https — must be left untouched.
+                "privatelink_url": "https://jiyyezv-fs-vnext2.spcs.pdx2awt.privatelink.snowflake.app",
+                # Bare http:// SPCS-internal URL — scheme present but not https.
+                "internal_url": "http://fs-runtime-11696213589.ik3a.svc.spcs.internal:8080",
+            },
+        ],
+    }
+)
+
+
+class TestFormatStatusDisplayEndpointScheme:
+    """Pin that endpoint URL rendering is scheme-aware: a value that
+    already carries a scheme (``http://`` internal, ``https://``
+    PrivateLink) is emitted verbatim, and only a scheme-less host-only
+    value gets an ``https://`` prefix.  Regression guard for the
+    doubled ``https://http://`` internal-endpoint defect.
+    """
+
+    def setup_method(self) -> None:
+        status = parse_service_status(_RAW_STATUS_WITH_MIXED_ENDPOINT_SCHEMES)
+        self.display = format_status_display(status, user="u", database="D", schema="S")
+
+    def test_internal_url_not_double_schemed(self) -> None:
+        assert "https://http://" not in self.display
+
+    def test_internal_http_url_rendered_verbatim(self) -> None:
+        assert "http://fs-runtime-11696213589.ik3a.svc.spcs.internal:8080" in self.display
+
+    def test_host_only_public_url_gets_single_https_prefix(self) -> None:
+        assert (
+            "https://jiyyezv-sfengineering-feature-store-vnext2.awsuswest2qa6.test-snowflakecomputing.app"
+            in self.display
+        )
+        # And not double-prefixed.
+        assert "https://https://" not in self.display
+
+    def test_already_https_privatelink_url_unchanged(self) -> None:
+        assert "https://jiyyezv-fs-vnext2.spcs.pdx2awt.privatelink.snowflake.app" in self.display
+
+
+# ---------------------------------------------------------------------------
 # format_status_display — default-compact vs verbose layout
 # ---------------------------------------------------------------------------
 

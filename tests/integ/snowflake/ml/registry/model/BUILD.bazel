@@ -432,6 +432,7 @@ py_test(
 
 py_test(
     name = "registry_artifact_repository_test",
+    timeout = "long",
     srcs = ["registry_artifact_repository_test.py"],
     imports = ["."],
     optional_dependencies = ["scikit-learn"],

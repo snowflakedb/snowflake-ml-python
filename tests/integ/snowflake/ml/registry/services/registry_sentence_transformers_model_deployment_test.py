@@ -16,6 +16,11 @@ MODEL_NAMES = ["intfloat/e5-base-v2"]  # cant load models in parallel
 SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 HF_HOME = "HF_HOME"
 
+# SPCS image builds resolve conda deps against conda-forge, which does not
+# publish tokenizers 0.23.2. An explicit pin prevents the packager from
+# capturing the local pkgs/snowflake build.
+_PINNED_TOKENIZERS_CONDA = "tokenizers==0.23.1"
+
 
 class TestRegistrySentenceTransformerDeploymentModelInteg(
     registry_model_deployment_test_base.RegistryModelDeploymentTestBase
@@ -96,6 +101,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            additional_dependencies=[_PINNED_TOKENIZERS_CONDA],
             pip_requirements=pip_requirements,
             rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
             params={"truncate_dim": truncate_dim},

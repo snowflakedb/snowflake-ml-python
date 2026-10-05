@@ -74,15 +74,25 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
     def test_full_body_has_all_blocks_in_canonical_order(self) -> None:
         builder = inference_job_service_spec.InferenceJobServiceSpec()
         builder.add_image_build_spec(batch_inference_job_specs.ImageBuildSpec(image_repo="DB.SCHEMA.REPO"))
-        builder.add_inference_spec(batch_inference_job_specs.InferenceSpec(num_workers=2))
+        builder.add_inference_spec(
+            batch_inference_job_specs.InferenceSpec(
+                num_workers=2,
+                adapters=[
+                    batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support")
+                ],
+            )
+        )
         builder.add_resources_spec(batch_inference_job_specs.ResourcesSpec(cpu_requests="1"))
         builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
         builder.add_input_spec(inference_job_service_spec._InternalInputSpec(params={"k": "v"}))
         rendered = builder.save()
+        body = cast(dict[str, Any], yaml.safe_load(rendered))
+        self.assertEqual(list(body.keys()), ["input", "output", "resources", "inference", "image_build"])
         self.assertLess(rendered.index("input"), rendered.index("output"))
         self.assertLess(rendered.index("output"), rendered.index("resources"))
         self.assertLess(rendered.index("resources"), rendered.index("inference"))
         self.assertLess(rendered.index("inference"), rendered.index("image_build"))
+        self.assertIn("adapters", body["inference"])
 
     def test_input_emits_raw_params_and_column_handling(self) -> None:
         body = self._build(with_input=True)
@@ -167,6 +177,72 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
             set(body.keys()),
             {"input", "output", "resources", "inference", "image_build"},
         )
+
+    def test_omit_adapters_matches_minimal_and_full_goldens(self) -> None:
+        minimal = self._build()
+        self.assertEqual(set(minimal.keys()), {"output"})
+        self.assertNotIn("adapters", minimal)
+        full = self._build(with_input=True, with_resources=True, with_inference=True, with_image_build=True)
+        self.assertEqual(
+            set(full.keys()),
+            {"input", "output", "resources", "inference", "image_build"},
+        )
+        self.assertNotIn("adapters", full)
+        self.assertNotIn("adapters", full["inference"])
+
+    def test_empty_adapters_does_not_write_key(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@stage/"))
+        builder.add_inference_spec(batch_inference_job_specs.InferenceSpec(adapters=[]))
+        body = yaml.safe_load(builder.save())
+        self.assertEqual(set(body.keys()), {"output"})
+        self.assertNotIn("adapters", body)
+
+    def test_adapters_emitted_when_nonempty(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"))
+        builder.add_image_build_spec(batch_inference_job_specs.ImageBuildSpec(image_repo="DB.SCHEMA.REPO"))
+        builder.add_inference_spec(
+            batch_inference_job_specs.InferenceSpec(
+                adapters=[
+                    batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support"),
+                    batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SQL_GEN", version="V2", alias="sql_gen"),
+                ]
+            )
+        )
+        rendered = builder.save()
+        body = cast(dict[str, Any], yaml.safe_load(rendered))
+        self.assertNotIn("adapters", body)
+        self.assertEqual(set(body["inference"].keys()), {"adapters"})
+        self.assertEqual(
+            body["inference"]["adapters"],
+            [
+                {"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1", "alias": "support"},
+                {"name": "DB.SCHEMA.SQL_GEN", "version": "V2", "alias": "sql_gen"},
+            ],
+        )
+        self.assertEqual(list(body.keys()), ["output", "inference", "image_build"])
+        self.assertLess(rendered.index("inference"), rendered.index("image_build"))
+
+    def test_adapters_merge_into_existing_inference_block(self) -> None:
+        builder = inference_job_service_spec.InferenceJobServiceSpec()
+        builder.add_output_spec(batch_inference_job_specs.OutputSpec(stage_location="@DB.SCHEMA.STAGE/out/"))
+        builder.add_inference_spec(
+            batch_inference_job_specs.InferenceSpec(
+                num_workers=4,
+                adapters=[
+                    batch_inference_job_specs.AdapterSpec(name="DB.SCHEMA.SUPPORT_TONE", version="V1", alias="support")
+                ],
+            )
+        )
+        body = yaml.safe_load(builder.save())
+        self.assertNotIn("adapters", body)
+        self.assertEqual(body["inference"]["num_workers"], 4)
+        self.assertEqual(
+            body["inference"]["adapters"],
+            [{"name": "DB.SCHEMA.SUPPORT_TONE", "version": "V1", "alias": "support"}],
+        )
+        self.assertEqual(list(body.keys()), ["output", "inference"])
 
 
 if __name__ == "__main__":
