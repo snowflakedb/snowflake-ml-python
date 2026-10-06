@@ -9,14 +9,16 @@ def _fetch_conda_env_config_impl(rctx):
     # which will be located somewhere in the Bazel build files
     rctx.file("BUILD")
 
+    all_compatible_targets = [
+        "@SnowML//bazel/platforms:core_conda_channel",
+    ] + [
+        "@SnowML//bazel/platforms:{}_conda_channel".format(group_name)
+        for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+    ]
+
     conda_env_map = {
         "all": {
-            "compatible_target": [
-                "@SnowML//bazel/platforms:core_conda_channel",
-            ] + [
-                "@SnowML//bazel/platforms:{}_conda_channel".format(group_name)
-                for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
-            ],
+            "compatible_target": all_compatible_targets,
             "environment": "@//bazel/environments:conda-env-all.yml",
         },
         "build": {
@@ -30,6 +32,10 @@ def _fetch_conda_env_config_impl(rctx):
                 "@SnowML//bazel/platforms:core_conda_channel",
             ],
             "environment": "@//bazel/environments:conda-env-core.yml",
+        },
+        "perf": {
+            "compatible_target": all_compatible_targets,
+            "environment": "@//bazel/environments:conda-env-perf.yml",
         },
     }
 

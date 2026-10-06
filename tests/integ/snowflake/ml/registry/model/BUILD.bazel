@@ -311,13 +311,13 @@ py_test(
     ],
     deps = [
         ":registry_model_test_base",
-        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
+        "//tests/integ/snowflake/ml/test_utils:lora_adapters_enabled_patch",
     ],
 )
 
@@ -353,12 +353,12 @@ py_test(
     ],
     deps = [
         ":registry_model_test_base",
-        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/model:target_platform",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
+        "//tests/integ/snowflake/ml/test_utils:lora_adapters_enabled_patch",
     ],
 )
 

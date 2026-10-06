@@ -17,14 +17,16 @@ def _conda_toolchain_impl(module_ctx):
     env_name = module_ctx.os.environ.get("BAZEL_CONDA_ENV_NAME", "core").lower()
     python_ver = module_ctx.os.environ.get("BAZEL_CONDA_PYTHON_VERSION", "3.11").lower()
 
+    all_compatible_targets = [
+        Label("//bazel/platforms:core_conda_channel"),
+    ] + [
+        Label("//bazel/platforms:{}_conda_channel".format(group_name))
+        for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+    ]
+
     conda_env_map = {
         "all": {
-            "compatible_target": [
-                Label("//bazel/platforms:core_conda_channel"),
-            ] + [
-                Label("//bazel/platforms:{}_conda_channel".format(group_name))
-                for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
-            ],
+            "compatible_target": all_compatible_targets,
             "environment": Label("//bazel/environments:conda-env-all.yml"),
         },
         "build": {
@@ -34,6 +36,10 @@ def _conda_toolchain_impl(module_ctx):
         "core": {
             "compatible_target": [Label("//bazel/platforms:core_conda_channel")],
             "environment": Label("//bazel/environments:conda-env-core.yml"),
+        },
+        "perf": {
+            "compatible_target": all_compatible_targets,
+            "environment": Label("//bazel/environments:conda-env-perf.yml"),
         },
     }
 

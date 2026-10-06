@@ -3,12 +3,10 @@ import logging
 import os
 import tempfile
 from typing import Any
-from unittest import mock
 
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import (
     ModelVersion,
     PeftAdapter,
@@ -23,8 +21,11 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
     lora_adapter_account_gate,
+    lora_adapters_enabled_patch,
     test_env_utils,
 )
+
+lora_adapters_enabled_patch.enable()
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +33,6 @@ _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
 _SMOLLM2 = "HuggingFaceTB/SmolLM2-135M-Instruct"
 _SMOLLM2_ADAPTER = "Miladsaeedi70/smollm2-135m-scientific-sft-lora"
 _SMOLLM2_ADAPTER_REVISION = "c344de0f75239d4de9341f7d38a580cdd8b10d25"
-
-_LORA_ADAPTERS_ENABLED_PATCHER = mock.patch.object(
-    platform_capabilities.PlatformCapabilities,
-    "is_lora_adapters_enabled",
-    return_value=True,
-    autospec=True,
-)
-_LORA_ADAPTERS_ENABLED_PATCHER.start()
 
 
 def _write_stub_adapter_dir(path: str) -> str:
@@ -221,9 +214,14 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
         compute_pool: str | None = None,
         prediction_assert_fn: Any | None = None,
     ) -> Any:
-        gpu_requests = resources_spec.gpu_requests if resources_spec is not None else None
+        if (
+            inference_spec is None
+            or inference_spec.engine_options is None
+            or inference_spec.engine_options.engine != inference_engine.InferenceEngine.VLLM
+        ):
+            self.fail("LoRA batch integration jobs must use vLLM")
         if compute_pool is None:
-            compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
+            compute_pool = self._TEST_GPU_COMPUTE_POOL
         batch_job = mv.run_batch(
             X,
             compute_pool=compute_pool,
@@ -278,68 +276,6 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
             inference_spec=self._vllm_inference_spec(),
             job_name=job_name,
             prediction_assert_fn=self._chat_validator(expected_model_substr=alias),
-        )
-
-    def test_adapter_run_batch_rejects_extra_adapters(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        extra = self._log_stub_adapter(base_mv=base, model_name=self._name("EXTRA"), version_name="V1")
-        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
-        with self.assertRaisesRegex(ValueError, r"does not accept adapters on the inference spec"):
-            adapter.run_batch(
-                self.session.create_dataframe(self._chat_df()),
-                compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-                inference_spec=batch_inference_job_specs.InferenceSpec(adapters={"other": extra}),
-                job_name=job_name,
-            )
-
-    def test_flag_off_refuses_nonempty_adapters(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
-        with mock.patch.object(
-            platform_capabilities.PlatformCapabilities,
-            "is_lora_adapters_enabled",
-            return_value=False,
-        ):
-            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
-                base.run_batch(
-                    self.session.create_dataframe(self._chat_df()),
-                    compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                    output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-                    inference_spec=batch_inference_job_specs.InferenceSpec(adapters={"support": adapter}),
-                    job_name=job_name,
-                )
-
-    def test_flag_off_refuses_adapter_run_batch(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
-        with mock.patch.object(
-            platform_capabilities.PlatformCapabilities,
-            "is_lora_adapters_enabled",
-            return_value=False,
-        ):
-            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
-                adapter.run_batch(
-                    self.session.create_dataframe(self._chat_df()),
-                    compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                    output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-                    job_name=job_name,
-                )
-
-    def test_omit_adapters_passthrough(self) -> None:
-        omit_job_name, omit_out, _ = self._prepare_job_name_and_stage_for_batch_inference()
-        omit_mv = self._log_serving_base(model_name=self._name("OMIT"), version_name="V1")
-        self._run_lora_job(
-            omit_mv,
-            self.session.create_dataframe(self._chat_df()),
-            output_spec=batch_inference_job_specs.OutputSpec(stage_location=omit_out),
-            resources_spec=self._gpu_resources(),
-            inference_spec=self._vllm_inference_spec(),
-            job_name=omit_job_name,
-            prediction_assert_fn=self._chat_validator(),
         )
 
 

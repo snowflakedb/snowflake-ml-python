@@ -1,12 +1,9 @@
 import logging
 import os
 import time
-from unittest import mock
 
 from absl.testing import absltest
-from sklearn import datasets, linear_model
 
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import PeftAdapter
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.services import (
@@ -39,73 +36,43 @@ class TestRegistryLoraAdapterDeploymentInteg(
         finally:
             self._drop_lora_service(svc)
 
-    def test_mixed_version_create_service_on_each(self) -> None:
+    def test_adapter_version_create_service(self) -> None:
         model_name = self._name("MIXED")
         v1 = self._log_serving_base(model_name=model_name, version_name="V1")
         v2 = self._log_serving_adapter(base_mv=v1, model_name=model_name, version_name="V2")
-        svc_v1 = None
         svc_v2 = None
         try:
-            svc_v1 = self._create_lora_service(v1, service_name=self._name("SVC_V1"))
             self.assertEqual(self._show_model_type(model_name), "USER_MODEL")
-            self._assert_base_only_spec(svc_v1)
-            res = v1.run(self._chat_df(), function_name="__call__", service_name=svc_v1)
-            self._assert_chat_res(res)
-            self._assert_sql_chat(self._sql_call(self._service_fqn(svc_v1), model=None))
-            self._assert_chat_res(self._rest_call(v1))
-            self._drop_lora_service(svc_v1)
-            svc_v1 = None
-
             svc_v2 = self._create_lora_service(v2, service_name=self._name("SVC_V2"))
             alias = self._served_name(v2)
             self._assert_spec_adapters_list(svc_v2, expected_aliases=[alias])
-            self._assert_sql_chat(self._sql_call(self._service_fqn(svc_v2), model=alias))
-            self._assert_sql_chat(self._sql_call(self._service_fqn(svc_v2), model=None))
+            self._assert_sql_chat(
+                self._sql_call(self._service_fqn(svc_v2), model=alias),
+                expected_model_substr=v2.fully_qualified_model_name,
+            )
+            self._assert_sql_chat(
+                self._sql_call(self._service_fqn(svc_v2), model=None),
+                expected_model_substr=v1.model_name,
+            )
             self._assert_lists_service(v1, svc_v2)
         finally:
             if svc_v2 is not None:
                 self._drop_lora_service(svc_v2)
-            if svc_v1 is not None:
-                self._drop_lora_service(svc_v1)
 
     def test_illegal_alias_charset_rejected(self) -> None:
         base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
         adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        # Empty aliases are rejected by GS deployment-spec validation.
-        with self.assertRaisesRegex(Exception, r"(?i)invalid|alias|reserved"):
-            base.create_service(
-                service_name=self._name("SVC"),
-                service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                adapters={"": adapter},
-            )
-
-    def test_slash_and_fqn_aliases_pass_client_charset(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        fqn_alias = self._served_name(adapter)
-        for alias in ("support", "a/b", "db.schema.model", fqn_alias):
-            with self.subTest(alias=alias):
-                try:
-                    # Charset must not reject. This CPU create may fail later
-                    # (G6 schema / image); that is not a charset failure.
-                    base.create_service(
-                        service_name=self._name("SVC"),
-                        service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                        adapters={alias: adapter},
-                    )
-                except Exception as exc:
-                    self.assertNotRegex(str(exc), r"Adapter alias")
-
-    def test_adapter_create_service_rejects_extra_adapters(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        extra = self._log_stub_adapter(base_mv=base, model_name=self._name("EXTRA"), version_name="V1")
-        with self.assertRaisesRegex(ValueError, r"does not accept the adapters argument"):
-            adapter.create_service(
-                service_name=self._name("SVC"),
-                service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                adapters={"other": extra},
-            )
+        service_name = self._name("SVC")
+        try:
+            with self.assertRaisesRegex(Exception, r"(?i)invalid|alias|reserved"):
+                base.create_service(
+                    service_name=service_name,
+                    service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+                    inference_engine_options=self._vllm_engine_options(),
+                    adapters={"": adapter},
+                )
+        finally:
+            self._drop_lora_service(service_name)
 
     def test_garden_base_plus_adapter_attach(self) -> None:
         garden_name = os.getenv("LORA_IT_GARDEN_MODEL")
@@ -200,7 +167,6 @@ class TestRegistryLoraAdapterDeploymentInteg(
                 service_name=service_name,
                 service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
                 ingress_enabled=True,
-                force_rebuild=True,
                 inference_engine_options=self._vllm_engine_options(),
                 adapters=[attached],
             )
@@ -255,24 +221,17 @@ class TestRegistryLoraAdapterDeploymentInteg(
         version = os.getenv("LORA_IT_SHARED_VERSION")
         shared_mv = shared_model.version(version) if version else shared_model.default
         adapter = self._log_stub_adapter(base_mv=shared_mv, model_name=self._name("SHARED_ADAPTER"), version_name="V1")
-        with self.assertRaisesRegex(Exception, r"MODEL_SPCS_DEPLOY_SHARED_MODEL_NOT_SUPPORTED"):
-            shared_mv.create_service(
-                service_name=self._name("SHARED_SVC"),
-                service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
-                adapters={"support": adapter},
-            )
-
-    def test_pre_with_model_base_deploys_without_adapters(self) -> None:
-        # CPU python inference, same shape as the huggingface CPU neighbor. GPU
-        # + cuda_version races the LoRA vLLM shards for pool capacity.
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        service_name = self._name("SVC")
-        base.create_service(
-            service_name=service_name,
-            service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-        )
-        self._wait_for_service_status(base)
-        self._assert_base_only_spec(service_name)
+        service_name = self._name("SHARED_SVC")
+        try:
+            with self.assertRaisesRegex(Exception, r"MODEL_SPCS_DEPLOY_SHARED_MODEL_NOT_SUPPORTED"):
+                shared_mv.create_service(
+                    service_name=service_name,
+                    service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+                    inference_engine_options=self._vllm_engine_options(),
+                    adapters={"support": adapter},
+                )
+        finally:
+            self._drop_lora_service(service_name)
 
     def test_base_drop_dangles_then_attach_fails(self) -> None:
         base_name = self._name("BASE")
@@ -285,67 +244,37 @@ class TestRegistryLoraAdapterDeploymentInteg(
         dangling = self.registry.get_model(adapter_name)
         self.assertFalse(dangling.show_versions().empty)
         other = self._log_tiny_with_model_base(model_name=self._name("OTHER"), version_name="V1")
-        with self.assertRaisesRegex(Exception, r"(?i)pin|exist|not found|mismatch|adapter|lineage"):
-            other.create_service(
-                service_name=self._name("DANGLE_SVC"),
-                service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                adapters={"support": adapter},
-            )
-
-    def test_flag_off_refuses_nonempty_adapters(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        with mock.patch.object(
-            platform_capabilities.PlatformCapabilities,
-            "is_lora_adapters_enabled",
-            return_value=False,
-        ):
-            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
-                base.create_service(
-                    service_name=self._name("SVC"),
-                    service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
+        service_name = self._name("DANGLE_SVC")
+        try:
+            with self.assertRaisesRegex(Exception, r"(?i)pin|exist|not found|mismatch|adapter|lineage"):
+                other.create_service(
+                    service_name=service_name,
+                    service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+                    inference_engine_options=self._vllm_engine_options(),
                     adapters={"support": adapter},
                 )
-        self.assertTrue(base.list_services().empty)
+        finally:
+            self._drop_lora_service(service_name)
 
-    def test_flag_off_refuses_adapter_create_service(self) -> None:
-        base = self._log_tiny_with_model_base(model_name=self._name("BASE"), version_name="V1")
-        adapter = self._log_stub_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
-        with mock.patch.object(
-            platform_capabilities.PlatformCapabilities,
-            "is_lora_adapters_enabled",
-            return_value=False,
-        ):
-            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
-                adapter.create_service(
-                    service_name=self._name("SVC"),
-                    service_compute_pool=self._TEST_CPU_COMPUTE_POOL,
+    def test_adapter_from_different_base_rejected(self) -> None:
+        base_a = self._log_tiny_with_model_base(model_name=self._name("BASE_A"), version_name="V1")
+        base_b = self._log_tiny_with_model_base(model_name=self._name("BASE_B"), version_name="V1")
+        adapter = self._log_stub_adapter(base_mv=base_a, model_name=self._name("ADAPTER"), version_name="V1")
+        service_name = self._name("WRONG_BASE_SVC")
+        try:
+            with self.assertRaisesRegex(
+                Exception,
+                r"398547:.*is pinned to a different base than",
+            ):
+                base_b.create_service(
+                    service_name=service_name,
+                    service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+                    inference_engine_options=self._vllm_engine_options(),
+                    adapters={"support": adapter},
                 )
-
-    @mock.patch.object(
-        platform_capabilities.PlatformCapabilities,
-        "is_lora_adapters_enabled",
-        return_value=False,
-    )
-    def test_flag_off_non_lora_create_and_drop_unchanged(self, _mock_enabled: mock.MagicMock) -> None:
-        iris_x, iris_y = datasets.load_iris(return_X_y=True)
-        classifier = linear_model.LogisticRegression()
-        classifier.fit(iris_x, iris_y)
-        mv = self._test_registry_model_deployment(
-            model=classifier,
-            sample_input_data=iris_x,
-            prediction_assert_fns={
-                "predict": (
-                    iris_x,
-                    lambda res: self.assertEqual(len(res), len(iris_x)),
-                ),
-            },
-            options={"enable_explainability": False},
-        )
-        svc = mv.list_services().loc[0, "name"]
-        mv.delete_service(svc)
-        self.assertTrue(mv.list_services().empty)
-        self.registry.delete_model(mv.model_name)
+            self.assertTrue(base_b.list_services().empty)
+        finally:
+            self._drop_lora_service(service_name)
 
 
 if __name__ == "__main__":

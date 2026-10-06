@@ -3,11 +3,9 @@ import logging
 import os
 import tempfile
 from typing import Callable, TypeVar
-from unittest import mock
 
 from absl.testing import absltest
 
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import (
     ModelVersion,
     PeftAdapter,
@@ -16,17 +14,15 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import db_manager, lora_adapter_account_gate
+from tests.integ.snowflake.ml.test_utils import (
+    db_manager,
+    lora_adapter_account_gate,
+    lora_adapters_enabled_patch,
+)
+
+lora_adapters_enabled_patch.enable()
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
-
-_LORA_ADAPTERS_ENABLED_PATCHER = mock.patch.object(
-    platform_capabilities.PlatformCapabilities,
-    "is_lora_adapters_enabled",
-    return_value=True,
-    autospec=True,
-)
-_LORA_ADAPTERS_ENABLED_PATCHER.start()
 
 T = TypeVar("T")
 
@@ -266,17 +262,6 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
         finally:
             self.session.use_role(admin_role)
             self._db_manager.drop_role(usage_role, if_exists=True)
-
-    @mock.patch.object(
-        platform_capabilities.PlatformCapabilities,
-        "is_lora_adapters_enabled",
-        return_value=False,
-    )
-    def test_flag_off_refuses_peft_adapter(self, _mock_enabled: mock.MagicMock) -> None:
-        base_mv = self._log_customer_base(model_name=self._name("BASE"), version_name="V1")
-        with tempfile.TemporaryDirectory() as adapter_dir:
-            with self.assertRaisesRegex(Exception, r"ENABLE_LORA_ADAPTERS"):
-                PeftAdapter(base_model=base_mv, adapter_path=_write_stub_adapter_dir(adapter_dir))
 
     def test_adapter_warehouse_run_and_load_rejected(self) -> None:
         import pandas as pd

@@ -521,6 +521,30 @@ class ModelOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        dict(
+            testcase_name="legacy_url",
+            ingress_url="foo.snowflakecomputing.app",
+            expected="foo.snowflakecomputing.app",
+        ),
+        dict(
+            testcase_name="per_account_url",
+            ingress_url="inference-spcs.myorg-myaccount.us-west-2.snowflake.app",
+            expected="inference-spcs.myorg-myaccount.us-west-2.snowflake.app",
+        ),
+        dict(testcase_name="provisioning_placeholder", ingress_url="Waiting", expected=None),
+        dict(
+            testcase_name="provisioning_message",
+            ingress_url="Endpoints provisioning in progress... check back in a few minutes",
+            expected=None,
+        ),
+        dict(testcase_name="missing_url", ingress_url=None, expected=None),
+    )
+    def test_extract_and_validate_ingress_url(self, ingress_url: str | None, expected: str | None) -> None:
+        res_row = Row(name="inference", ingress_url=ingress_url, port=8080)
+
+        self.assertEqual(self.m_ops._extract_and_validate_ingress_url(res_row), expected)
+
     def test_show_services_1(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
         # Row objects with privatelink_ingress_url field for Business Critical accounts

@@ -269,10 +269,12 @@ let skip_continuous_run_targets = set($(<"ci/targets/local_only.txt")) in
 EndOfMessage
     # -- End of Query Rules Heredoc --
 
-${bazel} query --query_file="${excluded_test_source_rule_file}" \
-    --output location |
-    grep -o "source file.*" |
-    awk -F// '{print $2}' |
+excluded_test_sources="${working_dir}/excluded_test_sources"
+if ! "${bazel}" query --query_file="${excluded_test_source_rule_file}" \
+    --output location >"${excluded_test_sources}"; then
+    abort_on_query_failure "the source files to exclude from the test run"
+fi
+awk -F// '/source file/ {print $2}' "${excluded_test_sources}" |
     sed -e 's/:/\//g' >"${output_path}"
 
 # Special handling for modeling tests: exclude all modeling feature area tests if feature areas specified and "modeling" not included
@@ -300,6 +302,24 @@ grep ':' "ci/targets/quarantine/${SF_ENV}.txt" | \
         -e 's|:|/|' \
         -e 's|$|.py|' \
     >> "${output_path}"
+fi
+
+# Local-only targets never run in the CI pytest copy. A direct bazel test of the
+# target still runs them. Package patterns exclude that directory even when the
+# query above does not expand them.
+if [[ -f "ci/targets/local_only.txt" ]]; then
+    while IFS= read -r local_only_line || [[ -n "${local_only_line}" ]]; do
+        local_only_line="${local_only_line%%#*}"
+        local_only_line="${local_only_line#"${local_only_line%%[![:space:]]*}"}"
+        local_only_line="${local_only_line%"${local_only_line##*[![:space:]]}"}"
+        [[ -z "${local_only_line}" ]] && continue
+        local_only_line="${local_only_line#//}"
+        if [[ "${local_only_line}" == */... ]]; then
+            printf '%s/\n' "${local_only_line%/...}" >>"${output_path}"
+        elif [[ "${local_only_line}" == *:* ]]; then
+            printf '%s.py\n' "${local_only_line/://}" >>"${output_path}"
+        fi
+    done <"ci/targets/local_only.txt"
 fi
 echo "Tests getting excluded:"
 

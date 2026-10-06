@@ -59,7 +59,9 @@ class ServiceInfo(TypedDict):
 
 class ModelOperator:
     INFERENCE_SERVICE_ENDPOINT_NAME = "inference"
-    INGRESS_ENDPOINT_URL_SUFFIX = "snowflakecomputing.app"
+    # Accounts on the per-account public URL policy get a URL under "snowflake.app"; the others keep
+    # the original "snowflakecomputing.app". Both are live, so both have to be accepted.
+    INGRESS_ENDPOINT_URL_SUFFIXES = ("snowflakecomputing.app", "snowflake.app")
     # app-service-privatelink might not contain "snowflakecomputing" in the url - using the minimum required substring
     PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING = "privatelink.snowflake"
 
@@ -706,7 +708,7 @@ class ModelOperator:
         if url_value is None:
             return None
         url_str = str(url_value)
-        return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX) else None
+        return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIXES) else None
 
     def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> str | None:
         """Extract and validate privatelink ingress URL from endpoint row."""
