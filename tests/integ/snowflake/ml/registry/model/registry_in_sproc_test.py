@@ -1,3 +1,4 @@
+import sklearn
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import identifier
@@ -12,7 +13,7 @@ ADDED_VERSION_NAME = "V2"
 
 class RegistryInSprocTest(registry_model_test_base.RegistryModelTestBase):
     @common_test_base.CommonTestBase.sproc_test(
-        test_owners_rights=False, additional_packages=["inflection", "scikit-learn==1.5.1"]
+        test_owners_rights=False, additional_packages=["inflection", f"scikit-learn=={sklearn.__version__}"]
     )
     def test_workflow(self) -> None:
         model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()

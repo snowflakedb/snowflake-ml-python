@@ -8,6 +8,7 @@ channels:
 dependencies:
   - absl-py==2.1.0
   - h2==4.3.0
+  - httpx==0.28.1
   - inflection==0.5.1
   - psutil==7.0.0
   - pytest-timeout==2.2.0

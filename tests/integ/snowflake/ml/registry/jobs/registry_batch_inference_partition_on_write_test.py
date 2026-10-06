@@ -14,14 +14,10 @@ class TestBatchInferencePartitionedPartitionOnWriteInteg(
 ):
     """Same partitioned batch-inference cases with the write param on at session level.
 
-    Runs only in Jenkins image-override jobs (``*_IMAGE_PATH`` / ``*_PATH`` env vars set).
+    Skips if ``ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE`` cannot be set (older GS).
     """
 
     def setUp(self) -> None:
-        if not self._has_image_override():
-            self.skipTest(
-                "Skipping: ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE variant requires Jenkins image override."
-            )
         super().setUp()
         try:
             self.session.sql(f"ALTER SESSION SET {self._PARTITION_ON_WRITE_PARAM} = true").collect()

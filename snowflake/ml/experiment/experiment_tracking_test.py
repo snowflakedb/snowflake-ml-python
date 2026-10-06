@@ -53,13 +53,15 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.registry_patcher.stop()
 
     def test_singleton(self) -> None:
-        """Test that ExperimentTracking is a singleton class, and that warnings are issued on re-initialization."""
+        """Test that ExperimentTracking is a singleton class, and that re-initialization is logged, not warned."""
+        exp1 = experiment_tracking.ExperimentTracking(session=self.mock_session)
         with warnings.catch_warnings(record=True) as caught_warnings:
-            exp1 = experiment_tracking.ExperimentTracking(session=self.mock_session)
-            exp2 = experiment_tracking.ExperimentTracking(session=self.mock_session)
-        self.assertEqual(len(caught_warnings), 1)
-        self.assertEqual(caught_warnings[0].category, UserWarning)
-        self.assertIn("ExperimentTracking is a singleton class", str(caught_warnings[0].message))
+            warnings.simplefilter("always")
+            with self.assertLogs(experiment_tracking.logger, level="INFO") as logs:
+                exp2 = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("ExperimentTracking is a singleton class", logs.output[0])
+        self.assertEqual(len(caught_warnings), 0)
         self.assertIs(exp1, exp2)
 
     def test_init(self) -> None:
@@ -215,12 +217,20 @@ class ExperimentTrackingTest(absltest.TestCase):
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=True)
         self.assertTrue(exp._capture_source_info)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            same = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=False)
+        same = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=False)
 
         self.assertIs(same, exp)
         self.assertFalse(exp._capture_source_info)
+
+    def test_warnings_as_errors_is_updated_on_singleton_reconstruction(self) -> None:
+        """Re-constructing the singleton updates warnings_as_errors even though the instance is reused."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        self.assertFalse(exp._warnings_as_errors)
+
+        same = experiment_tracking.ExperimentTracking(session=self.mock_session, warnings_as_errors=True)
+
+        self.assertIs(same, exp)
+        self.assertTrue(exp._warnings_as_errors)
 
     @patch("snowflake.ml.experiment.experiment_tracking.source_info.SourceInfo.collect", autospec=True)
     def test_start_run_captures_source_info_when_enabled(self, mock_collect: MagicMock) -> None:
@@ -478,6 +488,22 @@ class ExperimentTrackingTest(absltest.TestCase):
                 self.assertEqual(caught_warnings[0].category, RuntimeWarning)
                 self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
 
+    def test_log_metrics_failure_with_warnings_as_errors(self) -> None:
+        """With warnings_as_errors=True, exceeding the metadata size limit raises on every call."""
+        self.mock_sql_client.modify_run_add_metrics.side_effect = exceptions.SnowparkSQLException(
+            "Size limit exceeded", sql_error_code=400003
+        )
+        metrics = {"accuracy": 0.95, "loss": 0.05}
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, warnings_as_errors=True)
+        exp.set_experiment("TEST_EXPERIMENT")
+        with exp.start_run("TEST_RUN"):
+            for step in (1, 2):
+                with self.assertRaisesRegex(RuntimeWarning, entities.run.METADATA_SIZE_WARNING_MESSAGE):
+                    exp.log_metrics(metrics, step=step)
+
+        self.assertEqual(self.mock_sql_client.modify_run_add_metrics.call_count, 2)
+
     def test_log_params_with_active_run(self) -> None:
         """Test logging params with an active run"""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
@@ -573,6 +599,22 @@ class ExperimentTrackingTest(absltest.TestCase):
                 self.assertEqual(len(caught_warnings), 1)
                 self.assertEqual(caught_warnings[0].category, RuntimeWarning)
                 self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
+
+    def test_log_params_failure_with_warnings_as_errors(self) -> None:
+        """With warnings_as_errors=True, exceeding the metadata size limit raises on every call."""
+        self.mock_sql_client.modify_run_add_params.side_effect = exceptions.SnowparkSQLException(
+            "Size limit exceeded", sql_error_code=400003
+        )
+        params = {"learning_rate": 0.01, "batch_size": 32}
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, warnings_as_errors=True)
+        exp.set_experiment("TEST_EXPERIMENT")
+        with exp.start_run("TEST_RUN"):
+            for _ in range(2):
+                with self.assertRaisesRegex(RuntimeWarning, entities.run.METADATA_SIZE_WARNING_MESSAGE):
+                    exp.log_params(params)
+
+        self.assertEqual(self.mock_sql_client.modify_run_add_params.call_count, 2)
 
     def test_log_model(self) -> None:
         """Test that log_model uses ExperimentInfoPatcher with correct experiment info"""

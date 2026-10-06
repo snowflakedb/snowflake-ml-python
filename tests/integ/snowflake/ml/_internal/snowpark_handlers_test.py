@@ -1,6 +1,7 @@
 import inflection
 import numpy as np
 import pandas as pd
+import sklearn
 from absl.testing import absltest
 from sklearn.datasets import load_diabetes
 from sklearn.linear_model import LinearRegression as SkLinearRegression
@@ -60,9 +61,10 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         return (input_df_pandas, input_cols, label_cols)
 
-    @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection", "scikit-learn==1.5.1"])
+    @common_test_base.CommonTestBase.sproc_test(
+        additional_packages=["inflection", f"scikit-learn=={sklearn.__version__}"]
+    )
     def test_batch_inference(self) -> None:
-
         output_cols = ["OUTPUT_" + c for c in self.label_cols]
 
         predictions = self._handlers.batch_inference(
@@ -80,9 +82,10 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
 
         np.testing.assert_allclose(sklearn_numpy_arr, sf_numpy_arr, rtol=1.0e-1, atol=1.0e-2)
 
-    @common_test_base.CommonTestBase.sproc_test(additional_packages=["inflection", "scikit-learn==1.5.1"])
+    @common_test_base.CommonTestBase.sproc_test(
+        additional_packages=["inflection", f"scikit-learn=={sklearn.__version__}"]
+    )
     def test_score_snowpark(self) -> None:
-
         score = self._handlers.score(
             session=self.session,
             dependencies=self.dependencies,

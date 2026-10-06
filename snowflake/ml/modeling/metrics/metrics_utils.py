@@ -4,6 +4,8 @@ from typing import Any, Collection, Iterable
 
 import cloudpickle
 import numpy as np
+import pandas as pd
+import pyarrow as pa
 from packaging import version
 
 import snowflake.snowpark._internal.utils as snowpark_utils
@@ -17,6 +19,10 @@ from snowflake.snowpark import Session, functions as F, types as T
 LABEL = "LABEL"
 INDEX = "INDEX"
 BATCH_SIZE = 1000
+
+# The Snowflake connector enables DataFrame.to_pandas() only when both pandas and pyarrow
+# are importable. A missing pyarrow is reported as pandas not installed.
+PANDAS_FETCH_PACKAGES = [f"pandas=={pd.__version__}", f"pyarrow=={pa.__version__}"]
 
 
 def register_accumulator_udtf(*, session: Session, statement_params: dict[str, Any]) -> str:

@@ -82,7 +82,7 @@ class InferenceJobServiceSpec:
         if self._resources is not None:
             body["resources"] = self._resources
         if self._inference is not None:
-            body["inference"] = self._inference
+            body["inference"] = dict(self._inference)
         if self._image_build is not None:
             body["image_build"] = self._image_build
         # Order keys to match the design doc for readability: input, output,

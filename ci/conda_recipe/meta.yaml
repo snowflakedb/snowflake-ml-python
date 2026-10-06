@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 2.3.0
+  version: 2.4.0
 requirements:
   build:
     - python
@@ -47,7 +47,7 @@ requirements:
     - sqlparse>=0.4,<1
     - tqdm<5
     - typing-extensions>=4.1.0,<5
-    - python>=3.10,<3.14
+    - python>=3.10,<3.15
   run_constrained:
     - altair>=5,<7
     - catboost>=1.2.0, <2
@@ -81,3 +81,7 @@ test:
     - snowflake.ml.modeling
   requires:
     - pip
+    # conda-forge snowflake-snowpark-python 1.52.0 py314 build 1 requires protobuf 7
+    # while its wheel still requires protobuf<6.34. Constrain the conda-build test
+    # env only; published run dependencies are unchanged.
+    - protobuf >=6.31,<7

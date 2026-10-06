@@ -181,7 +181,7 @@ def build_inference_job_service_yaml(
         input_spec: Optional YAML input block (``_InternalInputSpec``).
         output_spec: Required output block, already slash-normalized.
         resources_spec: Optional resources block.
-        inference_spec: Optional inference block.
+        inference_spec: Optional inference block, including nested ``adapters`` when present.
         image_build_spec: Optional image build block.
 
     Returns:
@@ -233,7 +233,7 @@ def build_batch_inference_task_definition(
         input_spec: Optional input block.
         output_spec: Required output block.
         resources_spec: Optional resources block.
-        inference_spec: Optional inference block.
+        inference_spec: Optional inference block, including nested ``adapters`` when present.
         image_build_spec: Optional image build block.
         replicas: Optional ``REPLICAS`` value.
 
@@ -1266,7 +1266,8 @@ class ServiceOperator:
                 by the server as a base: results are written under a per-job
                 subdirectory, ``<stage_location>/<job_name>/``.
             resources_spec: Optional resources block of the YAML body.
-            inference_spec: Optional inference block of the YAML body.
+            inference_spec: Optional inference block of the YAML body, including nested
+                ``adapters`` when present.
             image_build_spec: Optional image build block of the YAML body.
             function_name: Optional model function name for ``FUNCTION``.
             job_name: Optional fully qualified job name for ``NAME``. When
@@ -1358,7 +1359,7 @@ class ServiceOperator:
                     )
                     copied_partitioned = True
                 else:
-                    X.write.copy_into_location(  # type:ignore[call-overload]
+                    X.write.copy_into_location(  # type: ignore[call-overload]
                         location=from_stage_path, file_format_type="parquet", header=True, overwrite=True
                     )
             except Exception as e:

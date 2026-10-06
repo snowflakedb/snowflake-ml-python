@@ -343,7 +343,14 @@ def format_status_display(
                 value = ep.get(key)
                 if not value:
                     continue
-                if not str(value).startswith("https://"):
+                value = str(value)
+                # Prefix a scheme only when the runtime returned a bare
+                # host (no scheme).  A value that already carries one
+                # (``http://`` SPCS-internal, ``https://`` public /
+                # PrivateLink) is emitted verbatim — blindly prepending
+                # ``https://`` here produced the malformed doubled scheme
+                # ``https://http://…`` on the internal endpoint.
+                if "://" not in value:
                     value = f"https://{value}"
                 if key == "url":
                     lines.append(f"     {label}: {value}")

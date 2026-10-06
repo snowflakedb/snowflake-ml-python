@@ -25,12 +25,16 @@ BatchImageOverrideMode = Literal["full", "pip_only_batch"]
 def create_openai_chat_completion_output_validator(
     expected_phrases: list[str],
     test_case: absltest.TestCase,
+    *,
+    expected_model_substr: str | None = None,
 ) -> Callable[[pd.DataFrame], None]:
     """Create a validator function that checks if OpenAI chat completion output contains expected phrases.
 
     Args:
         expected_phrases: List of phrases that should appear in the output (case-insensitive).
         test_case: The test case instance for assertions.
+        expected_model_substr: Optional substring that each row's ``model`` column must contain
+            (case-insensitive).
 
     Returns:
         A validation function that takes a DataFrame and asserts expected phrases are present.
@@ -60,6 +64,18 @@ def create_openai_chat_completion_output_validator(
 
         all_content: list[str] = []
         for row_idx, row in output_df.iterrows():
+            if expected_model_substr is not None:
+                model_val = _parse_if_str(row[col_map["model"]])
+                test_case.assertIsInstance(
+                    model_val,
+                    str,
+                    f"row {row_idx}: 'model' should be str, got {type(model_val).__name__}: {model_val!r}",
+                )
+                test_case.assertIn(
+                    expected_model_substr.lower(),
+                    model_val.lower(),
+                    f"row {row_idx}: expected model to contain {expected_model_substr!r}, got {model_val!r}",
+                )
             choices_raw = row[col_map["choices"]]
             choices_val = _parse_if_str(choices_raw)
             test_case.assertIsInstance(

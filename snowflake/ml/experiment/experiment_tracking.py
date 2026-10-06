@@ -1,9 +1,9 @@
 import contextlib
 import functools
 import json
+import logging
 import sys
 import traceback
-import warnings
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any
@@ -32,6 +32,8 @@ from snowflake.snowpark import functions
 
 DEFAULT_EXPERIMENT_NAME = sql_identifier.SqlIdentifier("DEFAULT")
 
+logger = logging.getLogger(__name__)
+
 
 class ExperimentTracking:
     """
@@ -53,6 +55,7 @@ class ExperimentTracking:
         schema_name: str | None = None,
         capture_source_info: bool = True,
         model_registry: registry.Registry | None = None,
+        warnings_as_errors: bool = False,
     ) -> None:
         """
         Initializes experiment tracking within a pre-created schema.
@@ -75,20 +78,21 @@ class ExperimentTracking:
                 schema (e.g. ``analytics.experiments``) but models should be stored in another
                 (e.g. ``ml.models``). If None, models are logged to the same location as the
                 experiment. Defaults to None.
+            warnings_as_errors: If True, conditions that are normally reported as warnings are raised
+                instead.
 
         Raises:
             ValueError: If no database is provided and no active database exists in the session.
         """
         # Applied on every construction (even when reusing the singleton)
         self._capture_source_info = capture_source_info
+        self._warnings_as_errors = warnings_as_errors
 
         if hasattr(self, "_initialized"):
-            warnings.warn(
+            logger.info(
                 "ExperimentTracking is a singleton class. Reusing the existing instance, which has the setting:\n"
                 f"    Database: {self._database_name}, Schema: {self._schema_name}\n"
-                "To change the database or schema, use the database_name and schema_name arguments to set_experiment.",
-                UserWarning,
-                stacklevel=2,
+                "To change the database or schema, use the database_name and schema_name arguments to set_experiment."
             )
             return
 
@@ -493,7 +497,7 @@ class ExperimentTracking:
             )
         except snowpark.exceptions.SnowparkSQLException as e:
             if e.sql_error_code == 400003:  # EXPERIMENT_RUN_PROPERTY_SIZE_LIMIT_EXCEEDED
-                run._warn_about_run_metadata_size(e.message)
+                run._handle_run_metadata_size_limit(e.message)
             else:
                 raise
 
@@ -538,7 +542,7 @@ class ExperimentTracking:
             )
         except snowpark.exceptions.SnowparkSQLException as e:
             if e.sql_error_code == 400003:  # EXPERIMENT_RUN_PROPERTY_SIZE_LIMIT_EXCEEDED
-                run._warn_about_run_metadata_size(e.message)
+                run._handle_run_metadata_size_limit(e.message)
             else:
                 raise
 

@@ -10,3 +10,5 @@
 //tests/integ/snowflake/ml/jobs:classical_models_integ_test
 //tests/integ/snowflake/ml/jobs:tensorflow_integ_test
 //tests/integ/snowflake/ml/registry/services:registry_lora_adapter_deployment_test
+//tests/integ/snowflake/ml/registry/services:registry_lora_adapter_shared_deployment_test
+//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_lora_adapter_test

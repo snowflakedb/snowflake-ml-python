@@ -1,3 +1,4 @@
+import warnings
 from typing import Any, Union, cast
 
 from snowflake import snowpark
@@ -6,6 +7,40 @@ from snowflake.ml._internal.utils import formatting
 from snowflake.snowpark import context, functions
 
 CORTEX_FUNCTIONS_TELEMETRY_PROJECT = "CortexFunctions"
+
+
+_SNOWPARK_FUNCTIONS_DOC_URL = (
+    "https://docs.snowflake.com/en/developer-guide/snowpark/reference/python/latest/"
+    "snowpark/api/snowflake.snowpark.functions.{replacement}"
+)
+_MIGRATION_GUIDE_URL = "https://docs.snowflake.com/en/user-guide/snowflake-cortex/aisql-migrate-legacy-functions"
+
+# Functions that have already emitted their deprecation warning this process. Guarding on this keeps a
+# repeated call (e.g. inside a loop) from spamming the console -- each deprecated function warns once.
+_emitted_deprecations: set[str] = set()
+
+
+def warn_cortex_deprecated(name: str, replacement: str) -> None:
+    """Emit the deprecation warning for the named deprecated snowflake.cortex function, once per process.
+
+    Args:
+        name: The deprecated snowflake.cortex function name (e.g. "classify_text").
+        replacement: The snowflake.snowpark.functions replacement to point callers at (e.g. "ai_classify").
+    """
+    # Warn on use (not on package import) so callers of functions that are NOT deprecated -- e.g.
+    # Finetune -- are never warned.
+    if name in _emitted_deprecations:
+        return
+    _emitted_deprecations.add(name)
+    warnings.warn(
+        f"snowflake.cortex.{name} is deprecated and will be removed in a future release. "
+        f"Its backend is now redirected to Snowflake AI Functions. "
+        f"Use snowflake.snowpark.functions.{replacement} instead. "
+        f"API: {_SNOWPARK_FUNCTIONS_DOC_URL.format(replacement=replacement)} "
+        f"Migration guide: {_MIGRATION_GUIDE_URL}",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class SnowflakeAuthenticationException(Exception):

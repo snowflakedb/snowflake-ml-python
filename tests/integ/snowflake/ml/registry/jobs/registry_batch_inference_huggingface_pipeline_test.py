@@ -9,6 +9,11 @@ from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
+# SPCS image builds resolve conda deps against conda-forge, which does not
+# publish tokenizers 0.23.2. An explicit pin prevents the packager from
+# capturing the local pkgs/snowflake build.
+_PINNED_TOKENIZERS_CONDA = "tokenizers==0.23.1"
+
 
 class TestBatchInferenceHuggingFacePipelineInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @classmethod
@@ -114,6 +119,7 @@ class TestBatchInferenceHuggingFacePipelineInteg(registry_batch_inference_test_b
         self._test_registry_batch_inference(
             model=model,
             options={},
+            additional_dependencies=[_PINNED_TOKENIZERS_CONDA],
             pip_requirements=["transformers", "torch==2.6.0"],
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             X=input_df,

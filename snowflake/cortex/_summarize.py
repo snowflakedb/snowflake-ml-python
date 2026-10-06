@@ -1,10 +1,16 @@
-from typing import Union, cast
+from typing import cast
 
 from typing_extensions import deprecated
 
 from snowflake import snowpark
-from snowflake.cortex._util import CORTEX_FUNCTIONS_TELEMETRY_PROJECT, call_sql_function
+from snowflake.cortex._util import (
+    CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
+    call_sql_function,
+    warn_cortex_deprecated,
+)
 from snowflake.ml._internal import telemetry
+
+_AI_SUMMARIZE_FUNCTION_NAME = "AI_SUMMARIZE"
 
 
 @telemetry.send_api_usage_telemetry(
@@ -23,8 +29,8 @@ def summarize(
     Returns:
         A column of string summaries.
     """
-
-    return _summarize_impl("snowflake.cortex.summarize", text, session=session)
+    warn_cortex_deprecated("summarize", "ai_complete")
+    return _summarize_impl(_AI_SUMMARIZE_FUNCTION_NAME, text, session=session)
 
 
 def _summarize_impl(
@@ -32,7 +38,7 @@ def _summarize_impl(
     text: str | snowpark.Column,
     session: snowpark.Session | None = None,
 ) -> str | snowpark.Column:
-    return cast(Union[str, snowpark.Column], call_sql_function(function, session, text))
+    return cast(str | snowpark.Column, call_sql_function(function, session, text))
 
 
 Summarize = deprecated("Summarize() is deprecated and will be removed in a future release. Use summarize() instead")(

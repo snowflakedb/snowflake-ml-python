@@ -63,6 +63,24 @@ class TestFSColumn:
         assert isinstance(d, dict)
         assert d["tz"] == "UTC"
 
+    def test_element_type_defaults_none(self) -> None:
+        col = FSColumn(name="x", type="DoubleType")
+        assert col.element_type is None
+
+    def test_element_type_preserved_for_array(self) -> None:
+        col = FSColumn(name="last_2", type="ArrayType", element_type="DoubleType")
+        assert col.element_type == "DoubleType"
+
+    def test_model_dump_excludes_element_type_when_none(self) -> None:
+        col = FSColumn(name="x", type="DoubleType")
+        d = col.model_dump(exclude_none=True)
+        assert "element_type" not in d
+
+    def test_model_dump_includes_element_type_for_array(self) -> None:
+        col = FSColumn(name="last_2", type="ArrayType", element_type="StringType")
+        d = col.model_dump(exclude_none=True)
+        assert d["element_type"] == "StringType"
+
 
 class TestSpecBase:
     def test_defaults(self) -> None:
@@ -502,6 +520,89 @@ class TestBatchFeatureViewRefreshModeRestriction:
     def test_refresh_mode_none_accepted(self) -> None:
         fv = FeatureView.model_validate({"kind": "BatchFeatureView", "name": "MY_BFV"})
         assert fv.refresh_mode is None
+
+
+class TestStreamingRefreshFreqValidator:
+    """``refresh_freq`` acceptance is gated by kind and tiling.
+
+    A *tiled* ``StreamingFeatureView`` (``feature_granularity`` /
+    ``feature_granularity_sec`` / ``features`` present) materialises its
+    aggregate as an offline Dynamic Table whose refresh cadence is
+    ``refresh_freq`` — the same authoring key the imperative
+    ``FeatureView(refresh_freq=...)`` constructor accepts.  A *non-tiled*
+    streaming FV compiles to a zero-lag VIEW, and a ``RealtimeFeatureView``
+    has no Dynamic Table at all, so both reject ``refresh_freq``.
+    """
+
+    @staticmethod
+    def _tiled_streaming_payload(**extra: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "kind": "StreamingFeatureView",
+            "name": "MY_TILED_STREAM_FV",
+            "entities": ["USER_ID"],
+            "timestamp_col": "TIMESTAMP",
+            "sources": [{"name": "src", "source_type": "Stream"}],
+            "feature_granularity": "1 hour",
+            "feature_aggregation_method": "tiles",
+            "features": [{"function": "sum", "window": "1h"}],
+        }
+        payload.update(extra)
+        return payload
+
+    def test_tiled_streaming_accepts_refresh_freq(self) -> None:
+        fv = FeatureView.model_validate(self._tiled_streaming_payload(refresh_freq="5 minutes"))
+        assert fv.refresh_freq == "5 minutes"
+
+    def test_tiled_streaming_via_feature_granularity_sec_accepts_refresh_freq(self) -> None:
+        payload = self._tiled_streaming_payload(refresh_freq="5 minutes")
+        payload.pop("feature_granularity")
+        payload["feature_granularity_sec"] = 3600
+        fv = FeatureView.model_validate(payload)
+        assert fv.refresh_freq == "5 minutes"
+
+    def test_tiled_streaming_without_refresh_freq_is_allowed(self) -> None:
+        # Allow-not-require: a tiled streaming FV without refresh_freq is
+        # still valid (the imperative layer materialises a zero-lag VIEW).
+        fv = FeatureView.model_validate(self._tiled_streaming_payload())
+        assert fv.refresh_freq is None
+
+    def test_non_tiled_streaming_rejects_refresh_freq(self) -> None:
+        payload = {
+            "kind": "StreamingFeatureView",
+            "name": "MY_STREAM_FV",
+            "entities": ["USER_ID"],
+            "sources": [{"name": "src", "source_type": "Stream"}],
+            "refresh_freq": "5 minutes",
+        }
+        with pytest.raises(ValueError) as exc:
+            FeatureView.model_validate(payload)
+        msg = str(exc.value)
+        assert "refresh_freq" in msg
+        assert "is not valid on" in msg
+
+    def test_realtime_rejects_refresh_freq_even_when_tiled_shape(self) -> None:
+        payload = self._tiled_streaming_payload(
+            kind="RealtimeFeatureView",
+            name="MY_RTFV",
+            refresh_freq="5 minutes",
+        )
+        with pytest.raises(ValueError) as exc:
+            FeatureView.model_validate(payload)
+        msg = str(exc.value)
+        assert "refresh_freq" in msg
+        assert "is not valid on" in msg
+
+    def test_batch_fv_refresh_freq_unaffected(self) -> None:
+        fv = FeatureView.model_validate(
+            {
+                "kind": "BatchFeatureView",
+                "name": "MY_BFV",
+                "online": True,
+                "feature_granularity": "1 hour",
+                "refresh_freq": "5 minutes",
+            }
+        )
+        assert fv.refresh_freq == "5 minutes"
 
 
 if __name__ == "__main__":

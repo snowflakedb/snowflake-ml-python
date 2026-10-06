@@ -157,13 +157,10 @@ py_test(
     ],
 )
 
-py_test(
-    name = "registry_lora_adapter_deployment_test",
-    timeout = "eternal",
-    srcs = ["registry_lora_adapter_deployment_test.py"],
-    optional_dependencies = ["llm"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
+py_library(
+    name = "registry_lora_adapter_deployment_test_base",
+    testonly = True,
+    srcs = ["registry_lora_adapter_deployment_test_base.py"],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/_internal:platform_capabilities",
@@ -176,6 +173,35 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "registry_lora_adapter_shared_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_lora_adapter_shared_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_lora_adapter_deployment_test_base",
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model",
+    ],
+)
+
+py_test(
+    name = "registry_lora_adapter_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_lora_adapter_deployment_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_lora_adapter_deployment_test_base",
+        "//snowflake/ml/_internal:platform_capabilities",
+        "//snowflake/ml/model",
+        "//snowflake/ml/registry",
     ],
 )
 
@@ -308,7 +334,7 @@ py_test(
     optional_dependencies = ["scikit-learn"],
     shard_count = 1,
     tags = [
-        "feature:model_serving",
+        "feature:none",
         "smoke_test",
     ],
     deps = [

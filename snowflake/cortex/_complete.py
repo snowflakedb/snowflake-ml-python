@@ -14,6 +14,7 @@ from snowflake.cortex._util import (
     CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
     SnowflakeAuthenticationException,
     SnowflakeConfigurationException,
+    warn_cortex_deprecated,
 )
 from snowflake.ml._internal import telemetry
 from snowflake.snowpark import context, functions
@@ -331,10 +332,44 @@ def _return_stream_response(
                 pass
 
 
-def _complete_call_sql_function_snowpark(
-    function: str, *args: str | snowpark.Column | CompleteOptions
-) -> snowpark.Column:
+def _complete_call_sql_function_snowpark(function: str, *args: Any) -> snowpark.Column:
     return cast(snowpark.Column, functions.builtin(function)(*args))
+
+
+_SQL_MODEL_PARAMETER_KEYS = ("max_tokens", "temperature", "top_p", "guardrails")
+
+
+def _sql_ai_complete_args(
+    model: str | snowpark.Column,
+    prompt: str | list[ConversationMessage] | snowpark.Column,
+    options: CompleteOptions | snowpark.Column | None,
+) -> tuple[Any, ...]:
+    """Build positional SQL arguments for AI_COMPLETE.
+
+    Args:
+        model: Model name or Column of model names.
+        prompt: Prompt string, conversation history, or Column of prompts.
+        options: Complete options, a Column of options, or None.
+
+    Returns:
+        Positional AI_COMPLETE arguments with response format separate from
+        model parameters.
+    """
+    if options is None:
+        return (model, prompt)
+    if isinstance(options, snowpark.Column):
+        # Can't introspect a Column's keys at build time, so split response_format out of the options
+        # object in SQL: model_parameters is the object minus response_format, response_format is read
+        # out separately (NULL when absent, which AI_COMPLETE treats as "no response format").
+        model_parameters_col = functions.builtin("object_delete")(options, functions.lit("response_format"))
+        response_format_col = functions.get(options, functions.lit("response_format"))
+        return (model, prompt, model_parameters_col, response_format_col)
+    option_values = cast(dict[str, Any], options)
+    model_parameters = {key: option_values[key] for key in _SQL_MODEL_PARAMETER_KEYS if key in option_values}
+    response_format = options.get("response_format")
+    if response_format is None:
+        return (model, prompt, model_parameters) if model_parameters else (model, prompt)
+    return (model, prompt, model_parameters, response_format)
 
 
 def _complete_non_streaming_immediate(
@@ -366,10 +401,7 @@ def _complete_non_streaming_impl(
     deadline: float | None = None,
 ) -> str | snowpark.Column:
     if isinstance(prompt, snowpark.Column):
-        if options is not None:
-            return _complete_call_sql_function_snowpark(function, model, prompt, options)
-        else:
-            return _complete_call_sql_function_snowpark(function, model, prompt)
+        return _complete_call_sql_function_snowpark(function, *_sql_ai_complete_args(model, prompt, options))
     if isinstance(model, snowpark.Column):
         raise ValueError("'model' cannot be a snowpark.Column when 'prompt' is a string.")
     if isinstance(options, snowpark.Column):
@@ -414,7 +446,7 @@ def _complete_impl(
     model: str | snowpark.Column,
     prompt: str | list[ConversationMessage] | snowpark.Column,
     snow_api_xp_request_handler: Callable[..., dict[str, Any]] | None = None,
-    function: str = "snowflake.cortex.complete",
+    function: str = "AI_COMPLETE",
     options: CompleteOptions | None = None,
     session: snowpark.Session | None = None,
     stream: bool = False,
@@ -480,7 +512,7 @@ def complete(
     Returns:
         A column of string responses.
     """
-
+    warn_cortex_deprecated("complete", "ai_complete")
     # Set the XP snow api function, if available.
     snow_api_xp_request_handler = None
     if is_in_stored_procedure():  # type: ignore[no-untyped-call]

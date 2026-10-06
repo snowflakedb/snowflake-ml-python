@@ -237,7 +237,6 @@ class TestBatchInferenceMultiModalityVLLMHuggingFacePipelineInteg(
             replicas=1,
             options={"cuda_version": "12.4"},
             signatures=OPENAI_CHAT_SIGNATURE,
-            compute_pool="SYSTEM_COMPUTE_POOL_GPU",
             inference_spec=batch_inference_job_specs.InferenceSpec(
                 engine_options=batch_inference_job_specs.EngineOptions(
                     engine=InferenceEngine.VLLM,

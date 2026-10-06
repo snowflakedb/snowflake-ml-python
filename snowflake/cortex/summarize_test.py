@@ -1,3 +1,5 @@
+from unittest import mock
+
 import _test_util
 from absl.testing import absltest
 
@@ -36,6 +38,13 @@ class SummarizeTest(absltest.TestCase):
         df_out = df_in.select(_summarize._summarize_impl("summarize", functions.col("prompt")))
         res = df_out.collect()[0][0]
         self.assertEqual(self.summarize_for_test(self.prompt), res)
+
+    @mock.patch("snowflake.cortex._summarize.call_sql_function", autospec=True)
+    def test_summarize_retargets_to_ai_summarize(self, mock_call_sql_function: mock.Mock) -> None:
+        mock_call_sql_function.return_value = "summary"
+        result = _summarize.summarize("long text", session=None)
+        mock_call_sql_function.assert_called_once_with("AI_SUMMARIZE", None, "long text")
+        self.assertEqual("summary", result)
 
 
 if __name__ == "__main__":

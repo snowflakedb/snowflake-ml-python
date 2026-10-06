@@ -1,5 +1,6 @@
-"""
-Aux file for test purposes, keeping test data for json-mode related tests in one place and organised.
+"""JSON-mode Complete test fixtures.
+
+Keep in sync with tests/integ/snowflake/cortex/json_mode_test_utils/schema_utils.py.
 """
 
 from dataclasses import dataclass

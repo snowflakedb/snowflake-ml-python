@@ -2843,6 +2843,27 @@ class ModelVersionImplTest(parameterized.TestCase):
             mock_pin_create.assert_not_called()
             mock_lineage.assert_not_called()
 
+    def test_flag_off_refuses_adapter_run_batch(self) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True) as mock_lineage,
+            mock.patch.object(pin, "run_batch", autospec=True) as mock_pin_run,
+            mock.patch.object(adapter._service_ops, "execute_inference_job_service") as mock_execute,
+        ):
+            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
+                adapter.run_batch(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@output_stage"),
+                )
+            mock_execute.assert_not_called()
+            mock_pin_run.assert_not_called()
+            mock_lineage.assert_not_called()
+
     @_enable_lora_adapters
     def test_adapter_forward_alias_may_equal_base_parent_name(self, _mock_enabled: mock.MagicMock) -> None:
         adapter = self._make_mv("MODEL", "ADAPTER")
@@ -2914,6 +2935,231 @@ class ModelVersionImplTest(parameterized.TestCase):
                 )
             ],
         )
+
+    @_enable_lora_adapters
+    def test_adapter_run_batch_forwards_one_item_list(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(pin, "run_batch", autospec=True) as mock_pin_run,
+        ):
+            adapter.run_batch(input_df, compute_pool="POOL", output_spec=output_spec)
+        args, kwargs = mock_pin_run.call_args
+        alias = self._default_adapter_alias(adapter)
+        self.assertEqual(kwargs["inference_spec"].adapters, [adapter])
+        self.assertEqual(kwargs["input_spec"].params["model"], alias)
+        self.assertIs(args[0], input_df)
+        self.assertEqual(kwargs["compute_pool"], "POOL")
+        self.assertIs(kwargs["output_spec"], output_spec)
+
+    @_enable_lora_adapters
+    def test_adapter_run_batch_rejects_extra_adapters(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        extra = self._make_mv("OTHER", "V1")
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True) as mock_lineage,
+            mock.patch.object(pin, "run_batch", autospec=True) as mock_pin_run,
+        ):
+            with self.assertRaisesRegex(ValueError, r"does not accept adapters on the inference spec"):
+                adapter.run_batch(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@output_stage"),
+                    inference_spec=batch_inference_job_specs.InferenceSpec(adapters={"other": extra}),
+                )
+        mock_pin_run.assert_not_called()
+        mock_lineage.assert_not_called()
+
+    @_enable_lora_adapters
+    def test_run_batch_serializes_adapters_to_ops(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            self.m_mv.run_batch(
+                input_df,
+                compute_pool="POOL",
+                output_spec=output_spec,
+                inference_spec=batch_inference_job_specs.InferenceSpec(adapters={"support": adapter_mv}),
+            )
+        _, kwargs = mock_execute.call_args
+        self.assertEqual(
+            kwargs["inference_spec"].adapters,
+            [
+                batch_inference_job_specs.AdapterSpec(
+                    name=adapter_mv.fully_qualified_model_name,
+                    version=adapter_mv.version_name,
+                    alias="support",
+                )
+            ],
+        )
+
+    @_enable_lora_adapters
+    def test_run_batch_list_adapters_omits_alias(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        other_mv = self._make_mv("SQL_GEN", "V2")
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            self.m_mv.run_batch(
+                input_df,
+                compute_pool="POOL",
+                output_spec=output_spec,
+                inference_spec=batch_inference_job_specs.InferenceSpec(adapters=[adapter_mv, other_mv]),
+            )
+        _, kwargs = mock_execute.call_args
+        expected = [
+            batch_inference_job_specs.AdapterSpec(
+                name=adapter_mv.fully_qualified_model_name,
+                version=adapter_mv.version_name,
+            ),
+            batch_inference_job_specs.AdapterSpec(
+                name=other_mv.fully_qualified_model_name,
+                version=other_mv.version_name,
+            ),
+        ]
+        self.assertEqual(kwargs["inference_spec"].adapters, expected)
+        for spec in kwargs["inference_spec"].adapters:
+            self.assertIsNone(spec.alias)
+
+    @_enable_lora_adapters
+    def test_run_batch_adapter_alias_charset(self, _mock_enabled: mock.MagicMock) -> None:
+        adapter_mv = self._adapter_mv()
+        fqn_alias = self._default_adapter_alias(adapter_mv)
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value=_legacy_model_spec(model_type="huggingface_pipeline"),
+                autospec=True,
+            ),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            for alias in ("support", "a/b", "db.schema.model", fqn_alias, "support-tone", "__snowflake_base__"):
+                with self.subTest(alias=alias):
+                    mock_execute.reset_mock()
+                    self.m_mv.run_batch(
+                        input_df,
+                        compute_pool="POOL",
+                        output_spec=output_spec,
+                        inference_spec=batch_inference_job_specs.InferenceSpec(adapters={alias: adapter_mv}),
+                    )
+                    self.assertEqual(mock_execute.call_args.kwargs["inference_spec"].adapters[0].alias, alias)
+
+    def test_flag_off_refuses_nonempty_run_batch_adapters(self) -> None:
+        with mock.patch.object(self.m_mv._service_ops, "execute_inference_job_service") as mock_execute:
+            with self.assertRaisesRegex(ValueError, r"ENABLE_LORA_ADAPTERS"):
+                self.m_mv.run_batch(
+                    mock.MagicMock(spec=dataframe.DataFrame),
+                    compute_pool="POOL",
+                    output_spec=batch_inference_job_specs.OutputSpec(stage_location="@output_stage"),
+                    inference_spec=batch_inference_job_specs.InferenceSpec(adapters={"support": self._adapter_mv()}),
+                )
+            mock_execute.assert_not_called()
+
+    def test_flag_off_omit_and_empty_run_batch_unchanged(self) -> None:
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage/")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            self.m_mv.run_batch(input_df, compute_pool="POOL", output_spec=output_spec)
+            self.m_mv.run_batch(
+                input_df,
+                compute_pool="POOL",
+                output_spec=output_spec,
+                inference_spec=batch_inference_job_specs.InferenceSpec(adapters={}),
+            )
+            self.m_mv.run_batch(
+                input_df,
+                compute_pool="POOL",
+                output_spec=output_spec,
+                inference_spec=batch_inference_job_specs.InferenceSpec(adapters=[]),
+            )
+        self.assertEqual(mock_execute.call_count, 3)
+        for call in mock_execute.call_args_list:
+            spec = call.kwargs["inference_spec"]
+            self.assertTrue(spec is None or spec.adapters is None)
 
     def test_adapter_warehouse_run_delegates_to_server(self) -> None:
         adapter = self._adapter_mv()

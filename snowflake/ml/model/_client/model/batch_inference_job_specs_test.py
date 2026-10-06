@@ -102,9 +102,114 @@ class BatchInferenceJobSpecsTest(absltest.TestCase):
         spec = batch_inference_job_specs.InferenceSpec(num_workers=4)
         self.assertEqual(spec.model_dump(mode="json", exclude_none=True), {"num_workers": 4})
 
+    def test_inference_spec_nests_adapters(self) -> None:
+        spec = batch_inference_job_specs.InferenceSpec(
+            num_workers=4,
+            adapters=[batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1", alias="support")],
+        )
+        self.assertEqual(
+            spec.model_dump(mode="json", exclude_none=True),
+            {
+                "num_workers": 4,
+                "adapters": [{"name": "DB.S.M", "version": "V1", "alias": "support"}],
+            },
+        )
+
+    def test_inference_spec_empty_adapters_omits_key(self) -> None:
+        spec = batch_inference_job_specs.InferenceSpec(num_workers=4, adapters=[])
+        self.assertIsNone(spec.adapters)
+        self.assertEqual(spec.model_dump(mode="json", exclude_none=True), {"num_workers": 4})
+        empty_dict = batch_inference_job_specs.InferenceSpec(num_workers=4, adapters={})
+        self.assertIsNone(empty_dict.adapters)
+        self.assertEqual(empty_dict.model_dump(mode="json", exclude_none=True), {"num_workers": 4})
+
+    def test_inference_spec_accepts_model_version_shaped_adapters(self) -> None:
+        class _FakeVersion:
+            pass
+
+        fake = _FakeVersion()
+        spec = batch_inference_job_specs.InferenceSpec(num_workers=4, adapters={"support": fake})
+        assert isinstance(spec.adapters, dict)
+        self.assertIs(spec.adapters["support"], fake)
+        self.assertEqual(spec.num_workers, 4)
+        with self.assertRaisesRegex(Exception, r"resolved to name and version"):
+            spec.model_dump(mode="json")
+        serialized = [
+            batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1", alias="support"),
+        ]
+        dumped = batch_inference_job_specs.inference_spec_with_adapters(
+            batch_inference_job_specs.InferenceSpec(num_workers=4),
+            serialized,
+        )
+        assert dumped is not None
+        self.assertEqual(
+            dumped.model_dump(mode="json", exclude_none=True),
+            {
+                "num_workers": 4,
+                "adapters": [{"name": "DB.S.M", "version": "V1", "alias": "support"}],
+            },
+        )
+
+    def test_split_inference_adapters(self) -> None:
+        adapters = {"support": object()}
+        original = batch_inference_job_specs.InferenceSpec(num_workers=4, adapters=adapters)
+        stripped, raw = batch_inference_job_specs.split_inference_adapters(original)
+        assert stripped is not None
+        self.assertEqual(raw, adapters)
+        self.assertIsNone(stripped.adapters)
+        self.assertEqual(stripped.num_workers, 4)
+        self.assertEqual(original.adapters, adapters)
+
+        only_adapters = batch_inference_job_specs.InferenceSpec(adapters=adapters)
+        empty, raw_only = batch_inference_job_specs.split_inference_adapters(only_adapters)
+        self.assertIsNone(empty)
+        self.assertEqual(raw_only, adapters)
+        self.assertEqual(
+            batch_inference_job_specs.split_inference_adapters(None),
+            (None, None),
+        )
+        untouched = batch_inference_job_specs.InferenceSpec(num_workers=2)
+        self.assertEqual(
+            batch_inference_job_specs.split_inference_adapters(untouched),
+            (untouched, None),
+        )
+
+    def test_inference_spec_with_adapters(self) -> None:
+        adapters = [batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1")]
+        created = batch_inference_job_specs.inference_spec_with_adapters(None, adapters)
+        assert created is not None
+        self.assertEqual(created.adapters, adapters)
+
+        original = batch_inference_job_specs.InferenceSpec(num_workers=4)
+        merged = batch_inference_job_specs.inference_spec_with_adapters(original, adapters)
+        assert merged is not None
+        self.assertIsNot(merged, original)
+        self.assertEqual(merged.num_workers, 4)
+        self.assertEqual(merged.adapters, adapters)
+        self.assertIsNone(original.adapters)
+
+        self.assertIsNone(batch_inference_job_specs.inference_spec_with_adapters(None, None))
+        self.assertIs(batch_inference_job_specs.inference_spec_with_adapters(original, None), original)
+        self.assertIs(batch_inference_job_specs.inference_spec_with_adapters(original, []), original)
+
     def test_image_build_spec_default_force_rebuild_false(self) -> None:
         spec = batch_inference_job_specs.ImageBuildSpec()
         self.assertFalse(spec.force_rebuild)
+
+    def test_adapter_spec_rejects_unknown_fields(self) -> None:
+        with self.assertRaises(ValueError):
+            batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1", extra=1)  # type: ignore[call-arg]
+
+    def test_adapter_spec_requires_version(self) -> None:
+        with self.assertRaises(ValueError):
+            batch_inference_job_specs.AdapterSpec(name="DB.S.M")  # type: ignore[call-arg]
+        spec = batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1")
+        self.assertEqual(spec.model_dump(mode="json", exclude_none=True), {"name": "DB.S.M", "version": "V1"})
+        with_alias = batch_inference_job_specs.AdapterSpec(name="DB.S.M", version="V1", alias="support")
+        self.assertEqual(
+            with_alias.model_dump(mode="json", exclude_none=True),
+            {"name": "DB.S.M", "version": "V1", "alias": "support"},
+        )
 
     def test_all_specs_reject_unknown_fields(self) -> None:
         # extra="forbid" makes typos fail at construction rather than being silently dropped.
@@ -115,6 +220,7 @@ class BatchInferenceJobSpecsTest(absltest.TestCase):
             (batch_inference_job_specs.EngineOptions, {}),
             (batch_inference_job_specs.InferenceSpec, {}),
             (batch_inference_job_specs.ImageBuildSpec, {}),
+            (batch_inference_job_specs.AdapterSpec, {"name": "DB.S.M", "version": "V1"}),
         ]
         for spec_cls, kwargs in cases:
             with self.assertRaises(ValueError, msg=f"{spec_cls.__name__} should reject unknown fields"):

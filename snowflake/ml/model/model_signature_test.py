@@ -622,6 +622,97 @@ class ModelSignatureMiscTest(absltest.TestCase):
             fts,
         )
 
+        object_fts = [
+            model_signature.FeatureSpec("payload", model_signature.DataType.OBJECT),
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame({"payload": [{"route": "delivery"}, {"urgent": True}, None]}),
+            object_fts,
+        )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type"
+        ):
+            model_signature._validate_pandas_df(
+                pd.DataFrame({"payload": [{"route": "delivery"}]}),
+                [model_signature.FeatureSpec("payload", model_signature.DataType.STRING)],
+            )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="array type feature"
+        ):
+            model_signature._validate_pandas_df(
+                pd.DataFrame({"payload": [{"route": "delivery"}]}),
+                [model_signature.FeatureSpec("payload", model_signature.DataType.OBJECT, shape=(-1,))],
+            )
+
+        array_object_fts = [
+            model_signature.FeatureSpec("payload", model_signature.DataType.OBJECT, shape=(-1,)),
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame(
+                {
+                    "payload": [
+                        [{"route": "delivery"}, {"urgent": True}],
+                        [{"score": 0.9}],
+                        [],
+                        None,
+                    ]
+                }
+            ),
+            array_object_fts,
+        )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="scalar feature while list data"
+        ):
+            model_signature._validate_pandas_df(
+                pd.DataFrame({"payload": [[{"route": "delivery"}]]}),
+                [model_signature.FeatureSpec("payload", model_signature.DataType.OBJECT)],
+            )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature type"
+        ):
+            model_signature._validate_pandas_df(
+                pd.DataFrame({"payload": [["a", "b"]]}),
+                array_object_fts,
+            )
+
+        nested_array_object_fts = [
+            model_signature.FeatureSpec("payload", model_signature.DataType.OBJECT, shape=(-1, -1)),
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame({"payload": [[[{"route": "delivery"}, {"urgent": True}], [{"score": 0.9}]]]}),
+            nested_array_object_fts,
+        )
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Feature shape"
+        ):
+            model_signature._validate_pandas_df(
+                pd.DataFrame({"payload": [[{"route": "delivery"}]]}),
+                nested_array_object_fts,
+            )
+
+        nested_group = [
+            model_signature.FeatureGroupSpec(
+                "request",
+                [
+                    model_signature.FeatureSpec("questions", model_signature.DataType.OBJECT),
+                    model_signature.FeatureSpec("answers", model_signature.DataType.OBJECT, shape=(-1,)),
+                ],
+            )
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame(
+                {
+                    "request": [
+                        {
+                            "questions": {"prompt": "hi", "meta": {"lang": "en"}},
+                            "answers": [{"choice": "a"}, {"noul": 1}],
+                        }
+                    ]
+                }
+            ),
+            nested_group,
+        )
+
     def test_validate_data_with_features(self) -> None:
         fts = [
             model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),

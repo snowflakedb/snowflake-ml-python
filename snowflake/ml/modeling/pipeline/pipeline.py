@@ -9,6 +9,7 @@ from typing import Any, Callable
 import cloudpickle as cp
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 from sklearn import __version__ as skversion, pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import FunctionTransformer
@@ -126,7 +127,11 @@ class Pipeline(base.BaseTransformer):
 
         self._model_signature_dict: dict[str, ModelSignature] | None = None
 
-        deps: set[str] = {f"pandas=={pd.__version__}", f"scikit-learn=={skversion}"}
+        deps: set[str] = {
+            f"pandas=={pd.__version__}",
+            f"pyarrow=={pa.__version__}",
+            f"scikit-learn=={skversion}",
+        }
         for _, obj in steps:
             if isinstance(obj, base.BaseTransformer):
                 deps = deps | set(obj._get_dependencies())

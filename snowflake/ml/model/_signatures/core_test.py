@@ -44,6 +44,24 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.BYTES, core.DataType.from_snowpark_type(spt.BinaryType()))
 
         self.assertEqual(core.DataType.OBJECT.as_snowpark_type(), spt.MapType(spt.StringType(), spt.VariantType()))
+        self.assertEqual(
+            core.DataType.OBJECT,
+            core.DataType.from_snowpark_type(spt.MapType(spt.StringType(), spt.VariantType())),
+        )
+        self.assertEqual(
+            core.DataType.OBJECT,
+            core.DataType.from_snowpark_type(spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType()))),
+        )
+        self.assertEqual(
+            core.DataType.OBJECT,
+            core.DataType.from_snowpark_type(
+                spt.ArrayType(spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType())))
+            ),
+        )
+        self.assertEqual(
+            core.DataType.INT64,
+            core.DataType.from_snowpark_type(spt.ArrayType(spt.ArrayType(spt.LongType()))),
+        )
 
     def test_python_type(self) -> None:
         """Test conversion from Python built-in types to DataType."""
@@ -135,6 +153,20 @@ class FeatureSpecTest(absltest.TestCase):
         self.assertEqual(ft.as_dtype(), np.object_)
         self.assertEqual(ft.as_dtype(force_numpy_dtype=True), np.object_)
 
+        map_type = spt.MapType(spt.StringType(), spt.VariantType())
+        ft = core.FeatureSpec(name="payload", dtype=core.DataType.OBJECT)
+        self.assertEqual(ft, eval(repr(ft), core.__dict__))
+        self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
+        self.assertEqual(ft.as_snowpark_type(), map_type)
+
+        ft = core.FeatureSpec(name="payload", dtype=core.DataType.OBJECT, shape=(-1,))
+        self.assertEqual(ft.as_snowpark_type(), spt.ArrayType(map_type))
+        self.assertEqual(ft.as_dtype(), np.object_)
+        self.assertEqual(ft, core.FeatureSpec.from_dict(ft.to_dict()))
+
+        ft = core.FeatureSpec(name="payload", dtype=core.DataType.OBJECT, shape=(-1, -1))
+        self.assertEqual(ft.as_snowpark_type(), spt.ArrayType(spt.ArrayType(map_type)))
+
 
 class FeatureGroupSpecTest(absltest.TestCase):
     def test_feature_group_spec(self) -> None:
@@ -187,6 +219,24 @@ class FeatureGroupSpecTest(absltest.TestCase):
             ),
         )
         self.assertEqual(np.object_, fts.as_dtype())
+
+        map_type = spt.MapType(spt.StringType(), spt.VariantType())
+        fts = core.FeatureGroupSpec(
+            name="request",
+            specs=[
+                core.FeatureSpec(name="questions", dtype=core.DataType.OBJECT),
+                core.FeatureSpec(name="answers", dtype=core.DataType.OBJECT, shape=(-1,)),
+            ],
+        )
+        self.assertEqual(
+            fts.as_snowpark_type(),
+            spt.StructType(
+                [
+                    spt.StructField("questions", map_type, True),
+                    spt.StructField("answers", spt.ArrayType(map_type), True),
+                ]
+            ),
+        )
 
 
 class ParamSpecTest(absltest.TestCase):

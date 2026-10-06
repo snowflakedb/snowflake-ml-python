@@ -82,6 +82,23 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         }
         return {k: v for k, v in overrides.items() if v is not None}
 
+    def _override_image_repository_fqns(self) -> list[str]:
+        fqns: set[str] = set()
+        for path in self._get_image_override_session_params().values():
+            fqn = self._image_repository_fqn_from_override_path(path)
+            if fqn:
+                fqns.add(fqn)
+        return sorted(fqns)
+
+    @staticmethod
+    def _image_repository_fqn_from_override_path(path: str) -> str | None:
+        parts = [part for part in path.strip().split("/") if part]
+        if parts and "." in parts[0]:
+            parts = parts[1:]
+        if len(parts) < 3:
+            return None
+        return f"{parts[0].upper()}.{parts[1].upper()}.{parts[2].upper()}"
+
     def setUp(self) -> None:
         super().setUp()
         # When running with image override, set the model logger session parameter once

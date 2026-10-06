@@ -649,6 +649,60 @@ py_test(
 )
 
 py_test(
+    name = "python_codegen_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_python_codegen.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_python_codegen.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "imperative_executor_streaming_refresh_freq_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_imperative_executor_streaming_refresh_freq.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_imperative_executor_streaming_refresh_freq.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "planner_streaming_refresh_freq_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_streaming_refresh_freq.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_streaming_refresh_freq.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "loader_spec_fallback_test",
     srcs = [
         "tests/__init__.py",

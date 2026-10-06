@@ -57,11 +57,19 @@ class Run:
             run_name=self.name.identifier(),
         )
 
-    def _warn_about_run_metadata_size(self, sql_error_msg: str) -> None:
+    def _handle_run_metadata_size_limit(self, sql_error_msg: str) -> None:
+        """Report that run metadata exceeded the size limit.
+
+        Args:
+            sql_error_msg: The error message returned by Snowflake.
+
+        Raises:
+            RuntimeWarning: If the experiment tracking instance was created with warnings_as_errors=True.
+        """
+        message = f"{sql_error_msg}. {METADATA_SIZE_WARNING_MESSAGE}"
+        if self._experiment_tracking._warnings_as_errors:
+            raise RuntimeWarning(message)
+        # Once the limit is hit every subsequent log attempt fails the same way, so warn only once.
         if not self._warned_about_metadata_size:
-            warnings.warn(
-                f"{sql_error_msg}. {METADATA_SIZE_WARNING_MESSAGE}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
             self._warned_about_metadata_size = True

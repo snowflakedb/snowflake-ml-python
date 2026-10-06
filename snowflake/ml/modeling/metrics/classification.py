@@ -811,6 +811,7 @@ def precision_recall_fscore_support(
             packages=[
                 f"cloudpickle=={cloudpickle.__version__}",
                 f"scikit-learn=={sklearn_release[0]}.{sklearn_release[1]}.*",
+                *metrics_utils.PANDAS_FETCH_PACKAGES,
                 "snowflake-snowpark-python",
             ],
             statement_params=statement_params,

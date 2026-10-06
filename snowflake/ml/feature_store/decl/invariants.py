@@ -1118,7 +1118,7 @@ def _normalise_fv_sources_for_hash(sources: Any) -> list[dict[str, str]]:
     return out
 
 
-def _canonical_spec_for_hash(spec: dict[str, Any]) -> dict[str, Any]:
+def _normalize_for_full_spec_hash(spec: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of *spec* with hash-irrelevant fields stripped.
 
     This is the payload hashed by :func:`_full_spec_hash`.  Diagnostic
@@ -1247,13 +1247,19 @@ def _canonical_spec_for_hash(spec: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+# Back-compat alias: the streaming FV replan drift walker imports this name and
+# must hash through the identical normalisation the planner uses, so it aliases
+# :func:`_normalize_for_full_spec_hash` rather than re-implementing the skip set.
+_canonical_spec_for_hash = _normalize_for_full_spec_hash
+
+
 def _full_spec_hash(spec: dict[str, Any]) -> str:
     """SHA-256 over the full spec JSON, with stable key ordering.
 
     Used by the planner for full-spec diffs when an ``AppliedObject`` was
     populated from ``DESCRIBE ONLINE FEATURE TABLE <name> TYPE =
     SPECIFICATION`` (i.e. ``from_specification=True``).  The hashed
-    payload is produced by :func:`_canonical_spec_for_hash` (volatile
+    payload is produced by :func:`_normalize_for_full_spec_hash` (volatile
     metadata, runtime-stamped keys, operational FV keys, and BatchFV
     parity normalisation).
 
@@ -1265,7 +1271,7 @@ def _full_spec_hash(spec: dict[str, Any]) -> str:
     Returns:
         64-character lowercase hex SHA-256 digest.
     """
-    canonical = json.dumps(_canonical_spec_for_hash(spec), sort_keys=True, ensure_ascii=True)
+    canonical = json.dumps(_normalize_for_full_spec_hash(spec), sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 

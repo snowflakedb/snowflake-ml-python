@@ -688,7 +688,14 @@ class ModelVersion(lineage_node.LineageNode):
                 ``<stage_location>/<job_name>/``.
             input_spec: Input block.
             resources_spec: Resources block.
-            inference_spec: Inference block.
+            inference_spec: Inference block. Optional ``adapters`` is a mapping from job alias
+                (``input.params.model``) to adapter ``ModelVersion``s, or a list of adapter
+                versions. Dict keys become ``alias`` on each emitted list item. A nonempty list
+                and adapter-as-target omit ``alias`` (the server defaults each to
+                ``<FQN>/VERSIONS/<version>``). Omit, ``None``, ``{}``, or ``[]`` attaches none.
+                Calling ``run_batch`` on an adapter version is equivalent to running the lineage
+                pin with a one-item list, and defaults job-level ``params.model`` to that
+                defaulted alias when unset.
             image_build_spec: Image build block.
             function_name: Model function name. Resolved against the model's
                 function list when omitted.
@@ -763,11 +770,39 @@ class ModelVersion(lineage_node.LineageNode):
         if (X is None) == (input_stage_location is None):
             raise ValueError("Exactly one of X or input_stage_location must be provided.")
 
+        inference_spec, raw_adapters = batch_inference_job_specs.split_inference_adapters(inference_spec)
+        deploy_target, adapters_map, input_spec = self._prepare_lora_batch(
+            adapters=raw_adapters,
+            input_spec=input_spec,
+            input_spec_cls=batch_inference_job_specs.InputSpec,
+        )
+        if deploy_target is not self:
+            forwarded = [mv for _, mv in adapters_map] if adapters_map else None
+            return deploy_target.run_batch(
+                X,
+                input_stage_location=input_stage_location,
+                compute_pool=compute_pool,
+                output_spec=output_spec,
+                input_spec=input_spec,
+                resources_spec=resources_spec,
+                inference_spec=batch_inference_job_specs.inference_spec_with_adapters(inference_spec, forwarded),
+                image_build_spec=image_build_spec,
+                function_name=function_name,
+                job_name=job_name,
+                replicas=replicas,
+                async_=async_,
+            )
+
         target_function_info = self._validate_batch_inference_request(
             input_spec=input_spec,
             resources_spec=resources_spec,
             function_name=function_name,
             statement_params=statement_params,
+        )
+
+        inference_spec = batch_inference_job_specs.inference_spec_with_adapters(
+            inference_spec,
+            self._serialize_batch_adapters(adapters_map) if adapters_map else None,
         )
 
         return self._service_ops.execute_inference_job_service(
@@ -1238,11 +1273,13 @@ class ModelVersion(lineage_node.LineageNode):
         return caps(features={}).is_lora_adapters_enabled()
 
     @staticmethod
-    def _require_lora_adapters_enabled() -> None:
+    def _require_lora_adapters_enabled(
+        *,
+        unavailable_what: str = "Creating a service with adapters",
+    ) -> None:
         if not ModelVersion._lora_adapters_enabled():
             ModelVersion._adapter_invalid_argument(
-                "Creating a service with adapters is unavailable because ENABLE_LORA_ADAPTERS is not enabled "
-                "for this account."
+                f"{unavailable_what} is unavailable because ENABLE_LORA_ADAPTERS is not enabled " "for this account."
             )
 
     def _is_peft_adapter_version(self) -> bool:
@@ -1263,7 +1300,7 @@ class ModelVersion(lineage_node.LineageNode):
 
     def _normalize_adapters(
         self,
-        adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None,
+        adapters: dict[str, Any] | list[Any] | None,
     ) -> list[tuple[str | None, "ModelVersion"]] | None:
         if adapters is None:
             return None
@@ -1299,6 +1336,61 @@ class ModelVersion(lineage_node.LineageNode):
             )
             for alias, adapter_mv in adapters
         ]
+
+    @staticmethod
+    def _serialize_batch_adapters(
+        adapters: list[tuple[str | None, "ModelVersion"]],
+    ) -> list[batch_inference_job_specs.AdapterSpec]:
+        return [
+            batch_inference_job_specs.AdapterSpec(
+                name=adapter_mv.fully_qualified_model_name,
+                version=adapter_mv.version_name,
+                alias=alias,
+            )
+            for alias, adapter_mv in adapters
+        ]
+
+    @staticmethod
+    def _default_adapter_alias(mv: "ModelVersion") -> str:
+        return f"{mv.fully_qualified_model_name}/VERSIONS/{mv.version_name}"
+
+    @staticmethod
+    def _with_default_batch_params_model(
+        input_spec: Any | None,
+        *,
+        alias: str,
+        spec_cls: Any,
+    ) -> Any:
+        if input_spec is not None and input_spec.params and input_spec.params.get("model") is not None:
+            return input_spec
+        params = dict(input_spec.params) if input_spec and input_spec.params else {}
+        params["model"] = alias
+        if input_spec is None:
+            return spec_cls(params=params)
+        return input_spec.model_copy(update={"params": params})
+
+    def _prepare_lora_batch(
+        self,
+        *,
+        adapters: dict[str, Any] | list[Any] | None,
+        input_spec: Any | None,
+        input_spec_cls: Any,
+    ) -> tuple["ModelVersion", list[tuple[str | None, "ModelVersion"]] | None, Any]:
+        adapters_items = self._normalize_adapters(adapters)
+        if adapters_items:
+            self._require_lora_adapters_enabled(unavailable_what="Running a batch job with adapters")
+        if self._is_peft_adapter_version():
+            self._require_lora_adapters_enabled(unavailable_what="Running a batch job on a LoRA adapter")
+            if adapters_items:
+                self._adapter_invalid_argument(
+                    "batch inference: an adapter version does not accept adapters on the inference spec. "
+                    "The adapter is attached under its default FQN/VERSIONS alias."
+                )
+            pin = self._resolve_adapter_pin()
+            alias = self._default_adapter_alias(self)
+            input_spec = self._with_default_batch_params_model(input_spec, alias=alias, spec_cls=input_spec_cls)
+            return (pin, [(None, self)], input_spec)
+        return (self, adapters_items, input_spec)
 
     @overload
     def create_service(
