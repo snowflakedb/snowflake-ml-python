@@ -81,7 +81,11 @@ class ModelRuntime:
 
         if getattr(self, "embed_local_ml_library", False):
             snowpark_ml_lib_path = runtime_base_path / "snowflake-ml-python.zip"
-            file_utils.zip_python_package(str(snowpark_ml_lib_path), "snowflake.ml")
+            file_utils.zip_python_package(
+                str(snowpark_ml_lib_path),
+                "snowflake.ml",
+                exclude_dir_names=("experimental",),
+            )
             snowpark_ml_lib_rel_path = pathlib.PurePosixPath(snowpark_ml_lib_path.relative_to(packager_path).as_posix())
             self.imports.append(str(snowpark_ml_lib_rel_path))
 

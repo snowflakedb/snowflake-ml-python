@@ -129,7 +129,9 @@ def create_model_metadata(
     )
 
     if embed_local_ml_library:
-        env.snowpark_ml_version = f"{snowml_version.VERSION}+{file_utils.hash_directory(path_to_copy)}"
+        env.snowpark_ml_version = (
+            f"{snowml_version.VERSION}+{file_utils.hash_directory(path_to_copy, excluded_files=['experimental'])}"
+        )
 
     # Persist full method_options
     method_options: dict[str, dict[str, Any]] = kwargs.pop("method_options", {})

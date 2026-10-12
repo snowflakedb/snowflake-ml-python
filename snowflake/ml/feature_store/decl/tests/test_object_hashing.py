@@ -994,6 +994,280 @@ class TestStddevSpellingCanonicalization:
         )
 
 
+def _lower_identifiers(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of an applied spec payload with identifiers lower-cased.
+
+    Only touches identifier-bearing fields — NOT enum values like
+    ``refresh_mode`` / ``initialize`` / ``feature_aggregation_method``, which
+    :func:`_full_spec_hash` does not case-fold, so a blanket lower-case would
+    diverge for reasons unrelated to identifier canonicalization.
+
+    Args:
+        payload: An applied-state ``spec_payload`` dict (uppercase identifiers).
+
+    Returns:
+        A deep copy whose identifier cells are lower-cased.
+    """
+    p = copy.deepcopy(payload)
+    md = p.get("metadata")
+    if isinstance(md, dict):
+        for key in ("database", "schema", "name", "version"):
+            if isinstance(md.get(key), str):
+                md[key] = md[key].lower()
+    spec = p.get("spec")
+    if not isinstance(spec, dict):
+        return p
+    for list_key in (
+        "ordered_entity_column_names",
+        "cluster_by",
+        "aggregation_secondary_keys",
+        "ordered_secondary_key_column_names",
+    ):
+        if isinstance(spec.get(list_key), list):
+            spec[list_key] = [c.lower() if isinstance(c, str) else c for c in spec[list_key]]
+    if isinstance(spec.get("timestamp_field"), str):
+        spec["timestamp_field"] = spec["timestamp_field"].lower()
+
+    def _lower_cols(cols: Any) -> None:
+        if not isinstance(cols, list):
+            return
+        for col in cols:
+            if isinstance(col, dict) and isinstance(col.get("name"), str):
+                col["name"] = col["name"].lower()
+
+    for feat in spec.get("features", []) or []:
+        if isinstance(feat, dict):
+            for key in ("source_column", "output_column"):
+                if isinstance(feat.get(key), dict) and isinstance(feat[key].get("name"), str):
+                    feat[key]["name"] = feat[key]["name"].lower()
+    _lower_cols(spec.get("output_columns"))
+    for src in spec.get("sources", []) or []:
+        if isinstance(src, dict):
+            _lower_cols(src.get("columns"))
+    udf = spec.get("udf")
+    if isinstance(udf, dict):
+        _lower_cols(udf.get("output_columns"))
+    return p
+
+
+class TestIdentifierCaseCanonicalization:
+    """Authored identifiers resolve to Snowflake's stored form before comparison.
+
+    ``compile_to_spec`` copies authored identifiers verbatim (SQL syntax, where
+    quotes encode case-sensitivity), while snowml-core persists each identifier
+    in its *stored* form (``SqlIdentifier.resolved()``: an unquoted name folds
+    to UPPER, a ``"quoted"`` name keeps its case with the quotes removed).  The
+    two halves of the hash are therefore NOT in the same representation, so
+    :func:`_full_spec_hash` resolves the authored half (``authored=True``) into
+    the stored form and only unquotes the applied half (``authored=False``).  A
+    single function applied to both halves cannot work, because a deployed
+    case-sensitive ``userId`` and an unquoted authoring ``userId`` are the same
+    string with different meanings.  See the "SQL-identifier hash
+    canonicalization" section of ``DESIGN.md``.
+    """
+
+    def test_batch_fv_lowercase_authoring_matches_applied(self) -> None:
+        """A lower-/mixed-case BatchFV authoring hashes equal to the UPPER applied side."""
+        _authoring, applied = _batch_fv_advanced_fixture()
+        # The fixture's ``cluster_by`` equals its entity list, so it is stripped
+        # as the core default before hashing.  Use a non-default value so the
+        # field actually contributes to the hash.  Also add the two identifier
+        # carriers the fixture omits so the case delta exercises them too.
+        applied["spec"]["cluster_by"] = ["SESSION_ID"]
+        applied["spec"]["output_columns"] = [{"name": "AMOUNT_SUM_1H", "type": "DoubleType"}]
+        applied["spec"]["ordered_secondary_key_column_names"] = ["SESSION_ID"]
+
+        authored_lower = _lower_identifiers(applied)
+        assert _full_spec_hash(authored_lower, authored=True) == _full_spec_hash(applied), (
+            "A lower-case BatchFV authoring must resolve to the UPPER stored form "
+            "and re-plan NO_CHANGE instead of RECREATE_FV."
+        )
+
+    def test_streaming_fv_lowercase_udf_columns_match_applied(self) -> None:
+        """UDF and source column identifiers resolve to stored form across a case delta."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+
+        authored_lower = _lower_identifiers(applied)
+        assert _full_spec_hash(authored_lower, authored=True) == _full_spec_hash(applied), (
+            "spec.udf.output_columns[].name and spec.sources[].columns[].name "
+            "must resolve so a lower-case UDF authoring hashes equal."
+        )
+
+    def test_lowercase_entity_authoring_matches_upper_applied(self) -> None:
+        """The original replan-loop fix: a lower-case ``user_id`` matches applied ``USER_ID``."""
+        _authoring, applied = _batch_fv_advanced_fixture()
+        authored = copy.deepcopy(applied)
+        authored["spec"]["ordered_entity_column_names"] = ["user_id"]
+
+        assert _full_spec_hash(authored, authored=True) == _full_spec_hash(
+            applied
+        ), "A lower-case ``user_id`` authoring must resolve to ``USER_ID`` and re-plan NO_CHANGE."
+
+    def test_unquoted_authoring_does_not_match_case_sensitive_applied(self) -> None:
+        """The review's false-NO_CHANGE case.
+
+        A column deployed as the case-sensitive ``userId`` (stored from a quoted
+        ``"userId"`` authoring) must NOT hash equal to an unquoted ``userId``
+        authoring, which Snowflake would fold to ``USERID`` on CREATE.
+        """
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+        applied["spec"]["ordered_entity_column_names"] = ["userId"]
+        authored = copy.deepcopy(applied)
+        authored["spec"]["ordered_entity_column_names"] = ["userId"]
+
+        assert _full_spec_hash(authored, authored=True) != _full_spec_hash(applied), (
+            "An unquoted ``userId`` authoring resolves to ``USERID`` and must not "
+            "hash equal to a deployed case-sensitive ``userId`` column (no false NO_CHANGE)."
+        )
+
+    def test_quoted_authoring_matches_case_sensitive_applied(self) -> None:
+        """A quoted ``"userId"`` authoring hashes equal to the deployed ``userId``."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+        applied["spec"]["ordered_entity_column_names"] = ["userId"]
+        authored = copy.deepcopy(applied)
+        authored["spec"]["ordered_entity_column_names"] = ['"userId"']
+
+        assert _full_spec_hash(authored, authored=True) == _full_spec_hash(
+            applied
+        ), 'A quoted "userId" authoring resolves to the stored ``userId`` and must re-plan NO_CHANGE.'
+
+    def test_timestamp_field_follows_authored_to_stored_contract(self) -> None:
+        """``timestamp_field`` obeys the same authored-to-stored rule as entity columns."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+        applied["spec"]["timestamp_field"] = "eventTs"
+        quoted = copy.deepcopy(applied)
+        quoted["spec"]["timestamp_field"] = '"eventTs"'
+        unquoted = copy.deepcopy(applied)
+        unquoted["spec"]["timestamp_field"] = "eventTs"
+
+        assert _full_spec_hash(quoted, authored=True) == _full_spec_hash(
+            applied
+        ), 'A quoted "eventTs" timestamp authoring must match the deployed ``eventTs``.'
+        assert _full_spec_hash(unquoted, authored=True) != _full_spec_hash(
+            applied
+        ), "An unquoted ``eventTs`` timestamp authoring folds to ``EVENTTS`` and must not match."
+
+    def test_sql_form_output_column_resolution(self) -> None:
+        """A SQL-form field (udf output column) resolves symmetrically to the stored form.
+
+        The applied half stores the bare ``myCol``; a quoted authoring must
+        match it while an unquoted authoring (folding to ``MYCOL``) must not.
+        """
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+        applied["spec"]["udf"]["output_columns"] = [{"name": "myCol", "type": "StringType"}]
+        quoted = copy.deepcopy(applied)
+        quoted["spec"]["udf"]["output_columns"] = [{"name": '"myCol"', "type": "StringType"}]
+        unquoted = copy.deepcopy(applied)
+        unquoted["spec"]["udf"]["output_columns"] = [{"name": "myCol", "type": "StringType"}]
+
+        assert _full_spec_hash(quoted, authored=True) == _full_spec_hash(
+            applied
+        ), 'A quoted "myCol" output column authoring must match the deployed bare ``myCol``.'
+        assert _full_spec_hash(unquoted, authored=True) != _full_spec_hash(
+            applied
+        ), "An unquoted ``myCol`` output column folds to ``MYCOL`` and must not match."
+
+    def test_lowercase_version_matches_applied(self) -> None:
+        """``metadata.version`` is a non-identifier: fold symmetrically, never resolve.
+
+        ``FeatureViewVersion`` permits ``-`` and ``.``, which ``resolve_identifier``
+        rejects, so version must be upper-cased on BOTH halves.  If it were
+        resolved like an identifier the authored half would fold to ``V1`` while
+        the applied half stayed ``v1`` and every lower-case-versioned FV would
+        loop on RECREATE_FV.
+        """
+        _authoring, applied = _batch_fv_advanced_fixture()
+        applied["metadata"]["version"] = "v1"
+        authored = copy.deepcopy(applied)
+
+        assert _full_spec_hash(authored, authored=True) == _full_spec_hash(
+            applied
+        ), "A lower-case ``metadata.version`` must hash equal across the authored / applied split."
+
+    def test_applied_unquote_is_idempotent(self) -> None:
+        """Unquoting the applied half is idempotent across the quoted / bare forms.
+
+        ``DESCRIBE ... TYPE = SPECIFICATION`` may return a case-sensitive column
+        either still quoted (``"userId"``) or already bare (``userId``).  Both
+        must hash identically, so a second normalization pass can never corrupt
+        an already-resolved identifier.
+        """
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+        quoted = copy.deepcopy(applied)
+        quoted["spec"]["ordered_entity_column_names"] = ['"userId"']
+        bare = copy.deepcopy(applied)
+        bare["spec"]["ordered_entity_column_names"] = ["userId"]
+
+        assert _full_spec_hash(quoted) == _full_spec_hash(bare), (
+            'A quoted "userId" and a bare userId applied payload must hash equal; '
+            "unquoting the stored form is idempotent."
+        )
+
+    def test_quoted_identifier_rename_still_recreates(self) -> None:
+        """A quoted-identifier case change is a genuine rename and must bump the hash."""
+        _authoring, applied = _streaming_fv_with_udf_fixture()
+
+        quoted_lower = copy.deepcopy(applied)
+        quoted_lower["spec"]["ordered_entity_column_names"] = ['"user_id"']
+        quoted_upper = copy.deepcopy(applied)
+        quoted_upper["spec"]["ordered_entity_column_names"] = ['"USER_ID"']
+
+        assert _full_spec_hash(quoted_lower) != _full_spec_hash(quoted_upper), (
+            'A quoted "user_id" -> "USER_ID" rename preserves case and is a real '
+            "column rename, so it must still change the hash."
+        )
+
+    def test_genuine_entity_rename_still_bumps_hash(self) -> None:
+        """Canonicalization collapses casing only, not a real join-key change."""
+        _authoring, applied = _batch_fv_advanced_fixture()
+
+        original = copy.deepcopy(applied)
+        renamed = copy.deepcopy(applied)
+        renamed["spec"]["ordered_entity_column_names"] = ["ORG_ID"]
+
+        assert _full_spec_hash(original) != _full_spec_hash(renamed), (
+            "USER_ID -> ORG_ID is a genuine entity join-key change and must not "
+            "be absorbed by identifier canonicalization."
+        )
+
+
+class TestEntityFingerprintJoinKeyProvenance:
+    """The Entity structural fingerprint folds either provenance to one key.
+
+    ``structural_fingerprint_hash`` is the single function that hashes BOTH
+    halves of an entity diff: the exporter writes a case-sensitive join key in
+    SQL syntax (``"userId"``) while ``state._build_entity_object`` carries the
+    tag's ``ALLOWED_VALUES`` in Snowflake's bare stored form (``userId``).  If
+    the fingerprint only upper-cased, the two would never match and the planner
+    would loop ``UPDATE_ENTITY`` forever (which only applies ``desc``).
+    """
+
+    @pytest.mark.parametrize(
+        "applied_name, authored_name",
+        [
+            ("userId", '"userId"'),
+            ("USER_ID", "USER_ID"),
+        ],
+    )
+    def test_exporter_and_state_entity_hashes_agree(self, applied_name: str, authored_name: str) -> None:
+        """An exporter-shaped local spec hashes equal to the state-shaped applied spec."""
+        local = {
+            "kind": "Entity",
+            "name": "USERID",
+            "join_keys": [{"name": authored_name, "type": "StringType"}],
+        }
+        applied = {
+            "kind": "Entity",
+            "name": "USERID",
+            "join_keys": [{"name": applied_name, "type": "StringType"}],
+        }
+
+        assert structural_fingerprint_hash(local) == structural_fingerprint_hash(applied), (
+            f"Exporter-authored {authored_name!r} must hash equal to deployed "
+            f"{applied_name!r} so a re-export re-plans NO_CHANGE instead of looping UPDATE_ENTITY."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Edit sensitivity
 # ---------------------------------------------------------------------------
@@ -2575,6 +2849,153 @@ class TestQuerySourceHashCanonicalization:
         edited = copy.deepcopy(base)
         edited["sources"][0]["query"] = "SELECT id FROM orders -- b (edited)"
         assert structural_fingerprint_hash(base) == structural_fingerprint_hash(edited)
+
+
+class TestEmptyFunctionParamsHashParity:
+    """Pin two ``function_params`` hash-parity contracts (Bug C + alias).
+
+    1. An explicit empty ``function_params={}`` hashes equal to the applied
+       recovery that omits the key.  ``model_to_dict(exclude_none=True)`` keeps
+       an authored ``{}`` on the local side, while the applied
+       ``DESCRIBE ... TYPE = SPECIFICATION`` recovery omits ``function_params``
+       entirely for a param-less aggregation (e.g. a plain ``count``).  Without
+       coalescing empty/absent ``function_params`` in
+       ``_normalize_for_full_spec_hash`` the two halves diverge and every
+       re-plan of an unchanged project emits a destructive ``RECREATE_FV``.  A
+       *populated* ``function_params`` must stay hash-significant so real
+       parameter changes are still detected.
+    2. An authored ``approx_count_distinct`` ``precision`` alias hashes equal to
+       the internal ``hll_lg_k`` key that DESCRIBE returns.  The recreate-loop
+       fix depends on ``spec_compiler._compile_features`` renaming the alias
+       (via ``_normalize_function_params``) *before* the hash; reverting or
+       reordering that branch must fail here rather than silently reviving the
+       destructive recreate loop.
+    """
+
+    def _bfv_authoring(
+        self,
+        *,
+        function: str,
+        function_params: dict[str, Any] | None,
+        output_type: str = "LongType",
+    ) -> dict[str, Any]:
+        feature: dict[str, Any] = {
+            "source_column": {"name": "ITEM", "type": "StringType"},
+            "output_column": {"name": "ITEM_AGG_1H", "type": output_type},
+            "function": function,
+            "window": "1h",
+        }
+        if function_params is not None:
+            feature["function_params"] = function_params
+        return {
+            "kind": "BatchFeatureView",
+            "name": "BFV_EMPTY_PARAMS_HASH",
+            "database": _DB,
+            "schema_": _SCHEMA,
+            "version": "V1",
+            "online": False,
+            "entities": ["USER_ID"],
+            "sources": [
+                {
+                    "name": "EVENTS_EP",
+                    "source_type": "Batch",
+                    "table": "RAW_EVENTS_EP",
+                    "columns": [
+                        {"name": "USER_ID", "type": "StringType"},
+                        {"name": "EVENT_TS", "type": "TimestampType"},
+                        {"name": "ITEM", "type": "StringType"},
+                    ],
+                }
+            ],
+            "timestamp_col": "EVENT_TS",
+            "feature_granularity": "1h",
+            "feature_aggregation_method": "tiles",
+            "refresh_freq": "5 minutes",
+            "features": [feature],
+        }
+
+    def test_empty_function_params_hashes_equal_to_absent(self) -> None:
+        local = compile_to_spec(
+            _strip_schema_alias(self._bfv_authoring(function="count", function_params={})),
+            _DB,
+            _SCHEMA,
+        )
+        # Sanity: the local compile actually keeps the empty dict.
+        assert local["spec"]["features"][0].get("function_params") == {}, (
+            "local compile must retain the authored empty function_params={} — "
+            "otherwise this test would trivially pass."
+        )
+        # Applied recovery omits the key entirely for a param-less aggregation.
+        applied = copy.deepcopy(local)
+        for feat in applied["spec"]["features"]:
+            feat.pop("function_params", None)
+        assert _full_spec_hash(local) == _full_spec_hash(applied), (
+            "A count BFV authored with function_params={} must hash equal to the "
+            "applied side that omits function_params; otherwise the re-plan loops "
+            "on a destructive RECREATE_FV."
+        )
+
+    def test_populated_function_params_stay_hash_significant(self) -> None:
+        # Guard against over-stripping: a populated function_params carries
+        # real semantics; dropping it on one side must still register a diff.
+        local = compile_to_spec(
+            _strip_schema_alias(self._bfv_authoring(function="approx_count_distinct", function_params={"hll_lg_k": 8})),
+            _DB,
+            _SCHEMA,
+        )
+        applied = copy.deepcopy(local)
+        for feat in applied["spec"]["features"]:
+            feat.pop("function_params", None)
+        assert _full_spec_hash(local) != _full_spec_hash(applied), (
+            "A populated function_params must stay hash-significant so a real "
+            "parameter change is not silently coalesced away."
+        )
+
+    def test_precision_alias_hashes_equal_to_applied_hll_lg_k(self) -> None:
+        # The authored ``precision`` alias for approx_count_distinct must be
+        # renamed to the internal ``hll_lg_k`` by ``_compile_features`` so the
+        # local hash matches the applied side, which DESCRIBE reports with the
+        # internal key.  The applied half is compiled from ``hll_lg_k``
+        # *independently* (never copied from the precision compile) so the alias
+        # table never fires on it — a reverted/ reordered ``function_params``
+        # rename branch then leaves ``precision`` on the local half and
+        # ``hll_lg_k`` on the applied half, diverging the hashes and failing
+        # this test.
+        local = compile_to_spec(
+            _strip_schema_alias(
+                self._bfv_authoring(function="approx_count_distinct", function_params={"precision": 8})
+            ),
+            _DB,
+            _SCHEMA,
+        )
+        # The rename must land in the compiled spec itself, not only inside the
+        # hash normalizer.
+        assert local["spec"]["features"][0]["function_params"] == {"hll_lg_k": 8}, (
+            "compile_to_spec must rename the approx_count_distinct 'precision' "
+            "alias to the internal 'hll_lg_k' key in the compiled spec."
+        )
+        applied = compile_to_spec(
+            _strip_schema_alias(self._bfv_authoring(function="approx_count_distinct", function_params={"hll_lg_k": 8})),
+            _DB,
+            _SCHEMA,
+        )
+        assert _full_spec_hash(local) == _full_spec_hash(applied), (
+            "An approx_count_distinct authored with function_params={'precision': 8} "
+            "must hash equal to the applied side carrying the internal {'hll_lg_k': 8}; "
+            "otherwise a re-plan loops on a destructive RECREATE_FV."
+        )
+        # The value must stay hash-significant: a different hll_lg_k must not
+        # collide, so a normalizer that drops or ignores the value cannot pass.
+        other = compile_to_spec(
+            _strip_schema_alias(
+                self._bfv_authoring(function="approx_count_distinct", function_params={"hll_lg_k": 12})
+            ),
+            _DB,
+            _SCHEMA,
+        )
+        assert _full_spec_hash(local) != _full_spec_hash(other), (
+            "A different hll_lg_k must change the hash; the alias value must stay " "hash-significant."
+        )
 
 
 if __name__ == "__main__":

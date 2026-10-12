@@ -3,7 +3,7 @@ name: FV_FILE
 version: V1
 online: false
 entities:
-  - USER_ID
+  - USER
 sources:
   - name: EVENTS_FILE
     source_type: Batch

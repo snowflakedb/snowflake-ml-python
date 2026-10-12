@@ -28,10 +28,12 @@ Hypothesis ↔ implementation phase ↔ falsification → design impact:
   Implementation phase: Phase 4. Falsification: the planner must
   enforce the dependency check itself (more work).
 
-- **H4** — ``FeatureStore.update_entity`` remains ``desc=``-only
-  (join keys are not an update argument). **GREEN-as-pin**: locks the
-  public signature so declarative apply does not invent unsupported
-  kwargs.
+- **H4** — ``FeatureStore.update_entity`` does **not** accept
+  ``join_keys=`` because entity join keys are immutable after create;
+  only ``desc=`` remains mutable. Falsification: a ``join_keys=``
+  keyword reappears on the imperative signature (or ``desc=`` is
+  removed), which would re-open join-key mutation through
+  ``UPDATE_ENTITY``.
 
 - **H5** — ``FeatureStore.__init__(FAIL_IF_NOT_EXIST)`` raises a
   deterministic exception when the schema lacks internal tags, and
@@ -302,23 +304,37 @@ class TestH3DeleteEntityFVDependency:
 
 
 # ---------------------------------------------------------------------------
-# H4 — update_entity is desc-only (no join_keys=)
+# H4 — update_entity does not accept join_keys= (join keys are immutable)
 # ---------------------------------------------------------------------------
 
 
-class TestH4UpdateEntityDescOnly:
-    """``FeatureStore.update_entity`` accepts ``desc=`` only.
-
-    Join keys are set at ``register_entity`` time and are not an
-    ``update_entity`` argument. Pin the public signature so the
-    declarative executor does not pass unsupported kwargs.
+class TestH4UpdateEntityJoinKeysExtension:
+    """``FeatureStore.update_entity`` must not accept ``join_keys=`` —
+    entity join keys are immutable after create. Only ``desc=`` remains
+    mutable, and that keyword must stay keyword-only with default
+    ``None`` so existing imperative callers keep working.
     """
+
+    def test_update_entity_signature_carries_join_keys_keyword(self) -> None:
+        """Pin: ``join_keys`` is absent from ``update_entity`` (immutable).
+
+        The method name is historical (H4 originally expected a Phase-3
+        ``join_keys=`` extension). The design flipped: join keys cannot
+        be updated, so this assertion now guards against that keyword
+        returning.
+        """
+        sig = inspect.signature(fs_module.FeatureStore.update_entity)
+        assert "join_keys" not in sig.parameters, (
+            "FeatureStore.update_entity must not accept a `join_keys=` "
+            "keyword — entity join keys are immutable after create "
+            "(see hypothesis H4)."
+        )
 
     def test_update_entity_signature_preserves_desc_keyword(self) -> None:
         sig = inspect.signature(fs_module.FeatureStore.update_entity)
-        assert (
-            "desc" in sig.parameters
-        ), "FeatureStore.update_entity must preserve the existing `desc=` keyword (backward-compat pin for H4)."
+        assert "desc" in sig.parameters, (
+            "FeatureStore.update_entity must preserve the existing `desc=` " "keyword (backward-compat pin for H4)."
+        )
         assert sig.parameters["desc"].kind == inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["desc"].default is None
         assert "join_keys" not in sig.parameters
@@ -411,16 +427,21 @@ class TestH5AssertFeatureStoreInitializedRewrap:
 
     def test_assert_feature_store_initialized_returns_fs_on_success(self) -> None:
         from snowflake.ml.feature_store.decl import imperative_executor
+        from snowflake.ml.feature_store.online_service import OnlineServiceAccess
 
         fs_instance = MagicMock(name="FeatureStore")
         session = MagicMock(name="session")
         with patch(
             "snowflake.ml.feature_store.feature_store.FeatureStore",
             return_value=fs_instance,
-        ):
+        ) as mock_fs_cls:
             result = imperative_executor.assert_feature_store_initialized(session, "DB", "SCH", "WH")
 
         assert result is fs_instance
+        # The declarative client pins the public Online Service URL so
+        # CLI ingest/query never auto-route to an unresolvable PrivateLink
+        # host from networks without PrivateLink DNS.
+        assert mock_fs_cls.call_args.kwargs["online_service_access"] is OnlineServiceAccess.PUBLIC
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,6 @@ import snowflake.ml.experiment._entities as entities
 import snowflake.ml.experiment._experiment_info as experiment_info
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import experiment_tracking
-from snowflake.ml.experiment._client import experiment_tracking_sql_client as sql_client
 from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.registry._manager import model_manager
 
@@ -18,21 +17,14 @@ class RunTest(absltest.TestCase):
         # Create mock experiment tracking
         self.mock_experiment_tracking = MagicMock(spec=experiment_tracking.ExperimentTracking)
 
-        # Create mock SQL client
-        self.mock_sql_client = MagicMock(spec=sql_client.ExperimentTrackingSQLClient)
-        self.mock_experiment_tracking._sql_client = self.mock_sql_client
-
         # Set up mock database and schema names
+        self.mock_experiment_tracking._session = MagicMock()
         self.mock_experiment_tracking._database_name = sql_identifier.SqlIdentifier("TEST_DB")
         self.mock_experiment_tracking._schema_name = sql_identifier.SqlIdentifier("TEST_SCHEMA")
 
         # Set up test identifiers
         self.experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
         self.run_name = sql_identifier.SqlIdentifier("TEST_RUN")
-
-        # Mock the fully_qualified_object_name method
-        expected_fqn = "TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT"
-        self.mock_sql_client.fully_qualified_object_name.return_value = expected_fqn
 
         # Clear any existing experiment info stack state
         experiment_info.ExperimentInfoPatcher._experiment_info_stack.clear()

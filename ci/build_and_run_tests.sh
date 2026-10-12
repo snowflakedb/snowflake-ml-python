@@ -425,7 +425,7 @@ COMMON_PYTEST_FLAG=()
 COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo in markers
 COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
-COMMON_PYTEST_FLAG+=(-n logical)
+COMMON_PYTEST_FLAG+=(-n 3) # Cap workers at 3, matching bazel --local_test_jobs for continuous_run.
 COMMON_PYTEST_FLAG+=(--timeout=3600)
 
 group_exit_codes=()

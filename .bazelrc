@@ -21,6 +21,7 @@ coverage --instrumentation_filter="-//tests[/:]"
 build:_build --platforms //bazel/platforms:core_conda_env --host_platform //bazel/platforms:core_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=build
 build:_core --platforms //bazel/platforms:core_conda_env --host_platform //bazel/platforms:core_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=core
 build:_all --platforms //bazel/platforms:all_conda_env --host_platform //bazel/platforms:all_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=all
+build:_perf --platforms //bazel/platforms:perf_conda_env --host_platform //bazel/platforms:perf_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=perf
 
 # Public definitions
 
@@ -51,6 +52,9 @@ run:core --config=_core
 cquery:all --config=_all
 test:all --config=_all
 run:all --config=_all
+cquery:perf --config=_perf
+test:perf --config=_perf
+run:perf --config=_perf
 
 # Hermetic CC toolchain: use zig cc on Linux to avoid host ccache issues with cgo.
 # On macOS the system toolchain is used (zig cc lacks macOS SDK headers).

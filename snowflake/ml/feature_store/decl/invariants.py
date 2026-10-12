@@ -9,9 +9,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, Mapping
 
-from snowflake.ml.feature_store.decl.compiler import canonicalize_sql_for_hash
+from snowflake.ml._internal.utils import identifier
+from snowflake.ml.feature_store.decl.compiler import (
+    canonicalize_sql_for_hash,
+    to_comparison_identifier,
+)
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
 from snowflake.ml.feature_store.decl.types import (
     AppliedObject,
@@ -65,41 +69,26 @@ _SOURCE_KIND_ALIASES: frozenset[str] = frozenset({"StreamingSource", "BatchSourc
 def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> str:
     """Build a unique key for an object's identity.
 
-    Versioned kinds (``FeatureView`` subkinds and ``FeatureGroup``) key as
-    ``kind:database.schema:NAME:VERSION`` because their identity is
-    ``(name, version)``; unversioned kinds (``Entity``, ``Datasource``)
-    key as ``kind:database.schema:NAME``.  Name (and version) are
-    uppercased for a case-stable key.
+    Versioned kinds (FeatureView subkinds and FeatureGroup) key as
+    ``kind:database.schema:NAME:VERSION`` because their identity is the name
+    plus the version; Entity and Datasource key without the version.  Names
+    are uppercased so the key is case-stable.
 
-    The two concrete source kinds (``StreamingSource``, ``BatchSource``)
-    collapse to the canonical ``Datasource`` kind in
-    the key so a freshly-loaded YAML matches the
-    :func:`state._datasource_objects_from_specs` AppliedObject (which
-    uses the generic :data:`ObjectKind.DATASOURCE` for display
-    consistency in ``snow feature list``).
+    StreamingSource and BatchSource both collapse to the generic Datasource
+    kind, so a freshly-loaded YAML matches the applied-state entry the state
+    module builds (it uses the generic kind for display consistency).
 
-    The ``database`` / ``schema`` kwargs are *fallback only* — they are
-    consulted only when the spec dict itself omits the corresponding
-    field.  This keeps the multi-store contract intact (a spec that
-    explicitly names ``OTHER_DB.OTHER_SCHEMA`` always wins over the
-    connection context) while letting the planner qualify keys for
-    bare YAMLs (single-file ``apply`` / ``plan`` invocations or
-    declarative entities written without ``database:``/``schema:``)
-    against the active ``snow`` connection so the lookup key collides
-    with the applied-state key (which is *always* fully qualified by
-    :func:`state._build_spec_key`).
+    The database and schema arguments are fallbacks, consulted only when the
+    spec omits the field.  A spec that names its own database always wins over
+    the connection context, while bare YAMLs still get qualified against the
+    active connection so their keys collide with the always-qualified
+    applied-state keys.
 
     Args:
-        data: Spec dict carrying ``kind``, ``name``, ``database``, and
-            either ``schema`` or ``schema_``.
-        database: Connection-context database used as a fallback when
-            ``data`` does not carry a ``database`` field.  Defaults to
-            ``""`` for backwards compatibility with callers that don't
-            yet thread connection context through (e.g. ad-hoc spec
-            inspection in tests).
-        schema: Connection-context schema used as a fallback when
-            ``data`` does not carry a ``schema`` / ``schema_`` field.
-            Defaults to ``""``.
+        data: Spec dict carrying ``kind``, ``name``, ``database``, and either
+            ``schema`` or ``schema_``.
+        database: Fallback database when ``data`` has no ``database`` field.
+        schema: Fallback schema when ``data`` has no ``schema`` / ``schema_``.
 
     Returns:
         Canonical key string.
@@ -126,14 +115,14 @@ def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> s
 
 
 def _spec_hash(data: dict[str, Any]) -> str:
-    """SHA-256 over the full spec dict (excluding ``_hash`` / ``_content_hash``)."""
+    """SHA-256 over the full spec dict, excluding the internal hash keys."""
     clean = {k: v for k, v in data.items() if k not in _INTERNAL_KEYS}
     canonical = json.dumps(clean, sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _content_hash(data: dict[str, Any]) -> str:
-    """SHA-256 over the spec dict excluding the ``version`` field."""
+    """SHA-256 over the spec dict, excluding the version field."""
     d = {k: v for k, v in data.items() if k not in _INTERNAL_KEYS}
     d = copy.deepcopy(d)
     d.pop("version", None)
@@ -144,10 +133,8 @@ def _content_hash(data: dict[str, Any]) -> str:
 def _sf_type_for_fp(type_str: str) -> str:
     """Normalise a type string for structural fingerprinting.
 
-    Converts FSBaseType names (e.g. ``"StringType"``) to their Snowflake SQL
-    equivalents (e.g. ``"VARCHAR"``), then uppercases the result.  SQL type
-    strings that come directly from ``DESCRIBE ONLINE FEATURE TABLE`` are
-    already in SQL format and are just uppercased.
+    Spec-side names like StringType map to their Snowflake SQL equivalents;
+    strings that already come from DESCRIBE are simply uppercased.
 
     Args:
         type_str: A raw type string from either an authoring spec or DESCRIBE.
@@ -161,32 +148,26 @@ def _sf_type_for_fp(type_str: str) -> str:
 def _structural_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
     """Build a structural fingerprint from a spec or DESCRIBE-derived dict.
 
-    Extracts ``name``, ``version`` (optional), and sorted output column
-    ``name``/``type`` pairs.  Both the authoring-spec path (via
-    ``planner.generate_plan``) and the DESCRIBE-reconstruction path (via
-    ``state.fetch_applied_state``) call this function, so they always produce
-    identical fingerprints for the same deployed feature view.
+    Extracts the name, the optional version, and sorted output column
+    name/type pairs.  Both the authoring path and the DESCRIBE reconstruction
+    path call this, so the two always agree on the fingerprint for a given
+    deployed feature view.
 
-    For specs: output columns come from ``features[].output_column`` or from
-    ``udf.output_columns`` when a UDF is present.
+    Output columns come from each feature's output column, or from the UDF's
+    output columns when one is present.  On the DESCRIBE side those entries
+    are pre-populated with the non-primary-key column rows.
 
-    For DESCRIBE-derived dicts: ``features[].output_column`` is pre-populated
-    with the non-primary-key column rows from ``DESCRIBE ONLINE FEATURE TABLE``.
-
-    For ``Entity`` specs the fingerprint additionally folds in
-    ``description`` and the sorted ``join_keys`` schema so a non-destructive
-    ``UPDATE_ENTITY`` op fires for any of the three editable surfaces of an
-    entity tag (``ALLOWED_VALUES`` → join keys, ``COMMENT`` → description,
-    name).  Without this widen a ``description``-only edit hashes
-    identically and the planner reports ``NO_CHANGE`` (BUG_BASH §11 cascade
-    — see ``plans/step11_update_entity_bug_*.plan.md``).
+    Entity specs also fold in the description and the sorted join-key schema,
+    so an edit to any of the three editable surfaces of an entity tag produces
+    an update op.  Without that, a description-only edit hashes identically
+    and the planner reports no change.
 
     Args:
         data: Spec dict or DESCRIBE-derived dict.
 
     Returns:
-        Dict with keys ``name``, ``version``, ``columns``, and (for
-        ``Entity`` kinds only) ``description`` and ``join_keys``.
+        Dict with ``name``, ``version`` and ``columns`` keys, plus
+        ``description`` and ``join_keys`` for Entity kinds.
     """
     name = (data.get("name") or "").upper()
     version = (data.get("version") or "").upper()
@@ -219,7 +200,11 @@ def _structural_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
         fingerprint["join_keys"] = sorted(
             (
                 {
-                    "name": (jk.get("name") or "").upper(),
+                    # Mixed provenance meets here: the authored half is SQL
+                    # syntax, the applied half is bare stored form.  Unquote
+                    # before case-folding or a re-quoted ``"userId"`` never
+                    # matches the deployed ``userId``.
+                    "name": to_comparison_identifier(jk["name"]),
                     "type": _sf_type_for_fp(jk.get("type") or ""),
                 }
                 for jk in (data.get("join_keys") or [])
@@ -285,13 +270,11 @@ def _structural_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def structural_fingerprint_hash(data: dict[str, Any]) -> str:
-    """SHA-256 of the structural fingerprint (name + version + output columns).
+    """SHA-256 of the structural fingerprint.
 
-    This is the canonical hash used for idempotency checks throughout the
-    pipeline.  It replaces ``_spec_hash`` so that applied state reconstructed
-    from ``DESCRIBE ONLINE FEATURE TABLE`` produces the same hash as the
-    authoring spec, enabling ``NO_CHANGE`` detection without a specification
-    column in SHOW results.
+    The canonical idempotency hash across the pipeline.  Applied state rebuilt
+    from DESCRIBE produces the same digest as the authoring spec, so no-change
+    detection works without a specification column in SHOW results.
 
     Args:
         data: Spec dict or DESCRIBE-derived dict.
@@ -352,28 +335,22 @@ def _strip_volatile_source_keys(payload: dict[str, Any], *, strip_type: bool) ->
     """Return a structurally-stable copy of a source payload.
 
     Drops description-style fields (and optionally the producer-protocol
-    ``type`` key), canonicalises ``kind`` to ``"Datasource"``, and
-    derives ``source_type`` from the original ``kind`` alias when the
-    payload omits it.  After this normalisation a local YAML's
-    ``StreamingSource`` payload hashes identically to the runtime
-    applied row produced by :func:`state._build_stream_source_object`.
+    ``type``), canonicalises the kind to Datasource, and derives
+    ``source_type`` from the original kind alias when the payload omits it.
+    After this, a local YAML payload hashes identically to the runtime applied
+    row.
 
     Args:
-        payload: The source spec / applied-state dict.  Non-dict input
-            yields ``{}`` defensively so callers can pass through raw
-            row dicts without a pre-check.
-        strip_type: When ``True``, also remove the ``type`` field.  Set
-            on the local payload only because the runtime row produced
-            by ``list_stream_sources()`` does not carry the key — the
-            applied side keeps any ``type`` value so a hypothetical
-            runtime drift surfaces as ``"recreate"``.
+        payload: The source spec or applied-state dict.  Non-dict input yields
+            an empty dict so callers can skip a pre-check.
+        strip_type: Also drop the ``type`` field.  Set on the local payload
+            only, since the runtime row never carries it; keeping it on the
+            applied side lets a genuine runtime drift surface as a recreate.
 
     Returns:
-        A new dict with the volatile keys removed, ``kind``
-        canonicalised to ``"Datasource"``, and ``source_type``
-        derived from the original ``kind`` alias when otherwise absent.
-        An explicit ``source_type`` value on the input always wins so
-        an authored mismatch still surfaces as a structural drift.
+        A new dict with the volatile keys removed.  An explicit
+        ``source_type`` on the input always wins, so an authored mismatch
+        still surfaces as structural drift.
     """
     if not isinstance(payload, dict):
         return {}
@@ -388,20 +365,16 @@ def _strip_volatile_source_keys(payload: dict[str, Any], *, strip_type: bool) ->
 
 
 def _source_structural_hash(stripped: dict[str, Any]) -> str:
-    """SHA-256 over the canonical-JSON serialisation of a stripped source payload.
+    """SHA-256 over the canonical JSON of a stripped source payload.
 
-    This helper is intentionally distinct from
-    :func:`structural_fingerprint_hash` because the latter projects
-    every input down to ``{name, version, columns}`` plus FV / Entity
-    extensions — which means two source payloads that differ only in
-    ``columns``, ``source_type``, ``table``, or ``query`` would
-    fingerprint identically.  For a source diff we want to capture the
-    full structural shape, so we hash the stripped dict directly.
+    Deliberately separate from the structural fingerprint, which projects
+    every input down to name, version and columns — so two sources differing
+    only in their columns, store type, table or query would fingerprint
+    identically.  A source diff needs the full shape, so we hash the stripped
+    dict directly.
 
     Args:
-        stripped: A source payload that has had its volatile keys
-            removed via :func:`_strip_volatile_source_keys` and its
-            ``kind`` canonicalised to ``"Datasource"``.
+        stripped: A source payload with its volatile keys already removed.
 
     Returns:
         64-character lowercase hex SHA-256 digest.
@@ -413,14 +386,12 @@ def _source_structural_hash(stripped: dict[str, Any]) -> str:
 def _resolve_source_description(payload: dict[str, Any]) -> str:
     """Pick the description text from a source payload.
 
-    Looks at ``description`` first, then ``desc``, falling back to
-    ``""``.  ``None`` and empty values collapse to ``""`` so the
-    desc compare in :func:`compute_source_diff_kind` is symmetric
-    across "missing key", "key present with ``None``", and "key
-    present with empty string".
+    Prefers ``description``, then ``desc``, else empty.  Nulls and empty
+    values collapse together so the comparison is symmetric across a missing
+    key, a key set to null, and a key set to an empty string.
 
     Args:
-        payload: Source spec / applied-state dict.
+        payload: Source spec or applied-state dict.
 
     Returns:
         Whitespace-trimmed, case-preserved description text.
@@ -434,32 +405,19 @@ def _resolve_source_description(payload: dict[str, Any]) -> str:
 def _canonicalize_columns(columns: Any) -> list[dict[str, str]]:
     """Project a columns list to a stable, sorted, type-stripped form.
 
-    Used by :func:`compute_source_diff_kind` (and any future caller
-    that needs to compare two ``columns:`` lists across the
-    authoring / applied diff surface) to wash out cosmetic drift that
-    must NOT trigger a destructive ``RECREATE_SOURCE``:
-
-    * Sort entries by uppercased ``name`` so YAML order vs. runtime
-      CREATE order does not bump the hash.
-    * Strip surrounding whitespace from ``type`` strings so a
-      verbose DESCRIBE row formatter (``"  StringType  "``) hashes
-      identically to the local YAML's tight ``"StringType"``.
-    * Uppercase the ``name`` so a YAML lowercased identifier hashes
-      identically to a runtime row that always uppercases.
-
-    Pins the Bug 1 hash-equivalence contract from the
-    ``metadata-roundtrip-limitations`` plan (Phase B5).  See the
-    test class :class:`tests.test_invariants.
-    TestSourceDiffColumnsCanonicalization` for the regression pins.
+    Washes out cosmetic drift that must not trigger a destructive recreate:
+    entries sort by uppercased name so YAML order and runtime order agree,
+    type strings are trimmed so a padded DESCRIBE row matches a tight YAML
+    one, and names are uppercased so a lowercased YAML identifier matches an
+    always-uppercase runtime row.
 
     Args:
-        columns: A ``columns`` list value; non-list inputs return
-            ``[]`` defensively (the caller should pass through any
-            shape without a pre-check).
+        columns: A ``columns`` list value; non-list input returns an empty list
+            so callers can skip a pre-check.
 
     Returns:
-        A new, sorted list of ``{"name": <UPPER>, "type": <stripped>}``
-        dicts.  Entries lacking a non-empty ``name`` are dropped.
+        A new sorted list of name/type dicts.  Entries without a name are
+        dropped.
     """
     if not isinstance(columns, list):
         return []
@@ -479,62 +437,33 @@ def compute_source_diff_kind(
     local_payload: dict[str, Any],
     applied_payload: dict[str, Any],
 ) -> Literal["no_change", "update_desc_only", "recreate"]:
-    """Classify a Datasource diff as no_change | update_desc_only | recreate.
+    """Classify a Datasource diff as no_change, update_desc_only, or recreate.
 
-    Pins the §2 truth table from
-    ``plans/stream_source_contract.md``.  Used by the planner to pick
-    the right ``OpKind`` for an authored source spec that already has
-    an applied counterpart:
+    The planner uses this to pick an op kind for an authored source that
+    already has an applied counterpart:
 
-    * ``"recreate"`` — structural fingerprint differs (column
-      addition / removal / type change, ``source_type`` / ``table`` /
-      ``query`` / producer-``type`` swap).  Routes to
-      ``OpKind.RECREATE_SOURCE`` (destructive; ``--destructive``).
-    * ``"update_desc_only"`` — structural fingerprint matches but the
-      description text differs.  Routes to ``OpKind.UPDATE_SOURCE``
-      (non-destructive).
-    * ``"no_change"`` — structural fingerprint AND description match.
-      Routes to ``OpKind.NO_CHANGE``.
+    * ``recreate`` — the structural shape differs: a column added, removed or
+      retyped, or a swapped store type, table, query or producer type.  This
+      is destructive, so it needs an explicit opt-in.
+    * ``update_desc_only`` — the shape matches but the description differs.
+    * ``no_change`` — both match.
 
-    Implementation:
-
-    1. Build two structurally-stable stripped payloads.  Description
-       fields (``description`` / ``desc`` / ``comment`` / ``details``)
-       are dropped on BOTH sides.  The producer-protocol ``type`` is
-       dropped on the LOCAL side only because the runtime row produced
-       by ``FeatureStore.list_stream_sources()`` never stamps it; the
-       applied stripped payload keeps any ``type`` it was given so a
-       synthetic / future runtime drift still surfaces as a recreate.
-    2. Canonicalise both ``kind`` values to ``"Datasource"`` (mirrors
-       :func:`spec_key`'s ``_SOURCE_KIND_ALIASES`` collapse).
-    3. Canonicalize ``columns`` symmetrically via
-       :func:`_canonicalize_columns` (sort by name, strip type
-       whitespace).  When the applied side has no recovered columns
-       (empty list / missing key) — the typical legacy DT-text
-       recovery shape for a table-backed BatchSource — drop ``columns``
-       from BOTH sides so a Bug 1 clean-apply replan does not force
-       a destructive ``RECREATE_SOURCE``.  When both sides have
-       columns, the canonicalised lists go back into the stripped
-       payload before hashing.
-    4. Hash each stripped payload via :func:`_source_structural_hash`.
-       A mismatch short-circuits the desc compare and returns
-       ``"recreate"`` — desc drift is "free" inside a recreate.
-    5. When the structural hashes match, compare descriptions
-       case-sensitively and whitespace-trimmed.  Equal descriptions →
-       ``"no_change"``; unequal → ``"update_desc_only"``.
+    Both sides are stripped to a structurally-stable shape before hashing.
+    Descriptions are dropped from both; the producer-protocol ``type`` is
+    dropped from the local side only, since the runtime row never carries it.
+    Columns are canonicalised symmetrically, and dropped from both sides when
+    the applied side recovered none — the usual shape for a table-backed batch
+    source, where keeping them would force a needless recreate.  Queries are
+    canonicalised so a comment or whitespace edit stays cosmetic.  A structural
+    mismatch short-circuits the description comparison, since description drift
+    is free inside a recreate.
 
     Args:
-        local_payload: The authored YAML payload for the source
-            (``kind: StreamingSource`` / ``BatchSource``, plus
-            ``columns`` / ``type`` / ``description`` / ...).
-        applied_payload: The applied-state ``AppliedObject.spec_payload``
-            for the same source (``kind: Datasource`` once
-            canonicalised; carries ``description`` / ``columns`` /
-            ``source_type`` etc. as set by
-            ``state._build_stream_source_object``).
+        local_payload: The authored YAML payload for the source.
+        applied_payload: The applied-state payload for the same source.
 
     Returns:
-        One of ``"no_change"``, ``"update_desc_only"``, ``"recreate"``.
+        One of ``no_change``, ``update_desc_only``, or ``recreate``.
     """
     stripped_local = _strip_volatile_source_keys(local_payload, strip_type=True)
     stripped_applied = _strip_volatile_source_keys(applied_payload, strip_type=False)
@@ -672,18 +601,15 @@ _BFV_TYPE_PROMOTION: dict[str, str] = {
 def _strip_default_operational_fields(inner: dict[str, Any]) -> None:
     """Drop snowml-core operational defaults from a BatchFV inner spec.
 
-    ``initialize`` is stamped by snowml-core at create time and recovered by
-    the applied-state DT-text parsers, but the local-compile side only emits
-    it when the operator authored it.  Strip the key when its value matches
-    the documented snowml-core default so the two sides hash identically.
-
-    ``refresh_mode`` is intentionally not stripped here: Snowflake resolves it
-    to INCREMENTAL or FULL (never AUTO), so applied-side normalisation is
-    asymmetric via :func:`_normalize_applied_bfv_for_hash`.
+    ``initialize`` is stamped at create time and recovered from the deployed
+    table text, but the local side only emits it when the operator authored it.
+    Dropping it when it matches the default keeps the two sides hashing
+    identically.  ``refresh_mode`` is left alone — Snowflake resolves it to
+    INCREMENTAL or FULL, never AUTO, so it needs asymmetric handling instead.
 
     Args:
-        inner: The ``spec`` sub-dict of a BatchFV spec_payload (mutated in
-            place).  Non-dict / non-BatchFV inputs are no-ops.
+        inner: The ``spec`` sub-dict of a BatchFV payload, mutated in place.
+            Non-dict input is a no-op.
     """
     if not isinstance(inner, dict):
         return
@@ -696,21 +622,19 @@ def _normalize_applied_bfv_for_hash(
     applied_payload: dict[str, Any],
     local_compiled: dict[str, Any],
 ) -> dict[str, Any]:
-    """Strip Snowflake-resolved fields from applied payload when not authored locally.
+    """Strip Snowflake-resolved fields the operator never authored.
 
-    ``refresh_mode`` is stamped by Snowflake's DT engine (INCREMENTAL / FULL)
-    even when the operator never specified it. The local compiled spec omits the
-    key in that case. Strip it from the applied payload before hashing so the two
-    hashes converge on an unspecified-refresh_mode round-trip.
-
-    Must only be called on applied payloads, not local specs.
+    Snowflake stamps a ``refresh_mode`` of INCREMENTAL or FULL even when nobody
+    asked for one, while the local compiled spec omits the key.  Dropping it
+    from the applied payload lets the two hashes converge.  Only valid on
+    applied payloads, never on local specs.
 
     Args:
-        applied_payload: Full ``AppliedObject.spec_payload``.
-        local_compiled: Output of ``compile_to_spec`` for the local authoring dict.
+        applied_payload: Full applied-state payload.
+        local_compiled: The compiled local spec for the same object.
 
     Returns:
-        A normalised deep copy of ``applied_payload``.
+        A normalised deep copy of the applied payload.
     """
     import json as _json
 
@@ -727,24 +651,17 @@ def _normalize_applied_bfv_for_hash(
 def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
     """Drop ``cluster_by`` from a BatchFV inner spec when it matches the default.
 
-    snowml-core defaults ``cluster_by`` to the ordered entity column list
-    for non-tiled BFVs and ``[<entities>..., "TILE_START"]`` for tiled
-    BFVs (those with explicit ``features`` aggregations).  Authoring
-    YAML that does not set ``cluster_by`` produces a local-compile spec
-    without the key, while the applied side recovers the deployed
-    default from the DT text.  Strip the key when the value equals the
-    expected default so the two sides hash identically.  An operator who
-    authors a non-default cluster list keeps the key in the hash so an
-    edit triggers ``RECREATE_FV``.
+    snowml-core defaults the cluster list to the ordered entity columns, plus a
+    tile-start column for tiled views.  YAML that leaves the key out compiles
+    without it while the applied side recovers the deployed default, so both
+    sides must drop it to hash identically.  An operator who authors a
+    non-default list keeps the key, so editing it still forces a recreate.
 
-    The check tolerates both tiled detections (an explicit
-    ``feature_aggregation_method`` on the local-compile inner spec, or
-    a non-auto-derived ``features`` list on the applied side) so the
-    helper works symmetrically on both halves of the diff.
+    Tiling is detected from either half of the diff, so the helper works
+    symmetrically.
 
     Args:
-        inner: The ``spec`` sub-dict of a BatchFV spec_payload (mutated in
-            place).
+        inner: The ``spec`` sub-dict of a BatchFV payload, mutated in place.
     """
     if not isinstance(inner, dict):
         return
@@ -761,20 +678,16 @@ def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
 
 
 def _normalise_feature_column_types(features: Any) -> None:
-    """Widen narrow integer / float types in a BatchFV ``features`` list.
+    """Widen narrow integer and float types in a BatchFV features list.
 
-    Walks each feature entry and rewrites ``source_column.type`` and
-    ``output_column.type`` from the authoring narrow types
-    (``IntegerType`` / ``FloatType``) to the deployed widened forms
-    (``LongType`` / ``DoubleType``).  Snowflake stores Integer columns
-    as 64-bit (LongType) and Float columns as 64-bit (DoubleType), so
-    the deployed SPECIFICATION JSON reports the widened type even when
-    the operator authored the narrower form.  Normalising both sides
-    to the widened form before hashing keeps a clean round-trip.
+    Snowflake stores integers as 64-bit and floats as doubles, so the deployed
+    specification reports the wider type even when the YAML authored the
+    narrower one.  Rewriting both sides to the wide form keeps a clean
+    round-trip.
 
     Args:
-        features: The ``features`` list of a BatchFV inner spec (mutated
-            in place).  Non-list / non-dict entries are skipped.
+        features: The ``features`` list of a BatchFV inner spec, mutated in
+            place.  Non-list and non-dict entries are skipped.
     """
     if not isinstance(features, list):
         return
@@ -792,17 +705,17 @@ def _normalise_feature_column_types(features: Any) -> None:
 
 
 def _canonical_function_spelling(fn: Any) -> Any:
-    """Map the SPECIFICATION stddev spelling to the imperative wire token.
+    """Map the specification stddev spelling to the imperative wire token.
 
-    ``"stddev"`` (case-insensitive) canonicalizes to ``"std"``; every other
-    value is returned unchanged so the caller can compare function tokens
-    without treating the two stddev spellings as a change.
+    ``stddev`` becomes ``std``, case-insensitively; anything else passes
+    through, so callers can compare function tokens without treating the two
+    spellings as a change.
 
     Args:
-        fn: A raw ``function`` token (or any value).
+        fn: A raw ``function`` token, or any value.
 
     Returns:
-        ``"std"`` when ``fn`` is ``"stddev"``, otherwise ``fn`` unchanged.
+        ``std`` for ``stddev``, otherwise the value unchanged.
     """
     if isinstance(fn, str) and fn.lower() == "stddev":
         return "std"
@@ -810,20 +723,16 @@ def _canonical_function_spelling(fn: Any) -> Any:
 
 
 def _normalise_feature_function_spelling(features: Any) -> None:
-    """Canonicalize the aggregation ``function`` spelling in a ``features`` list.
+    """Canonicalize the aggregation function spelling in a features list.
 
-    The imperative wire token for stddev is ``"std"`` (see
-    ``AggregationType.STD``), but Snowflake's ``DESCRIBE … TYPE =
-    SPECIFICATION`` reports the SQL spelling ``"stddev"``.  The applied
-    side therefore carries ``"stddev"`` while the local-compile side
-    carries ``"std"``.  Rewriting ``"stddev"`` -> ``"std"`` on both halves
-    before hashing keeps the round-trip clean without changing the
-    imperative wire form.  The rewrite is symmetric and a no-op on any
-    other function token.
+    The imperative wire token for standard deviation is ``std``, but
+    Snowflake's specification output reports the SQL spelling ``stddev``.
+    Rewriting it on both halves keeps the round-trip clean without changing the
+    wire form.  A no-op on every other token.
 
     Args:
-        features: The ``features`` list of a tiled FV inner spec (mutated
-            in place).  Non-list / non-dict entries are skipped.
+        features: The ``features`` list of a tiled FV inner spec, mutated in
+            place.  Non-list and non-dict entries are skipped.
     """
     if not isinstance(features, list):
         return
@@ -833,6 +742,25 @@ def _normalise_feature_function_spelling(features: Any) -> None:
         fn = feat.get("function")
         if isinstance(fn, str):
             feat["function"] = _canonical_function_spelling(fn)
+
+
+def _drop_empty_function_params(features: Any) -> None:
+    """Drop empty / ``None`` ``function_params`` (in place) so an authored
+    ``{}`` hashes equal to the applied recovery that omits the key. A populated
+    dict is preserved so a real parameter change is still detected.
+
+    Args:
+        features: The ``features`` list of a tiled FV inner spec (mutated in
+            place).  Non-list / non-dict entries are skipped.
+    """
+    if not isinstance(features, list):
+        return
+    for feat in features:
+        if not isinstance(feat, dict) or "function_params" not in feat:
+            continue
+        fp = feat.get("function_params")
+        if fp is None or (isinstance(fp, dict) and not fp):
+            feat.pop("function_params", None)
 
 
 # Operational FV-level keys that influence registration semantics but
@@ -911,17 +839,15 @@ _RUNTIME_STAMPED_COLUMN_DEFAULTS: dict[str, object] = {
 
 
 def _strip_runtime_stamped_columns(columns: object) -> None:
-    """Remove runtime-default keys from a ``columns``/``output_columns`` list.
+    """Remove runtime-default keys from a columns or output_columns list.
 
-    Walks the list in place; entries that are not dicts are left
-    untouched.  A key is stripped only when its value matches the
-    documented runtime default — non-default values (e.g. an explicit
-    ``length: 100`` set in the local YAML) survive so they continue to
-    contribute to the hash.
+    Walks the list in place, leaving non-dict entries alone.  A key is dropped
+    only when its value matches the documented runtime default, so an
+    explicitly authored value still contributes to the hash.
 
     Args:
-        columns: The list value of a ``columns`` / ``output_columns``
-            spec key (or any non-list, in which case this is a no-op).
+        columns: The list value of a ``columns`` or ``output_columns`` key.
+            Any non-list is a no-op.
     """
     if not isinstance(columns, list):
         return
@@ -934,31 +860,22 @@ def _strip_runtime_stamped_columns(columns: object) -> None:
 
 
 def _is_auto_derived_feature(feature: Any) -> bool:
-    """True when a feature entry is a 1:1 ``source_column == output_column`` pass-through.
+    """True when a feature entry is a 1:1 source-to-output pass-through.
 
-    Snowflake's ``FROM SPECIFICATION`` deserialiser auto-derives this
-    shape from the underlying source columns at CREATE time for any
-    non-tiled BatchFV / StreamingFV that omits an explicit ``features:``
-    block — so the deployed SPECIFICATION JSON returns N auto-derived
-    feature entries even though the authoring YAML had none.  Stripping
-    these before :func:`_full_spec_hash` keeps local-compile and
-    applied-side hashes in sync on a clean round-trip; explicit
-    aggregations (whose feature dict carries any key beyond
-    ``source_column`` / ``output_column``, e.g. ``function``,
-    ``window_sec``, ``feature_aggregation_method``) are NOT 1:1 and
-    survive the normalisation so the planner still sees real semantic
-    edits.
+    Snowflake auto-derives this shape from the source columns at create time
+    for any non-tiled view that omits an explicit ``features:`` block, so the
+    deployed specification returns entries the authoring YAML never had.
+    Stripping them keeps the local and applied hashes in sync on a clean
+    round-trip.  Explicit aggregations carry extra keys, so they survive and
+    the planner still sees real semantic edits.
 
     Args:
-        feature: A feature dict from ``spec.features[]``.
+        feature: A feature dict from the inner spec.
 
     Returns:
-        ``True`` when both ``output_column.name`` and
-        ``source_column.name`` are present and equal AND the entry
-        carries no other keys (any extra key — ``function``,
-        ``window_sec``, ``feature_aggregation_method``,
-        ``feature_granularity[_sec]``, ``window``, etc. — means the
-        feature carries semantic info that must influence the hash).
+        True when the source and output column names are both present and
+        equal, and the entry carries no other keys.  Any extra key means the
+        feature holds semantic content that must influence the hash.
     """
     if not isinstance(feature, dict):
         return False
@@ -1000,47 +917,34 @@ _FV_HASH_NORMALISE_KINDS: frozenset[str] = frozenset(
 
 
 def _canonicalize_operational_for_drift(payload: dict[str, Any]) -> dict[str, Any]:
-    """Decl-side canonicalizer for the operational-drift comparison surface.
+    """Canonicalize the operational-drift comparison surface.
 
-    Wraps snowml-core's :func:`feature_store._canonicalize_operational_fields`
-    (introduced by Phase A4) with a lazy import so the decl/ package
-    does not pull the imperative ``feature_store`` module into its
-    initial import graph.  Bug 2 closure — Phase B5 of the
-    ``metadata-roundtrip-limitations`` plan.
+    Wraps the imperative canonicalizer behind a lazy import so this package
+    does not pull the feature_store module into its initial import graph.  Two
+    fields are canonicalized symmetrically across both halves of the diff so a
+    clean replan does not emit a phantom update:
 
-    Two operational fields are canonicalized symmetrically across the
-    local-compile and applied-state halves of the operational-drift
-    diff so a clean replan does not emit a phantom ``UPDATE_FV``:
+    * ``online_store_type`` — mixed-case or padded enum values from the
+      deployed specification collapse to the local lowercase form.
+    * ``target_lag_sec`` — "5 minutes" and "300 SECONDS" both reduce to a
+      number of seconds, so the diff is stable whichever form the table
+      happened to return.
 
-    * ``online_store_type`` — mixed-case / whitespace-padded enum
-      values from the deployed SPECIFICATION (``"POSTGRES"``,
-      ``"  POSTGRES  "``) collapse to the local-compile form
-      (``"postgres"``).
-    * ``target_lag_sec`` — ``"5 minutes"`` vs. ``"300 SECONDS"``
-      both reduce to ``int(seconds)`` so the diff is stable
-      regardless of which textual form the OFT happened to return.
+    The downstream sentinel used by cron-scheduled tasks is skipped: the
+    planner recovers the cron expression from the companion task, and the
+    interval parser would crash on it.
 
-    The ``"DOWNSTREAM"`` sentinel (CRON-task target_lag) is silently
-    skipped: the planner recovers the cron expression via the
-    companion Task, and ``interval_to_seconds`` would crash on the
-    sentinel string.
-
-    The helper is pure: the input ``payload`` is not mutated.  When
-    the snowml-core helper is unavailable for any reason (missing
-    module, import error during a partial install, etc.), a defensive
-    in-package fallback canonicalizes ``online_store_type`` only —
-    ``target_lag_sec`` falls through unchanged, which is the
-    conservative choice (a missed canonicalization shows up as a
-    benign ``UPDATE_FV`` rather than a silent miss).
+    Pure — the input is not mutated, so callers can chain other normalisers.
+    If the imperative helper is unavailable the fallback canonicalizes the
+    store type only, which is the conservative choice: a missed
+    canonicalization shows up as a benign update rather than a silent miss.
 
     Args:
-        payload: A dict carrying any subset of ``online_store_type`` /
-            ``target_lag`` / ``target_lag_sec``.  Other keys pass
-            through untouched.
+        payload: A dict carrying any subset of ``online_store_type``,
+            ``target_lag`` and ``target_lag_sec``.  Other keys pass through.
 
     Returns:
-        A new dict with the canonicalized values; the input is left
-        unchanged so callers can chain through other normalisers.
+        A new dict with the canonicalized values.
     """
     try:
         from snowflake.ml.feature_store.feature_store import (
@@ -1058,42 +962,24 @@ def _canonicalize_operational_for_drift(payload: dict[str, Any]) -> dict[str, An
 def _normalise_fv_sources_for_hash(sources: Any) -> list[dict[str, str]]:
     """Project each FV source binding down to its stable identifier.
 
-    The deployed ``DESCRIBE … TYPE = SPECIFICATION`` JSON either drops
-    ``sources`` entirely (BatchFV — empty list) or preserves a subset
-    of fields (streaming) that does NOT line up with the local-compile
-    shape (``columns``, ``source_type`` semantics, and ``name`` may
-    differ from the local authoring name).  The stable identity per
-    source is the **binding** — preferring, in order:
+    The deployed specification either drops ``sources`` entirely, as it does for
+    batch views, or keeps a subset of fields that does not line up with the
+    local shape.  The stable identity is the binding, preferred in order: the
+    table, then the canonicalised query body, then the name.
 
-    1. ``table`` (recovered for table-backed BatchFVs by
-       :func:`state._inject_batch_fv_source_from_dt_text` from the
-       offline DT's FROM clause).
-    2. ``query`` (the whitespace-normalized SQL body, recovered for
-       query-backed BatchFVs by the same path with the Phase-4
-       classifier). The query body itself IS the binding identity for
-       a query-backed source — author-side and DT-recovery-side names
-       differ (the recovery path synthesizes ``<FV>__SOURCE`` while
-       the author writes their own ``BatchSource.name``), so the name
-       cannot be the identity here. Both sides normalize the SQL via
-       :func:`compiler.normalize_sql_whitespace`, so the strings
-       converge.
-    3. ``name`` (streaming sources, fixture-shaped tests, etc.) when
-       neither ``table`` nor ``query`` is recorded.
-
-    Projecting to ``[{"binding": <value>}]`` keeps the FV's source
-    binding identity in the hash without false-positive bumps from
-    name / column drift on the deployed side.
-
-    The result is sorted so ordering differences across DT-text
-    injection and authoring don't matter.
+    A query-backed source binds on its SQL body because the two sides disagree
+    on the name — the recovery path synthesises one while the author writes
+    their own.  Both sides canonicalise the SQL, so the strings converge.
+    Projecting this way keeps the binding in the hash without false positives
+    from name or column drift on the deployed side, and the result is sorted so
+    ordering differences between recovery and authoring do not matter.
 
     Args:
-        sources: ``spec.sources`` value (any type).
+        sources: The ``sources`` value, of any type.
 
     Returns:
-        A sorted list of single-key ``{"binding": <value>}`` dicts.
-        Empty list when no source has a ``table``, ``query``, or
-        ``name``.
+        A sorted list of single-key binding dicts, empty when no source carries
+        a table, query, or name.
     """
     if not isinstance(sources, list):
         return []
@@ -1118,40 +1004,173 @@ def _normalise_fv_sources_for_hash(sources: Any) -> list[dict[str, str]]:
     return out
 
 
-def _normalize_for_full_spec_hash(spec: dict[str, Any]) -> dict[str, Any]:
+def _resolve_hash_identifier(value: Any) -> Any:
+    """Canonicalise a single SQL identifier the way snowml-core does.
+
+    A thin wrapper over :func:`identifier.resolve_identifier` (unquoted folds to
+    upper-case, ``"quoted"`` keeps its case).  Non-string / empty / parser-
+    rejected values are returned unchanged so hashing never raises.  See the
+    "SQL-identifier hash canonicalization" section of ``DESIGN.md``.
+
+    Args:
+        value: A single identifier cell (typically a ``str``).
+
+    Returns:
+        The core-resolved identifier string, or ``value`` unchanged.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return value
+    try:
+        return identifier.resolve_identifier(value.strip())
+    except ValueError:
+        return value
+
+
+def _to_stored_form(value: Any, *, authored: bool) -> Any:
+    """Canonicalise one identifier to Snowflake's bare stored form.
+
+    The authored half is SQL syntax, so it resolves first (``userId`` ->
+    ``USERID``, ``"userId"`` -> ``userId``).  The applied half is already
+    stored, so it is only unquoted -- never case-folded, which keeps it
+    idempotent.  Parser-rejected values pass through so hashing never raises.
+
+    Args:
+        value: A single identifier cell (typically a ``str``).
+        authored: ``True`` to resolve SQL syntax first, ``False`` to unquote only.
+
+    Returns:
+        The bare stored-form identifier, or *value* unchanged.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return value
+    text = _resolve_hash_identifier(value) if authored else value.strip()
+    try:
+        return identifier.get_unescaped_names(text)
+    except ValueError:
+        return text
+
+
+def _canonicalise_column_list(columns: Any, *, authored: bool) -> None:
+    """In-place resolve the ``name`` of every column dict in a list.
+
+    Args:
+        columns: A list of ``{"name": ..., "type": ...}`` column dicts.  No-op
+            when not a list; non-dict entries (and dicts without a ``name``) are
+            skipped.
+        authored: Threaded to :func:`_to_stored_form`.
+    """
+    if not isinstance(columns, list):
+        return
+    for col in columns:
+        if isinstance(col, dict) and "name" in col:
+            col["name"] = _to_stored_form(col.get("name"), authored=authored)
+
+
+def _canonicalise_inner_spec_identifiers(inner: Any, *, authored: bool) -> None:
+    """Resolve every identifier-bearing field of an inner ``spec`` block, in place.
+
+    Shared by :func:`_canonicalise_spec_identifiers` (full-spec hash) and the
+    structural-equivalence projection in
+    :func:`batch_feature_view_structural_equivalent` so both apply the identical
+    per-field contract.
+
+    Args:
+        inner: The ``spec`` sub-dict (mutated in place).  No-op when not a dict.
+        authored: Threaded to :func:`_to_stored_form`.
+    """
+    if not isinstance(inner, dict):
+        return
+    for key in (
+        "ordered_entity_column_names",
+        "cluster_by",
+        "aggregation_secondary_keys",
+        "ordered_secondary_key_column_names",
+    ):
+        values = inner.get(key)
+        if isinstance(values, list):
+            inner[key] = [_to_stored_form(v, authored=authored) for v in values]
+    if "timestamp_field" in inner:
+        inner["timestamp_field"] = _to_stored_form(inner.get("timestamp_field"), authored=authored)
+    features = inner.get("features")
+    if isinstance(features, list):
+        for feat in features:
+            if isinstance(feat, dict):
+                _canonicalise_column_list([feat.get("source_column"), feat.get("output_column")], authored=authored)
+    _canonicalise_column_list(inner.get("output_columns"), authored=authored)
+    sources = inner.get("sources")
+    if isinstance(sources, list):
+        for source in sources:
+            if isinstance(source, dict):
+                _canonicalise_column_list(source.get("columns"), authored=authored)
+    udf = inner.get("udf")
+    if isinstance(udf, dict):
+        # ``udf.name`` is a Python function name, not a SQL identifier — the
+        # live SPECIFICATION round-trips it lower-case, so only columns resolve.
+        _canonicalise_column_list(udf.get("output_columns"), authored=authored)
+
+
+def _canonicalise_spec_identifiers(cleaned: dict[str, Any], *, authored: bool) -> None:
+    """Resolve every identifier-bearing field of a spec dict, in place.
+
+    Must run *first* in :func:`_normalize_for_full_spec_hash`, before any
+    downstream ``.upper()`` comparison forms a second, divergent opinion.  The
+    authored half is SQL syntax so it resolves to the stored form; the applied
+    half is already stored so it only unquotes (see :func:`_to_stored_form`).
+    ``metadata.version`` is not an identifier (``FeatureViewVersion`` permits
+    ``-`` / ``.``) and folds symmetrically with ``.upper()`` on both halves,
+    matching :func:`spec_key`.  See the "SQL-identifier hash canonicalization"
+    section of ``DESIGN.md`` for the per-field table.
+
+    Args:
+        cleaned: A deep-copied spec dict (mutated in place).  Tolerant of
+            missing keys / unexpected shapes so it never raises during hashing.
+        authored: ``True`` for the local-compile (authored) half, ``False`` for
+            the applied-recovery half.
+    """
+    if not isinstance(cleaned, dict):
+        return
+    metadata = cleaned.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("database", "schema", "name"):
+            if key in metadata:
+                metadata[key] = _to_stored_form(metadata.get(key), authored=authored)
+        if isinstance(metadata.get("version"), str):
+            metadata["version"] = metadata["version"].upper()
+    _canonicalise_inner_spec_identifiers(cleaned.get("spec"), authored=authored)
+
+
+def _normalize_for_full_spec_hash(spec: dict[str, Any], *, authored: bool = False) -> dict[str, Any]:
     """Return a copy of *spec* with hash-irrelevant fields stripped.
 
-    This is the payload hashed by :func:`_full_spec_hash`.  Diagnostic
-    diffs (and any other hash-aligned comparison) must use this helper
-    rather than re-implementing the skip set, so they report the same
-    fields the planner hashes.
+    This is the payload the full-spec hash covers.  Diagnostic diffs and any
+    other hash-aligned comparison should call this rather than re-implementing
+    the skip set, so they report the same fields the planner hashes.
 
-    Volatile metadata (see :data:`_VOLATILE_METADATA_KEYS`) is removed so
-    a tool-version bump is not treated as a change.  Spec-level
-    runtime-stamped keys (see :data:`_RUNTIME_STAMPED_SPEC_KEYS`) and
-    per-column runtime defaults (see :data:`_RUNTIME_STAMPED_COLUMN_DEFAULTS`)
-    are likewise stripped so a deploy-time ``target_lag_sec: 0`` or
-    ``length: 16777216`` stamp does not look like drift.  Remaining
-    ``metadata`` fields (name, version, database, schema) are kept.
+    Volatile metadata is removed so a tool-version bump is not read as a
+    change, and spec-level and per-column runtime defaults go too, so a
+    deploy-time stamp does not look like drift.  The remaining metadata fields
+    (name, version, database, schema) are kept.
 
-    **BatchFV parity normalisation.**  For FeatureView kinds in
-    :data:`_FV_HASH_NORMALISE_KINDS` the inner ``spec.sources`` is
-    projected to a sorted ``[{table}]`` shape (see
-    :func:`_normalise_fv_sources_for_hash`) and ``spec.features`` is
-    stripped of 1:1 ``source_column == output_column`` pass-throughs
-    (see :func:`_is_auto_derived_feature`).  See
-    docs/BATCH_FV_BUG_BASH.md §7/§8.
+    For feature-view kinds the inner source list is projected down to a sorted
+    binding shape and auto-derived 1:1 features are dropped, since the deployed
+    specification cannot reproduce either faithfully.
 
     Args:
         spec: A compiled-spec dict (e.g. the output of
             :func:`spec_compiler.compile_to_spec` or the JSON returned by
             ``DESCRIBE ... TYPE = SPECIFICATION``).
+        authored: Threaded to :func:`_canonicalise_spec_identifiers` (``True``
+            resolves the authored half to stored form; ``False`` unquotes only).
 
     Returns:
-        Deep copy with volatile, derived, operational, and runtime-stamped
-        fields removed and BatchFV parity applied.  Does not mutate *spec*.
+        A deep copy with volatile, derived, operational and runtime-stamped
+        fields removed.  Does not mutate the input.
     """
-    cleaned = cast(dict[str, Any], json.loads(json.dumps(spec, default=str)))  # deep copy via JSON round-trip
+    cleaned: dict[str, Any] = json.loads(json.dumps(spec, default=str))  # deep copy via JSON round-trip
+    # Resolve SQL identifiers FIRST, before any downstream ``.upper()``
+    # comparison.  The authored half is resolved to the stored form; the
+    # applied half is only unquoted (see DESIGN.md).
+    _canonicalise_spec_identifiers(cleaned, authored=authored)
     kind = cleaned.get("kind") if isinstance(cleaned, dict) else ""
     metadata = cleaned.get("metadata") if isinstance(cleaned, dict) else None
     if isinstance(metadata, dict):
@@ -1230,6 +1249,11 @@ def _normalize_for_full_spec_hash(spec: dict[str, Any]) -> dict[str, Any]:
             # batch + streaming tiled features so the SPECIFICATION spelling
             # does not diverge from the imperative wire token when hashing.
             _normalise_feature_function_spelling(inner.get("features"))
+            # Coalesce an explicit empty ``function_params={}`` (kept by
+            # ``model_to_dict(exclude_none=True)``) with the applied recovery
+            # that omits the key for param-less aggregations (e.g. ``count``),
+            # so an unchanged project does not loop on RECREATE_FV.
+            _drop_empty_function_params(inner.get("features"))
         # BatchFV-specific operational-default stripping.  snowml-core
         # stamps ``initialize: ON_CREATE``, ``refresh_mode: AUTO``, and a
         # default ``cluster_by`` (entities, or entities + TILE_START for
@@ -1253,25 +1277,25 @@ def _normalize_for_full_spec_hash(spec: dict[str, Any]) -> dict[str, Any]:
 _canonical_spec_for_hash = _normalize_for_full_spec_hash
 
 
-def _full_spec_hash(spec: dict[str, Any]) -> str:
+def _full_spec_hash(spec: dict[str, Any], *, authored: bool = False) -> str:
     """SHA-256 over the full spec JSON, with stable key ordering.
 
-    Used by the planner for full-spec diffs when an ``AppliedObject`` was
-    populated from ``DESCRIBE ONLINE FEATURE TABLE <name> TYPE =
-    SPECIFICATION`` (i.e. ``from_specification=True``).  The hashed
-    payload is produced by :func:`_normalize_for_full_spec_hash` (volatile
-    metadata, runtime-stamped keys, operational FV keys, and BatchFV
-    parity normalisation).
+    Used by the planner for full-spec diffs when the applied object came from a
+    specification DESCRIBE.  The hashed payload is the normalised one, with
+    volatile metadata, runtime-stamped keys and operational fields removed.
 
     Args:
         spec: A compiled-spec dict (e.g. the output of
             :func:`spec_compiler.compile_to_spec` or the JSON returned by
             ``DESCRIBE ... TYPE = SPECIFICATION``).
+        authored: Threaded to :func:`_normalize_for_full_spec_hash`.  The
+            authored and applied hashes match only when the authoring's stored
+            form equals the deployed identifier.
 
     Returns:
         64-character lowercase hex SHA-256 digest.
     """
-    canonical = json.dumps(_normalize_for_full_spec_hash(spec), sort_keys=True, ensure_ascii=True)
+    canonical = json.dumps(_normalize_for_full_spec_hash(spec, authored=authored), sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -1284,25 +1308,21 @@ def compute_local_spec_hash(
 ) -> str:
     """Compile a local FV spec dict and return its full-spec hash.
 
-    The local model dict (produced by :func:`model_to_dict`) is run
-    through :func:`spec_compiler.compile_to_spec` so the result has the
-    same shape as the JSON returned by ``DESCRIBE ... TYPE =
-    SPECIFICATION``.  The hash is then computed via
-    :func:`_full_spec_hash` so a deployed spec and a local spec produce
-    identical digests when their semantics match.
+    The local dict is run through the spec compiler so it ends up with the same
+    shape as a specification DESCRIBE, then hashed — so a deployed spec and a
+    local one produce identical digests when their semantics match.
 
-    This helper is only meaningful for FeatureView kinds.  Entity and
-    Source kinds should keep using :func:`structural_fingerprint_hash`.
+    Only meaningful for FeatureView kinds; Entity and source kinds should keep
+    using the structural fingerprint hash.
 
     Args:
-        model_dict: Spec dict from :func:`model_to_dict`.
-        database: Snowflake database name (used as ``metadata.database``).
-        schema: Snowflake schema name (used as ``metadata.schema``).
-        entity_join_keys: Optional entity-name → join-key-columns map
-            forwarded to :func:`compile_to_spec` so the wire field
-            ``ordered_entity_column_names`` matches the applied side.  When
-            omitted, the authored ``entities`` list is compiled verbatim
-            (preserving hashes for callers that do not supply the map).
+        model_dict: Spec dict from the model serializer.
+        database: Snowflake database name.
+        schema: Snowflake schema name.
+        entity_join_keys: Optional entity-name to join-key-columns map, passed
+            to the compiler so the entity column wire field matches the applied
+            side.  When omitted the authored entity list compiles verbatim,
+            preserving hashes for callers that do not supply the map.
 
     Returns:
         64-character lowercase hex SHA-256 digest of the compiled spec.
@@ -1312,36 +1332,27 @@ def compute_local_spec_hash(
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
     compiled = compile_to_spec(model_dict, database, schema, entity_join_keys=entity_join_keys)
-    return _full_spec_hash(compiled)
+    # Authored half: resolve SQL-syntax identifiers to Snowflake's stored form
+    # so they compare against the applied side's already-resolved identifiers.
+    return _full_spec_hash(compiled, authored=True)
 
 
 def fg_content_hash(spec: dict[str, Any]) -> str:
-    """SHA-256 over the FeatureGroup identity + sources tuple.
+    """SHA-256 over the FeatureGroup identity and sources tuple.
 
-    The basis is intentionally narrow:
+    The basis is deliberately narrow: the name, the version, the description,
+    the auto-prefix flag that controls output column naming, and a sorted tuple
+    of each source's name, version, slice columns and alias.  Sorting makes it
+    order-independent, so reordering the YAML does not force a destructive
+    recreate, while a version edit still does.
 
-    * ``name`` (canonical identifier on the imperative side).
-    * ``version`` (FGs pin a specific version; a version edit is a recreate).
-    * ``desc`` (free-form description; round-trips through
-      ``FeatureGroupMetadata.desc``).
-    * ``auto_prefix`` (deployed-side flag controlling output column naming).
-    * Sorted tuple of ``(fv_name, fv_version, slice_columns or [], alias or
-      None)`` — order-independent so a YAML reorder does NOT trigger a
-      destructive recreate.
-
-    Notes:
-    * ``output_columns`` is **derived** from the source FVs at register
-      time and lives in ``FeatureGroupMetadata`` only as a convenience for
-      ``list_feature_groups``; it is NOT in the basis.
-    * Unrelated client-side fields (e.g. an exporter scratch field) are
-      ignored — the hash function reads only the named keys above.
-    * ``alias = ""`` is preserved in the basis tuple as the literal empty
-      string (semantically: "no prefix"), distinct from ``alias = None``.
+    Output columns are derived from the source views at register time and are
+    not part of the basis.  Unrelated client-side fields are ignored, since the
+    hash reads only the keys above.  An empty alias is preserved as such,
+    meaning "no prefix", and stays distinct from an absent one.
 
     Args:
-        spec: An FG spec dict from either authoring (``model_to_dict`` of
-            a :class:`spec_models.FeatureGroup`) or applied state
-            (reconstructed from ``FeatureGroupMetadata``).
+        spec: An FG spec dict from either authoring or applied state.
 
     Returns:
         Hex-encoded SHA-256 digest.
@@ -1396,10 +1407,10 @@ def fg_content_hash(spec: dict[str, Any]) -> str:
 
 
 def model_to_dict(spec_obj: SpecBase) -> dict[str, Any]:
-    """Serialize a SpecBase model to a canonical dict for hashing/comparison.
+    """Serialize a SpecBase model to a canonical dict for hashing and comparison.
 
-    Renames ``schema_`` to ``schema`` so the key is consistent with raw dict
-    representations produced by ``fetch_applied_state``.
+    Renames ``schema_`` to ``schema`` so the key matches the raw dicts the state
+    module produces.
 
     Args:
         spec_obj: A SpecBase (or subclass) model instance.
@@ -1461,21 +1472,19 @@ def _feature_agg_label(entry: dict[str, Any], index: int) -> str:
 
 
 def _check_feature_aggregations(spec: dict[str, Any]) -> list[ValidationResult]:
-    """Require complete aggregation rows on FeatureView ``features``.
+    """Require complete aggregation rows on FeatureView features.
 
-    A row that carries ``function`` or ``window`` / ``window_sec`` is an
-    aggregation and must have all three of ``function``, a source-column
-    name, and integer ``window_sec``. Incomplete rows used to be dropped
-    silently at apply time, so the deployed view could have fewer
-    features than the spec declared.
-
-    Rows with none of those keys (DESCRIBE 1:1 passthrough) are skipped.
+    A row carrying a function or a window is an aggregation, and needs all three
+    of a function, a source-column name, and an integer window in seconds.
+    Incomplete rows used to be dropped silently at apply time, so the deployed
+    view could end up with fewer features than the spec declared.  Rows with
+    none of those keys are 1:1 pass-throughs and are skipped.
 
     Args:
-        spec: Normalized FeatureView spec dict (``model_to_dict`` shape).
+        spec: Normalized FeatureView spec dict.
 
     Returns:
-        ERROR results for incomplete aggregation rows; empty when none.
+        Errors for incomplete aggregation rows; empty when there are none.
     """
     kind = spec.get("kind", "")
     if "FeatureView" not in str(kind):
@@ -1540,6 +1549,115 @@ def _check_feature_aggregations(spec: dict[str, Any]) -> list[ValidationResult]:
     return results
 
 
+# Aggregation functions whose deployed output-column type is predetermined by
+# the runtime (e.g. acd -> ``LongType``), keyed by the lower-cased ``function``.
+# Mirrors core's ``spec/builder.py::_AGG_PREDETERMINED_OUTPUT`` (parity-tested).
+_AGG_REQUIRED_OUTPUT_TYPE: dict[str, str] = {
+    "count": "LongType",
+    "approx_count_distinct": "LongType",
+    "avg": "DoubleType",
+    "std": "DoubleType",
+    "var": "DoubleType",
+    "approx_percentile": "DoubleType",
+}
+
+
+def _check_feature_output_types(spec: dict[str, Any]) -> list[ValidationResult]:
+    """Reject aggregation features whose authored output type can never match
+    the runtime-deployed type (see :data:`_AGG_REQUIRED_OUTPUT_TYPE`), which
+    would otherwise loop every re-plan on a destructive ``RECREATE_FV``. The
+    authored type is compared through :data:`_BFV_TYPE_PROMOTION`, so promotable
+    spellings (e.g. ``IntegerType`` -> ``LongType``) are accepted.
+
+    Args:
+        spec: Normalized FeatureView spec dict (``model_to_dict`` shape).
+
+    Returns:
+        ERROR results for mismatched aggregation outputs; empty when none.
+    """
+    # Scoped to BatchFeatureView: the table reflects offline OFT storage
+    # widening; streaming FVs deploy through a different store.
+    if spec.get("kind") != "BatchFeatureView":
+        return []
+    # Skip secondary-key FVs: their aggregation outputs are ArrayType-wrapped by
+    # the runtime, reconciled by ``_strip_secondary_key_derivations`` instead.
+    for sk_key in ("aggregation_secondary_keys", "ordered_secondary_key_column_names"):
+        sk_val = spec.get(sk_key)
+        if isinstance(sk_val, list) and sk_val:
+            return []
+
+    results: list[ValidationResult] = []
+    fv_name = spec.get("name", "") or ""
+    for index, entry in enumerate(spec.get("features") or []):
+        if not isinstance(entry, dict):
+            continue
+        function_name = entry.get("function")
+        if not function_name:
+            continue
+        # Canonicalize ``stddev`` -> ``std`` so the table (which mirrors core's
+        # ``std`` token) matches either authoring spelling.
+        required = _AGG_REQUIRED_OUTPUT_TYPE.get(str(_canonical_function_spelling(function_name)).lower())
+        if required is None:
+            continue
+        out_col = entry.get("output_column")
+        actual = out_col.get("type") if isinstance(out_col, dict) else None
+        if actual is None:
+            continue
+        if _BFV_TYPE_PROMOTION.get(str(actual), str(actual)) != required:
+            label = _feature_agg_label(entry, index)
+            results.append(
+                _result(
+                    "ERROR",
+                    "FEATURE_OUTPUT_TYPE_INVALID",
+                    f"{fv_name}: aggregation {label} ({function_name}) requires "
+                    f"``output_column.type`` {required}, got {actual}. Author the "
+                    f"output as {required} (the runtime-deployed type).",
+                    fv_name,
+                )
+            )
+    return results
+
+
+def _check_feature_param_conflicts(spec: dict[str, Any]) -> list[ValidationResult]:
+    """Reject features that set both a ``function_params`` alias and its internal
+    key with differing values (an ambiguous authoring shape that would otherwise
+    be swallowed by the planner's defensive ``compile_to_spec`` fallbacks).
+
+    Args:
+        spec: Normalized FeatureView spec dict (``model_to_dict`` shape).
+
+    Returns:
+        ERROR results for conflicting aggregation params; empty when none.
+    """
+    from snowflake.ml.feature_store.decl.spec_compiler import _FUNCTION_PARAM_ALIASES
+
+    results: list[ValidationResult] = []
+    fv_name = spec.get("name", "") or ""
+    for index, entry in enumerate(spec.get("features") or []):
+        if not isinstance(entry, dict):
+            continue
+        params = entry.get("function_params")
+        if not isinstance(params, dict):
+            continue
+        aliases = _FUNCTION_PARAM_ALIASES.get(str(entry.get("function")).lower())
+        if not aliases:
+            continue
+        for alias, internal in aliases.items():
+            if alias in params and internal in params and params[alias] != params[internal]:
+                label = _feature_agg_label(entry, index)
+                results.append(
+                    _result(
+                        "ERROR",
+                        "FEATURE_PARAMS_CONFLICT",
+                        f"{fv_name}: aggregation {label} sets conflicting params "
+                        f"'{alias}'={params[alias]!r} and '{internal}'="
+                        f"{params[internal]!r}; provide only one.",
+                        fv_name,
+                    )
+                )
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Individual invariant checkers
 # ---------------------------------------------------------------------------
@@ -1551,25 +1669,22 @@ def _check_versions(
 ) -> list[ValidationResult]:
     """Version management invariants.
 
-    Only ``FeatureView`` and ``FeatureGroup`` kinds are required to carry an
-    explicit version string (``MISSING_VERSION`` when absent). ``Entity`` and
-    ``Source`` specs are schema-level objects without semantic versioning.
+    Only FeatureView and FeatureGroup kinds must carry an explicit version.
+    Entity and source specs are schema-level objects without semantic
+    versioning.
 
-    There is no cross-version "downgrade" rule.  Object identity is now
-    ``(name, version)`` (see :func:`spec_key`), so ``applied`` is the exact
-    same-version object (or ``None``) and a lower version number is a
-    distinct object rather than a conflict.  The former ``VERSION_CONFLICT``
-    check (rejecting a local version string strictly below the deployed one)
-    has been removed.
+    There is no downgrade rule.  Object identity is the name plus the version,
+    so the applied object is always either the exact same version or nothing at
+    all, and a lower version is a distinct object rather than a conflict.
 
     Args:
         spec: The normalized spec dict to validate.
-        applied: The currently-deployed object, or ``None`` for new objects.
-            Retained for signature stability with the other ``_check_*``
-            helpers; no longer consulted now that the downgrade rule is gone.
+        applied: The currently-deployed object, or None for new objects.  Kept
+            for signature parity with the other checks; no longer consulted now
+            that the downgrade rule is gone.
 
     Returns:
-        List of ``ValidationResult`` objects (may be empty).
+        Validation results, possibly empty.
     """
     results: list[ValidationResult] = []
     name = spec.get("name", "")
@@ -1607,36 +1722,28 @@ def _check_idempotency(
 ) -> tuple[bool, list[ValidationResult]]:
     """Content-hash idempotency check.
 
-    For FeatureView kinds whose ``applied`` object came from
-    ``DESCRIBE ... TYPE = SPECIFICATION`` (``applied.from_specification ==
-    True``), the desired-side hash is computed via
-    :func:`compute_local_spec_hash` (compile + :func:`_full_spec_hash`) so it
-    matches the strategy used by :func:`planner.generate_plan` and the
-    state-side ``content_hash`` set by
-    :func:`state.fetch_applied_state`.  Otherwise the legacy
-    structural-fingerprint comparison is used.
+    For FeatureView kinds whose applied object came from a specification
+    DESCRIBE, the desired-side hash is compiled and hashed the same way the
+    planner and the state module do it.  Everything else compares structural
+    fingerprints.
 
-    ``entity_join_keys`` must be threaded through (as the planner does), or a
-    FeatureView whose entity **name** differs from its join-key **column**
-    compiles a name-based ``ordered_entity_column_names`` that never matches
-    the column-based applied hash — and ``NO_CHANGE`` never short-circuits for
-    exactly the projects entity-name resolution (``6c1``) fixes.
+    Callers must thread the entity join keys through, as the planner does.
+    Without them, a view whose entity name differs from its join-key column
+    compiles a name-based entity column list that never matches the
+    column-based applied hash, so no-change never short-circuits.
 
     Args:
         spec: The normalized spec dict to check.
-        applied: The currently-deployed object, or ``None`` for new objects.
-        target_database: Connection target database used when compiling the
-            local spec for the full-spec hash path.  Falls back to
-            ``spec["database"]`` if empty.
-        target_schema: Connection target schema used when compiling the local
-            spec for the full-spec hash path.  Falls back to
-            ``spec["schema"]`` / ``spec["schema_"]`` if empty.
-        entity_join_keys: Optional entity-name → join-key-columns map forwarded
-            to :func:`compute_local_spec_hash` so the desired-side hash matches
-            the applied side (and the planner).
+        applied: The currently-deployed object, or None for new objects.
+        target_database: Connection database for the compile step; falls back to
+            the spec's own field when empty.
+        target_schema: Connection schema for the compile step; falls back to the
+            spec's own field when empty.
+        entity_join_keys: Optional entity-name to join-key-columns map so the
+            desired-side hash matches the applied side and the planner.
 
     Returns:
-        Tuple of ``(is_up_to_date, results)``.
+        Whether the spec is already up to date, plus any results.
     """
     if applied is None:
         return False, []
@@ -1696,26 +1803,18 @@ def _check_fv_column_evolution(
 ) -> None:
     """Column evolution checks for feature-view output columns.
 
-    The ``features`` list lives at different nesting levels depending on
-    where ``applied.spec_payload`` came from:
-
-    - ``from_specification=True`` — the payload is the full
-      ``DESCRIBE ... TYPE = SPECIFICATION`` JSON, so ``features`` is at
-      ``spec_payload['spec']['features']`` (one level deeper).
-    - ``from_specification=False`` — the payload is the legacy
-      structural-fingerprint shape with ``features`` at the top level.
-
-    Without this kind-aware lookup the ``from_specification=True`` path
-    silently sees zero deployed features, so every current feature
-    looks "added" and the validator emits a spurious ``COLUMN_ADDED``
-    warning per output column on every re-plan against a SPECIFICATION-
-    backed AppliedObject.  See ``plans/planner_revalidate_identical_spec.plan.md``.
+    The features list sits at a different depth depending on where the applied
+    payload came from: a specification DESCRIBE nests it one level inside
+    ``spec``, while the legacy fingerprint shape keeps it at the top.  Without
+    the depth-aware lookup the nested case sees zero deployed features, so every
+    current feature looks new and each re-plan emits a spurious added-column
+    warning per output column.
 
     Args:
         spec: The local spec dict being validated.
-        applied: The deployed applied object (any ``from_specification``).
-        name: The feature view's name (used in result messages).
-        results: Mutable list accumulating any ``ValidationResult`` rows.
+        applied: The deployed applied object, from either shape.
+        name: The feature view's name, used in result messages.
+        results: Mutable list accumulating any results.
     """
     if applied.from_specification:
         applied_features = applied.spec_payload.get("spec", {}).get("features", [])
@@ -1836,11 +1935,11 @@ def _check_dependencies(
     name = spec.get("name", "")
     kind = spec.get("kind", "")
 
-    # Collect entity **names** and **join-key columns** from applied state
-    # (callers merge batch entities into ``applied_state`` before calling, so
-    # this covers both the current batch and the deployed state).  A FeatureView
-    # may reference an entity either by its authored **name** or by a join-key
-    # **column**; both are valid, so index both and accept either below.
+    # Collect entity **names** and **join-key columns** from applied state.
+    # ``validate_specs`` injects batch entities into ``applied_state`` as
+    # ephemeral ``AppliedObject`` entries, so this covers both applied and
+    # batch entities.  A FeatureView may reference an entity by authored
+    # **name** or by a join-key **column**; both are valid.
     applied_entity_join_keys: set[str] = set()
     applied_entity_names: set[str] = set()
     applied_source_names: set[str] = set()
@@ -1851,11 +1950,16 @@ def _check_dependencies(
         if obj_kind == "Entity":
             entity_name = payload.get("name", "")
             if entity_name:
-                applied_entity_names.add(entity_name)
+                # Mixed provenance: deployed entities are stored form, merged
+                # batch entities are authoring SQL syntax. Index both so either
+                # matches below.
+                applied_entity_names.add(_to_stored_form(entity_name, authored=True))
+                applied_entity_names.add(_to_stored_form(entity_name, authored=False))
             for jk in payload.get("join_keys", []):
-                jk_name = jk.get("name", "")
+                jk_name = jk.get("name", "") if isinstance(jk, dict) else str(jk)
                 if jk_name:
-                    applied_entity_join_keys.add(jk_name)
+                    applied_entity_join_keys.add(_to_stored_form(jk_name, authored=True))
+                    applied_entity_join_keys.add(_to_stored_form(jk_name, authored=False))
         elif obj_kind in ("StreamingSource", "BatchSource"):
             src_name = payload.get("name", "")
             if src_name:
@@ -1866,19 +1970,32 @@ def _check_dependencies(
                 applied_fv_names.add(fv_name)
 
     if "FeatureView" in kind:
-        # Entity reference validation.  A FeatureView's ``entities`` list may
-        # name an entity by its authored **name** or by a join-key **column**
-        # (the two coincide in the common case).  Accept either — callers merge
-        # batch entities into ``applied_state`` so both the current batch and
-        # the deployed state are covered.
-        entity_refs = spec.get("entities", [])
-        for eref in entity_refs:
-            if eref not in applied_entity_join_keys and eref not in applied_entity_names:
+        # Entity reference validation.  A FeatureView's ``entities`` entries
+        # are dicts (``{"name": ...}``) or plain strings, and may name an
+        # entity by its authored **name** or by a join-key **column** (the two
+        # coincide in the common case).  Accept either — callers merge batch
+        # entities into ``applied_state`` so both the current batch and the
+        # deployed state are covered.
+        for eref in spec.get("entities", []):
+            entity_name = eref.get("name", "") if isinstance(eref, dict) else str(eref)
+            # Resolve the authoring reference (SQL syntax) to stored form before
+            # the membership gate: a quoted authoring (``"userId"``) must match
+            # the bare deployed join-key.  This is a membership gate, not
+            # equality: the applied sets index both normalisations, so
+            # over-accepting can only miss a ``MISSING_ENTITY``, never emit a
+            # destructive op (the idempotency hash and
+            # ``ENTITY_JOIN_KEY_IMMUTABLE`` remain the drift authority).
+            eref_resolved = _to_stored_form(entity_name, authored=True) if entity_name else entity_name
+            if (
+                entity_name
+                and eref_resolved not in applied_entity_join_keys
+                and eref_resolved not in applied_entity_names
+            ):
                 results.append(
                     _result(
                         "ERROR",
                         "MISSING_ENTITY",
-                        f"{name}: references entity '{eref}' but no entity with that "
+                        f"{name}: references entity '{entity_name}' but no entity with that "
                         "name or join key exists in the current batch or applied state.",
                         name,
                     )
@@ -1924,41 +2041,30 @@ def _check_feature_group_sources(
 ) -> list[ValidationResult]:
     """Cross-FV invariants for a single FeatureGroup spec.
 
-    Mirrors the imperative ``register_feature_group`` preflight so
-    ``snow feature plan`` surfaces shape errors at compile time:
+    Mirrors the imperative register preflight so planning surfaces shape errors
+    at compile time:
 
-    * ``MISSING_FEATURE_VIEW`` — a referenced source ``(name, version)``
-      pair that resolves in neither the local batch nor the applied state.
-    * ``FG_DUPLICATE_SOURCE`` — the same ``(name, version)`` appears more
-      than once in ``feature_views`` (Pydantic catches this at model
-      construction time, but the validator surfaces it for raw-dict /
-      compiled-spec callers).
-    * ``FG_SOURCE_NOT_ONLINE_POSTGRES`` — a referenced source FV that we
-      can prove is **not** ``online: true`` with ``store_type: POSTGRES``.
-      Three resolution rules apply, in order:
+    * ``MISSING_FEATURE_VIEW`` — a referenced source resolves in neither the
+      local batch nor the applied state.
+    * ``FG_DUPLICATE_SOURCE`` — the same name and version appears twice.
+      Pydantic catches this at model construction, but raw-dict callers need it
+      too.
+    * ``FG_SOURCE_NOT_ONLINE_POSTGRES`` — a referenced source that we can prove
+      is not online and Postgres-backed.
 
-      1. If the source FV ``(name, version)`` is in ``batch_fv_specs`` and
-         the local payload declares ``online_config.store_type``, validate
-         against it.
-      2. Else, if the FV is in ``applied_state``, validate against the
-         applied payload's ``online`` + ``online_config.store_type`` /
-         ``online_store_type`` field (whichever is populated).
-      3. Else (source FV unknown to both views, or local payload omits
-         ``online_config`` entirely), soft-pass: the imperative API will
-         raise the precondition at apply time.  This avoids false
-         negatives for the common authoring shape that doesn't carry
-         ``store_type`` at all (the declarative layer doesn't expose
-         ``store_type:`` as an authoring field today — TODO promote it
-         per Phase 2 plan note).
+    Online state resolves from the local payload first, then the applied one.
+    When neither carries enough signal the check soft-passes and the imperative
+    API raises the precondition at apply time, which avoids false negatives for
+    the common authoring shape: the declarative layer does not expose the store
+    type as an authoring field today.
 
     Args:
         spec: The FG spec dict to validate.
-        batch_fv_specs: Map of uppercased ``(fv_name, fv_version)`` to local
-            FV spec dict (e.g. built by the caller from ``batch.specs``).
+        batch_fv_specs: Map of uppercased name and version to local FV spec.
         applied_state: Applied-state snapshot.
 
     Returns:
-        List of ``ValidationResult`` objects (may be empty).
+        Validation results, possibly empty.
     """
     results: list[ValidationResult] = []
     if spec.get("kind") != "FeatureGroup":
@@ -2018,12 +2124,14 @@ def _check_feature_group_sources(
             )
             continue
 
-        # Try local first, then applied — whichever payload can prove the
-        # online + Postgres invariant gets used.
+        # Try local first, then applied — the first payload that carries
+        # signal decides (the ``break`` below is unconditional).
         for payload in (local_payload, applied_payload):
             if payload is None:
                 continue
-            online = bool(payload.get("online", False))
+            # The applied OFT SPECIFICATION payload carries no top-level
+            # ``online`` flag; its signal is a non-empty ``online_store_type``.
+            online = bool(payload.get("online", False)) or bool(payload.get("online_store_type"))
             online_config = payload.get("online_config")
             store_type = ""
             if isinstance(online_config, dict):
@@ -2063,23 +2171,28 @@ def _check_feature_group_sources(
                             fg_name,
                         )
                     )
-                break  # one violation per ref is enough
+            break  # first payload with signal decides this ref
 
     return results
 
 
-def _ordered_join_key_names(payload: Any) -> list[str]:
-    """Ordered, upper-cased join-key column names from an Entity payload.
+def _ordered_join_key_names(payload: Any, *, authored: bool) -> list[str]:
+    """Ordered, stored-form join-key column names from an Entity payload.
 
-    Accepts the authoring/applied Entity shape where ``join_keys`` is a list
-    of ``{"name": ..., "type": ...}`` dicts (or bare column-name strings).
-    Order is preserved — it is the OFT primary-key order.
+    Accepts the Entity shape where ``join_keys`` is a list of
+    ``{"name": ..., "type": ...}`` dicts (or bare strings), preserving order
+    (the OFT primary-key order). Each name goes through :func:`_to_stored_form`
+    (not ``.upper()``) so a quoted authoring (``"userId"``) compares equal to
+    the deployed bare ``userId`` instead of folding to ``USERID`` and raising a
+    false ``ENTITY_JOIN_KEY_IMMUTABLE``.
 
     Args:
         payload: The Entity spec dict (authoring or applied ``spec_payload``).
+        authored: ``True`` for the authoring half (SQL syntax, resolved first),
+            ``False`` for the applied half (already stored, unquoted only).
 
     Returns:
-        The ordered, upper-cased join-key column names.
+        The ordered, stored-form join-key column names.
     """
     if not isinstance(payload, dict):
         return []
@@ -2089,9 +2202,9 @@ def _ordered_join_key_names(payload: Any) -> list[str]:
     cols: list[str] = []
     for jk in raw:
         if isinstance(jk, dict) and jk.get("name"):
-            cols.append(str(jk["name"]).upper())
+            cols.append(str(_to_stored_form(str(jk["name"]), authored=authored)))
         elif isinstance(jk, str) and jk:
-            cols.append(jk.upper())
+            cols.append(str(_to_stored_form(jk, authored=authored)))
     return cols
 
 
@@ -2101,33 +2214,35 @@ def _check_entity_join_keys_immutable(
 ) -> list[ValidationResult]:
     """Reject join-key edits on an already-deployed entity at plan time.
 
-    Join keys are identity for a registered entity: ``FeatureStore.update_entity``
-    is description-only (``ALTER TAG ... SET COMMENT``), so an edited YAML can
-    never change the deployed key set.  Left unchecked, a rename / add / drop /
-    **reorder** flips a dependent FeatureView's ``ordered_entity_column_names``
-    and loops it on a destructive ``RECREATE_FV`` that never converges (the
-    executor rebuilds the FV from the live entity, which still has the old
-    keys).
+    Join keys are identity for a registered entity, and updating one only
+    rewrites its comment, so an edited YAML can never change the deployed key
+    set.  Left unchecked, a rename, addition, removal or reorder flips a
+    dependent feature view's entity column list and loops it on a destructive
+    recreate that never converges, because the executor rebuilds the view from
+    the live entity and its keys never moved.
 
-    Order is significant — it is the OFT primary-key order — so this compares
-    the **ordered** column names (case insensitive), unlike the sorted Entity
-    structural fingerprint.  Callers must run this **before** any idempotency
-    skip, since a reorder hashes identically under that sorted fingerprint.
+    Order matters, so this compares the ordered names case-insensitively rather
+    than the sorted set the structural fingerprint uses.  Callers must run it
+    before the idempotency skip, since a reorder hashes identically under that
+    sorted fingerprint.
 
     Args:
         spec: The local Entity spec dict being validated.
-        applied: The deployed applied object, or ``None`` for new entities.
+        applied: The deployed applied object, or None for new entities.
 
     Returns:
-        List of ``ValidationResult`` objects (may be empty).
+        Validation results, possibly empty.
     """
     if applied is None:
         return []
     if spec.get("kind", "") != "Entity":
         return []
 
-    spec_jks = _ordered_join_key_names(spec)
-    applied_jks = _ordered_join_key_names(applied.spec_payload)
+    # The local Entity spec is authoring (SQL syntax); the applied payload is
+    # Snowflake's stored form.  Resolve each half on its own provenance so a
+    # quoted exported ``"userId"`` matches the deployed bare ``userId``.
+    spec_jks = _ordered_join_key_names(spec, authored=True)
+    applied_jks = _ordered_join_key_names(applied.spec_payload, authored=False)
     if spec_jks == applied_jks:
         return []
 
@@ -2151,21 +2266,18 @@ def _check_destructive(
 ) -> list[ValidationResult]:
     """Detect changes that require re-materialization.
 
-    The deployed features list lives at different nesting levels
-    depending on where ``applied.spec_payload`` came from — see
-    :func:`_check_fv_column_evolution` for the same nesting contract.
-    Without this kind-aware lookup, ``_check_destructive`` silently
-    sees zero deployed features for ``from_specification=True``
-    AppliedObjects and never fires the ``DESTRUCTIVE_CHANGE`` error
-    that gates plain ``snow feature apply`` against destructive
-    aggregation/function edits.
+    The deployed features list sits at a different depth depending on where the
+    applied payload came from, exactly as in the column-evolution check.
+    Without the depth-aware lookup the nested case sees zero deployed features
+    and never raises the error that gates a plain apply against destructive
+    aggregation edits.
 
     Args:
         spec: The local spec dict being validated.
-        applied: The deployed applied object, or ``None`` for new objects.
+        applied: The deployed applied object, or None for new objects.
 
     Returns:
-        List of ``ValidationResult`` objects (may be empty).
+        Validation results, possibly empty.
     """
     if applied is None:
         return []
@@ -2209,59 +2321,25 @@ def _check_destructive(
     return results
 
 
-def _check_state_sync(
-    spec: dict[str, Any],
-    applied: AppliedObject | None,
-) -> list[ValidationResult]:
-    """State-synchronization invariants (concurrent modification / state drift)."""
-    if applied is None:
-        return []
-
-    results: list[ValidationResult] = []
-    name = spec.get("name", "")
-    spec_version = spec.get("version") or ""
-    applied_version = applied.version or ""
-
-    # State drift: applied has a strictly newer version than what the plan expects.
-    # This indicates a concurrent modification between fetch_applied_state and now.
-    if applied_version and spec_version and applied_version > spec_version:
-        results.append(
-            _result(
-                "ERROR",
-                "STATE_DRIFT",
-                f"{name}: state drift detected. Expected version '{spec_version}', found "
-                f"'{applied_version}'. Re-run plan to refresh state.",
-                name,
-            )
-        )
-
-    return results
-
-
 def _check_database_schema_mismatch(
     specs: list[dict[str, Any]],
     target_database: str,
     target_schema: str,
 ) -> list[ValidationResult]:
-    """Warn when spec database/schema fields differ from the connection target.
+    """Warn when spec database or schema fields differ from the connection target.
 
-    When a spec explicitly sets ``database`` or ``schema`` / ``schema_`` to a
-    value that differs from the connection target, the connection target will
-    always be used — the spec field is ignored.  This check surfaces that
-    discrepancy so users are aware.
-
-    Only checks are emitted when both the spec field and the target are
-    non-empty (and differ).
+    A spec that names a database or schema other than the connection target is
+    ignored — the target always wins — so this surfaces the discrepancy for the
+    user.  It only fires when both the spec field and the target are non-empty
+    and they differ.
 
     Args:
-        specs: List of normalised spec dicts to check.
-        target_database: The connection's target database (uppercased for
-            comparison).
-        target_schema: The connection's target schema (uppercased for
-            comparison).
+        specs: Normalised spec dicts to check.
+        target_database: The connection's target database.
+        target_schema: The connection's target schema.
 
     Returns:
-        List of ``ValidationResult`` objects with severity ``WARNING``.
+        Warning-severity validation results.
     """
     results: list[ValidationResult] = []
     target_db_upper = (target_database or "").upper()
@@ -2353,25 +2431,24 @@ def batch_feature_view_structural_equivalent(
 ) -> bool:
     """Return True if local and deployed batch FVs differ only operationally.
 
-    Compares the structural subset of ``spec`` (sources, tiling, entities)
-    between ``compile_to_spec(local_authoring)`` and *applied_payload* from
-    ``DESCRIBE … TYPE = SPECIFICATION``.  Used by the planner to emit
-    ``UPDATE_FV`` instead of ``RECREATE_FV`` when refresh cadence, warehouse,
-    description, or online toggles change without semantic FV edits.
+    Compares the structural subset of the inner spec — sources, tiling and
+    entities — between the compiled local spec and the deployed one.  The planner
+    uses this to emit an in-place update instead of a recreate when refresh
+    cadence, warehouse, description or online toggles change without any
+    semantic edit.
 
     Args:
-        local_authoring: Parsed authoring dict for ``BatchFeatureView``.
-        applied_payload: Full ``AppliedObject.spec_payload`` from state fetch.
-        database: Target database for local compile.
-        schema: Target schema for local compile.
-        entity_join_keys: Optional entity-name → join-key-columns map forwarded
-            to :func:`compile_to_spec` so the local wire field
-            ``ordered_entity_column_names`` matches the applied side's join-key
+        local_authoring: Parsed authoring dict for the batch feature view.
+        applied_payload: Full applied-state payload from the state fetch.
+        database: Target database for the local compile.
+        schema: Target schema for the local compile.
+        entity_join_keys: Optional entity-name to join-key-columns map so the
+            local entity column wire field matches the applied side's join-key
             columns.
 
     Returns:
-        ``True`` when structural projections match; ``False`` otherwise or on
-        compile errors.
+        True when the structural projections match, False otherwise or on a
+        compile error.
     """
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
@@ -2387,38 +2464,36 @@ def batch_feature_view_structural_equivalent(
     def _project(inner: dict[str, Any], ref_inner: dict[str, Any] | None = None) -> dict[str, Any]:
         """Project the FV inner spec onto its semantic-stable subset.
 
-        Mirrors the BatchFV parity normalisation in
-        :func:`_full_spec_hash` (see that docstring for the lossy
-        round-trip background): drop ``sources[].name`` / ``columns`` /
-        ``source_type`` in favour of a sorted ``[{table}]`` projection,
-        and strip auto-derived 1:1 features.  Without this projection
-        the deployed BatchFV ``sources = []`` and auto-derived
-        ``features`` always disagree with the local-compile shape and
-        every BatchFV edit falls through to ``RECREATE_FV``.
+        Mirrors the parity normalisation the full-spec hash applies: source
+        bindings reduce to a sorted projection and auto-derived 1:1 features are
+        dropped.  Without it, the deployed empty source list and auto-derived
+        features always disagree with the local shape, and every batch edit
+        falls through to a recreate.
 
-        When ``ref_inner`` is provided (the local/authored side), strip
-        ``refresh_mode`` from the projection when the operator did not
-        author it.  Snowflake always stamps INCREMENTAL or FULL on the DT
-        even when the operator never specified a value; without this strip
-        a Snowflake-resolved ``refresh_mode`` on the applied side creates a
-        spurious structural diff.
+        For the applied side, pass the local inner spec so a refresh mode the
+        operator never authored can be dropped.  Snowflake always stamps one, so
+        leaving it in creates a spurious structural diff.
+
+        Identifiers use the same asymmetric contract as :func:`_full_spec_hash`
+        (local side resolves to stored form, applied side unquotes only) so a
+        quoted column cannot make the ``UPDATE_FV`` gate and the ``RECREATE_FV``
+        hash disagree.
 
         Args:
-            inner: The FV inner spec block (``spec`` payload) to project.
-            ref_inner: When projecting the applied side, pass the local
-                inner spec so asymmetric normalisation can fire.  Omit
-                (``None``) when projecting the local side.
+            inner: The FV inner spec block to project.
+            ref_inner: The local inner spec when projecting the applied side;
+                omit when projecting the local side.
 
         Returns:
-            A copy of *inner* restricted to the structurally-stable
-            keys with sources / features normalised for cross-side
-            comparison.
+            A copy of the inner spec restricted to the structurally-stable keys,
+            with sources and features normalised for comparison.
         """
         block: dict[str, Any] = {}
         for k in _BATCH_FV_STRUCTURAL_INNER_KEYS:
             if k not in inner:
                 continue
             block[k] = copy.deepcopy(inner[k])
+        _canonicalise_inner_spec_identifiers(block, authored=ref_inner is None)
         if "sources" in block:
             block["sources"] = _normalise_fv_sources_for_hash(block.get("sources"))
         if "features" in block and isinstance(block["features"], list):
@@ -2610,33 +2685,38 @@ def _check_batch_feature_view_constraints(
 def _check_streaming_feature_view_constraints(
     spec: dict[str, Any],
 ) -> list[ValidationResult]:
-    """Validate ``StreamingFeatureView`` authoring rules that the decl
-    surface must catch before apply.
+    """Validate StreamingFeatureView authoring rules before apply.
 
-    A **tiled** streaming FV (any feature declares an aggregation window)
-    materialises its tiles as a managed offline Dynamic Table whose
-    ``CREATE DYNAMIC TABLE … TARGET_LAG`` is driven by ``refresh_freq`` —
-    the imperative ``FeatureView._validate`` requires it, and without it
-    the register flow silently degrades to a plain VIEW over the untiled
-    source query (no tiles). So a tiled streaming FV must carry
-    ``refresh_freq``.  This mirrors ``BATCH_FV_TILING_REFRESH``.
+    A tiled streaming view — one where any feature declares an aggregation
+    window — materialises its tiles as a managed Dynamic Table whose target lag
+    comes from ``refresh_freq``.  The imperative layer requires it, and without
+    it the register flow quietly degrades to a plain view over the untiled source
+    query, producing no tiles at all.  So a tiled streaming view must carry
+    ``refresh_freq``, mirroring the batch check.
 
-    Unlike the batch check, ``target_lag`` / ``target_lag_sec`` are **not**
-    accepted substitutes here: on a streaming FV they name the Online
-    Feature Table's lag, which the Snowflake runtime stamps to ``0`` on
-    the ingest path — they do not schedule the offline tile DT.  Only
-    ``refresh_freq`` supplies the offline cadence.
+    Unlike the batch check, ``target_lag`` and ``target_lag_sec`` are not
+    accepted substitutes: on a streaming view they name the online table's lag,
+    which the runtime stamps to zero on the ingest path, and they never schedule
+    the offline tile table.  A non-tiled streaming view materialises to a
+    zero-lag view with no table to schedule, so it is unaffected.
 
-    A non-tiled streaming FV (1:1 passthrough features, no windows)
-    materialises to a zero-lag VIEW and has no offline DT to schedule, so
-    it is unaffected.
+    Two further rules catch what the imperative stream-config builder would
+    otherwise reject halfway through an apply, so an unappliable spec fails at
+    plan time instead.  A streaming view is by definition backed by a stream
+    config, and that cannot be built without both a source entry carrying a name
+    and a UDF with a name and an inlinable body (either an authoring file or an
+    already-inlined definition).
+
+    These run after the idempotency skip, so a hash-matched legacy object that
+    pre-dates the metadata — a view-backed feature view recovered as a near-empty
+    shell, say — stays unchanged and is never flagged.
 
     Args:
         spec: The StreamingFeatureView authoring dict.
 
     Returns:
-        A list of ``ValidationResult`` (a single ``STREAM_FV_TILING_REFRESH``
-        ERROR when a tiled streaming FV omits ``refresh_freq``, else empty).
+        Validation results for a tiled view missing its refresh cadence, a
+        missing named source, and a missing or unusable UDF.
     """
     results: list[ValidationResult] = []
     name = spec.get("name", "")
@@ -2656,6 +2736,39 @@ def _check_streaming_feature_view_constraints(
                 name,
             )
         )
+
+    sources = spec.get("sources") or []
+    has_named_source = any(isinstance(s, dict) and str(s.get("name") or "").strip() for s in sources)
+    if not has_named_source:
+        results.append(
+            _result(
+                "ERROR",
+                "STREAM_FV_SOURCE_REQUIRED",
+                f"{name}: StreamingFeatureView must declare a stream source in ``sources[]`` with a "
+                "``name`` — a StreamingFeatureView is always backed by a StreamConfig, which cannot "
+                "be built without one (the imperative register flow raises the same error at apply).",
+                name,
+            )
+        )
+
+    udf = spec.get("udf")
+    udf_ok = (
+        isinstance(udf, dict)
+        and str(udf.get("name") or "").strip()
+        and (udf.get("file") or udf.get("function_definition"))
+    )
+    if not udf_ok:
+        results.append(
+            _result(
+                "ERROR",
+                "STREAM_FV_UDF_REQUIRED",
+                f"{name}: StreamingFeatureView must declare a ``udf`` with a ``name`` and an inlinable "
+                "body (authoring ``file`` or inlined ``function_definition``) — the StreamConfig "
+                "transformation function is required (the imperative register flow raises the same "
+                "error at apply).",
+                name,
+            )
+        )
     return results
 
 
@@ -2663,23 +2776,20 @@ def _check_source_compatibility(
     batch_specs: list[dict[str, Any]],
     applied_state: AppliedState,
 ) -> list[ValidationResult]:
-    """Check that source spec changes are compatible with dependent feature views.
+    """Check that source changes are compatible with dependent feature views.
 
-    For each source spec in the batch, compares it against the applied version and
-    checks whether any feature views in the batch reference affected columns.
-
-    Rules:
-    - Column removed and used by a batch FV: ERROR (SOURCE_COLUMN_REMOVED)
-    - Column type changed and used by a batch FV: ERROR (SOURCE_COLUMN_TYPE_CHANGED)
-    - Column added: WARNING (SOURCE_COLUMN_ADDED)
-    - Source absent from batch but referenced by a batch FV: ERROR (SOURCE_DELETED_WITH_DEPENDENTS)
+    Compares each source spec in the batch against its applied version and looks
+    at whether any feature view in the batch touches the affected columns.
+    Removing or retyping a column that a view depends on is an error, while
+    adding one is only a warning.  Dropping a source that a view still references
+    is also an error.
 
     Args:
-        batch_specs: List of normalised spec dicts in the current batch.
+        batch_specs: Normalised spec dicts in the current batch.
         applied_state: Current applied-state snapshot.
 
     Returns:
-        List of ``ValidationResult`` objects.
+        Validation results.
     """
     results: list[ValidationResult] = []
 
@@ -2804,25 +2914,23 @@ def validate_specs(
 ) -> list[ValidationResult]:
     """Validate a spec batch against all invariant rules.
 
-    This is a pure function — no side effects, no database access.
+    Pure — no side effects, no database access.
 
     Args:
         batch: The parsed spec batch to validate.
-        applied_state: Current applied-state snapshot (from ``fetch_applied_state``).
-        target_database: Connection target database; when non-empty, specs with a
-            differing ``database`` field produce a ``DB_MISMATCH`` warning.
-        target_schema: Connection target schema; when non-empty, specs with a
-            differing ``schema`` / ``schema_`` field produce a ``SCHEMA_MISMATCH``
-            warning.
+        applied_state: Current applied-state snapshot.
+        target_database: Connection target database; when non-empty, a spec
+            naming a different database produces a mismatch warning.
+        target_schema: Connection target schema; when non-empty, a spec naming a
+            different schema produces a mismatch warning.
 
     Returns:
-        Combined list of ``ValidationResult`` objects (ERRORRs and WARNINGGs).
+        Combined list of errors and warnings.
     """
     results: list[ValidationResult] = []
 
     # Build lookup data from the batch for cross-spec dependency checks.
-    # We need entity join-keys and source names from ALL specs in this batch.
-    batch_entity_join_keys: set[str] = set()
+    # We need source names from ALL specs in this batch.
     batch_source_names: set[str] = set()
     batch_fv_names: set[str] = set()
     batch_names: set[str] = set()
@@ -2833,12 +2941,7 @@ def validate_specs(
         name = data.get("name", "")
         if name:
             batch_names.add(name)
-        if kind == "Entity":
-            for jk in data.get("join_keys", []):
-                jk_name = jk.get("name", "")
-                if jk_name:
-                    batch_entity_join_keys.add(jk_name)
-        elif kind in ("StreamingSource", "BatchSource"):
+        if kind in ("StreamingSource", "BatchSource"):
             if name:
                 batch_source_names.add(name)
         elif "FeatureView" in kind:
@@ -2875,6 +2978,16 @@ def validate_specs(
         if d.get("kind") == "BatchSource" and d.get("name"):
             batch_source_specs[d["name"]] = d
 
+    # FeatureView specs keyed by uppercased ``(name, version)`` — the tuple
+    # contract ``_check_feature_group_sources`` expects so an FG source
+    # reference resolves to the exact pinned version rather than being
+    # shadowed by another version of the same name.
+    batch_fv_specs: dict[tuple[str, str], dict[str, Any]] = {}
+    for spec_obj in batch.specs:
+        d = model_to_dict(spec_obj)
+        if "FeatureView" in str(d.get("kind", "")) and d.get("name"):
+            batch_fv_specs[(d["name"].upper(), str(d.get("version") or "").upper())] = d
+
     # Entity-name → join-key-columns map, mirroring ``planner.generate_plan``.
     # ``_check_idempotency`` compiles each local FV through
     # ``compute_local_spec_hash``; without this map an FV whose entity name
@@ -2900,6 +3013,13 @@ def validate_specs(
         # incomplete aggregation must fail even on a no-op re-plan.
         if "FeatureView" in str(data.get("kind", "")):
             results.extend(_check_feature_aggregations(data))
+            # Reject aggregation features whose authored output_column.type
+            # cannot match the runtime-predetermined type (independent of
+            # applied state; a wrong type would otherwise loop on RECREATE_FV).
+            results.extend(_check_feature_output_types(data))
+            # Reject ambiguous function_params (alias + internal key disagree),
+            # which the planner's compile_to_spec fallbacks would otherwise hide.
+            results.extend(_check_feature_param_conflicts(data))
 
         # Entity join keys are immutable after create.  Run this BEFORE the
         # idempotency skip: a composite-key reorder hashes identically under
@@ -2932,19 +3052,23 @@ def validate_specs(
             results.extend(_check_batch_feature_view_constraints(data, batch_source_specs))
         elif data.get("kind") == "StreamingFeatureView":
             results.extend(_check_streaming_feature_view_constraints(data))
+        elif data.get("kind") == "FeatureGroup":
+            # Enforce the register_feature_group source preconditions at plan
+            # time: unresolved / duplicate / not-online-Postgres sources.
+            # Resolve against the raw applied_state (the helper reads only
+            # FeatureView-kind applied objects, so the ephemeral-Entity
+            # merged_applied is unnecessary here).
+            results.extend(_check_feature_group_sources(data, batch_fv_specs, applied_state))
 
         # 5. Destructive changes
         results.extend(_check_destructive(data, applied))
 
-        # 6. State sync / drift detection
-        results.extend(_check_state_sync(data, applied))
-
-    # 7. Database/schema mismatch warnings (batch-level, after per-spec loop)
+    # 6. Database/schema mismatch warnings (batch-level, after per-spec loop)
     if target_database or target_schema:
         all_dicts = [model_to_dict(s) for s in batch.specs]
         results.extend(_check_database_schema_mismatch(all_dicts, target_database, target_schema))
 
-    # 8. Source compatibility checks (batch-level)
+    # 7. Source compatibility checks (batch-level)
     all_dicts = [model_to_dict(s) for s in batch.specs]
     results.extend(_check_source_compatibility(all_dicts, applied_state))
 

@@ -4,6 +4,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 
 from absl.testing import absltest
@@ -94,6 +95,32 @@ class FileUtilsTest(absltest.TestCase):
             with self.assertRaises(ValueError):
                 file_utils.zip_python_package(zip_module_filename, "snowflake.fake.fake_module")
             sys.path.remove(os.path.abspath(tmpdir))
+
+    def test_zip_python_package_excludes_named_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_mod_dirpath = os.path.join(tmpdir, "snowflake", "fake", "fake_module")
+            experimental_dirpath = os.path.join(fake_mod_dirpath, "experimental")
+            os.makedirs(experimental_dirpath)
+
+            with open(os.path.join(fake_mod_dirpath, "p.py"), "w", encoding="utf-8") as f:
+                f.write(PY_SRC)
+            with open(os.path.join(experimental_dirpath, "note.py"), "w", encoding="utf-8") as f:
+                f.write(PY_SRC)
+
+            sys.path.insert(0, os.path.abspath(tmpdir))
+            importlib.import_module("snowflake.fake.fake_module.p")
+            zip_module_filename = os.path.join(tmpdir, "fake_module.zip")
+            file_utils.zip_python_package(
+                zip_module_filename,
+                "snowflake.fake.fake_module",
+                exclude_dir_names=("experimental",),
+            )
+            sys.path.remove(os.path.abspath(tmpdir))
+
+            with zipfile.ZipFile(zip_module_filename) as zf:
+                names = zf.namelist()
+            self.assertIn("snowflake/fake/fake_module/p.py", names)
+            self.assertFalse(any("experimental" in name for name in names))
 
     def test_hash_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -4,7 +4,6 @@ import os
 import tempfile
 import time
 from typing import Any
-from unittest import mock
 
 # Bazel sandboxes mount $HOME read-only. huggingface_hub resolves HF_HOME at
 # import time, so these must be set before snowml huggingface modules are imported.
@@ -20,7 +19,6 @@ import pandas as pd  # noqa: E402
 import requests  # noqa: E402
 import yaml  # noqa: E402
 
-from snowflake.ml._internal import platform_capabilities  # noqa: E402
 from snowflake.ml.model import (  # noqa: E402
     ModelVersion,
     PeftAdapter,
@@ -35,21 +33,16 @@ from tests.integ.snowflake.ml.registry.services import (  # noqa: E402
 from tests.integ.snowflake.ml.test_utils import (  # noqa: E402
     db_manager,
     lora_adapter_account_gate,
+    lora_adapters_enabled_patch,
     test_env_utils,
 )
+
+lora_adapters_enabled_patch.enable()
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
 _SMOLLM2 = "HuggingFaceTB/SmolLM2-135M-Instruct"
 _SMOLLM2_ADAPTER = "Miladsaeedi70/smollm2-135m-scientific-sft-lora"
 _SMOLLM2_ADAPTER_REVISION = "c344de0f75239d4de9341f7d38a580cdd8b10d25"
-
-_LORA_ADAPTERS_ENABLED_PATCHER = mock.patch.object(
-    platform_capabilities.PlatformCapabilities,
-    "is_lora_adapters_enabled",
-    return_value=True,
-    autospec=True,
-)
-_LORA_ADAPTERS_ENABLED_PATCHER.start()
 
 
 def write_stub_adapter_dir(path: str) -> str:
@@ -129,7 +122,13 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
     def _served_name(self, mv: ModelVersion) -> str:
         return f"{mv.fully_qualified_model_name}/VERSIONS/{mv.version_name}"
 
-    def _chat_df(self) -> pd.DataFrame:
+    def _chat_df(
+        self,
+        *,
+        prompt: str = "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+        temperature: float = 0.9,
+        max_completion_tokens: int = 64,
+    ) -> pd.DataFrame:
         return pd.DataFrame.from_records(
             [
                 {
@@ -143,15 +142,13 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": (
-                                        "A descendant of the Lost City of Atlantis, who swam to Earth while saying, "
-                                    ),
+                                    "text": prompt,
                                 }
                             ],
                         },
                     ],
-                    "temperature": 0.9,
-                    "max_completion_tokens": 64,
+                    "temperature": temperature,
+                    "max_completion_tokens": max_completion_tokens,
                     "stop": None,
                     "n": 1,
                     "stream": False,
@@ -163,12 +160,21 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
             ]
         )
 
-    def _assert_chat_res(self, res: pd.DataFrame) -> None:
+    def _first_chat_content(self, res: pd.DataFrame) -> str:
+        self._assert_chat_res(res)
+        choices = res.iloc[0]["choices"]
+        return str(choices[0]["message"]["content"])
+
+    def _assert_chat_res(self, res: pd.DataFrame, *, expected_model_substr: str | None = None) -> None:
         pd.testing.assert_index_equal(
             res.columns,
             pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
             check_order=False,
         )
+        if expected_model_substr is not None:
+            for model_name in res["model"]:
+                self.assertIsInstance(model_name, str)
+                self.assertIn(expected_model_substr.lower(), model_name.lower())
         for row in res["choices"]:
             self.assertIsInstance(row, list)
             self.assertGreater(len(row), 0)
@@ -176,12 +182,16 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
             self.assertIn("content", row[0]["message"])
             self.assertGreater(len(row[0]["message"]["content"]), 0)
 
-    def _assert_sql_chat(self, rows: Any) -> None:
+    def _assert_sql_chat(self, rows: Any, *, expected_model_substr: str | None = None) -> None:
         self.assertGreater(len(rows), 0)
         value = rows[0][0]
         if isinstance(value, str):
             value = json.loads(value)
         self.assertIsInstance(value, dict)
+        if expected_model_substr is not None:
+            model_name = value.get("model") or value.get("MODEL")
+            self.assertIsInstance(model_name, str)
+            self.assertIn(expected_model_substr.lower(), model_name.lower())
         choices = value.get("choices") or value.get("CHOICES") or []
         self.assertGreater(len(choices), 0)
         message = choices[0].get("message") or choices[0].get("MESSAGE") or {}
@@ -324,7 +334,6 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
             "service_name": service_name,
             "service_compute_pool": self._TEST_GPU_COMPUTE_POOL,
             "ingress_enabled": True,
-            "force_rebuild": True,
             "inference_engine_options": self._vllm_engine_options(extra_args=engine_args_override),
         }
         if adapters is not None:
@@ -357,18 +366,20 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
         mv: ModelVersion,
         *,
         params: dict[str, Any] | None = None,
+        input_data: pd.DataFrame | None = None,
         expect_ok: bool = True,
     ) -> Any:
         endpoint = self._ensure_ingress_url(self._service_owner(mv))
         payload = self._build_rest_inference_request_payload(
             registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_SPLIT,
-            self._chat_df(),
+            input_data if input_data is not None else self._chat_df(),
             params,
         )
         res = requests.post(
             f"https://{endpoint}/--call--",
             json=payload,
             auth=self._get_auth_for_inference(endpoint),
+            timeout=60,
         )
         if expect_ok:
             res.raise_for_status()

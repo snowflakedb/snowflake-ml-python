@@ -59,7 +59,9 @@ class ServiceInfo(TypedDict):
 
 class ModelOperator:
     INFERENCE_SERVICE_ENDPOINT_NAME = "inference"
-    INGRESS_ENDPOINT_URL_SUFFIX = "snowflakecomputing.app"
+    # Accounts on the per-account public URL policy get a URL under "snowflake.app"; the others keep
+    # the original "snowflakecomputing.app". Both are live, so both have to be accepted.
+    INGRESS_ENDPOINT_URL_SUFFIXES = ("snowflakecomputing.app", "snowflake.app")
     # app-service-privatelink might not contain "snowflakecomputing" in the url - using the minimum required substring
     PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING = "privatelink.snowflake"
 
@@ -706,7 +708,7 @@ class ModelOperator:
         if url_value is None:
             return None
         url_str = str(url_value)
-        return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX) else None
+        return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIXES) else None
 
     def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> str | None:
         """Extract and validate privatelink ingress URL from endpoint row."""
@@ -908,7 +910,6 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: dict[str, Any] | None = None,
-        retry: bool | None = False,
     ) -> tuple[model_spec.ModelSpec, list[str] | None]:
         """Fetch both model spec and target platforms from a single SQL query.
 
@@ -918,23 +919,19 @@ class ModelOperator:
             model_name: The model name.
             version_name: The version name.
             statement_params: Optional dictionary of statement parameters.
-            retry: If True, retry SHOW VERSIONS when the version row is not yet visible.
 
         Returns:
             A tuple of (model_spec, target_platforms) where target_platforms is a list of
             platform strings (e.g., ["WAREHOUSE"]) or None if not available.
         """
-        show_versions_kwargs: dict[str, Any] = {
-            "database_name": database_name,
-            "schema_name": schema_name,
-            "model_name": model_name,
-            "version_name": version_name,
-            "check_model_details": True,
-            "statement_params": {**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
-        }
-        if retry:
-            show_versions_kwargs["retry"] = True
-        version_row = self._model_client.show_versions(**show_versions_kwargs)[0]
+        version_row = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            check_model_details=True,
+            statement_params={**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+        )[0]
 
         # Extract model spec
         raw_model_spec_res = version_row[self._model_client.MODEL_VERSION_MODEL_SPEC_COL_NAME]
@@ -958,7 +955,6 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: dict[str, Any] | None = None,
-        retry: bool | None = False,
     ) -> model_spec.ModelSpec:
         parsed_model_spec, _ = self._fetch_model_spec_and_target_platforms(
             database_name=database_name,
@@ -966,7 +962,6 @@ class ModelOperator:
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
-            **({"retry": True} if retry else {}),
         )
         return parsed_model_spec
 
@@ -1214,7 +1209,6 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         statement_params: dict[str, Any] | None = None,
-        retry: bool | None = False,
     ) -> list[model_manifest_schema.ModelFunctionInfo]:
         parsed_model_spec = self._fetch_model_spec(
             database_name=database_name,
@@ -1222,7 +1216,6 @@ class ModelOperator:
             model_name=model_name,
             version_name=version_name,
             statement_params=statement_params,
-            **({"retry": True} if retry else {}),
         )
         show_functions_res = self._model_version_client.show_functions(
             database_name=database_name,

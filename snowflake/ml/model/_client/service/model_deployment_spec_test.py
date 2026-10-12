@@ -1,12 +1,12 @@
 import pathlib
 import tempfile
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.feature_store import feature_view
+from snowflake.ml.feature_store import feature_group, feature_view
 from snowflake.ml.model import inference_engine
 from snowflake.ml.model._client.service import (
     model_deployment_spec,
@@ -814,7 +814,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             str(cm.exception),
         )
 
-    def _make_fake_feature_view(
+    def _make_feature_view(
         self,
         *,
         database: str = "FS_DB",
@@ -822,16 +822,31 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         name: str = "USER_FEATURES",
         version: str = "V1",
     ) -> feature_view.FeatureView:
-        # Returns a duck-typed stand-in for FeatureView. We construct the real type
-        # via cast() so call sites stay typed; instantiating a real FeatureView
-        # would require a Session and a registered entity, which is overkill for
-        # the YAML-shape assertions exercised here. The runtime shape used by
-        # _build_feature_retrieval_config is .database/.schema/.name (each
-        # .identifier()) and .version, all of which _FakeFeatureView provides.
-        return cast(
-            feature_view.FeatureView,
-            _FakeFeatureView(database=database, schema=schema, name=name, version=version),
+        return _MinimalFeatureView(database=database, schema=schema, name=name, version=version)
+
+    def _make_feature_group(
+        self,
+        *,
+        name: str = "USER_FRAUD_FG",
+        version: str | None = "V1",
+        source_database: str = "FS_DB",
+        source_schema: str = "FS_SCHEMA",
+        source_name: str = "USER_PROFILE_FV",
+        source_version: str = "V1",
+    ) -> feature_group.FeatureGroup:
+        # Build a minimal FeatureGroup via object.__new__, bypassing the constructor's
+        # FeatureView validation. Only .name, .version, and .features[0] are accessed.
+        source_fv = _MinimalFeatureView(
+            database=source_database,
+            schema=source_schema,
+            name=source_name,
+            version=source_version,
         )
+        fg: feature_group.FeatureGroup = object.__new__(feature_group.FeatureGroup)
+        fg._name = name
+        fg._version = feature_group.FeatureGroupVersion(version) if version is not None else None
+        fg._features = [source_fv]
+        return fg
 
     def test_service_spec_with_feature_sources(self) -> None:
         # End-to-end YAML shape: feature_sources_per_function lands in
@@ -856,7 +871,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 min_instances=1,
                 max_instances=5,
                 feature_sources_per_function={
-                    "predict": [self._make_fake_feature_view()],
+                    "predict": [self._make_feature_view()],
                 },
             )
             file_path = mds.save()
@@ -921,10 +936,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
                 fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
             )
-            unregistered = cast(
-                feature_view.FeatureView,
-                _FakeFeatureView(database="FS_DB", schema="FS_SCHEMA", name="UF", version=None),
-            )
+            unregistered = _MinimalFeatureView(database="FS_DB", schema="FS_SCHEMA", name="UF", version=None)
             with self.assertRaisesRegex(ValueError, "is not registered"):
                 mds.add_service_spec(
                     service_name=sql_identifier.SqlIdentifier("service"),
@@ -935,9 +947,35 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     feature_sources_per_function={"predict": [unregistered]},
                 )
 
+    def test_service_spec_unregistered_feature_group_raises(self) -> None:
+        # FeatureGroup with version=None (not yet registered) surfaces a client-side
+        # error naming "FeatureGroup" and pointing to register_feature_group.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            with self.assertRaisesRegex(ValueError, "FeatureGroup.*is not registered") as cm:
+                mds.add_service_spec(
+                    service_name=sql_identifier.SqlIdentifier("service"),
+                    inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                    ingress_enabled=True,
+                    min_instances=1,
+                    max_instances=5,
+                    feature_sources_per_function={"predict": [self._make_feature_group(version=None)]},
+                )
+            self.assertIn("register_feature_group", str(cm.exception))
+
     def test_service_spec_with_feature_sources_multi_method(self) -> None:
-        # Multi-method coverage: each function gets its own lookups bucket
-        # and per-bucket order is preserved.
+        # Each method gets its own lookups bucket; FeatureGroup and FeatureView both
+        # produce the same YAML shape (source, type, version).
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -957,8 +995,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 min_instances=1,
                 max_instances=5,
                 feature_sources_per_function={
-                    "predict": [self._make_fake_feature_view(name="USER_FEATURES", version="V1")],
-                    "explain": [self._make_fake_feature_view(name="ITEM_FEATURES", version="V2")],
+                    "predict": [self._make_feature_group(name="USER_FRAUD_FG", version="V1")],
+                    "explain": [self._make_feature_view(name="ITEM_FEATURES", version="V2")],
                 },
             )
             file_path = mds.save()
@@ -968,7 +1006,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 result["service"]["feature_retrieval"]["lookups"],
                 {
                     "predict": [
-                        {"source": "FS_DB.FS_SCHEMA.USER_FEATURES", "type": "oft_vnext", "version": "V1"},
+                        {"source": "FS_DB.FS_SCHEMA.USER_FRAUD_FG", "type": "oft_vnext", "version": "V1"},
                     ],
                     "explain": [
                         {"source": "FS_DB.FS_SCHEMA.ITEM_FEATURES", "type": "oft_vnext", "version": "V2"},
@@ -981,7 +1019,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         # (DB.SCHEMA.NAME), NOT FeatureView.fully_qualified_name() which appends
         # `$<version>$ONLINE` and points at the physical OFT online table. A future
         # refactor that switches to fully_qualified_name() must fail this test loudly.
-        fv = self._make_fake_feature_view(name="USER_FEATURES", version="V1")
+        fv = self._make_feature_view(name="USER_FEATURES", version="V1")
         # Stub fully_qualified_name() to a recognizable, wrong shape so any
         # accidental use of it leaks into `source` and trips the assertion.
         fv.fully_qualified_name = lambda: "FS_DB.FS_SCHEMA.USER_FEATURES$V1$ONLINE"  # type: ignore[method-assign]
@@ -1016,14 +1054,11 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         # Case-sensitive FV name (e.g. created with "lowercase") must round-trip
         # through SqlIdentifier.identifier() as a quoted form so the server
         # resolves the same physical object.
-        fv = cast(
-            feature_view.FeatureView,
-            _FakeFeatureView(
-                database="FS_DB",
-                schema="FS_SCHEMA",
-                name=sql_identifier.SqlIdentifier('"user_features"', case_sensitive=False),
-                version="V1",
-            ),
+        fv = _MinimalFeatureView(
+            database="FS_DB",
+            schema="FS_SCHEMA",
+            name=sql_identifier.SqlIdentifier('"user_features"', case_sensitive=False),
+            version="V1",
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
@@ -1106,11 +1141,10 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 )
 
 
-class _FakeFeatureView:
-    """Duck-typed stand-in for snowflake.ml.feature_store.FeatureView used by
-    feature-retrieval spec tests. We avoid importing FeatureView into the
-    model-client test module to keep the dependency direction one-way
-    (feature_store may depend on model client, never the reverse).
+class _MinimalFeatureView(feature_view.FeatureView):
+    """Minimal FeatureView subclass for feature-retrieval spec tests.
+    Bypasses FeatureView.__init__ — only the four attributes used by
+    _build_feature_retrieval_config are set.
     """
 
     def __init__(
@@ -1119,12 +1153,12 @@ class _FakeFeatureView:
         database: str,
         schema: str,
         name: str | sql_identifier.SqlIdentifier,
-        version: object,
+        version: str | None,
     ) -> None:
-        self.database = sql_identifier.SqlIdentifier(database) if database else None
-        self.schema = sql_identifier.SqlIdentifier(schema) if schema else None
-        self.name = name if isinstance(name, sql_identifier.SqlIdentifier) else sql_identifier.SqlIdentifier(name)
-        self.version = version
+        self._database = sql_identifier.SqlIdentifier(database) if database else None
+        self._schema = sql_identifier.SqlIdentifier(schema) if schema else None
+        self._name = name if isinstance(name, sql_identifier.SqlIdentifier) else sql_identifier.SqlIdentifier(name)
+        self._version = feature_view.FeatureViewVersion(version) if version is not None else None
 
 
 if __name__ == "__main__":

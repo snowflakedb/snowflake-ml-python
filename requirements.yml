@@ -100,7 +100,9 @@
 - name: coverage
   dev_version: 7.14.1
 - name_pypi: datasets
-  dev_version_pypi: 3.3.2
+  # 5.0.1 allows fsspec<=2026.6.0 and pyarrow>=21. 5.1.0 allows fsspec through 2026.7.0
+  # but requires pyarrow>=24, and the dev pin is still pyarrow 23.0.1.
+  dev_version_pypi: 5.0.1
   tags:
     - build_test_env
 - name: flask-cors
@@ -109,12 +111,11 @@
   dev_version: 3.1.2
 - name_pypi: fsspec[http]
   name_conda: fsspec
-  # Conda needs >=2025.10.0: it is the earliest version with a py3.14 build on the Snowflake channel.
-  # PyPI stays lower because datasets caps fsspec at <=2024.12.0 until datasets 4.4.0, and fsspec is a
-  # pure-Python wheel there, so the older pin installs fine on every interpreter we test.
-  dev_version_conda: 2025.10.0
-  dev_version_pypi: 2024.6.1
-  version_requirements: '>=2024.6.1,<2026'
+  # 2026.6.0 is the first release that fixes CVE-2026-104851. Snowflake conda has
+  # 2026.6.0 builds through Python 3.14.
+  dev_version_conda: 2026.6.0
+  dev_version_pypi: 2026.6.0
+  version_requirements: '>=2024.6.1,<2027'
 - name: h2
   # Required by httpx for HTTP/2 negotiation. httpx pulls h2 only via the ``httpx[http2]`` extra,
   # which our requirements pipeline does not model; declare it explicitly so
@@ -309,7 +310,7 @@
   # Do not lower: only the 1.54.0 build 101 and 1.53.0 build 102 py314 builds carry the corrected
   # libprotobuf bound, so earlier releases leave the py3.14 environments unsolvable.
   dev_version: 1.54.0
-  version_requirements: '>=1.37.0,<2'
+  version_requirements: '>=1.43.0,<2'
 - name: sphinx
   dev_version: 7.3.7
 - name: starlette

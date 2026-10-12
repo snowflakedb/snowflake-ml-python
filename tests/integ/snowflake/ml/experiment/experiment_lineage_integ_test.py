@@ -5,8 +5,10 @@ import pandas as pd
 from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
+from snowflake.ml import registry
 from snowflake.ml._internal.utils import connection_params
 from snowflake.ml.experiment import ExperimentTracking
+from snowflake.ml.experiment._entities import run as run_module
 from snowflake.ml.model import ModelVersion
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -147,6 +149,88 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
 
         logged_models = self.exp.list_model_versions(run_name=run_name)
         self.assertEqual(len(logged_models), 0, f"Expected 0 logged models, got {len(logged_models)}")
+
+    def test_upstream_experiment_run(self) -> None:
+        """Test that mv.lineage(direction='upstream') returns an ExperimentRun for the logging run."""
+        experiment_name = "GET_RUN_EXPERIMENT"
+        run_name = "GET_RUN_RUN"
+        model_name = "GET_RUN_MODEL"
+
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        y = [0, 1, 0]
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            model = LinearRegression()
+            model.fit(X, y)
+            mv = self.exp.log_model(
+                model,
+                model_name=model_name,
+                sample_input_data=X,
+            )
+
+        runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
+        self.assertEqual(len(runs), 1)
+        run = runs[0]
+        self.assertIsInstance(run, run_module.Run)
+        assert isinstance(run, run_module.Run)
+        self.assertEqual(run.database_name, self._db_name)
+        self.assertEqual(run.schema_name, self._schema_name)
+        self.assertEqual(run.experiment_name, experiment_name)
+        self.assertEqual(run.name, run_name)
+
+        # The returned names should lead back to the same model version
+        self.exp.set_experiment(
+            experiment_name=run.experiment_name,
+            database_name=run.database_name,
+            schema_name=run.schema_name,
+        )
+        logged_models = self.exp.list_model_versions(run_name=run.name)
+        self.assertEqual([(m.model_name, m.version_name) for m in logged_models], [(mv.model_name, mv.version_name)])
+
+    def test_upstream_experiment_run_duplicate_run_names(self) -> None:
+        """Test that lineage reports the correct experiment when two experiments share a run name."""
+        run_name = "SHARED_RUN"
+        model_name = "SHARED_RUN_MODEL"
+
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        y = [0, 1, 0]
+
+        self.exp.set_experiment(experiment_name="DECOY_EXPERIMENT")
+        with self.exp.start_run(run_name=run_name):
+            self.exp.log_metric("accuracy", 0.9)
+
+        self.exp.set_experiment(experiment_name="LOGGING_EXPERIMENT")
+        with self.exp.start_run(run_name=run_name):
+            model = LinearRegression()
+            model.fit(X, y)
+            mv = self.exp.log_model(
+                model,
+                model_name=model_name,
+                sample_input_data=X,
+            )
+
+        runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
+        self.assertEqual(len(runs), 1)
+        run = runs[0]
+        assert isinstance(run, run_module.Run)
+        self.assertEqual(run.experiment_name, "LOGGING_EXPERIMENT")
+        self.assertEqual(run.name, run_name)
+
+    def test_upstream_experiment_run_logged_outside_run(self) -> None:
+        """Test that lineage returns no experiment runs for a model version not logged under a run."""
+        model_name = "NO_RUN_MODEL"
+
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        y = [0, 1, 0]
+
+        reg = registry.Registry(self._session, database_name=self._db_name, schema_name=self._schema_name)
+        model = LinearRegression()
+        model.fit(X, y)
+        mv = reg.log_model(model, model_name=model_name, sample_input_data=X)
+
+        runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
+        self.assertEqual(len(runs), 0)
 
 
 if __name__ == "__main__":

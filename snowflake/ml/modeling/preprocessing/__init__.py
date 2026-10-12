@@ -5,8 +5,7 @@ from snowflake.ml.modeling._internal import optional_dependency
 
 pkg_name = __name__
 
-# Fail fast with an actionable error when scikit-learn (optional as of 2.0) is missing, and warn
-# that snowflake.ml.modeling estimators are deprecated when the import succeeds.
+# Fail fast with an actionable error when scikit-learn (optional as of 2.0) is missing.
 optional_dependency.check_modeling_dependencies(pkg_name)
 
 pkg_dir = os.path.dirname(__file__)

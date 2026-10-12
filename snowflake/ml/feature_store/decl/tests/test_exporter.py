@@ -382,8 +382,14 @@ class TestExportSpecsFullFidelity:
         # ``TestExportSpecsOmitsSchedulingState`` below for the
         # per-kind pins.
         assert "scheduling_state" not in data
-        assert data["entities"] == ["user_id"]
-        assert data["timestamp_col"] == "event_time"
+        # ``_FULL_SPEC`` stores its entity column and timestamp in Snowflake's
+        # bare lower-case form (``user_id`` / ``event_time``), which can only
+        # exist for a column created with case-sensitive quoting.  The exporter
+        # re-quotes each back into authoring SQL syntax so the loader's
+        # ``authored=True`` resolver round-trips it to the deployed column
+        # instead of folding it to UPPER-case (a lossy export).
+        assert data["entities"] == ['"user_id"']
+        assert data["timestamp_col"] == '"event_time"'
         assert data["feature_granularity_sec"] == 60
         assert data["feature_aggregation_method"] == "tiles"
 
@@ -1852,10 +1858,25 @@ class TestExportSpecsEntityRows:
         # runs the content-hash idempotency check first and short-circuits before
         # ``_check_dependencies`` when the local compiled spec hashes identically
         # to the deployed one — so an unmodified orphaned FV plans cleanly.
+        import copy
+
         from snowflake.ml.feature_store.decl import api as decl_api
         from snowflake.ml.feature_store.decl.exporter import export_specs
+        from snowflake.ml.feature_store.decl.invariants import (
+            _canonicalise_spec_identifiers,
+        )
         from snowflake.ml.feature_store.decl.loader import load_specs
         from snowflake.ml.feature_store.decl.state import fetch_applied_state
+
+        # A live ``DESCRIBE ... TYPE = SPECIFICATION`` payload carries Snowflake's
+        # stored form (identifiers already resolved by ``SqlIdentifier.resolved()``).
+        # Resolve a local copy of the shared ``_FULL_SPEC`` fixture so both the
+        # exporter and the applied state operate on the deployed stored form,
+        # matching the planner's production applied half under the asymmetric
+        # authored-vs-applied hash contract.  (The module-level ``_FULL_SPEC`` is
+        # left untouched for the many exported-YAML content assertions.)
+        deployed_spec = copy.deepcopy(_FULL_SPEC)
+        _canonicalise_spec_identifiers(deployed_spec, authored=True)
 
         # entity_rows carries an unrelated tag (OTHER_KEY) so the orphaned-OFT
         # check fires for the FV's ``user_id`` column, which has no tag.
@@ -1867,7 +1888,7 @@ class TestExportSpecsEntityRows:
             output_dir=str(tmp_path),
             database="MYDB",
             schema="PUBLIC",
-            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            specification_map={"USER_CLICKS$V1$ONLINE": deployed_spec},
             entity_rows=entity_rows,
         )
         assert len(export_result["warnings"]) == 1, "orphaned-OFT warning must still be emitted"
@@ -1877,7 +1898,7 @@ class TestExportSpecsEntityRows:
         applied_state = fetch_applied_state(
             [_SHOW_ROW_1],
             None,
-            specification_map={"USER_CLICKS$V1$ONLINE": _FULL_SPEC},
+            specification_map={"USER_CLICKS$V1$ONLINE": deployed_spec},
             entity_rows=entity_rows,
             default_database="MYDB",
             default_schema="PUBLIC",
@@ -4499,6 +4520,105 @@ class TestExportSpecsAsPythonStemSafety:
         # Every path reported as written must load cleanly.
         for path in result["files"]:
             assert load_python_file(path)
+
+
+class TestExportCaseSensitiveSecondaryKey:
+    """A case-sensitive secondary key must be stripped from the exported
+    entities and its synthesized SK-array feature dropped, independent of
+    whether the deployed entity list carries the appended key quoted or bare.
+
+    The two spellings are the two provenances the server's ``FROM
+    SPECIFICATION`` path could emit; folding both sides through the shared
+    comparison removes the dependency on which one it is.  Assertions read the
+    emitted YAML directly — a hash-level replan check would report NO_CHANGE
+    even for a lossy export because ``invariants._strip_secondary_key_derivations``
+    strips the key from both halves.
+    """
+
+    def _sk_batch_spec(self, appended_entity_sk: str) -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": "sk_bfv",
+                "version": "v1",
+            },
+            "offline_configs": [],
+            "spec": {
+                # Core appends the SK to the entity list; the real entity is
+                # ``"userId"``.  The appended entry's spelling is the unknown.
+                "ordered_entity_column_names": ['"userId"', appended_entity_sk],
+                "ordered_secondary_key_column_names": ['"sessionId"'],
+                "sources": [
+                    {
+                        "name": "events",
+                        "source_type": "Batch",
+                        "columns": [
+                            {"name": '"userId"', "type": "StringType"},
+                            {"name": '"sessionId"', "type": "StringType"},
+                            {"name": "amount", "type": "FloatType"},
+                        ],
+                    }
+                ],
+                "features": [
+                    {
+                        "source_column": {"name": "amount", "type": "FloatType"},
+                        "output_column": {"name": "AMOUNT_SUM_1H", "type": "ArrayType", "element_type": "FloatType"},
+                        "function": "sum",
+                        "window_sec": 3600,
+                    },
+                    # Core's synthesized SK-array feature: sourced from the SK,
+                    # ArrayType output, no ``function``.
+                    {
+                        "source_column": {"name": '"sessionId"', "type": "StringType"},
+                        "output_column": {
+                            "name": "SESSIONID_KEYS_3600S",
+                            "type": "ArrayType",
+                            "element_type": "StringType",
+                        },
+                        "window_sec": 3600,
+                    },
+                ],
+                "timestamp_field": '"eventTs"',
+                "feature_granularity_sec": 3600,
+                "feature_aggregation_method": "tiles",
+            },
+            "online_store_type": "snowflake",
+        }
+
+    @pytest.mark.parametrize("appended_entity_sk", ['"sessionId"', "sessionId"])
+    def test_sk_stripped_from_entities_and_features(self, tmp_path: Path, appended_entity_sk: str) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        show_row = {
+            "name": "SK_BFV$V1$ONLINE",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "scheduling_state": "ACTIVE",
+        }
+        export_specs(
+            show_rows=[show_row],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"SK_BFV$V1$ONLINE": self._sk_batch_spec(appended_entity_sk)},
+        )
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "sk_bfv_v1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+
+        # The secondary key must not appear in the authored entity list under
+        # either spelling — re-registering it would make it a second join key.
+        assert data["entities"] == ['"userId"'], data["entities"]
+
+        # The synthesized SK-array feature must be dropped; the real
+        # aggregation survives.
+        feature_outputs = [f["output_column"]["name"] for f in data["features"]]
+        assert feature_outputs == ["AMOUNT_SUM_1H"], feature_outputs
+
+        # The SK identity is emitted verbatim — no extra quote layer.
+        assert data["aggregation_secondary_keys"] == ['"sessionId"'], data.get("aggregation_secondary_keys")
 
 
 if __name__ == "__main__":

@@ -949,7 +949,6 @@ class ModelManager:
             ),
             model_name=model_name_id,
             version_name=version_name_id,
-            retry=True,
         )
 
     def _build_import_model_yaml_spec(

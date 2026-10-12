@@ -16,7 +16,7 @@ from snowflake.ml.feature_store.decl.invariants import (
     _check_destructive,
     _check_entity_join_keys_immutable,
     _check_idempotency,
-    _check_state_sync,
+    _check_streaming_feature_view_constraints,
     _check_versions,
     _content_hash,
     _spec_hash,
@@ -457,6 +457,32 @@ class TestCheckDependencies:
         errors = [r for r in results if r.code == "MISSING_ENTITY"]
         assert len(errors) == 0
 
+    def test_quoted_entity_ref_matches_bare_applied_join_key(self) -> None:
+        """A quoted entity-column reference must resolve against the bare applied key.
+
+        An exported FV references a case-sensitive entity column by its quoted
+        authoring form ``"userId"``, while the deployed entity tag stores the
+        bare ``userId``.  The membership check must resolve identifiers before
+        comparing, or the quoted reference falsely trips ``MISSING_ENTITY`` and
+        the CLI never plans.
+        """
+        entity_spec = _make_entity_spec(name="user", join_key="userId")
+        applied = _applied_with(entity_spec)
+        fv_spec = _make_fv_spec(entity_cols=['"userId"'])
+        batch_names = {"click_features", "clicks"}
+        results = _check_dependencies(fv_spec, batch_names, applied)
+        errors = [r for r in results if r.code == "MISSING_ENTITY"]
+        assert len(errors) == 0
+
+    def test_truly_missing_entity_still_errors_under_resolution(self) -> None:
+        """A reference with no matching entity must still raise MISSING_ENTITY."""
+        entity_spec = _make_entity_spec(name="user", join_key="userId")
+        applied = _applied_with(entity_spec)
+        fv_spec = _make_fv_spec(entity_cols=['"orgId"'])
+        batch_names = {"click_features", "clicks"}
+        results = _check_dependencies(fv_spec, batch_names, applied)
+        assert any(r.code == "MISSING_ENTITY" for r in results)
+
 
 # ---------------------------------------------------------------------------
 # _check_destructive tests
@@ -589,6 +615,28 @@ class TestCheckEntityJoinKeysImmutable:
         results = _check_entity_join_keys_immutable(spec, applied)
         assert results == []
 
+    def test_quoted_authoring_matches_bare_applied_no_error(self) -> None:
+        """An exported quoted ``"userId"`` matches the deployed bare ``userId``.
+
+        The exporter writes stored-form identifiers into an authoring YAML; a
+        case-sensitive key comes back quoted (``"userId"``) while the deployed
+        tag stores the bare ``userId``.  They are the same identifier, so the
+        immutable gate must resolve each side to its stored form rather than
+        ``.upper()`` both (which would fold ``"userId"`` to ``"USERID"`` and
+        raise a false ``ENTITY_JOIN_KEY_IMMUTABLE``).
+        """
+        spec = _make_entity_spec_multi("USER", ['"userId"'])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["userId"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert results == []
+
+    def test_quoted_authoring_genuine_rename_still_errors(self) -> None:
+        """A genuine rename under quoting is still an ERROR."""
+        spec = _make_entity_spec_multi("USER", ['"userId"'])
+        applied = _make_applied_object(_make_entity_spec_multi("USER", ["userXd"]))
+        results = _check_entity_join_keys_immutable(spec, applied)
+        assert any(r.code == "ENTITY_JOIN_KEY_IMMUTABLE" for r in results)
+
     def test_description_only_change_no_error(self) -> None:
         spec = _make_entity_spec_multi("USER", ["USER_ID"])
         spec["description"] = "new description"
@@ -638,31 +686,6 @@ class TestCheckEntityJoinKeysImmutable:
 
 
 # ---------------------------------------------------------------------------
-# _check_state_sync tests
-# ---------------------------------------------------------------------------
-
-
-class TestCheckStateSync:
-    def test_object_at_unexpected_version_is_error(self) -> None:
-        # Spec says V2, but applied state has V3 (concurrent modification)
-        spec = _make_fv_spec(version="V2")
-        applied_spec = _make_fv_spec(version="V3")
-        applied = _make_applied_object(applied_spec)
-        # Simulate state drift: applied version doesn't match what we expected
-        results = _check_state_sync(spec, applied)
-        # STATE_DRIFT if applied has a NEWER version than spec (concurrent write)
-        errors = [r for r in results if r.severity == "ERROR"]
-        assert any(r.code == "STATE_DRIFT" for r in errors)
-
-    def test_matching_version_no_drift(self) -> None:
-        spec = _make_fv_spec(version="V1")
-        applied = _make_applied_object(spec)
-        results = _check_state_sync(spec, applied)
-        errors = [r for r in results if r.code == "STATE_DRIFT"]
-        assert len(errors) == 0
-
-
-# ---------------------------------------------------------------------------
 # validate_specs integration tests
 # ---------------------------------------------------------------------------
 
@@ -673,9 +696,12 @@ class TestValidateSpecs:
         source_spec = _make_source_spec()
         fv_spec = _make_fv_spec(
             version="V1",
-            entity_cols=["user_id"],
+            entity_cols=["user"],
             sources=[{"name": "clicks", "source_type": "Stream"}],
         )
+        # A StreamingFeatureView is always backed by a StreamConfig, so a
+        # valid batch must carry a UDF (STREAM_FV_UDF_REQUIRED).
+        fv_spec["udf"] = {"name": "transform", "file": "transform.py"}
         batch = _batch(entity_spec, source_spec, fv_spec)
         applied = AppliedState(objects={})
         results = validate_specs(batch, applied)
@@ -1083,13 +1109,22 @@ def _fv_round_trip_dict(
 
 def _applied_full_spec_state(deployed_dict: dict[str, Any]) -> AppliedState:
     """Build an AppliedState whose FV came from DESCRIBE ... TYPE = SPECIFICATION."""
-    from snowflake.ml.feature_store.decl.invariants import _full_spec_hash
+    from snowflake.ml.feature_store.decl.invariants import (
+        _canonicalise_spec_identifiers,
+        _full_spec_hash,
+    )
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
     compile_input = dict(deployed_dict)
     if "schema_" in compile_input:
         compile_input["schema"] = compile_input.pop("schema_")
     deployed_spec = compile_to_spec(compile_input, "DB", "SCH")
+    # ``compile_to_spec`` keeps the authoring (wire) form, but a live
+    # ``DESCRIBE ... TYPE = SPECIFICATION`` payload is Snowflake's stored form
+    # (identifiers already resolved by ``SqlIdentifier.resolved()``).  Resolve
+    # the stand-in so the applied half matches the planner's production input
+    # under the asymmetric authored-vs-applied hash contract.
+    _canonicalise_spec_identifiers(deployed_spec, authored=True)
     key = spec_key({**compile_input, "kind": deployed_dict["kind"]})
     applied = AppliedObject(
         key=key,
@@ -2029,6 +2064,64 @@ class TestStreamingTilingRefresh:
         )
         codes = self._codes(non_tiled)
         assert "STREAM_FV_TILING_REFRESH" not in codes
+
+
+# ---------------------------------------------------------------------------
+# Streaming FVs require a named source and a usable UDF
+# (STREAM_FV_SOURCE_REQUIRED / STREAM_FV_UDF_REQUIRED)
+# ---------------------------------------------------------------------------
+
+
+class TestStreamingSourceAndUdfRequired:
+    """A ``StreamingFeatureView`` is backed by a ``StreamConfig``, which cannot
+    be built without a named stream source and a transformation function. These
+    front-run the two ``ValueError``\\ s in ``_build_stream_config``.
+
+    The validator runs *pre-compile*, so an authoring ``udf.file`` (not yet
+    inlined to ``function_definition``) is a usable body and must soft-pass —
+    the asymmetry with the imperative side, which requires the inlined source.
+    """
+
+    def _base(self, **overrides: Any) -> dict[str, Any]:
+        spec: dict[str, Any] = {
+            "kind": "StreamingFeatureView",
+            "name": "click_fv",
+            "database": "DB",
+            "schema": "SCH",
+            "version": "V1",
+            "sources": [{"name": "clicks", "source_type": "Stream"}],
+            "udf": {"name": "transform", "function_definition": "def transform(x):\n    return x"},
+        }
+        spec.update(overrides)
+        return spec
+
+    def _codes(self, spec: dict[str, Any]) -> list[str]:
+        return [r.code for r in _check_streaming_feature_view_constraints(spec)]
+
+    def test_missing_sources_is_source_required(self) -> None:
+        codes = self._codes(self._base(sources=[]))
+        assert "STREAM_FV_SOURCE_REQUIRED" in codes
+
+    def test_unnamed_source_is_source_required(self) -> None:
+        codes = self._codes(self._base(sources=[{}]))
+        assert "STREAM_FV_SOURCE_REQUIRED" in codes
+
+    def test_missing_udf_is_udf_required(self) -> None:
+        spec = self._base()
+        del spec["udf"]
+        codes = self._codes(spec)
+        assert "STREAM_FV_UDF_REQUIRED" in codes
+
+    def test_udf_without_body_is_udf_required(self) -> None:
+        codes = self._codes(self._base(udf={"name": "transform"}))
+        assert "STREAM_FV_UDF_REQUIRED" in codes
+
+    def test_udf_with_file_only_soft_passes(self) -> None:
+        # Pre-compile authoring shape: ``udf.file`` is a usable body even
+        # though the imperative side requires the inlined ``function_definition``.
+        codes = self._codes(self._base(udf={"name": "transform", "file": "transform.py"}))
+        assert "STREAM_FV_UDF_REQUIRED" not in codes
+        assert "STREAM_FV_SOURCE_REQUIRED" not in codes
 
 
 if __name__ == "__main__":

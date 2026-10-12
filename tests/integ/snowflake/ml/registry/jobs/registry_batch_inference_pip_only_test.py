@@ -67,22 +67,7 @@ class TestBatchInferencePipOnlyInteg(
     pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase,
 ):
-    """Integration tests for batch inference with pip-only models.
-
-    Requires image overrides: set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH,
-    BASE_BATCH_GPU_IMAGE_PATH, and MODEL_LOGGER_PATH together. Without them the tests skip.
-    """
-
-    _BATCH_IMAGE_OVERRIDE_MODE: registry_batch_inference_test_base.BatchImageOverrideMode = "pip_only_batch"
-
-    def setUp(self) -> None:
-        # The pip-only image build installs the batch base image's own requirements before the
-        # model's, so the base image must be one that bounds snowflake-connector-python itself;
-        # an unbounded resolve there selects a release with no wheel for the runtime Python.
-        if not self._has_image_override():
-            self.skipTest("Skipping test: image override environment variables not set.")
-
-        super().setUp()
+    """Integration tests for batch inference with pip-only models."""
 
     def _prepare_pip_only_test(
         self,

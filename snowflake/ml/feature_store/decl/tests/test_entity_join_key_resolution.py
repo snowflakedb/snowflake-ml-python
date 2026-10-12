@@ -621,5 +621,109 @@ def test_validate_specs_no_change_for_name_equals_join_key() -> None:
     assert not [r for r in results if r.severity == "ERROR"]
 
 
+# ---------------------------------------------------------------------------
+# Case-sensitive deployed join keys: the authored half must be re-quoted so it
+# round-trips through authored=True resolution (compiler.to_authoring_identifier)
+# ---------------------------------------------------------------------------
+
+_CS_ENTITY = "USER"
+# The bare, case-preserved stored form a case-sensitive key takes after
+# ``SqlIdentifier.resolved()`` at register time (what the entity tag carries).
+_CS_STORED_JOIN_KEY = "userId"
+
+
+def _case_sensitive_bfv() -> dict[str, Any]:
+    """A tiled BFV referencing entity ``USER`` whose join key is ``userId``.
+
+    The join-key column is authored **quoted** wherever it appears directly in
+    the FV (the source column) so the local authored half is real SQL syntax.
+    The entity column itself is not authored here — it is derived from the
+    deployed entity's stored join key via ``build_entity_join_key_map``.
+
+    Returns:
+        The authoring-shape BatchFV dict.
+    """
+    return {
+        "kind": "BatchFeatureView",
+        "name": _FV_NAME,
+        "version": "V1",
+        "database": _DB,
+        "schema": _SCHEMA,
+        "online": False,
+        "entities": [_CS_ENTITY],
+        "sources": [
+            {
+                "name": "SRC1",
+                "source_type": "Batch",
+                "table": "RAW_EVENTS",
+                "columns": [
+                    {"name": '"userId"', "type": "StringType"},
+                    {"name": "AMOUNT", "type": "FloatType"},
+                ],
+            }
+        ],
+        "timestamp_col": "EVENT_TS",
+        "refresh_freq": "5 minutes",
+        "feature_granularity": "1h",
+        "feature_aggregation_method": "tiles",
+        "features": [
+            {
+                "source_column": {"name": "AMOUNT", "type": "FloatType"},
+                "output_column": {"name": "AMOUNT_SUM_1H", "type": "FloatType"},
+                "function": "sum",
+                "window": "1h",
+            }
+        ],
+    }
+
+
+def test_build_entity_join_key_map_requotes_case_sensitive_applied_key() -> None:
+    """A deployed case-sensitive join key is re-quoted back to SQL syntax.
+
+    The applied entity tag stores the bare, case-preserved ``userId`` (run
+    through ``SqlIdentifier.resolved()`` at register time).  The map feeds the
+    *authored* half of the full-spec hash, which resolves SQL syntax to the
+    stored form, so the map must hand back SQL syntax (a quoted ``"userId"``)
+    or the authored resolver folds it to ``USERID`` and the FV never converges.
+    """
+    from snowflake.ml.feature_store.decl.spec_compiler import build_entity_join_key_map
+
+    ent_key, ent_obj = _entity_applied_object(entity_name=_CS_ENTITY, join_key=_CS_STORED_JOIN_KEY)
+    applied = AppliedState(objects={ent_key: ent_obj})
+
+    mapping = build_entity_join_key_map([], applied)
+    assert mapping[_CS_ENTITY] == ['"userId"'], (
+        "The applied branch must re-quote a case-sensitive stored join key back to "
+        f"SQL syntax ('\"userId\"'); got {mapping.get(_CS_ENTITY)!r}"
+    )
+
+
+def test_case_sensitive_deployed_join_key_no_change() -> None:
+    """An FV over a deployed case-sensitive entity key must replan NO_CHANGE.
+
+    Before the re-quote fix the authored half resolved the map's bare ``userId``
+    to ``USERID`` while the applied half kept ``userId``, so the two hashes never
+    matched and the FV looped on a destructive ``RECREATE_FV``.
+    """
+    local = _case_sensitive_bfv()
+    fv_key, fv_obj = _fv_applied_object(local, join_key=_CS_STORED_JOIN_KEY)
+    ent_key, ent_obj = _entity_applied_object(entity_name=_CS_ENTITY, join_key=_CS_STORED_JOIN_KEY)
+    applied = AppliedState(objects={fv_key: fv_obj, ent_key: ent_obj})
+
+    src = BatchSource(
+        kind="BatchSource",
+        name="SRC1",
+        table="RAW_EVENTS",
+        columns=[
+            FSColumn(name='"userId"', type="StringType"),
+            FSColumn(name="AMOUNT", type="FloatType"),
+        ],
+    )
+    batch = SpecBatch(specs=[src, FeatureView.model_validate(local)])
+
+    plan = generate_plan(batch, applied, PlanOptions(), database=_DB, schema=_SCHEMA)
+    assert _fv_op_kind(plan) is OpKind.NO_CHANGE
+
+
 if __name__ == "__main__":
     pytest_driver.main()

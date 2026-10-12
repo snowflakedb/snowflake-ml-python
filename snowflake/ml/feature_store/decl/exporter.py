@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import json
 import keyword
 import logging
 import re
@@ -47,6 +46,11 @@ from typing import Any, Protocol
 
 import yaml
 
+from snowflake.ml.feature_store.decl.compiler import (
+    _decode_join_keys,
+    to_authoring_identifier,
+    to_comparison_identifier,
+)
 from snowflake.ml.feature_store.decl.spec_models import _is_cron_refresh_freq
 from snowflake.ml.feature_store.decl.state import (
     _ENTITY_TAG_PREFIX,
@@ -307,13 +311,13 @@ def _secondary_key_columns(inner: dict[str, Any]) -> set[str]:
             ``aggregation_secondary_keys`` instead.
 
     Returns:
-        Upper-cased secondary-key column names; empty when the spec
+        Comparison-folded secondary-key column names; empty when the spec
         declares none.
     """
     raw = inner.get("aggregation_secondary_keys") or inner.get("ordered_secondary_key_column_names")
     if not isinstance(raw, list):
         return set()
-    return {str(col).upper() for col in raw if col}
+    return {to_comparison_identifier(col) for col in raw if col}
 
 
 def _authoring_features(features: list[Any], sk_columns: set[str]) -> list[Any]:
@@ -357,7 +361,7 @@ def _authoring_features(features: list[Any], sk_columns: set[str]) -> list[Any]:
             continue
         if sk_columns and not entry.get("function"):
             source_column = entry.get("source_column")
-            source_name = str(source_column.get("name") or "").upper() if isinstance(source_column, dict) else ""
+            source_name = to_comparison_identifier(source_column.get("name")) if isinstance(source_column, dict) else ""
             if source_name in sk_columns:
                 continue
         authored.append(copy.deepcopy(entry))
@@ -496,10 +500,19 @@ def _build_full_fidelity_fv(
     # only under ``aggregation_secondary_keys``.  Re-emitting it as an entity
     # would make the next apply register the SK as a second join key.
     if "ordered_entity_column_names" in inner:
-        fv_doc["entities"] = [col for col in inner["ordered_entity_column_names"] if str(col).upper() not in sk_columns]
+        # Re-quote each stored-form value into SQL syntax (``userId`` ->
+        # ``"userId"``) so the loader's authored resolver round-trips it instead
+        # of folding to upper-case. The SK filter folds both sides through the
+        # shared comparison so a case-sensitive SK is stripped regardless of
+        # whether the deployed entity list carries it bare or quoted.
+        fv_doc["entities"] = [
+            to_authoring_identifier(col)
+            for col in inner["ordered_entity_column_names"]
+            if to_comparison_identifier(col) not in sk_columns
+        ]
 
     if "timestamp_field" in inner and inner["timestamp_field"] is not None:
-        fv_doc["timestamp_col"] = inner["timestamp_field"]
+        fv_doc["timestamp_col"] = to_authoring_identifier(inner["timestamp_field"])
     if "feature_granularity_sec" in inner and inner["feature_granularity_sec"] is not None:
         fv_doc["feature_granularity_sec"] = inner["feature_granularity_sec"]
     if "feature_aggregation_method" in inner and inner["feature_aggregation_method"] is not None:
@@ -1061,34 +1074,16 @@ def _entity_name_from_row(row: dict[str, Any]) -> str | None:
 
 
 def _join_keys_from_row(row: dict[str, Any]) -> list[str]:
-    """Decode the join-key list from a SHOW TAGS row's ``allowed_values``.
-
-    Mirrors the parsing in :func:`state._build_entity_object`: prefer a
-    list value verbatim, otherwise treat ``allowed_values`` as JSON, with
-    a final fallback to a comma-split form for legacy SHOW TAGS output.
+    """Decode a SHOW TAGS row's ``allowed_values`` to join-key columns.
 
     Args:
-        row: One row dict from
-            :func:`decl_api.fetch_entity_rows`.
+        row: One row dict from :func:`decl_api.fetch_entity_rows`.
 
     Returns:
-        List of join-key column names (preserving case).  Empty when
-        ``allowed_values`` is absent or unparsable.
+        Join-key column names via :func:`compiler._decode_join_keys`.
     """
     raw = row.get("allowed_values") or row.get("ALLOWED_VALUES") or row.get("allowed_values_list")
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return [str(v) for v in raw]
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(v) for v in parsed]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return [v.strip() for v in raw.strip("[]").split(",") if v.strip()]
-    return []
+    return _decode_join_keys(raw)
 
 
 def _entity_yaml_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -1127,7 +1122,10 @@ def _entity_yaml_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     spec: dict[str, Any] = {
         "kind": "Entity",
         "name": entity_name,
-        "join_keys": [{"name": jk.upper(), "type": "StringType"} for jk in join_keys],
+        # Re-quote each stored join key into SQL syntax so a case-sensitive
+        # ``userId`` round-trips instead of folding to ``USERID`` (a lossy
+        # export that would never re-apply against the deployed entity).
+        "join_keys": [{"name": to_authoring_identifier(jk), "type": "StringType"} for jk in join_keys],
     }
     comment = row.get("comment") or row.get("COMMENT")
     if isinstance(comment, str) and comment:

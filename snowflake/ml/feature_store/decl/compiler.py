@@ -19,6 +19,7 @@ from typing import Any
 
 import sqlparse
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.decl.enums import normalize_type
 from snowflake.ml.feature_store.decl.templating import detect_and_render
 from snowflake.ml.feature_store.interval_utils import interval_to_seconds
@@ -40,6 +41,32 @@ _SQL_TRAILING_TERMINATORS = re.compile(r"(?:\s*;\s*)+$")
 
 # Duration keys that should be renamed to their _sec counterparts.
 _DURATION_KEYS = frozenset({"feature_granularity", "target_lag", "window", "offset"})
+
+
+def _decode_join_keys(raw: Any) -> list[str]:
+    """Decode a join-key cell to column names (case preserved).
+
+    Shared 3-tier contract: a list verbatim, else a JSON list (a JSON
+    scalar is no keys), else a legacy comma-separated fallback.
+
+    Args:
+        raw: A ``JOIN_KEYS`` / ``allowed_values`` cell (list, JSON, or string).
+
+    Returns:
+        The join-key column names; ``[]`` when none parse.
+    """
+    if isinstance(raw, list):
+        return [str(v) for v in raw]
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return [v.strip() for v in text.strip("[]").split(",") if v.strip()]
+        return [str(v) for v in parsed] if isinstance(parsed, list) else []
+    return []
 
 
 def parse_duration_to_seconds(duration: str | int | float | None) -> int | None:
@@ -359,6 +386,60 @@ def canonicalize_sql_for_hash(sql: str) -> str:
     except Exception:  # noqa: BLE001 — fall back to whitespace-only normalisation
         formatted = sql
     return normalize_sql_whitespace(formatted)
+
+
+def to_authoring_identifier(value: Any) -> Any:
+    """Re-quote a Snowflake stored-form identifier back into SQL syntax.
+
+    The inverse of ``invariants._to_stored_form(authored=True)``: re-quotes a
+    case-sensitive name (``userId`` -> ``"userId"``) and leaves an all-upper
+    name untouched (``USERID`` -> ``USERID``), so the authored hash half (which
+    resolves its input as SQL syntax) round-trips a stored value instead of
+    folding ``userId`` to ``USERID``. Non-string/empty/parser-rejected values
+    are returned unchanged.
+
+    Args:
+        value: A single stored-form identifier cell (typically a ``str``).
+
+    Returns:
+        The SQL-syntax (authoring-form) identifier, or *value* unchanged.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return value
+    stripped = value.strip()
+    # Already SQL syntax: re-inferring a quoted name would double-escape it
+    # (``"userId"`` -> ``"""userId"""``), so the boundary stays idempotent.
+    if identifier.QUOTED_IDENTIFIER_RE.match(stripped):
+        return stripped
+    try:
+        return identifier.get_inferred_name(stripped)
+    except ValueError:
+        return value
+
+
+def to_comparison_identifier(value: Any) -> str:
+    """Fold an identifier of either provenance to one case-insensitive key.
+
+    Entity join keys reach the apply/export comparisons as Snowflake stored
+    form (bare, case-preserved); secondary keys and re-quoted entity columns
+    reach them as SQL syntax (quotes still encoding case). Both fold here to a
+    single unquoted, upper-cased key so a comparison never depends on which
+    form a value arrived in. Parser-rejected and non-string values fall back to
+    a bare strip so no recovery path raises.
+
+    Args:
+        value: A single identifier cell (``str`` or anything ``str()`` accepts).
+
+    Returns:
+        The unquoted, upper-cased comparison key; ``""`` for empty input.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return identifier.get_unescaped_names(text).upper()
+    except ValueError:
+        return text.strip('"').upper()
 
 
 def inline_query_source(

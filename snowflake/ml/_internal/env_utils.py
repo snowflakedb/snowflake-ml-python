@@ -90,6 +90,9 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
     Returns:
         A requirements.Requirement object containing the requirement information.
     """
+    # A requirement string must not carry surrounding whitespace: packaging>=26 accepts only a
+    # requirement that ends at the end of the string, so a trailing newline is a parse error.
+    req_str = req_str.strip()
     try:
         r = requirements.Requirement(req_str)
 
@@ -780,8 +783,9 @@ def load_requirements_file(path: pathlib.Path) -> list[requirements.Requirement]
     with open(path, encoding="utf-8") as f:
         reqs = f.readlines()
 
-    # Filter out pip options
-    reqs = [line for line in reqs if line.strip() and not line.strip().startswith(("-", "#"))]
+    # "-" lines are pip options (e.g. --extra-index-url) and "#" lines are comments; neither is a
+    # requirement. Strip as well, since a requirement string must not keep readlines()' newline.
+    reqs = [stripped for line in reqs if (stripped := line.strip()) and not stripped.startswith(("-", "#"))]
 
     return validate_pip_requirement_string_list(reqs)
 

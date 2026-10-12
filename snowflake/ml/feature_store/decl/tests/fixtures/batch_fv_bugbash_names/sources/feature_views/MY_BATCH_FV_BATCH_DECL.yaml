@@ -4,7 +4,7 @@ version: V1
 online: true
 target_lag: 1 minute
 entities:
-  - USER_ID
+  - USER_BATCH_DECL
 sources:
   - name: EVENTS_BATCH_DECL
     source_type: Batch

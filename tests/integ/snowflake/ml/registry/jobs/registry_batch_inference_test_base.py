@@ -3,7 +3,8 @@ import inspect
 import json
 import logging
 import uuid
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal
 
 import pandas as pd
 from absl.testing import absltest
@@ -339,25 +340,17 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         except TimeoutError:
             logger.warning(f"Batch job timed out after 30 minutes. Status: {batch_job.status}")
         if batch_job.status != "DONE":
-            logs = batch_job.get_logs(limit=100)
+            try:
+                container_names = registry_spcs_test_base.container_names_from_service_spec(batch_job._service_spec)
+            except Exception:
+                container_names = ["main"]
+            logs = registry_spcs_test_base.format_service_container_logs(
+                self.session, batch_job.id, container_names, limit=100
+            )
             msg = (
                 f"Job {batch_job.id} status is {batch_job.status}, expected DONE.\n\n"
-                f"Last 100 lines of job logs:\n{logs}"
+                f"Recent logs from each container on each replica:\n{logs}"
             )
-
-            # Also fetch logs from proxy and model-inference containers if there are multiple containers
-            containers = batch_job._service_spec.get("spec", {}).get("containers", [])
-            container_names = {c["name"] for c in containers}
-            for container_name in ("proxy", "model-inference"):
-                if len(containers) > 1 and container_name in container_names:
-                    try:
-                        from snowflake.ml.jobs.job import _get_logs
-
-                        container_logs = _get_logs(self.session, batch_job.id, limit=100, container_name=container_name)
-                        msg += f"\n\nLast 100 lines of {container_name} logs:\n{container_logs}"
-                    except Exception as e:
-                        logger.warning("Failed to fetch %s container logs: %s", container_name, e)
-                        msg += f"\n\nFailed to get {container_name} logs: {e}"
         else:
             msg = None
         self.assertEqual(batch_job.status, "DONE", msg)

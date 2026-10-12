@@ -280,7 +280,10 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, param
         )
 
         ingested_key = f"U_TILED_{s}"
-        base = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+        # Online reads only count complete UTC-day tiles, so anchor on yesterday's UTC midnight
+        # to keep the hourly offsets out of today's partial tile.
+        yesterday_utc = datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=1)
+        base = datetime.datetime.combine(yesterday_utc, datetime.time())
         amounts = (100.0, 200.0, 300.0)
         ingest_rows = [
             {
@@ -616,7 +619,10 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, param
 
         key_a = f"U_HLL_A_{s}"
         key_b = f"U_HLL_B_{s}"
-        base = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+        # Online reads only count complete UTC-day tiles, so anchor on yesterday's UTC midnight
+        # to keep the hourly offsets out of today's partial tile.
+        yesterday_utc = datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=1)
+        base = datetime.datetime.combine(yesterday_utc, datetime.time())
         ingest_rows = [
             {"USER_ID": key_a, "CATEGORY": "electronics", "EVENT_TIME": base + datetime.timedelta(hours=1)},
             {"USER_ID": key_a, "CATEGORY": "books", "EVENT_TIME": base + datetime.timedelta(hours=2)},

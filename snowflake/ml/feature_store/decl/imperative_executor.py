@@ -14,6 +14,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from snowflake.ml.feature_store.decl.compiler import (
+    _decode_join_keys,
+    to_comparison_identifier,
+)
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.errors import (
     DependencyError,
@@ -1072,23 +1076,25 @@ def _emulate_quake_postprocess(result: dict[str, Any]) -> None:
     sks: list[str] = []
     if isinstance(sks_raw, list):
         sks = [str(k) for k in sks_raw if k]
+    # The SK and the entity/source columns can arrive in different identifier
+    # provenances (bare stored form vs re-quoted SQL syntax), so compare them
+    # through the shared fold rather than a raw ``.upper()``.
+    sks_uc = {to_comparison_identifier(s) for s in sks}
     if sks:
         inner["aggregation_secondary_keys"] = sks
         entities = inner.get("ordered_entity_column_names")
         if isinstance(entities, list):
-            sks_uc = {s.upper() for s in sks}
-            inner["ordered_entity_column_names"] = [e for e in entities if str(e).upper() not in sks_uc]
+            inner["ordered_entity_column_names"] = [e for e in entities if to_comparison_identifier(e) not in sks_uc]
 
     features = inner.get("features")
     if isinstance(features, list):
-        sks_uc = {s.upper() for s in sks}
         cleaned: list[Any] = []
         for feat in features:
             if not isinstance(feat, dict):
                 cleaned.append(feat)
                 continue
             src = feat.get("source_column")
-            src_name = str(src.get("name", "")).upper() if isinstance(src, dict) else ""
+            src_name = to_comparison_identifier(src.get("name", "")) if isinstance(src, dict) else ""
             if sks_uc and src_name in sks_uc and "function" not in feat:
                 continue
             oc = feat.get("output_column")
@@ -1620,11 +1626,15 @@ def _execute_op(
     elif op.kind == OpKind.RECREATE_FV:
         name = op.payload.get("name", "")
         version = op.payload.get("version", "V1")
+        # Build (and resolve entities) before deleting: the build reads only
+        # this payload's own sources and the entity registry, never the FV
+        # being recreated, so a resolution failure here must leave the deployed
+        # FV intact rather than drop it first and strand the schema.
+        fv, new_version = _build_feature_view(op.payload, session, database, schema, warehouse, fs=fs)
         try:
             fs.delete_feature_view(name, version)
         except Exception as e:
             logger.warning("delete_feature_view(%s, %s) failed during RECREATE: %s", name, version, e)
-        fv, new_version = _build_feature_view(op.payload, session, database, schema, warehouse, fs=fs)
         # Append-only targets MUST re-register with ``overwrite=False`` — core
         # rejects append_only + ``overwrite=True`` outright — and the
         # ``delete_feature_view`` above already cleared the prior object (and
@@ -2223,10 +2233,10 @@ def _augment_schema_with_secondary_keys(
         return raw_schema
     from snowflake.snowpark.types import StructType
 
-    existing = {_normalize_column_name(f.name) for f in raw_schema.fields}
+    existing = {to_comparison_identifier(f.name) for f in raw_schema.fields}
     additions: list[Any] = []
     for sk in secondary_keys:
-        sk_norm = _normalize_column_name(sk)
+        sk_norm = to_comparison_identifier(sk)
         if not sk_norm or sk_norm in existing:
             continue
         field = None
@@ -2234,7 +2244,7 @@ def _augment_schema_with_secondary_keys(
             if fb is None:
                 continue
             for f in getattr(fb, "fields", []):
-                if _normalize_column_name(f.name) == sk_norm:
+                if to_comparison_identifier(f.name) == sk_norm:
                     field = f
                     break
             if field is not None:
@@ -2274,7 +2284,7 @@ def _augment_source_ref_columns_with_secondary_keys(
         return
     schema_types: dict[str, str] = {}
     for f in getattr(schema, "fields", []):
-        schema_types[_normalize_column_name(f.name)] = type(f.datatype).__name__
+        schema_types[to_comparison_identifier(f.name)] = type(f.datatype).__name__
     if not schema_types:
         return
     for ref in source_refs:
@@ -2283,9 +2293,9 @@ def _augment_source_ref_columns_with_secondary_keys(
         cols = ref.get("columns")
         if not isinstance(cols, list):
             continue
-        present = {_normalize_column_name(c.get("name")) for c in cols if isinstance(c, dict)}
+        present = {to_comparison_identifier(c.get("name")) for c in cols if isinstance(c, dict)}
         for sk in secondary_keys:
-            sk_norm = _normalize_column_name(sk)
+            sk_norm = to_comparison_identifier(sk)
             if not sk_norm or sk_norm in present:
                 continue
             type_name = schema_types.get(sk_norm)
@@ -2293,11 +2303,6 @@ def _augment_source_ref_columns_with_secondary_keys(
                 continue
             cols.append({"name": str(sk), "type": type_name})
             present.add(sk_norm)
-
-
-def _normalize_column_name(name: Any) -> str:
-    """Normalise a (possibly quoted) Snowflake identifier for case-insensitive comparison."""
-    return str(name or "").strip('"').upper()
 
 
 def _execute_create_stream_source(fs: Any, payload: dict[str, Any]) -> Any:
@@ -2608,6 +2613,7 @@ def _build_features(raw: list[dict[str, Any]]) -> list[Any]:
         ``stream_config``-only path).
     """
     from snowflake.ml.feature_store.aggregation import AggregationType
+    from snowflake.ml.feature_store.decl.spec_compiler import _normalize_function_params
     from snowflake.ml.feature_store.feature import Feature
 
     features: list[Any] = []
@@ -2639,6 +2645,10 @@ def _build_features(raw: list[dict[str, Any]]) -> list[Any]:
         params = entry.get("function_params") or {}
         if not isinstance(params, dict):
             params = {}
+        # Apply consumes the raw model_to_dict payload, which keeps authoring
+        # aliases (e.g. acd's ``precision``); normalise to the internal key
+        # (``hll_lg_k``) the Feature/AggregationSpec validator expects.
+        params = _normalize_function_params(fn_name, params)
 
         feat = Feature(agg_type, column, window, offset, **params)
 
@@ -2653,14 +2663,6 @@ def _build_features(raw: list[dict[str, Any]]) -> list[Any]:
         features.append(feat)
 
     return features
-
-
-def _normalize_join_key_token(raw: Any) -> str:
-    """Normalise a join-key cell from ``list_entities`` JSON for comparisons."""
-    s = str(raw).strip()
-    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        s = s[1:-1]
-    return s.strip()
 
 
 def _get_entity_for_feature_view_ref(fs: Any, ref: str) -> Any:
@@ -2691,15 +2693,14 @@ def _get_entity_for_feature_view_ref(fs: Any, ref: str) -> Any:
         snowml_exceptions.SnowflakeMLException: Propagated from ``get_entity`` /
             ``list_entities`` for non-``NOT_FOUND`` failures.
     """
-    import json
-
     from snowflake.ml._internal.exceptions import (
         error_codes,
         exceptions as snowml_exceptions,
     )
 
     ref_n = str(ref or "").strip()
-    if not ref_n:
+    ref_key = to_comparison_identifier(ref_n)
+    if not ref_key:
         raise ValueError("FeatureView `entities` entry is empty.")
 
     try:
@@ -2707,32 +2708,36 @@ def _get_entity_for_feature_view_ref(fs: Any, ref: str) -> Any:
     except snowml_exceptions.SnowflakeMLException as exc:
         if exc.error_code != error_codes.NOT_FOUND:
             raise
+    except ValueError:
+        # A parser-rejected ref never names a tag; fall through to the join-key
+        # scan rather than aborting partway through a recreate.
+        pass
 
     try:
         rows = fs.list_entities().collect()
     except Exception as e:
         raise RuntimeError(f"list_entities() failed while resolving entity ref {ref_n!r}: {e}") from e
 
+    # The ref arrives in authoring SQL syntax (``"userId"``) while a deployed
+    # join key is Snowflake stored form (bare ``userId``); fold both to one
+    # comparison key so the provenance difference cannot miss a match.
     matches: list[str] = []
-    ref_upper = ref_n.upper()
     for row in rows:
         r = row.as_dict() if hasattr(row, "as_dict") else dict(row)
         name = str(r.get("NAME", "") or "").strip()
         if not name:
             continue
-        jk_raw = r.get("JOIN_KEYS", "")
-        try:
-            keys_raw = json.loads(jk_raw) if isinstance(jk_raw, str) else list(jk_raw or [])
-        except json.JSONDecodeError:
-            keys_raw = []
-        norm_keys = {_normalize_join_key_token(k).upper() for k in keys_raw}
-        if ref_upper in norm_keys:
+        norm_keys = {to_comparison_identifier(k) for k in _decode_join_keys(r.get("JOIN_KEYS", ""))}
+        if ref_key in norm_keys:
             matches.append(name)
 
     if len(matches) == 1:
         return fs.get_entity(matches[0])
     if not matches:
-        raise ValueError(f"No entity registered with name {ref_n!r} and no entity declares join key {ref_n!r}.")
+        raise ValueError(
+            f"No entity registered with name {ref_n!r} and no entity declares join key {ref_n!r} "
+            f"(compared as {ref_key!r})."
+        )
     raise ValueError(
         f"Ambiguous entity resolution for join key {ref_n!r}: " f"multiple entities declare it: {sorted(matches)!r}"
     )

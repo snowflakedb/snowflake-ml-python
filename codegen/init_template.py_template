@@ -6,8 +6,7 @@ from snowflake.ml.modeling._internal import optional_dependency
 pkg_name = __name__
 
 # Fail fast with an actionable error when a required optional dependency (scikit-learn, and
-# xgboost/lightgbm for those subpackages) is missing, and warn that snowflake.ml.modeling
-# estimators are deprecated when the import succeeds.
+# xgboost/lightgbm for those subpackages) is missing.
 optional_dependency.check_modeling_dependencies(pkg_name)
 
 pkg_dir = os.path.dirname(os.path.abspath(__file__))

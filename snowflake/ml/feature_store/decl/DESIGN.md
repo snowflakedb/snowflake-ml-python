@@ -193,10 +193,8 @@ snowpark SDK.
     it as a recovery path.      Cost: one `get_feature_view()` round-trip
     per OFT-less FV (N+1 for that subset; acceptable for CLI plan/init).
     `cluster_by` column identifiers recovered from `list_feature_views()`
-    rows are normalised through `identifier.resolve_identifier()` — via
-    `_resolve_cluster_column`, which now delegates to the shared
-    `invariants._resolve_hash_identifier` so recovery and hashing use one
-    identifier resolver — so a quoted identifier with an internal quote
+    rows are normalised through `identifier.resolve_identifier()` via
+    `_resolve_cluster_column`, so a quoted identifier with an internal quote
     (`"FOO""BAR"`) resolves to its canonical form instead of the mangled
     `FOO""BAR` a naive `.strip('"')` would yield.
   - `Entity` — from rows produced by
@@ -285,7 +283,9 @@ snowpark SDK.
   invariant `FV.ordered_entity_column_names ⊆ (join-key columns of
   entity_rows)` is enforced leniently when `entity_rows` is non-empty
   (the shared helper `_orphaned_entity_column_warnings` decodes each
-  tag's join-key **columns** via `_join_keys_from_row` /
+  tag's join-key **columns** via `_join_keys_from_row` (itself a thin
+  wrapper over the shared `compiler._decode_join_keys`, which also backs
+  `imperative_executor` and `state._build_entity_object`) /
   `allowed_values` — **never** the entity **name** via
   `_entity_name_from_row`, since an entity's name and its join-key
   column are frequently and validly different strings, e.g.
@@ -561,7 +561,10 @@ existing kind).  The numbered entries map onto the eight steps above:
    either local batch or applied state), that `(name, version)` pairs are
    unique within the FG, and that source FVs are `online: true` with
    `store_type: POSTGRES` (with a soft-pass when `store_type` is not
-   declared in the local spec).  `_check_idempotency` was extended to use
+   declared in the local spec).  Online state is read from the applied OFT
+   SPECIFICATION shape via `online_store_type` (which has no top-level
+   `online` flag), and the first payload with signal (local, then applied)
+   decides each ref.  `_check_idempotency` was extended to use
    `fg_content_hash` when `kind == "FeatureGroup"`.
 4. **`loader.py`** — appended `"feature_groups"` to `_PROJECT_SUBDIRS` so
    `<root>/sources/feature_groups/` is discovered by `load_from_project`.
@@ -825,34 +828,159 @@ non-SK golden + SK semantic-change detection).
 
 `compile_to_spec` copies authored identifiers into the wire spec verbatim, but
 snowml-core resolves every identifier through `SqlIdentifier`: an **unquoted**
-name folds to UPPER, a `"quoted"` name preserves case. So a project authoring a
-lower-/mixed-case entity join key, `cluster_by`, `timestamp_col`, feature
-column, or metadata identity applies cleanly (core uppercases on `CREATE`) and
-then loops forever on destructive `RECREATE_FV` — byte-for-byte the customer
-triage's `spec.cluster_by, spec.features, spec.ordered_entity_column_names,
-spec.timestamp_field changed` reason strings (and, for lowercase metadata
-identity, the generic full-spec fallback).
+name folds to UPPER, a `"quoted"` name preserves case. Without canonicalization
+a project authoring a lower-/mixed-case entity join key, `cluster_by`,
+`timestamp_col`, feature column, or metadata identity applies cleanly (core
+upper-cases on `CREATE`) and then loops forever on destructive `RECREATE_FV`,
+because the hash of the authored spec never matches the hash of the deployed
+one.
 
-`invariants._normalize_for_full_spec_hash` calls `_canonicalise_spec_identifiers`
-**first** (right after the JSON deep copy, before any downstream `.upper()`
-comparison), routing every identifier-bearing field through
-`_resolve_hash_identifier` — a thin wrapper over
-`snowflake.ml._internal.utils.identifier.resolve_identifier`, the exact rule
-core applies. Because normalization runs on **both** the local compile and the
-applied recovery, authored casing and core-resolved casing collapse to one
-canonical form. `compile_to_spec` output and the authored YAML are left
-untouched, so uppercase golden hashes stay byte-stable. Fields canonicalized:
-`metadata.{database,schema,name,version}` and, inside `spec`,
-`ordered_entity_column_names`, `cluster_by`, `aggregation_secondary_keys`,
-`ordered_secondary_key_column_names`, `timestamp_field`, each feature's
-`source_column`/`output_column` name, `output_columns[].name`, and
-`sources[].columns[].name`. A **quoted** identifier keeps its case, so a genuine
-`"foo"` → `"FOO"` rename still `RECREATE_FV`s. `state._resolve_cluster_column`
-delegates to the same `_resolve_hash_identifier`, so recovery and hashing share
-one resolver. Pinned by `tests/test_identifier_case_canonicalization.py`
-(per-field symmetry, full lowercase archetype end-to-end `NO_CHANGE`,
-genuine-rename recreate guards, uppercase byte-stability) and the class-level
-`tests/test_customer_drift_repro.py`.
+The two halves of a full-spec diff are **not** in the same representation, so a
+single `resolve_identifier` pass over both cannot work — `resolve_identifier` is
+**not idempotent** across the boundary:
+
+- The **authored** half (local YAML / Python, copied verbatim by
+  `compile_to_spec`) is **SQL syntax** — quotes still encode case-sensitivity.
+  This holds only because the two producers that would otherwise inject a
+  Snowflake **stored-form** value into the authored half re-quote it back into
+  SQL syntax at the boundary via `compiler.to_authoring_identifier` — the
+  inverse of `_to_stored_form(v, authored=True)`: it wraps a case-sensitive
+  bare name such as `userId` in quotes (`"userId"`) and leaves an already-upper
+  `USER_ID` untouched. The two producers are: (1)
+  `spec_compiler.build_entity_join_key_map`, which takes an entity's join keys
+  from the **deployed** entity (stored form) when the authoring references it by
+  name; and (2) the exporter (`export_specs` / `export_specs_as_python`), which
+  writes `entities`, `timestamp_col`, and each entity's `join_keys` from a
+  deployed FV's stored form. Without that boundary a bare stored `userId` would
+  fold to `USERID` under `authored=True` and loop forever on a destructive,
+  non-convergent `RECREATE_FV`. Consumers that *compare* these identifiers
+  rather than re-quote them (the apply-time entity resolver, the exporter's
+  secondary-key filters, the Entity structural fingerprint) fold either
+  provenance to one case-insensitive key via `compiler.to_comparison_identifier`.
+- The **applied** half (`DESCRIBE … TYPE = SPECIFICATION`) is Snowflake's
+  **stored form** — quotes have already been consumed by `SqlIdentifier.resolved()`
+  at register time (`feature_store.py` for BatchFV, `streaming_registration.py`
+  for StreamingFV).
+
+```text
+authored '"userId"' --resolve--> '"userId"'   (quotes kept)
+  .resolved() at register time -> 'userId'    <- what is actually stored
+applied  'userId'   --resolve--> 'USERID'     <- resolving again corrupts it
+```
+
+Resolving the applied half a second time would fold a deployed case-sensitive
+`userId` to `USERID`, where it collides with an unquoted authoring of `userId`
+and yields a **false `NO_CHANGE`** while the live column is case-sensitive.
+Stored `userId` and authored `userId` are the same string with different
+meanings, so each half is canonicalized differently.
+
+The canonical comparison form is the **stored form** (bare, case-preserved),
+reached by a single helper `_to_stored_form(v, *, authored)` with two modes:
+
+- **authored** (`authored=True`) — the authored half only. Resolves SQL syntax
+  first via `_resolve_hash_identifier`, then unquotes: `userId` → `USERID`,
+  `"userId"` → `userId`, `USER_ID` → `USER_ID`. Deliberately **not** idempotent;
+  only ever applied once, where we still know the string is SQL syntax.
+- **applied** (`authored=False`) — the applied half, for fields Snowflake
+  returns in SQL form. Unquotes only, **never** folds case (`"userId"` →
+  `userId`, `userId` → `userId`); **idempotent**, so a payload normalized twice
+  is safe.
+
+`invariants._normalize_for_full_spec_hash(spec, *, authored=False)` calls
+`_canonicalise_spec_identifiers(cleaned, authored=authored)` **first** (right
+after the JSON deep copy, before any downstream `.upper()` comparison).
+`compute_local_spec_hash` passes `authored=True`; every applied-recovery caller
+(planner BatchFV rehash, `state.py`) keeps the `authored=False` default. The
+shared `_canonicalise_inner_spec_identifiers` is also routed through the local
+(`authored=True`) and applied (`authored=False`) projections of
+`batch_feature_view_structural_equivalent`, so the `UPDATE_FV` gate and the
+`RECREATE_FV` hash can never disagree for a quoted identifier.
+
+Per-field classification of the applied half, by operation:
+
+- **Already bare stored form → applied mode is a no-op.** The applied side ran
+  `.resolved()` at register time:
+  - `metadata.database` / `metadata.schema` — `self._config.database.resolved()`
+  - `metadata.name` — `feature_view.name.resolved()`
+  - `spec.ordered_entity_column_names` — `jk.resolved()`
+  - `spec.timestamp_field` — `timestamp_col.resolved()`
+- **SQL form → unquote only** (quotes kept for case-sensitive names):
+  - `spec.ordered_secondary_key_column_names` — `SqlIdentifier(k).identifier()`
+  - `spec.features[].{source,output}_column.name`, `spec.output_columns[].name`,
+    `spec.sources[].columns[].name`, `spec.udf.output_columns[].name` — built by
+    `_make_fs_column`, which keeps quotes for case-sensitive names
+  - `spec.cluster_by` — `state._resolve_cluster_column` already ran
+    `resolve_identifier`, which preserves quotes
+- **Not an identifier → symmetric `.upper()` on both halves** (matching
+  `spec_key`):
+  - `metadata.version` — `FeatureViewVersion` permits `-` / `.`, which
+    `resolve_identifier` rejects
+
+`metadata.version` folds symmetrically rather than resolving because it is not
+a legal identifier (`FeatureViewVersion` permits `-` / `.`, which
+`resolve_identifier` rejects); resolving it would upper-case authored `v1` to
+`V1` against an untouched applied `v1` and make every lowercase-versioned
+FeatureView replan as `RECREATE_FV`. `_resolve_hash_identifier` (the
+`resolve_identifier` wrapper that keeps quotes) is the authored mode's first
+step; it applies the same rule `state._resolve_cluster_column` uses for cluster
+recovery, which must keep emitting SQL form. `compile_to_spec` output and the
+authored YAML are left untouched, so uppercase golden hashes stay byte-stable
+(an uppercase unquoted name is a no-op in authored mode). A **quoted**
+identifier keeps its case, so a genuine `"foo"` → `"FOO"` rename still
+`RECREATE_FV`s.
+
+Pinned by the `TestIdentifierCaseCanonicalization` class in
+`tests/test_object_hashing.py` (authored-vs-applied per field, the false
+`NO_CHANGE` red case, quoted-authoring match, lowercase-version match,
+applied-unquote idempotency, quoted-rename guard, genuine-rename guard) and the
+Python-form coverage in `tests/test_load_python_form.py`
+(`TestPythonFormIdentifierResolution`); uppercase byte-stability is covered by
+that file's existing `TestThreeShapeParity`.
+
+**Known limitations (deferred, same root cause, different owners).**
+`spec_key` / `state._build_spec_key` uppercase `name` / `database` / `schema`,
+so a quoted mixed-case FV *name* never matches its applied object (owned by
+`6b1`); and `_normalise_fv_sources_for_hash` uses `table.strip().upper()` rather
+than identifier resolution for source bindings. Both are out of scope here. The
+exporter copies `metadata.name` / `database` / `schema` from the deployed FV's
+stored form verbatim (it does **not** route them through
+`compiler.to_authoring_identifier`), so a quoted mixed-case FV *name* leaks the
+same way — but it is moot: `spec_key` already upper-cases names before the
+match, so such a name never resolves to its applied object regardless. Extend
+the `6b1` fix there rather than re-quoting `metadata.name` on export.
+
+### Aggregation `function_params` fidelity (acd `precision`, empty params)
+
+Three related fixes keep tiled-aggregation projects off the `RECREATE_FV` loop
+and out of apply-time crashes:
+
+- **Param-alias normalization.** `approx_count_distinct` is authored with
+  `precision`, but the imperative `AggregationSpec` validator only accepts the
+  internal `hll_lg_k` (and `DESCRIBE ... TYPE = SPECIFICATION` returns the
+  internal key too). `spec_compiler._normalize_function_params` renames the
+  alias via the single `_FUNCTION_PARAM_ALIASES` table, called from both the
+  hashing path (`_compile_features`) and the apply path
+  (`imperative_executor._build_features`). Both spellings round-trip; a
+  conflicting pair (alias and internal key disagree) raises defensively there
+  and is surfaced to the author as `FEATURE_PARAMS_CONFLICT` by
+  `invariants._check_feature_param_conflicts` — the planner's `compile_to_spec`
+  fallbacks would otherwise swallow the raise into a spurious recreate.
+
+- **Predetermined output types.** Some aggregations deploy a fixed output-column
+  type regardless of the authored `output_column.type` (acd/count → `LongType`,
+  avg/std/var/approx_percentile → `DoubleType`). Authoring a non-promotable type
+  can never hash-match the applied side, so `_check_feature_output_types` rejects
+  it with `FEATURE_OUTPUT_TYPE_INVALID`. The authored type is compared through
+  `_BFV_TYPE_PROMOTION` first, so promotable spellings (`IntegerType` →
+  `LongType`) are accepted. `_AGG_REQUIRED_OUTPUT_TYPE` mirrors core's
+  `spec/builder.py::_AGG_PREDETERMINED_OUTPUT`, kept honest by a parity test;
+  secondary-key FVs are skipped (their output is ArrayType-wrapped).
+
+- **Empty-params coalescing.** `model_to_dict(exclude_none=True)` keeps an
+  authored `function_params={}`, while the applied recovery omits the key for a
+  param-less aggregation (e.g. `count`). `_drop_empty_function_params` drops the
+  empty dict on both hash halves so the project stays `NO_CHANGE`; a populated
+  dict stays hash-significant.
 
 ### Exporter kind-filter + source-less BatchFV skip (init on legacy schemas)
 

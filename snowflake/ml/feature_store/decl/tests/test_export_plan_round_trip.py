@@ -37,6 +37,7 @@ from snowflake.ml.feature_store.decl import api as decl_api
 from snowflake.ml.feature_store.decl.exporter import export_specs
 from snowflake.ml.feature_store.decl.invariants import (
     _VOLATILE_METADATA_KEYS,
+    _canonicalise_spec_identifiers,
     _full_spec_hash,
 )
 from snowflake.ml.feature_store.decl.loader import load_specs
@@ -76,7 +77,7 @@ _STREAMING_SPEC: dict[str, Any] = {
         }
     ],
     "spec": {
-        "ordered_entity_column_names": ["user_id"],
+        "ordered_entity_column_names": ["USER_ID"],
         "sources": [
             {
                 "name": "user_events",
@@ -102,7 +103,7 @@ _STREAMING_SPEC: dict[str, Any] = {
             "engine": "python",
             "output_columns": [{"name": "event_count", "type": "IntegerType"}],
         },
-        "timestamp_field": "event_time",
+        "timestamp_field": "EVENT_TIME",
         "feature_granularity_sec": 60,
         "feature_aggregation_method": "tiles",
     },
@@ -189,7 +190,7 @@ _CONTINUOUS_STREAMING_NO_GRANULARITY_AUTHORING: dict[str, Any] = {
     "version": "v1",
     "database": "MYDB",
     "schema": "PUBLIC",
-    "entities": ["user_id"],
+    "entities": ["USER_ID"],
     "sources": [
         {
             "name": "user_events",
@@ -215,7 +216,7 @@ _CONTINUOUS_STREAMING_NO_GRANULARITY_AUTHORING: dict[str, Any] = {
         "function_definition": "def score_clicks(df):\n    return df['click'].sum()",
         "output_columns": [{"name": "score", "type": "FloatType"}],
     },
-    "timestamp_col": "event_time",
+    "timestamp_col": "EVENT_TIME",
     "feature_aggregation_method": "continuous",
     "refresh_freq": "5 minutes",
 }
@@ -243,7 +244,7 @@ _CONTINUOUS_STREAMING_SPEC: dict[str, Any] = {
         }
     ],
     "spec": {
-        "ordered_entity_column_names": ["user_id"],
+        "ordered_entity_column_names": ["USER_ID"],
         "sources": [
             {
                 "name": "user_events",
@@ -269,7 +270,7 @@ _CONTINUOUS_STREAMING_SPEC: dict[str, Any] = {
             "function_definition": "def score_clicks(df):\n    return df['click'].sum()",
             "output_columns": [{"name": "score", "type": "FloatType"}],
         },
-        "timestamp_field": "event_time",
+        "timestamp_field": "EVENT_TIME",
         "feature_granularity_sec": 60,
         "feature_aggregation_method": "continuous",
     },
@@ -322,6 +323,14 @@ def _live_applied_state(spec_payload: dict[str, Any]) -> object:
         object: an AppliedState covering the FV, every referenced entity,
         and every referenced datasource.
     """
+    # A live ``DESCRIBE ... TYPE = SPECIFICATION`` payload carries Snowflake's
+    # stored form (identifiers already resolved by ``SqlIdentifier.resolved()``),
+    # so resolve the SPECIFICATION-shape fixture to stored form before standing
+    # it in for the deployed object.  This keeps the FV's
+    # ``ordered_entity_column_names`` consistent with the already-upper-cased
+    # entity rows below and matches the planner's production applied half.
+    spec_payload = copy.deepcopy(spec_payload)
+    _canonicalise_spec_identifiers(spec_payload, authored=True)
     metadata = spec_payload.get("metadata", {})
     name = metadata.get("name", "")
     version = metadata.get("version", "")
@@ -596,6 +605,10 @@ def _orphan_applied_state(
         AppliedState covering the FV, every FV-referenced entity, and
         every supplied orphan entity.
     """
+    # See :func:`_live_applied_state`: a live SPECIFICATION payload is stored
+    # form, so resolve the fixture before standing it in for the deployed FV.
+    spec_payload = copy.deepcopy(spec_payload)
+    _canonicalise_spec_identifiers(spec_payload, authored=True)
     metadata = spec_payload.get("metadata", {})
     name = metadata.get("name", "")
     version = metadata.get("version", "")
@@ -2044,6 +2057,195 @@ class TestLimitationFixturesPlan:
         assert fv_ops[0].payload.get("warehouse") == "NEW_WH", (
             "UPDATE_FV payload must carry the operator-intent warehouse value; "
             f"got payload.warehouse={fv_ops[0].payload.get('warehouse')!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Case-sensitive identifier round-trip: the exporter must write authoring-form
+# (SQL syntax) identifiers, not Snowflake's bare stored form.
+# ---------------------------------------------------------------------------
+#
+# A live ``DESCRIBE ... TYPE = SPECIFICATION`` payload carries the bare stored
+# form of every identifier (``SqlIdentifier.resolved()`` at register time), so a
+# case-sensitive column comes back as ``userId`` / ``eventTs``.  The exporter
+# copies ``ordered_entity_column_names`` -> ``entities`` and ``timestamp_field``
+# -> ``timestamp_col`` (and the entity tag's join keys) into an authoring YAML,
+# which the loader treats as SQL syntax resolved with ``authored=True``.  If the
+# exporter emits the bare ``userId`` verbatim, the authored resolver folds it to
+# ``USERID`` while the applied half keeps ``userId``, so the re-plan loops on a
+# destructive ``RECREATE_FV``.  The exporter must therefore re-quote each value
+# (``userId`` -> ``"userId"``) so the round-trip lands as ``NO_CHANGE``.
+
+_CS_DB = "MYDB"
+_CS_SCHEMA = "PUBLIC"
+
+
+def _case_sensitive_batch_spec() -> dict[str, Any]:
+    """A SPECIFICATION-shape BatchFV whose entity column and timestamp are
+    case-sensitive (stored bare as ``userId`` / ``eventTs``).
+
+    Returns:
+        A SPECIFICATION-shape BatchFeatureView payload dict.
+    """
+    return {
+        "kind": "BatchFeatureView",
+        "metadata": {
+            "database": _CS_DB,
+            "schema": _CS_SCHEMA,
+            "name": "CS_PROFILE",
+            "version": "V1",
+            "spec_format_version": "1",
+            "internal_data_version": "1",
+            "client_version": "0.1.0",
+        },
+        "offline_configs": [
+            {
+                "store_type": "snowflake",
+                "table_type": "BatchSource",
+                "database": _CS_DB,
+                "schema": _CS_SCHEMA,
+                "table": "CS_PROFILE$V1",
+                "columns": [
+                    {"name": "userId", "type": "StringType"},
+                    {"name": "eventTs", "type": "TimestampType"},
+                    {"name": "CITY", "type": "StringType"},
+                ],
+            }
+        ],
+        "spec": {
+            "ordered_entity_column_names": ["userId"],
+            "sources": [],
+            "features": [
+                {
+                    "source_column": {"name": "CITY", "type": "StringType"},
+                    "output_column": {"name": "CITY", "type": "StringType"},
+                }
+            ],
+            "timestamp_field": "eventTs",
+            "target_lag_sec": 10,
+        },
+        "online_store_type": "postgres",
+    }
+
+
+def _cs_entity_row() -> dict[str, Any]:
+    """Entity tag row whose ``allowed_values`` preserves the stored case.
+
+    Unlike :func:`_live_applied_state` (which upper-cases the entity column
+    for its uppercase fixtures), this keeps the case-sensitive ``userId`` so
+    the recovered Entity join key models a real deployed case-sensitive key.
+
+    Returns:
+        An entity tag row dict whose ``allowed_values`` keeps ``userId``.
+    """
+    return {
+        "name": "SNOWML_FEATURE_STORE_ENTITY_USERID",
+        "database_name": _CS_DB,
+        "schema_name": _CS_SCHEMA,
+        "allowed_values": '["userId"]',
+    }
+
+
+def _case_sensitive_applied_state() -> object:
+    """AppliedState covering the case-sensitive FV plus its deployed entity."""
+    payload = _case_sensitive_batch_spec()
+    name = payload["metadata"]["name"]
+    version = payload["metadata"]["version"]
+    oft_name = f"{name.upper()}${version.upper()}$ONLINE"
+    return fetch_applied_state(
+        [_show_row(name, version)],
+        None,
+        specification_map={oft_name: payload},
+        entity_rows=[_cs_entity_row()],
+        default_database=_CS_DB,
+        default_schema=_CS_SCHEMA,
+    )
+
+
+def _load_yaml_docs_by_kind(export_root: Path) -> dict[str, list[dict[str, Any]]]:
+    """Return every exported YAML doc grouped by its ``kind``."""
+    import yaml as _yaml
+
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for path in export_root.rglob("*.yaml"):
+        doc = _yaml.safe_load(path.read_text())
+        if isinstance(doc, dict) and doc.get("kind"):
+            by_kind.setdefault(doc["kind"], []).append(doc)
+    return by_kind
+
+
+class TestCaseSensitiveExportRoundTrip:
+    """The exporter must emit authoring-form (SQL-syntax) identifiers so a
+    case-sensitive deployed FV round-trips to NO_CHANGE."""
+
+    def test_exported_yaml_requotes_case_sensitive_identifiers(self, tmp_path: Path) -> None:
+        """entities / timestamp_col / entity join keys keep their case via quoting."""
+        payload = _case_sensitive_batch_spec()
+        oft_name = f"{payload['metadata']['name'].upper()}${payload['metadata']['version'].upper()}$ONLINE"
+        export_specs(
+            show_rows=[_show_row(payload["metadata"]["name"], payload["metadata"]["version"])],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database=_CS_DB,
+            schema=_CS_SCHEMA,
+            specification_map={oft_name: payload},
+            entity_rows=[_cs_entity_row()],
+        )
+
+        export_root = tmp_path / f"{_CS_DB}.{_CS_SCHEMA}"
+        by_kind = _load_yaml_docs_by_kind(export_root)
+
+        fv_docs = by_kind.get("BatchFeatureView", [])
+        assert len(fv_docs) == 1, f"expected one exported BatchFeatureView; got {by_kind.keys()!r}"
+        fv_doc = fv_docs[0]
+        assert fv_doc.get("entities") == ['"userId"'], (
+            "exported entities must re-quote the case-sensitive stored column so the "
+            f"authored resolver round-trips it; got {fv_doc.get('entities')!r}"
+        )
+        assert fv_doc.get("timestamp_col") == '"eventTs"', (
+            "exported timestamp_col must re-quote the case-sensitive stored column; "
+            f"got {fv_doc.get('timestamp_col')!r}"
+        )
+
+        entity_docs = by_kind.get("Entity", [])
+        assert len(entity_docs) == 1, f"expected one exported Entity; got {by_kind.keys()!r}"
+        jk_names = [jk.get("name") for jk in entity_docs[0].get("join_keys", [])]
+        assert jk_names == ['"userId"'], (
+            "exported entity join keys must re-quote the case-sensitive stored column "
+            f"(not upper-case it); got {jk_names!r}"
+        )
+
+    def test_case_sensitive_export_then_plan_emits_no_change(self, tmp_path: Path) -> None:
+        """Export, load, then validate+plan; the case-sensitive FV must be NO_CHANGE."""
+        payload = _case_sensitive_batch_spec()
+        applied_state = _case_sensitive_applied_state()
+
+        oft_name = f"{payload['metadata']['name'].upper()}${payload['metadata']['version'].upper()}$ONLINE"
+        export_specs(
+            show_rows=[_show_row(payload["metadata"]["name"], payload["metadata"]["version"])],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database=_CS_DB,
+            schema=_CS_SCHEMA,
+            specification_map={oft_name: payload},
+            entity_rows=[_cs_entity_row()],
+        )
+
+        export_root = tmp_path / f"{_CS_DB}.{_CS_SCHEMA}"
+        batch = load_specs([f"{export_root}/..."])
+
+        errors, plan = _validate_and_plan(
+            batch,
+            applied_state,
+            PlanOptions(),
+            database=_CS_DB,
+            schema=_CS_SCHEMA,
+        )
+        assert errors == [], f"case-sensitive round-trip must not error; got {errors!r}"
+        non_no_change_ops = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
+        assert non_no_change_ops == [], (
+            "A freshly-exported case-sensitive FV must round-trip to NO_CHANGE; "
+            f"got {[(op.kind.value, op.name) for op in non_no_change_ops]!r}"
         )
 
 
