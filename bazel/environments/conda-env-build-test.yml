@@ -18,5 +18,5 @@ dependencies:
   - snowflake.core==1.12.0
   - pip
   - pip:
-      - datasets==3.3.2
+      - datasets==5.0.1
       - tf-keras==2.21.0

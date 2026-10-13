@@ -27,7 +27,7 @@
 #   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")
 #   --test-filter: filter to run specific test class/method (e.g., "TestClassName.test_method")
 #   --test-env: KEY=VALUE passed to Bazel as --test_env (repeatable)
-#   --local-test-jobs: override the number of concurrent Bazel test jobs.
+#   --local-test-jobs: override concurrent Bazel test jobs. Default: 1 on Azure and GCP, 3 for continuous_run, 6 otherwise.
 #
 
 set -o pipefail
@@ -62,7 +62,7 @@ help() {
     echo "  --targets <targets>    Comma-separated Bazel targets for targeted mode (e.g., '//path:target,//path/...')"
     echo "  --test-filter <filter> Filter to run specific test class/method (e.g., 'TestClassName.test_method')"
     echo "  --test-env KEY=VALUE    Extra Bazel --test_env (repeatable)"
-    echo "  --local-test-jobs <n>  Concurrent Bazel test jobs"
+    echo "  --local-test-jobs <n>  Concurrent Bazel test jobs (default: 1 on Azure and GCP, 3 for continuous_run, 6 otherwise)"
     echo ""
     echo "Modes:"
     echo "  merge_gate      Run affected tests only"
@@ -463,6 +463,17 @@ if [[ ! -s "${all_test_targets_file}" && "${mode}" = "smoke_test" ]]; then
     exit 1
 fi
 
+# Create arrays for each group's files and exit codes
+group_test_targets_files=()
+group_bazel_exit_codes=()
+group_coverage_report_files=()
+
+if [[ "${mode}" = "perf" ]]; then
+    # Performance tests need benchstore and every optional modeling stack. --config=perf
+    # provides both, so this mode does not split targets across core and feature envs.
+    groups=("perf")
+    group_test_targets_files=("${all_test_targets_file}")
+else
 # Read groups from optional_dependency_groups.bzl
 groups=()
 while IFS= read -r line; do
@@ -486,12 +497,6 @@ fi
 # Identify non-python test targets that should always run with core
 non_python_test_targets_file="${working_dir}/non_python_test_targets"
 "${bazel}" query 'kind(".*_test rule", set('"$(<"${all_test_targets_file}")"')) - kind("py_test rule", set('"$(<"${all_test_targets_file}")"'))' >"${non_python_test_targets_file}"
-
-# Create files for each group's targets
-# Create arrays for each group's files and exit codes
-group_test_targets_files=()
-group_bazel_exit_codes=()
-group_coverage_report_files=()
 
 # Filter targets for each group
 for i in "${!groups[@]}"; do
@@ -545,6 +550,7 @@ done
 
 groups+=("core")
 group_test_targets_files+=("${core_targets_file}")
+fi
 
 for i in "${!groups[@]}"; do
     group="${groups[$i]}"
@@ -556,11 +562,25 @@ done
 
 trap - ERR
 
+rewrite_empty_bazel_timeout_reports() {
+    local testlogs_dir script_dir
+    testlogs_dir="$("${bazel}" info bazel-testlogs 2>/dev/null || true)"
+    if [[ -z "${testlogs_dir}" || ! -d "${testlogs_dir}" ]]; then
+        return 0
+    fi
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if ! python3 "${script_dir}/test_compiler/normalize_empty_test_reports.py" "${testlogs_dir}"; then
+        echo "WARNING: could not rewrite empty Bazel timeout reports"
+    fi
+}
+
 set +e
 if [[ "${action}" = "test" ]]; then
     bazel_jobs=6
     if [[ -n "${LOCAL_TEST_JOBS}" ]]; then
         local_test_jobs="${LOCAL_TEST_JOBS}"
+    elif [[ "${SF_ENV}" == az* || "${SF_ENV}" == gcp* ]]; then
+        local_test_jobs=1
     elif [[ "${mode}" == "continuous_run" ]]; then
         local_test_jobs=3
     else
@@ -587,6 +607,9 @@ if [[ "${action}" = "test" ]]; then
             --target_pattern_file "${group_test_targets_files[$i]}"
         group_bazel_exit_codes[$i]=$?
     done
+
+    # A timeout leaves test.xml empty. Replace it with a JUnit failure Jenkins can parse.
+    rewrite_empty_bazel_timeout_reports
 
 elif [[ "${action}" = "coverage" ]]; then
     # Run coverage for each group

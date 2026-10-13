@@ -369,7 +369,7 @@ def _payload_diff(local: dict[str, Any], deployed: dict[str, Any]) -> list[str]:
         hash-relevant field.
     """
     return _walk_canonical_payload(
-        _canonical_spec_for_hash(local),
+        _canonical_spec_for_hash(local, authored=True),
         _canonical_spec_for_hash(deployed),
         path="",
     )
@@ -445,7 +445,11 @@ def _hash_aligned_fixture() -> dict[str, Any]:
 
     Returns:
         A compiled-shaped spec dict with volatile metadata and derived
-        top-level keys that hashing must ignore.
+        top-level keys that hashing must ignore.  Identifiers are in the
+        stored form (uppercase ``X``) so the authored-half (``authored=True``)
+        and applied-half resolutions ``_payload_diff`` applies converge — a
+        lower-case column name here would model a case-sensitive deployed
+        column that an unquoted authoring intentionally does NOT match.
     """
     return {
         "kind": "StreamingFeatureView",
@@ -462,7 +466,7 @@ def _hash_aligned_fixture() -> dict[str, Any]:
             "features": [],
             "udf": {
                 "name": "transform",
-                "output_columns": [{"name": "x", "type": "STRING"}],
+                "output_columns": [{"name": "X", "type": "STRING"}],
             },
         },
     }

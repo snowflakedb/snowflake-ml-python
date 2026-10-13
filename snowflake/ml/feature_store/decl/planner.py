@@ -882,10 +882,12 @@ def generate_plan(
 
         # Hash differs.  For feature-view kinds, OFTs cannot be updated
         # in place so we emit a destructive RECREATE op.  For Entity
-        # kinds, ``ALTER TAG ... SET ALLOWED_VALUES / SET COMMENT`` is
-        # supported by Snowflake, so we emit a non-destructive
-        # ``UPDATE_ENTITY`` op (handled by ``imperative_executor``)
-        # instead of falling through to ``RECREATE_FV``.
+        # kinds, a join-key **name** edit is rejected at plan time by the
+        # ``ENTITY_JOIN_KEY_IMMUTABLE`` invariant, so we apply the diff via
+        # the non-destructive, desc-only ``ALTER TAG ... SET COMMENT`` path.
+        # Known gap: a join-key **type** edit is not immutability-checked
+        # (the tag only persists names) and ``update_entity`` ignores it,
+        # so it currently loops here until the authoring type is reverted.
         if kind == "Entity":
             ops.append(
                 PlanOp(
@@ -893,8 +895,8 @@ def generate_plan(
                     name=name,
                     depends_on=[],
                     destructive=False,
-                    reason="Entity definition changed (join keys or description); "
-                    "applying via FeatureStore.update_entity().",
+                    reason="Entity description or join-key type changed; "
+                    "applying via FeatureStore.update_entity() (desc only).",
                     payload=data,
                 )
             )

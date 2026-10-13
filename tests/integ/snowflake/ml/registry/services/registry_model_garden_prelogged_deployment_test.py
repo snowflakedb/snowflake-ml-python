@@ -12,6 +12,7 @@ import unittest
 from absl.testing import absltest
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
+from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_garden_deployment_test as garden,
 )
@@ -119,8 +120,17 @@ class TestRegistryModelGardenPreloggedDeploymentInteg(garden.TestRegistryModelGa
             logger.warning("Batch job timed out after 30 minutes. Status: %s", batch_job.status)
 
         if batch_job.status != "DONE":
-            logs = batch_job.get_logs(limit=100)
-            self.fail(f"Job {batch_job.id} status is {batch_job.status}, expected DONE.\n\n{logs}")
+            try:
+                container_names = registry_spcs_test_base.container_names_from_service_spec(batch_job._service_spec)
+            except Exception:
+                container_names = ["main"]
+            logs = registry_spcs_test_base.format_service_container_logs(
+                self.session, batch_job.id, container_names, limit=100
+            )
+            self.fail(
+                f"Job {batch_job.id} status is {batch_job.status}, expected DONE.\n\n"
+                f"Recent logs from each container on each replica:\n{logs}"
+            )
 
         resolved_job_name = batch_job.id.split(".")[-1].strip('"')
         job_output_stage_location = output_stage_location.rstrip("/") + "/" + resolved_job_name + "/"

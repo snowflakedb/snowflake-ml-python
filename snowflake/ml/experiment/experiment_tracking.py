@@ -25,7 +25,6 @@ from snowflake.ml.experiment._client import (
     experiment_tracking_sql_client as sql_client,
 )
 from snowflake.ml.experiment._entities import run_metadata
-from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import type_hints
 from snowflake.ml.utils import sql_client as sql_client_utils
 from snowflake.snowpark import functions
@@ -328,15 +327,14 @@ class ExperimentTracking:
         else:
             raise RuntimeError("No run is active. Please provide a run_name or start a run.")
 
-        experiment_fqn = self._sql_client.fully_qualified_object_name(
-            self._database_name, self._schema_name, self._experiment.name
-        )
-        run_node = lineage_node.LineageNode(
-            session=self._session,
-            name=experiment_fqn,
-            domain="experiment",
-            version=resolved_run_name.identifier(),
-        )
+        if self._run and self._run.name == resolved_run_name:
+            run_node = self._run
+        else:
+            run_node = entities.Run(
+                experiment_tracking=self,
+                experiment_name=self._experiment.name,
+                run_name=resolved_run_name,
+            )
         logged_models = run_node.lineage(direction="downstream", domain_filter={"model"})
         return [model for model in logged_models if isinstance(model, ml_model.ModelVersion)]
 

@@ -46,13 +46,21 @@ platform(
     for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
 ]
 
+_ALL_CONDA_CHANNELS = [
+    ":core_conda_channel",
+] + [
+    ":" + group_name + "_conda_channel"
+    for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
+]
+
 platform(
     name = "all_conda_env",
-    constraint_values = [
-        ":core_conda_channel",
-    ] + [
-        ":" + group_name + "_conda_channel"
-        for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
-    ],
+    constraint_values = _ALL_CONDA_CHANNELS,
+    parents = ["@local_config_platform//:host"],
+)
+
+platform(
+    name = "perf_conda_env",
+    constraint_values = _ALL_CONDA_CHANNELS,
     parents = ["@local_config_platform//:host"],
 )

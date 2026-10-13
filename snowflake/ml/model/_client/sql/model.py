@@ -1,27 +1,8 @@
 from typing import Any
 
-from snowflake import connector
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model._client.sql import _base
 from snowflake.snowpark import row
-
-# SHOW VERSIONS can return 0 rows immediately after CREATE/COMMIT while catalog metadata catches up.
-_EMPTY_VERSION_RESULT_EXPECTED = "Expected 1 rows"
-_EMPTY_VERSION_RESULT_FOUND = "found: 0 rows"
-
-# Catalog propagation can take tens of seconds on a loaded account, so retries are bounded by elapsed
-# wall-clock time in addition to attempt count.
-SHOW_VERSIONS_RETRY_MAX_ATTEMPTS = 15
-SHOW_VERSIONS_RETRY_MAX_DELAY_MS = 60000
-SHOW_VERSIONS_RETRY_WAIT_MULTIPLIER_MS = 500
-SHOW_VERSIONS_RETRY_WAIT_MAX_MS = 5000
-
-
-def _is_empty_version_result(exc: BaseException) -> bool:
-    if not isinstance(exc, connector.DataError):
-        return False
-    message = str(exc)
-    return _EMPTY_VERSION_RESULT_EXPECTED in message and _EMPTY_VERSION_RESULT_FOUND in message
 
 
 class ModelSQLClient(_base._BaseSQLClient):
@@ -79,45 +60,30 @@ class ModelSQLClient(_base._BaseSQLClient):
         validate_result: bool = True,
         check_model_details: bool = False,
         statement_params: dict[str, Any] | None = None,
-        retry: bool | None = False,
     ) -> list[row.Row]:
         like_sql = ""
         if version_name:
             like_sql = f" LIKE '{version_name.resolved()}'"
 
-        def _execute() -> list[row.Row]:
-            res = (
-                query_result_checker.SqlResultValidator(
-                    self._session,
-                    (
-                        f"SHOW VERSIONS{like_sql} IN "
-                        f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
-                    ),
-                    statement_params=statement_params,
-                )
-                .has_column(ModelSQLClient.MODEL_VERSION_NAME_COL_NAME, allow_empty=True)
-                .has_column(ModelSQLClient.MODEL_VERSION_COMMENT_COL_NAME, allow_empty=True)
-                .has_column(ModelSQLClient.MODEL_VERSION_METADATA_COL_NAME, allow_empty=True)
+        res = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                (
+                    f"SHOW VERSIONS{like_sql} IN "
+                    f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
+                ),
+                statement_params=statement_params,
             )
-            if validate_result and version_name:
-                res = res.has_dimensions(expected_rows=1)
-            if check_model_details:
-                res = res.has_column(ModelSQLClient.MODEL_VERSION_MODEL_SPEC_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_NAME_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_COMMENT_COL_NAME, allow_empty=True)
+            .has_column(ModelSQLClient.MODEL_VERSION_METADATA_COL_NAME, allow_empty=True)
+        )
+        if validate_result and version_name:
+            res = res.has_dimensions(expected_rows=1)
+        if check_model_details:
+            res = res.has_column(ModelSQLClient.MODEL_VERSION_MODEL_SPEC_COL_NAME, allow_empty=True)
 
-            return res.validate()
-
-        if retry:
-            import retrying
-
-            versions: list[row.Row] = retrying.retry(
-                retry_on_exception=_is_empty_version_result,
-                stop_max_attempt_number=SHOW_VERSIONS_RETRY_MAX_ATTEMPTS,
-                stop_max_delay=SHOW_VERSIONS_RETRY_MAX_DELAY_MS,
-                wait_exponential_multiplier=SHOW_VERSIONS_RETRY_WAIT_MULTIPLIER_MS,
-                wait_exponential_max=SHOW_VERSIONS_RETRY_WAIT_MAX_MS,
-            )(_execute)()
-            return versions
-        return _execute()
+        return res.validate()
 
     def set_comment(
         self,

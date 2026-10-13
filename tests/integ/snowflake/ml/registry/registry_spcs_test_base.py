@@ -1,5 +1,6 @@
 """Common base class for registry SPCS integration tests."""
 
+import json
 import logging
 import os
 import uuid
@@ -9,9 +10,147 @@ import pytest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
-from snowflake.ml._internal.utils import connection_params
+from snowflake import snowpark
+from snowflake.ml._internal.utils import connection_params, identifier
+from snowflake.ml.jobs._utils import query_helper
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
+
+_DEFAULT_CONTAINER_NAME = "main"
+
+
+def format_service_container_logs(
+    session: snowpark.Session,
+    service_identifier: str,
+    container_names: list[str],
+    *,
+    limit: int = 100,
+) -> str:
+    """Collect recent container logs for a service or job.
+
+    Args:
+        session: Snowpark session used to query service instances and logs.
+        service_identifier: Fully qualified service or job name.
+        container_names: Containers to include. An empty list falls back to ``main``.
+        limit: Maximum number of recent log lines per container.
+
+    Returns:
+        Logs grouped by replica and container.
+    """
+    names = container_names or [_DEFAULT_CONTAINER_NAME]
+    instance_ids = _list_service_instance_ids(session, service_identifier)
+    sections: list[str] = []
+    for container_name in names:
+        matched_any_instance = False
+        for instance_id in instance_ids:
+            header = f"===== instance {instance_id} container {container_name} ====="
+            try:
+                body = _get_container_logs(
+                    session,
+                    service_identifier,
+                    container_name=container_name,
+                    instance_id=instance_id,
+                    limit=limit,
+                )
+            except Exception as e:
+                body = f"Logs are unavailable: {e}"
+                logging.warning(body)
+            if body:
+                matched_any_instance = True
+                sections.append(f"{header}\n{body}")
+        if matched_any_instance:
+            continue
+        header = f"===== container {container_name} ====="
+        try:
+            body = _get_container_logs(
+                session,
+                service_identifier,
+                container_name=container_name,
+                instance_id=None,
+                limit=limit,
+            )
+        except Exception as e:
+            body = f"Logs are unavailable: {e}"
+            logging.warning(body)
+        sections.append(f"{header}\n{body or 'No container logs found.'}")
+    return "\n\n".join(sections)
+
+
+def container_names_from_service_spec(service_spec: Any) -> list[str]:
+    """Return container names from a service spec, or ``main`` when the spec has none.
+
+    Args:
+        service_spec: Service specification mapping, or ``None`` when it is unavailable.
+
+    Returns:
+        Container names in spec order.
+    """
+    try:
+        containers = service_spec["spec"]["containers"]
+    except Exception:
+        return [_DEFAULT_CONTAINER_NAME]
+    names = [
+        str(container["name"]) for container in containers if isinstance(container, dict) and container.get("name")
+    ]
+    return names or [_DEFAULT_CONTAINER_NAME]
+
+
+def _get_container_logs(
+    session: snowpark.Session,
+    service_identifier: str,
+    *,
+    container_name: str,
+    instance_id: int | None,
+    limit: int,
+) -> str:
+    """Return the newest logs for one container, chronological."""
+    database, schema, service_name = identifier.parse_schema_level_object_identifier(service_identifier)
+    service_fqn = identifier.get_schema_level_object_identifier(database, schema, service_name)
+    query = [
+        "SELECT LOG FROM",
+        f"TABLE({service_fqn}!SPCS_GET_LOGS())",
+        "WHERE CONTAINER_NAME = ?",
+    ]
+    params: list[Any] = [container_name]
+    if instance_id is not None:
+        query.append("AND INSTANCE_ID = ?")
+        params.append(instance_id)
+    query.append("ORDER BY TIMESTAMP DESC")
+    if limit > 0:
+        query.append("LIMIT ?")
+        params.append(limit)
+    rows = query_helper.run_query(session, "\n".join(query), params=params)
+    if not rows:
+        return ""
+    lines = [_log_value_to_text(row[0]) for row in reversed(rows)]
+    return "\n".join(line for line in lines if line)
+
+
+def _log_value_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return parsed if isinstance(parsed, str) else value
+    return str(value)
+
+
+def _list_service_instance_ids(session: snowpark.Session, service_identifier: str) -> list[int]:
+    try:
+        rows = query_helper.run_query(
+            session,
+            "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)",
+            params=(service_identifier,),
+        )
+        instance_ids = [
+            int(row["instance_id"]) for row in rows if "instance_id" in row and row["instance_id"] is not None
+        ]
+    except Exception:
+        return [0]
+    return sorted(set(instance_ids)) or [0]
 
 
 @pytest.mark.spcs_deployment_image

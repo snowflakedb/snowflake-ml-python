@@ -1,24 +1,20 @@
 import json
 import os
 import tempfile
-from unittest import mock
 
 from absl.testing import absltest
 
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import PeftAdapter, openai_signatures, target_platform
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import db_manager, lora_adapter_account_gate
+from tests.integ.snowflake.ml.test_utils import (
+    db_manager,
+    lora_adapter_account_gate,
+    lora_adapters_enabled_patch,
+)
+
+lora_adapters_enabled_patch.enable()
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
-
-_LORA_ADAPTERS_ENABLED_PATCHER = mock.patch.object(
-    platform_capabilities.PlatformCapabilities,
-    "is_lora_adapters_enabled",
-    return_value=True,
-    autospec=True,
-)
-_LORA_ADAPTERS_ENABLED_PATCHER.start()
 
 
 def _write_stub_adapter_dir(path: str) -> str:

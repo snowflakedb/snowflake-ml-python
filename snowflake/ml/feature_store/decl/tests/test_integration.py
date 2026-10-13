@@ -71,8 +71,12 @@ def _make_batch() -> SpecBatch:
             "database": "DB",
             "schema_": "SCH",
             "version": "V1",
-            "entities": ["user_id"],
+            "entities": ["user"],
             "sources": [{"name": "clicks", "source_type": "Stream"}],
+            # A StreamingFeatureView is always backed by a StreamConfig, so a
+            # named source + a UDF are required (STREAM_FV_SOURCE_REQUIRED /
+            # STREAM_FV_UDF_REQUIRED).
+            "udf": {"name": "transform", "file": "transform.py"},
             "features": [
                 {
                     "source_column": {"name": "event", "type": "StringType"},

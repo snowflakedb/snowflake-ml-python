@@ -19,6 +19,8 @@ Both tests deliberately fail until the helpers are implemented.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from snowflake.ml.feature_store.decl.types import AppliedObject, AppliedState
@@ -384,6 +386,106 @@ class TestCheckFeatureGroupSourcesVersionIdentity:
             f"resolve by (name, version). Got codes={codes}"
         )
         assert "MISSING_FEATURE_VIEW" not in codes
+
+
+class TestCheckFeatureGroupSourcesAppliedSpecificationShape:
+    """Online state must be read from the applied OFT SPECIFICATION shape.
+
+    The existing helper tests use a synthetic flat ``_fv_payload`` carrying a
+    top-level ``online`` key. The real applied payload for an online FV
+    (``state.fetch_applied_state`` path 1, ``from_specification=True``) carries
+    no top-level ``online`` — the signal is ``online_store_type``. These cases
+    drive ``validate_specs`` with the real golden shape so the online-signal
+    read and the first-payload-wins loop are pinned at the boundary.
+    """
+
+    _GOLDEN = Path(__file__).parent / "golden_specs" / "USER_CLICK_STATS_DECL.json"
+
+    def _applied_fv(self, payload: dict[str, Any]) -> tuple[str, str, str, str, AppliedState]:
+        md = payload["metadata"]
+        name, version, db, schema = md["name"], md["version"], md["database"], md["schema"]
+        key = f"StreamingFeatureView:{db.upper()}.{schema.upper()}:{name.upper()}:{version.upper()}"
+        applied = AppliedState(
+            objects={
+                key: AppliedObject(
+                    key=key,
+                    kind="StreamingFeatureView",
+                    name=name,
+                    version=version,
+                    content_hash="x",
+                    spec_payload=payload,
+                    from_specification=True,
+                )
+            }
+        )
+        return name, version, db, schema, applied
+
+    def _fg_batch(self, name: str, version: str, db: str, schema: str, extra: Any = None) -> Any:
+        from snowflake.ml.feature_store.decl.spec_models import FeatureGroup
+        from snowflake.ml.feature_store.decl.types import SpecBatch
+
+        fg = FeatureGroup.model_validate(
+            {
+                "kind": "FeatureGroup",
+                "name": "MY_FG",
+                "database": db,
+                "schema_": schema,
+                "version": "V1",
+                "feature_views": [{"name": name, "version": version}],
+            }
+        )
+        specs: list[Any] = [fg] if extra is None else [fg, extra]
+        return SpecBatch(specs=specs, source_files=[])
+
+    def _codes(self, batch: Any, applied: AppliedState, db: str, schema: str) -> list[str]:
+        from snowflake.ml.feature_store.decl.invariants import validate_specs
+
+        return [r.code for r in validate_specs(batch, applied, target_database=db, target_schema=schema)]
+
+    def test_online_applied_source_not_flagged(self) -> None:
+        payload = json.loads(self._GOLDEN.read_text())
+        name, version, db, schema, applied = self._applied_fv(payload)
+        batch = self._fg_batch(name, version, db, schema)
+        codes = self._codes(batch, applied, db, schema)
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" not in codes, (
+            "An online applied FV (online_store_type=postgres) must not be read "
+            f"as offline off the OFT SPECIFICATION shape. Got codes={codes}"
+        )
+
+    def test_clean_local_payload_shields_stale_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.spec_models import BatchFeatureView
+
+        payload = json.loads(self._GOLDEN.read_text())
+        payload.pop("online_store_type", None)  # applied looks offline
+        name, version, db, schema, applied = self._applied_fv(payload)
+        local = BatchFeatureView.model_validate(
+            {
+                "kind": "BatchFeatureView",
+                "name": name,
+                "version": version,
+                "database": db,
+                "schema_": schema,
+                "online": True,
+                "target_lag": "1 hour",
+            }
+        )
+        batch = self._fg_batch(name, version, db, schema, extra=local)
+        codes = self._codes(batch, applied, db, schema)
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" not in codes, (
+            "A batch member FV declaring online: true must shield the FG from a "
+            f"stale offline-looking applied payload. Got codes={codes}"
+        )
+
+    def test_genuinely_offline_applied_still_flagged(self) -> None:
+        payload = json.loads(self._GOLDEN.read_text())
+        payload.pop("online_store_type", None)  # neither online nor online_store_type
+        name, version, db, schema, applied = self._applied_fv(payload)
+        batch = self._fg_batch(name, version, db, schema)
+        codes = self._codes(batch, applied, db, schema)
+        assert "FG_SOURCE_NOT_ONLINE_POSTGRES" in codes, (
+            "A genuinely offline applied FV must still be flagged; the fix must "
+            f"not make the check vacuous. Got codes={codes}"
+        )
 
 
 if __name__ == "__main__":

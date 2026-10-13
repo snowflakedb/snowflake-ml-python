@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from snowflake.ml.feature_store.decl.compiler import parse_duration_to_seconds
+from snowflake.ml.feature_store.decl.compiler import (
+    parse_duration_to_seconds,
+    to_authoring_identifier,
+)
 from snowflake.ml.feature_store.decl.spec_models import (
     _is_interval_duration_refresh_freq,
 )
@@ -38,6 +41,50 @@ _CLIENT_VERSION = "0.1.0"
 # surfacing layer), and tiles streaming FVs raise from snowml-core when
 # the granularity is missing — that imperative error is the desired UX.
 _DEFAULT_CONTINUOUS_FEATURE_GRANULARITY_SEC = 60
+
+
+_FUNCTION_PARAM_ALIASES: dict[str, dict[str, str]] = {
+    "approx_count_distinct": {"precision": "hll_lg_k"},
+}
+
+
+def _normalize_function_params(function: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Rename authoring ``function_params`` aliases to their internal keys.
+
+    Both spellings are accepted so exported YAML (which carries the internal
+    ``DESCRIBE ... TYPE = SPECIFICATION`` key) still round-trips. A conflicting
+    pair is surfaced to the author by ``invariants._check_feature_param_conflicts``;
+    the raise here is a defensive guard.
+
+    Args:
+        function: The aggregation ``function`` (case-insensitive table key).
+        params: The authoring ``function_params`` dict.
+
+    Returns:
+        A new dict with any authoring aliases renamed to their internal keys.
+
+    Raises:
+        ValueError: When an alias and its internal key are both present and disagree.
+    """
+    aliases = _FUNCTION_PARAM_ALIASES.get(str(function).lower())
+    if not aliases:
+        return dict(params)
+
+    normalized = dict(params)
+    for alias, internal in aliases.items():
+        if alias not in normalized:
+            continue
+        alias_val = normalized.pop(alias)
+        if internal in normalized:
+            if normalized[internal] != alias_val:
+                raise ValueError(
+                    f"Conflicting aggregation parameters '{alias}'={alias_val!r} and "
+                    f"'{internal}'={normalized[internal]!r}; provide only one."
+                )
+            # Equal values — the alias is redundant; keep the internal key.
+            continue
+        normalized[internal] = alias_val
+    return normalized
 
 
 def sanitize_json_for_dollar_quoting(payload: str) -> str:
@@ -97,6 +144,8 @@ def _compile_features(raw_features: list[dict[str, Any]]) -> list[dict[str, Any]
                 compiled[f"{k}_sec"] = parse_duration_to_seconds(v)
             elif k in ("window_sec", "offset_sec"):
                 compiled[k] = int(v) if v is not None else v
+            elif k == "function_params" and isinstance(v, dict):
+                compiled[k] = _normalize_function_params(feat.get("function"), v)
             else:
                 compiled[k] = v
         result.append(compiled)
@@ -232,7 +281,15 @@ def build_entity_join_key_map(
     if applied_state is not None:
         for obj in applied_state.objects.values():
             if obj.kind == ObjectKind.ENTITY:
-                _record(obj.name, _entity_join_keys_from_payload(obj.spec_payload))
+                # Applied join keys are stored form; they feed the authored
+                # hash half (which resolves SQL syntax), so re-quote a
+                # case-sensitive key (``userId`` -> ``"userId"``) or it folds to
+                # ``USERID`` and loops on RECREATE_FV. The batch branch below is
+                # already SQL syntax (authoring YAML), so it is left as-is.
+                _record(
+                    obj.name,
+                    [to_authoring_identifier(col) for col in _entity_join_keys_from_payload(obj.spec_payload)],
+                )
 
     for data in spec_dicts:
         if isinstance(data, dict) and data.get("kind") == ObjectKind.ENTITY:

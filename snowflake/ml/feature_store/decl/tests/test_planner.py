@@ -6,6 +6,7 @@ from typing import Any
 
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
+    _canonicalise_spec_identifiers,
     _full_spec_hash,
     model_to_dict,
     spec_key,
@@ -566,6 +567,14 @@ def _applied_from_compiled(local_dict: dict[str, Any], *, from_specification: bo
     if "schema_" in compile_input:
         compile_input["schema"] = compile_input.pop("schema_")
     deployed_spec = compile_to_spec(compile_input, "DB", "SCH")
+    # ``compile_to_spec`` emits the authoring (wire) form verbatim, but a live
+    # ``DESCRIBE ... TYPE = SPECIFICATION`` payload carries Snowflake's stored
+    # form (every identifier already run through ``SqlIdentifier.resolved()``).
+    # Resolve the stand-in to stored form so the applied half matches what the
+    # planner compares against in production; otherwise an unquoted lowercase
+    # authoring would spuriously diverge from its own deployed object under the
+    # asymmetric authored-vs-applied hash contract.
+    _canonicalise_spec_identifiers(deployed_spec, authored=True)
     key = spec_key({**compile_input, "kind": local_dict["kind"]})
     applied = AppliedObject(
         key=key,

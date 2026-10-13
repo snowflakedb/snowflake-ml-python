@@ -12,7 +12,7 @@ from typing import Any, Optional, cast
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
-from snowflake.ml.feature_store import feature_view
+from snowflake.ml.feature_store import feature_group, feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import batch_inference_job_specs
@@ -445,7 +445,8 @@ class ServiceOperator:
         # inference table
         autocapture: bool | None = None,
         # feature retrieval
-        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]]
+        | None = None,
         adapters: list[model_deployment_spec_schema.AdapterSpec] | None = None,
     ) -> str | async_job.AsyncJob:
         # Generate operation ID for this deployment

@@ -1,10 +1,32 @@
 # Release History
 
-## 2.4.0
+## 2.5.0
+
+### New Features
+
+### Bug Fixes
+
+* Modeling: The `snowflake.ml.modeling` estimators and preprocessing transformers are not deprecated.
+  The `DeprecationWarning` emitted when importing a `snowflake.ml.modeling` subpackage, announced in
+  2.0.0, has been removed.
+* ML Jobs: `MLJob.get_logs(verbose=False)` no longer returns container startup and shutdown logs when other log
+  lines land between the lines of the job start or end banner.
+* Dependencies: Raised the `fsspec` requirement ceiling from `<2026` to `<2027` so `fsspec`
+  2026.6.0, which fixes CVE-2026-104851, can be installed.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.4.0 (2026-10-06)
 
 ### New Features
 
 * Generic: Support Python 3.14.
+
+* Registry: `create_service` now accepts `FeatureGroup` objects in `feature_sources_per_function`
+  alongside `FeatureView`s. Snowflake resolves the `FeatureGroup`'s online feature tables at
+  deploy time, so callers no longer need to enumerate the underlying feature views manually.
 
 * Registry: `FeatureSpec(dtype=DataType.OBJECT)` now accepts schema-free Python dictionaries as a
   model input or output (SQL `OBJECT`). Callers can pass a dict to `ModelVersion.run`, an object
@@ -19,6 +41,11 @@
 
 * Experiment Tracking: `ExperimentTracking` accepts an optional `warnings_as_errors` parameter. When True,
   conditions that are normally reported as warnings are raised instead.
+
+* Experiment Tracking: Experiment runs now appear as first-class objects in lineage. Calling
+  `model_version.lineage(direction="upstream", domain_filter={"experiment"})` returns `Run` instances
+  with `database_name`, `schema_name`, `experiment_name`, and `name` properties that can be passed straight back
+  into experiment tracking.
 
 ### Bug Fixes
 

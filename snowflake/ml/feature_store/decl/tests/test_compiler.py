@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from snowflake.ml.feature_store.decl.compiler import (
+    _decode_join_keys,
     canonicalize_sql_for_hash,
     compile_spec,
     inline_query_source,
@@ -15,6 +16,8 @@ from snowflake.ml.feature_store.decl.compiler import (
     normalize_types,
     parse_duration_to_seconds,
     strip_sql_comments,
+    to_authoring_identifier,
+    to_comparison_identifier,
 )
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 from snowflake.ml.test_utils import pytest_driver
@@ -723,6 +726,80 @@ class TestCompileSpecRunsInlineQuerySource:
         assert result["table"] == "RAW.EVENTS"
         assert "query" not in result
         assert "query_file" not in result
+
+
+class TestToComparisonIdentifier:
+    """One case-insensitive key regardless of quoting provenance."""
+
+    def test_bare_upper_unchanged(self) -> None:
+        assert to_comparison_identifier("USER_ID") == "USER_ID"
+
+    def test_bare_mixed_case_folds_up(self) -> None:
+        assert to_comparison_identifier("userId") == "USERID"
+
+    def test_quoted_case_sensitive_unquotes_then_folds(self) -> None:
+        assert to_comparison_identifier('"userId"') == "USERID"
+
+    def test_quoted_and_bare_agree(self) -> None:
+        assert to_comparison_identifier('"userId"') == to_comparison_identifier("userId")
+
+    def test_embedded_doubled_quote_unescaped(self) -> None:
+        # The quoted authoring form and the deployed bare form fold identically.
+        assert to_comparison_identifier('"user""Id"') == to_comparison_identifier('user"Id')
+
+    def test_empty_and_none_fold_to_empty(self) -> None:
+        assert to_comparison_identifier("") == ""
+        assert to_comparison_identifier(None) == ""
+        assert to_comparison_identifier('""') == ""
+
+    def test_non_string_coerced(self) -> None:
+        assert to_comparison_identifier(123) == "123"
+
+
+class TestToAuthoringIdentifierIdempotent:
+    """Re-quoting an already-authoring-form value must not double-escape it."""
+
+    def test_already_quoted_passthrough(self) -> None:
+        assert to_authoring_identifier('"userId"') == '"userId"'
+
+    def test_idempotent_on_repeat(self) -> None:
+        once = to_authoring_identifier("userId")
+        assert once == '"userId"'
+        assert to_authoring_identifier(once) == '"userId"'
+
+    def test_bare_upper_unchanged(self) -> None:
+        assert to_authoring_identifier("USER_ID") == "USER_ID"
+
+
+# ---------------------------------------------------------------------------
+# _decode_join_keys
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeJoinKeys:
+    def test_list_verbatim(self) -> None:
+        assert _decode_join_keys(["USER_ID", "ORG_ID"]) == ["USER_ID", "ORG_ID"]
+
+    def test_list_coerces_non_str(self) -> None:
+        assert _decode_join_keys([1, 2]) == ["1", "2"]
+
+    def test_json_list(self) -> None:
+        assert _decode_join_keys('["USER_ID", "ORG_ID"]') == ["USER_ID", "ORG_ID"]
+
+    def test_json_scalar_is_no_keys(self) -> None:
+        assert _decode_join_keys('"USER_ID"') == []
+
+    def test_legacy_comma_string(self) -> None:
+        assert _decode_join_keys("USER_ID, ORG_ID") == ["USER_ID", "ORG_ID"]
+
+    def test_legacy_bracketed_string(self) -> None:
+        assert _decode_join_keys("[USER_ID, ORG_ID]") == ["USER_ID", "ORG_ID"]
+
+    def test_empty_string(self) -> None:
+        assert _decode_join_keys("   ") == []
+
+    def test_none(self) -> None:
+        assert _decode_join_keys(None) == []
 
 
 if __name__ == "__main__":

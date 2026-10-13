@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 
 from snowflake.ml._internal.utils import identifier, sql_identifier
-from snowflake.ml.feature_store import feature_view
+from snowflake.ml.feature_store import feature_group, feature_view
 from snowflake.ml.model import inference_engine as inference_engine_module
 from snowflake.ml.model._client.service import model_deployment_spec_schema
 
@@ -147,7 +147,8 @@ class ModelDeploymentSpec:
         num_workers: int | None = None,
         max_batch_rows: int | None = None,
         autocapture: bool | None = None,
-        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]]
+        | None = None,
         adapters: list[model_deployment_spec_schema.AdapterSpec] | None = None,
     ) -> "ModelDeploymentSpec":
         """Add service specification to the deployment spec.
@@ -167,10 +168,10 @@ class ModelDeploymentSpec:
             max_batch_rows: Maximum batch rows for inference.
             autocapture: Whether to enable inference table.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
-                registered FeatureView objects that supply feature columns at inference time. The list is plumbed into
-                the deploy spec's ``service.feature_retrieval.lookups`` block; today the server requires exactly one
-                FeatureView per function, but the list shape is preserved so a future relaxation does not require a
-                client change. Pass ``None`` (default) to omit the block entirely.
+                registered FeatureView or FeatureGroup objects that supply feature columns at inference time. The list
+                is plumbed into the deploy spec's ``service.feature_retrieval.lookups`` block; today the server
+                requires exactly one source per function, but the list shape is preserved so a future relaxation does
+                not require a client change. Pass ``None`` (default) to omit the block entirely.
             adapters: Optional list of adapter identities (``name``, ``version``, optional ``alias``).
                 Omit, ``None``, or ``[]`` leaves the ``adapters`` key off the service block.
 
@@ -402,22 +403,23 @@ class ModelDeploymentSpec:
 
 
 def _build_feature_retrieval_config(
-    sources_per_function: dict[str, list[feature_view.FeatureView]],
+    sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]],
 ) -> model_deployment_spec_schema.FeatureRetrievalConfig:
-    """Translate ``{method_name: [FeatureView, ...]}`` into the deploy spec's
+    """Translate ``{method_name: [FeatureView | FeatureGroup, ...]}`` into the deploy spec's
     ``service.feature_retrieval.lookups`` block.
 
-    Each ``source`` is the FeatureView's logical 3-part name
-    (``DB.SCHEMA.NAME``) — NOT ``FeatureView.fully_qualified_name()`` which
-    appends ``$<version>`` and points at the physical OFT table. The server
-    resolves the logical name against its catalog and composes the physical
-    ``$<version>$ONLINE`` form internally; the wire ``version`` field
-    travels separately.
+    Each ``source`` is the object's logical 3-part name
+    (``DB.SCHEMA.NAME``) — NOT the physical OFT name which appends
+    ``$<version>``. GS resolves the logical name against its catalog and
+    composes the physical form internally; the wire ``version`` field
+    travels separately. GS also infers the ``objectType`` from the catalog
+    (``feature_view`` vs ``feature_group``) and stamps it into the proxy
+    env var at deploy time.
 
     Args:
         sources_per_function: Mapping from model method name to the list of
-            registered FeatureView objects whose columns should be looked up
-            at inference time for that method.
+            registered FeatureView or FeatureGroup objects whose columns should
+            be looked up at inference time for that method.
 
     Returns:
         A ``FeatureRetrievalConfig`` ready to be assigned to
@@ -425,41 +427,59 @@ def _build_feature_retrieval_config(
 
     Raises:
         ValueError: If ``sources_per_function`` itself is empty, if any
-            method's FeatureView list is empty, or if a FeatureView is
-            unregistered (no version / database / schema set).
+            method's source list is empty, or if a source is unregistered
+            (no version / database / schema set).
+        TypeError: If a source is neither a ``FeatureView`` nor a ``FeatureGroup``.
     """
     if not sources_per_function:
         raise ValueError(
             "feature_sources_per_function is empty; pass None (or omit it) to skip the feature_retrieval block."
         )
     lookups: dict[str, list[model_deployment_spec_schema.FeatureLookup]] = {}
-    for method_name, fvs in sources_per_function.items():
-        if not fvs:
+    for method_name, sources in sources_per_function.items():
+        if not sources:
             raise ValueError(
                 f"feature_sources_per_function[{method_name!r}] is empty; omit the entry instead of passing []."
             )
         method_lookups: list[model_deployment_spec_schema.FeatureLookup] = []
-        for fv in fvs:
-            # All three attributes are populated by FeatureStore.register_feature_view
-            # and are required to construct the wire-level (db, schema, name, version)
-            # tuple. A draft FV (no version) or a hand-built FV (no db/schema) is not
-            # deployable; surface this client-side rather than letting GS reject deeper
-            # in the pipeline with a less actionable error.
-            if fv.version is None or fv.database is None or fv.schema is None:
-                raise ValueError(
-                    f"FeatureView passed for method {method_name!r} is not registered; "
-                    f"call FeatureStore.register_feature_view first."
+        for src in sources:
+            # Extract (version, db, schema, name) and a registration hint based on type.
+            # All three must be non-None for a registered object.
+            if isinstance(src, feature_group.FeatureGroup):
+                # FeatureGroup does not carry database/schema directly; derive from the
+                # first source FeatureView (guaranteed non-empty by the FeatureGroup
+                # constructor; all sources must live in the same FeatureStore).
+                first = src.features[0]
+                if isinstance(first, feature_view.FeatureViewSlice):
+                    first = first.feature_view_ref
+                db, schema_id = first.database, first.schema
+                name = sql_identifier.SqlIdentifier(src.name)
+                kind, register_call = "FeatureGroup", "FeatureStore.register_feature_group"
+            elif isinstance(src, feature_view.FeatureView):
+                db, schema_id = src.database, src.schema
+                name = src.name
+                kind, register_call = "FeatureView", "FeatureStore.register_feature_view"
+            else:
+                raise TypeError(
+                    f"feature_sources_per_function[{method_name!r}] contains {type(src).__name__!r}; "
+                    "expected a registered FeatureView or FeatureGroup."
                 )
+
+            if src.version is None or db is None or schema_id is None:
+                raise ValueError(
+                    f"{kind} passed for method {method_name!r} is not registered; " f"call {register_call} first."
+                )
+
             source = identifier.get_schema_level_object_identifier(
-                fv.database.identifier(),
-                fv.schema.identifier(),
-                fv.name.identifier(),
+                db.identifier(),
+                schema_id.identifier(),
+                name.identifier(),
             )
             method_lookups.append(
                 model_deployment_spec_schema.FeatureLookup(
                     source=source,
                     type=model_deployment_spec_schema.FeatureRetrievalType.OFT_VNEXT,
-                    version=str(fv.version),
+                    version=str(src.version),
                 )
             )
         lookups[method_name] = method_lookups

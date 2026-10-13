@@ -1,3 +1,4 @@
+import bisect
 import json
 import logging
 import os
@@ -583,20 +584,49 @@ def _get_logs(
     if verbose:
         return full_log
 
-    # Otherwise, extract only the portion between LOG_START_MSG and LOG_END_MSG
-    start_idx = full_log.find(constants.LOG_START_MSG)
-    if start_idx != -1:
-        start_idx += len(constants.LOG_START_MSG)
-    else:
-        # If start message not found, start from the beginning
-        start_idx = 0
+    return _extract_payload_logs(full_log)
 
-    end_idx = full_log.find(constants.LOG_END_MSG, start_idx)
-    if end_idx == -1:
-        # If end message not found, return everything after start
-        end_idx = len(full_log)
 
-    return full_log[start_idx:end_idx].strip()
+def _extract_payload_logs(full_log: str) -> str:
+    """Return the payload output between the LOG_START_MSG and LOG_END_MSG banners.
+
+    A banner is a separator line, the marker line, and a separator line, in that order. Other
+    lines may sit between those parts because the job log interleaves stdout with stderr. The
+    first start banner and the last end banner after it are used, so marker text that the payload
+    prints before the launcher's end banner is kept as output.
+
+    Args:
+        full_log: The complete job log.
+
+    Returns:
+        The log lines between the banners, stripped of surrounding whitespace.
+    """
+    separator, start_marker, _ = constants.LOG_START_MSG.split("\n")
+    end_marker = constants.LOG_END_MSG.split("\n")[1]
+    lines = full_log.splitlines(keepends=True)
+    separators = [i for i, line in enumerate(lines) if line.strip() == separator]
+
+    def banners(marker: str) -> list[tuple[int, int]]:
+        """Return the (opening, closing) separator indices of every banner for ``marker``."""
+        found = []
+        for i, line in enumerate(lines):
+            if line.strip() != marker:
+                continue
+            opening_idx = bisect.bisect_left(separators, i) - 1
+            closing_idx = bisect.bisect_right(separators, i)
+            if opening_idx >= 0 and closing_idx < len(separators):
+                found.append((separators[opening_idx], separators[closing_idx]))
+        return found
+
+    # If start message not found, start from the beginning
+    start_banners = banners(start_marker)
+    start = start_banners[0][1] + 1 if start_banners else 0
+
+    # If end message not found, return everything after start
+    end_banners = [banner for banner in banners(end_marker) if banner[0] >= start]
+    end = end_banners[-1][0] if end_banners else len(lines)
+
+    return "".join(lines[start:end]).strip()
 
 
 def _read_instance_record(session: snowpark.Session, result_path: str, instance_id: int) -> dict[str, Any] | None:

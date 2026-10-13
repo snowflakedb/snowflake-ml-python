@@ -39,6 +39,7 @@ from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     spec_key,
     structural_fingerprint_hash,
+    validate_specs,
 )
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_models import Entity
@@ -324,6 +325,32 @@ class TestDescriptionEditPlansUpdateEntity:
         assert non_no_change == [], (
             "Local description matches deployed tag comment — every op "
             f"must be NO_CHANGE; got {[(op.kind.value, op.name) for op in non_no_change]!r}"
+        )
+
+    def test_join_key_change_produces_immutable_error(self) -> None:
+        """A join-key edit produces ``ENTITY_JOIN_KEY_IMMUTABLE`` in the
+        ``validate_specs`` output.  Entity join keys are immutable after
+        creation (2026-07-31 design decision); the edit must be rejected at
+        plan time rather than routed through ``UPDATE_ENTITY``."""
+        applied = _applied_state_for_entity(deployed_description="Bug-bash user identifier.")
+        spec_dict = _entity_dict_with_description("Bug-bash user identifier.")
+        spec_dict["join_keys"] = [
+            {"name": _NAME, "type": "StringType"},
+            {"name": "ORG_ID", "type": "StringType"},
+        ]
+        batch = SpecBatch(specs=[Entity.model_validate(spec_dict)], source_files=[])
+
+        results = validate_specs(
+            batch,
+            applied,
+            target_database=_DB,
+            target_schema=_SCHEMA,
+        )
+
+        immutable = [r for r in results if r.code == "ENTITY_JOIN_KEY_IMMUTABLE"]
+        assert len(immutable) == 1, (
+            "A join-key edit must surface exactly one ENTITY_JOIN_KEY_IMMUTABLE "
+            f"at plan time (not a duplicate); got {[(r.severity, r.code) for r in results]!r}"
         )
 
 

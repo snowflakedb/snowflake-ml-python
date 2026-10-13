@@ -95,11 +95,8 @@ def _applied_with_fg(
     name_upper = (spec_payload.get("name") or "").upper()
     db_upper = (spec_payload.get("database") or "").upper()
     schema_upper = (spec_payload.get("schema") or "").upper()
-    version_upper = str(spec_payload.get("version") or "").upper()
-    key = f"FeatureGroup:{db_upper}.{schema_upper}:{name_upper}"
-    # FeatureGroup is a versioned kind — mirror invariants.spec_key.
-    if version_upper:
-        key = f"{key}:{version_upper}"
+    version_upper = (spec_payload.get("version") or "").upper()
+    key = f"FeatureGroup:{db_upper}.{schema_upper}:{name_upper}:{version_upper}"
     ao = AppliedObject(
         key=key,
         kind="FeatureGroup",
@@ -189,6 +186,11 @@ class TestPlannerDropFG:
         assert OpKind.DROP_FG in kinds
         drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
         assert drop.destructive is True
+
+
+# ---------------------------------------------------------------------------
+# DROP_FG ordering: FeatureGroup must be dropped before its member FVs
+# ---------------------------------------------------------------------------
 
 
 def _applied_fv_object(name: str, version: str = "V1") -> tuple[str, AppliedObject]:
@@ -331,6 +333,70 @@ class TestPlannerDropFGOrdering:
         fg_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FG)
         fv_idxs = [i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FV]
         assert all(fg_idx < i for i in fv_idxs)
+
+    def test_two_fg_versions_drop_before_shared_members(self) -> None:
+        # Round 15 live graph: TWO FeatureGroup versions (USER_FRAUD_FG_DECL
+        # V1 + V2) both list the SAME member FVs (USER_AMOUNTS_FG_DECL /
+        # USER_CLICKS_FG_DECL, both V1).  With the members inserted FIRST in
+        # the applied dict (the failing SHOW/DESCRIBE order), BOTH DROP_FG ops
+        # must still precede every member DROP_FV — the single-FG suite did
+        # not cover the shared-member, two-version case the exporter/runtime
+        # actually deployed.
+        objects: dict[str, AppliedObject] = {}
+        for k, o in (
+            _applied_fv_object("USER_AMOUNTS_FG_DECL"),
+            _applied_fv_object("USER_CLICKS_FG_DECL"),
+            _applied_fg_object(
+                "USER_FRAUD_FG_DECL",
+                ["USER_AMOUNTS_FG_DECL", "USER_CLICKS_FG_DECL"],
+                version="V1",
+            ),
+            _applied_fg_object(
+                "USER_FRAUD_FG_DECL",
+                ["USER_AMOUNTS_FG_DECL", "USER_CLICKS_FG_DECL"],
+                version="V2",
+            ),
+        ):
+            objects[k] = o
+        applied = AppliedState(objects=objects)
+        plan = generate_plan(
+            SpecBatch(specs=[], source_files=[]),
+            applied,
+            _opts(full_directory_mode=True),
+        )
+        fg_idxs = [i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FG]
+        fv_idxs = [i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FV]
+        assert len(fg_idxs) == 2, f"expected 2 DROP_FG (V1 + V2), got {fg_idxs}"
+        assert len(fv_idxs) == 2, f"expected 2 member DROP_FV, got {fv_idxs}"
+        assert max(fg_idxs) < min(fv_idxs), (
+            "every DROP_FG must precede every member DROP_FV; "
+            f"FG idxs={fg_idxs}, FV idxs={fv_idxs}: "
+            f"{[(op.kind, op.name) for op in plan.ops]}"
+        )
+
+    def test_drop_order_survives_plan_json_round_trip(self) -> None:
+        # ``apply`` never re-plans: it deserialises the plan JSON off disk and
+        # executes ``plan.ops`` in stored order (imperative_executor iterates
+        # ``for op in plan.ops`` with no re-sort).  So the reverse-topo order
+        # the planner emits is only load-bearing if it survives the
+        # ``Plan`` model's JSON serialisation round-trip that the CLI's
+        # ``write_plan_object`` performs.  Pin it here in-repo (a snowml test
+        # cannot import the CLI ``manager``) via the same Pydantic round-trip.
+        from snowflake.ml.feature_store.decl.types import Plan
+
+        applied = self._live_graph_applied()
+        plan = generate_plan(
+            SpecBatch(specs=[], source_files=[]),
+            applied,
+            _opts(full_directory_mode=True),
+        )
+        before = [(op.kind, op.name) for op in plan.ops]
+        restored = Plan.model_validate_json(plan.model_dump_json())
+        after = [(op.kind, op.name) for op in restored.ops]
+        assert after == before, f"plan op order changed across JSON round-trip: {before} -> {after}"
+        fg_idx = next(i for i, op in enumerate(restored.ops) if op.kind == OpKind.DROP_FG)
+        fv_idxs = [i for i, op in enumerate(restored.ops) if op.kind == OpKind.DROP_FV]
+        assert all(fg_idx < i for i in fv_idxs), "DROP_FG must precede member DROP_FVs after round-trip"
 
 
 def _member_fv_model(name: str = "MEMBER_FV", version: str = "V1", output_name: str = "event") -> FeatureView:

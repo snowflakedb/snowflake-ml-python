@@ -88,6 +88,28 @@ py_library(
     ],
 )
 
+py_library(
+    name = "lora_adapters_enabled_patch",
+    testonly = True,
+    srcs = ["lora_adapters_enabled_patch.py"],
+    deps = [
+        "//snowflake/ml/_internal:platform_capabilities",
+    ],
+)
+
+py_test(
+    name = "lora_adapters_enabled_patch_test",
+    srcs = ["lora_adapters_enabled_patch_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":lora_adapters_enabled_patch",
+        "//snowflake/ml/_internal:platform_capabilities",
+    ],
+)
+
 py_test(
     name = "common_test_base_test",
     timeout = "long",

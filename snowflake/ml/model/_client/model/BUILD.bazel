@@ -157,6 +157,7 @@ py_test(
         ":model_version_impl",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/lineage",
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:inference_engine",
         "//snowflake/ml/model:model_signature",

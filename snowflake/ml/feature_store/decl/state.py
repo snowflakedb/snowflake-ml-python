@@ -30,6 +30,7 @@ import logging
 from typing import Any, Sequence, cast
 
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.feature_store.decl.compiler import _decode_join_keys
 from snowflake.ml.feature_store.decl.invariants import (
     _VERSIONED_KINDS,
     _full_spec_hash,
@@ -1212,18 +1213,8 @@ def _build_entity_object(
     qualifier = f"{db}.{schema_val}" if (db or schema_val) else ""
     key = f"{ObjectKind.ENTITY}:{qualifier}:{entity_name}"
 
-    join_keys: list[str] = []
     raw_allowed = row.get("allowed_values") or row.get("ALLOWED_VALUES") or row.get("allowed_values_list")
-    if raw_allowed:
-        if isinstance(raw_allowed, list):
-            join_keys = [str(v) for v in raw_allowed]
-        elif isinstance(raw_allowed, str):
-            try:
-                parsed = json.loads(raw_allowed)
-                if isinstance(parsed, list):
-                    join_keys = [str(v) for v in parsed]
-            except (json.JSONDecodeError, TypeError):
-                join_keys = [v.strip() for v in raw_allowed.strip("[]").split(",") if v.strip()]
+    join_keys = _decode_join_keys(raw_allowed)
 
     details: dict[str, Any] = {"join_keys": join_keys}
     comment = row.get("comment") or row.get("COMMENT") or ""

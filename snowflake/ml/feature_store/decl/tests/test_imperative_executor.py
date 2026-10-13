@@ -2926,6 +2926,75 @@ class TestExecutePlanAllowRecreateGate:
             "so version-conflict is not raised when delete_feature_view fails"
         )
 
+    def test_recreate_fv_builds_before_delete(self) -> None:
+        """``RECREATE_FV`` must build (and resolve entities for) the new
+        FeatureView BEFORE deleting the deployed one, so a resolution failure
+        leaves the deployed FV intact.  ``delete`` still precedes ``register``,
+        so the overwrite semantics are unchanged.
+        """
+        plan = Plan(
+            ops=[
+                PlanOp(
+                    kind=OpKind.RECREATE_FV,
+                    name="FV1",
+                    destructive=True,
+                    reason="spec drift",
+                    payload={"name": "FV1", "version": "V1", "kind": "StreamingFeatureView"},
+                )
+            ],
+            warnings=[],
+        )
+        session = MagicMock(name="session")
+        options = PlanOptions(allow_recreate=True)
+        fs_instance = MagicMock(name="FeatureStore")
+        order: list[str] = []
+        fs_instance.delete_feature_view.side_effect = lambda *a, **k: order.append("delete")
+        fs_instance.register_feature_view.side_effect = lambda *a, **k: order.append("register")
+
+        def _fake_build(*a: Any, **k: Any) -> Any:
+            order.append("build")
+            return (MagicMock(name="fv"), "V1")
+
+        with patch("snowflake.ml.feature_store.feature_store.FeatureStore", return_value=fs_instance), patch(
+            "snowflake.ml.feature_store.decl.imperative_executor._build_feature_view",
+            side_effect=_fake_build,
+        ):
+            result = execute_plan(plan, session, "DB", "SCH", "WH", options)
+
+        assert result.status == "applied"
+        assert order == ["build", "delete", "register"], order
+
+    def test_emulate_quake_postprocess_strips_quoted_secondary_key(self) -> None:
+        """A case-sensitive secondary key folds to the same comparison key as the
+        entity/source columns, so it is stripped from the entity list and its
+        synthesized SK-array feature is dropped on the recovery side too.
+        """
+        result: dict[str, Any] = {
+            "kind": "BatchFeatureView",
+            "spec": {
+                "ordered_entity_column_names": ['"userId"', '"sessionId"'],
+                "ordered_secondary_key_column_names": ['"sessionId"'],
+                "features": [
+                    {
+                        "source_column": {"name": "amount"},
+                        "output_column": {"name": "AMT", "type": "ArrayType", "element_type": "FloatType"},
+                        "function": "sum",
+                    },
+                    {
+                        "source_column": {"name": '"sessionId"'},
+                        "output_column": {"name": "SK_KEYS", "type": "ArrayType", "element_type": "StringType"},
+                    },
+                ],
+            },
+        }
+        _ie._emulate_quake_postprocess(result)
+        inner = result["spec"]
+        assert inner["ordered_entity_column_names"] == ['"userId"']
+        assert inner["aggregation_secondary_keys"] == ['"sessionId"']
+        assert [f["output_column"]["name"] for f in inner["features"]] == ["AMT"]
+        # The real aggregation's ArrayType wrapper is unwrapped to its element type.
+        assert inner["features"][0]["output_column"]["type"] == "FloatType"
+
 
 class TestAssertFeatureStoreInitialized:
     """Verify the ``assert_feature_store_initialized`` helper.
@@ -5150,6 +5219,77 @@ class TestBuildFeaturesIncomplete:
             ]
         )
         assert features == []
+
+
+class TestBuildFeaturesFunctionParamAliases:
+    """``_build_features`` maps authoring ``function_params`` aliases to the
+    internal keys the imperative ``AggregationSpec`` validator expects.
+
+    The apply path consumes the *raw* ``model_to_dict`` op payload (not the
+    compiled spec that ``compile_to_spec`` normalises for hashing), so the
+    authoring ``precision`` alias for ``approx_count_distinct`` reaches the
+    executor verbatim.  Without executor-side normalization it is forwarded
+    as ``precision`` into the generic ``Feature(function, ..., **params)``
+    constructor and the ``AggregationSpec`` validator later raises
+    ``Parameter 'precision' is required …`` (it only accepts ``hll_lg_k``).
+    Mirrors ``spec_compiler._normalize_function_params`` — the single source
+    of truth for the alias table.
+    """
+
+    def test_approx_count_distinct_precision_maps_to_hll_lg_k(self) -> None:
+        from snowflake.ml.feature_store.aggregation import AggregationType
+
+        features = _build_features(
+            [
+                {
+                    "function": "approx_count_distinct",
+                    "window_sec": 86400,
+                    "function_params": {"precision": 8},
+                    "source_column": {"name": "ITEM", "type": "StringType"},
+                    "output_column": {"name": "ITEM_NDV_1D", "type": "LongType"},
+                }
+            ]
+        )
+        assert len(features) == 1
+        assert features[0]._function is AggregationType.APPROX_COUNT_DISTINCT
+        assert features[0]._params == {"hll_lg_k": 8}
+
+    def test_approx_count_distinct_hll_lg_k_passthrough(self) -> None:
+        """Freshly-exported YAML already carries the internal ``hll_lg_k``
+        key (from ``DESCRIBE … TYPE = SPECIFICATION``); it must round-trip
+        unchanged so re-apply stays stable.
+        """
+        features = _build_features(
+            [
+                {
+                    "function": "approx_count_distinct",
+                    "window_sec": 86400,
+                    "function_params": {"hll_lg_k": 12},
+                    "source_column": {"name": "ITEM", "type": "StringType"},
+                    "output_column": {"name": "ITEM_NDV_1D", "type": "LongType"},
+                }
+            ]
+        )
+        assert len(features) == 1
+        assert features[0]._params == {"hll_lg_k": 12}
+
+    def test_non_acd_function_params_untouched(self) -> None:
+        from snowflake.ml.feature_store.aggregation import AggregationType
+
+        features = _build_features(
+            [
+                {
+                    "function": "last_n",
+                    "window_sec": 3600,
+                    "function_params": {"n": 10},
+                    "source_column": {"name": "ENGAGEMENT_SCORE", "type": "DoubleType"},
+                    "output_column": {"name": "RECENT_SCORES_1H", "type": "ArrayType"},
+                }
+            ]
+        )
+        assert len(features) == 1
+        assert features[0]._function is AggregationType.LAST_N
+        assert features[0]._params == {"n": 10}
 
 
 class TestBuildFeatureViewUnmockedTiledStreamingValidate:

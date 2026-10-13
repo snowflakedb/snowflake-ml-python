@@ -304,20 +304,20 @@ py_test(
     timeout = "long",
     srcs = ["registry_lora_adapter_model_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 2,
+    shard_count = 1,
     tags = [
         "feature:model_registry",
         "short_regress",
     ],
     deps = [
         ":registry_model_test_base",
-        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
+        "//tests/integ/snowflake/ml/test_utils:lora_adapters_enabled_patch",
     ],
 )
 
@@ -347,18 +347,19 @@ py_test(
     timeout = "long",
     srcs = ["registry_lora_adapter_log_functions_test.py"],
     optional_dependencies = ["transformers"],
+    shard_count = 1,
     tags = [
         "feature:model_registry",
         "short_regress",
     ],
     deps = [
         ":registry_model_test_base",
-        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/model:target_platform",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
+        "//tests/integ/snowflake/ml/test_utils:lora_adapters_enabled_patch",
     ],
 )
 

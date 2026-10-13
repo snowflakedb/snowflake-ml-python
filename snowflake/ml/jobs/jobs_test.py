@@ -205,6 +205,69 @@ class JobTest(parameterized.TestCase):
                 job.get_logs()
                 self.assertIn("Waiting for container to start. Logs will be shown when available.", cm.output[0])
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        (
+            "contiguous_banners",
+            ["setup", constants.LOG_START_MSG, "hello world", constants.LOG_END_MSG, "teardown"],
+            "hello world",
+        ),
+        (
+            "start_banner_split_by_stderr",
+            [
+                "setup",
+                "--------------------------------",
+                "2026-10-08 14:24:47,672 - INFO - Snowpark Session information: ",
+                '"version" : 1.55.0,',
+                "ML job started",
+                "--------------------------------",
+                "hello world",
+                constants.LOG_END_MSG,
+            ],
+            "hello world",
+        ),
+        (
+            "end_banner_split_by_stderr",
+            [
+                constants.LOG_START_MSG,
+                "1.7.1",
+                "--------------------------------",
+                "2026-10-08 14:53:50,539 - INFO - Closed session: 1858187564544850",
+                "ML job finished",
+                "--------------------------------",
+                "2026-10-08 14:53:51,207 - INFO - Closed session: 1858187564544850",
+                "User job completed. Signaling workers to shut down...",
+            ],
+            "1.7.1",
+        ),
+        (
+            "stderr_between_marker_and_closing_separator",
+            [
+                "--------------------------------",
+                "ML job started",
+                "2026-10-08 14:24:47,672 - INFO - Snowpark Session information: ",
+                "--------------------------------",
+                "hello world",
+                constants.LOG_END_MSG,
+            ],
+            "hello world",
+        ),
+        (
+            "payload_prints_end_marker",
+            [constants.LOG_START_MSG, "ML job finished", "more output", constants.LOG_END_MSG, "teardown"],
+            "ML job finished\nmore output",
+        ),
+        (
+            "payload_prints_end_banner",
+            [constants.LOG_START_MSG, constants.LOG_END_MSG, "more output", constants.LOG_END_MSG, "teardown"],
+            f"{constants.LOG_END_MSG}\nmore output",
+        ),
+        ("no_start_banner", ["hello world", constants.LOG_END_MSG, "teardown"], "hello world"),
+        ("no_end_banner", ["setup", constants.LOG_START_MSG, "hello world"], "hello world"),
+        ("no_banners", ["hello world"], "hello world"),
+    )
+    def test_extract_payload_logs(self, log_lines: list[str], expected: str) -> None:
+        self.assertEqual(expected, job._extract_payload_logs("\n".join(log_lines)))
+
     def test_get_logs_from_event_table(self) -> None:
         def sql_side_effect(session: snowpark.Session, query_str: str, *args: Any, **kwargs: Any) -> Any:
             if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):

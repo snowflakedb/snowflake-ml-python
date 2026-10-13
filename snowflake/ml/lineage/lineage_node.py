@@ -1,3 +1,4 @@
+import importlib
 import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Union
@@ -86,7 +87,7 @@ class LineageNode(mixins.SerializableSessionMixin):
     def lineage(
         self,
         direction: Literal["upstream", "downstream"] = "downstream",
-        domain_filter: set[Literal["feature_view", "dataset", "model", "table", "view"]] | None = None,
+        domain_filter: set[Literal["feature_view", "dataset", "model", "table", "view", "experiment"]] | None = None,
     ) -> list[Union["feature_view.FeatureView", "dataset.Dataset", "ModelVersion", "LineageNode"]]:
         """
         Retrieves the lineage nodes connected to this node.
@@ -122,6 +123,13 @@ class LineageNode(mixins.SerializableSessionMixin):
                     for s in identifier.parse_schema_level_object_identifier(lineage_object["name"])
                     if s is not None
                 )
+                if domain not in DOMAIN_LINEAGE_REGISTRY:
+                    match domain:
+                        case "experiment":
+                            try:
+                                importlib.import_module("snowflake.ml.experiment._entities.run")
+                            except ImportError:
+                                pass
                 if domain in DOMAIN_LINEAGE_REGISTRY and lineage_object["status"] == "ACTIVE":
                     lineage_nodes.append(
                         DOMAIN_LINEAGE_REGISTRY[domain]._load_from_lineage_node(

@@ -1,4 +1,3 @@
-import warnings
 from typing import Callable
 from unittest import mock
 
@@ -15,18 +14,10 @@ def _fake_is_installed(installed: set[str]) -> Callable[[str], bool]:
 
 
 class OptionalDependencyTest(absltest.TestCase):
-    def _check(
-        self,
-        package_name: str,
-        installed: set[str],
-        *,
-        emit_deprecation_warning: bool = True,
-    ) -> Exception | None:
+    def _check(self, package_name: str, installed: set[str]) -> Exception | None:
         with mock.patch.object(optional_dependency, "_is_installed", _fake_is_installed(installed)):
             try:
-                optional_dependency.check_modeling_dependencies(
-                    package_name, emit_deprecation_warning=emit_deprecation_warning
-                )
+                optional_dependency.check_modeling_dependencies(package_name)
             except ImportError as exc:
                 return exc
         return None
@@ -101,34 +92,15 @@ class OptionalDependencyTest(absltest.TestCase):
             "snowflake.ml.modeling.",
         )
 
-    def test_all_present_emits_deprecation_warning(self) -> None:
-        with mock.patch.object(optional_dependency, "_is_installed", _fake_is_installed({"sklearn"})):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                optional_dependency.check_modeling_dependencies("snowflake.ml.modeling.linear_model")
-        deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        self.assertLen(deprecations, 1)
-        self.assertIn("deprecated", str(deprecations[0].message))
-        self.assertIn("Model Registry", str(deprecations[0].message))
+    def test_all_present_does_not_raise(self) -> None:
+        exc = self._check("snowflake.ml.modeling.linear_model", installed={"sklearn"})
+        self.assertIsNone(exc)
 
-    def test_emit_deprecation_warning_false_is_silent(self) -> None:
-        with mock.patch.object(optional_dependency, "_is_installed", _fake_is_installed({"sklearn"})):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                optional_dependency.check_modeling_dependencies(
-                    "snowflake.ml.modeling.metrics", emit_deprecation_warning=False
-                )
-        deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        self.assertEmpty(deprecations)
+        exc = self._check("snowflake.ml.modeling.xgboost", installed={"sklearn", "xgboost"})
+        self.assertIsNone(exc)
 
-    def test_missing_dependency_does_not_warn(self) -> None:
-        with mock.patch.object(optional_dependency, "_is_installed", _fake_is_installed(set())):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                with self.assertRaises(ImportError):
-                    optional_dependency.check_modeling_dependencies("snowflake.ml.modeling.linear_model")
-        deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        self.assertEmpty(deprecations)
+        exc = self._check("snowflake.ml.modeling.lightgbm", installed={"sklearn", "lightgbm"})
+        self.assertIsNone(exc)
 
 
 if __name__ == "__main__":

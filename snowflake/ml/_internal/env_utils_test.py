@@ -1082,6 +1082,36 @@ class EnvFileTest(absltest.TestCase):
             loaded_rl = env_utils.load_requirements_file(pip_file_path)
             self.assertEqual(rl, loaded_rl)
 
+    def test_generate_requirements_file_multiple_deps(self) -> None:
+        # Entries are separated by "\n", so only a file with two or more of them has lines that
+        # still carry a newline when read back. Single-entry files cannot cover that.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rl = [
+                requirements.Requirement("transformers==5.17.0"),
+                requirements.Requirement("tokenizers==0.23.1"),
+                requirements.Requirement("torch==2.9.1"),
+            ]
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl)
+            self.assertListEqual(rl, env_utils.load_requirements_file(pip_file_path))
+
+    def test_load_requirements_file_strips_whitespace(self) -> None:
+        """Requirement lines must be accepted regardless of surrounding whitespace."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            # Trailing newline on the final line, plus stray spaces and a blank line.
+            pip_file_path.write_text("transformers==5.17.0  \n\n  torch==2.9.1\n", encoding="utf-8")
+            self.assertListEqual(
+                [requirements.Requirement("transformers==5.17.0"), requirements.Requirement("torch==2.9.1")],
+                env_utils.load_requirements_file(pip_file_path),
+            )
+
+    def test_validate_pip_requirement_string_strips_whitespace(self) -> None:
+        self.assertEqual(
+            requirements.Requirement("transformers==5.17.0"),
+            env_utils._validate_pip_requirement_string("  transformers==5.17.0\n"),
+        )
+
     def test_has_torch_dependency(self) -> None:
         # Test with torch
         deps_with_torch = [requirements.Requirement("torch>=2.0")]

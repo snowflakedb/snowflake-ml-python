@@ -121,16 +121,41 @@ class TestTopologicalSortFeatureGroupVersionAware:
 
 
 # ---------------------------------------------------------------------------
-# order_specs_for_drop — reverse-topological teardown order
+# order_specs_for_drop — reverse-topological order (FG → FV → Source → Entity)
 # ---------------------------------------------------------------------------
 
 
+def _source(name: str = "clicks") -> dict[str, Any]:
+    return {
+        "kind": "StreamingSource",
+        "name": name,
+        "database": "DB",
+        "schema": "SCH",
+    }
+
+
 class TestOrderSpecsForDrop:
-    """``order_specs_for_drop`` is the safe teardown order — the reverse of
-    ``topological_sort``.  A FeatureGroup must precede its member FeatureViews
-    so Snowflake's online FG table (which references each member FV's online
-    table) is torn down before the members it depends on.
+    """``order_specs_for_drop`` is the reverse of ``topological_sort`` — the
+    safe teardown order that drops a FeatureGroup before any member
+    FeatureView, so Snowflake's ``<FG>$<V>$ONLINE`` → member OFT
+    referential-integrity constraint is never violated.
     """
+
+    def test_fg_dropped_before_member_fvs(self) -> None:
+        # Input order mimics the failing dict order: members first, FG last.
+        fv1 = _fv("USER_AMOUNTS_FG_DECL")
+        fv2 = _fv("USER_CLICKS_FG_DECL")
+        fg = _fg(
+            "USER_FRAUD_FG_DECL",
+            fv_refs=[
+                {"name": "USER_AMOUNTS_FG_DECL", "version": "V1"},
+                {"name": "USER_CLICKS_FG_DECL", "version": "V1"},
+            ],
+        )
+        ordered = order_specs_for_drop([fv1, fv2, fg])
+        names = [s["name"] for s in ordered]
+        assert names.index("USER_FRAUD_FG_DECL") < names.index("USER_AMOUNTS_FG_DECL")
+        assert names.index("USER_FRAUD_FG_DECL") < names.index("USER_CLICKS_FG_DECL")
 
     def test_fg_before_member_fv(self) -> None:
         fv = _fv("click_fv")
@@ -138,6 +163,18 @@ class TestOrderSpecsForDrop:
         ordered = order_specs_for_drop([fv, fg])
         names = [s["name"] for s in ordered]
         assert names.index("MY_FG") < names.index("click_fv")
+
+    def test_full_chain_reverse_order(self) -> None:
+        entity = _entity("customer")
+        source = _source("clicks")
+        fv = _fv("click_fv")
+        fg = _fg("MY_FG", fv_refs=[{"name": "click_fv", "version": "V1"}])
+        ordered = order_specs_for_drop([entity, source, fv, fg])
+        names = [s["name"] for s in ordered]
+        # FeatureGroup first, then FeatureView, then Source, then Entity.
+        assert names.index("MY_FG") < names.index("click_fv")
+        assert names.index("click_fv") < names.index("clicks")
+        assert names.index("clicks") < names.index("customer")
 
     def test_full_chain_reverse(self) -> None:
         entity = _entity("customer")
@@ -149,7 +186,18 @@ class TestOrderSpecsForDrop:
         assert names.index("MY_FG") < names.index("click_fv")
         assert names.index("click_fv") < names.index("customer")
 
-    def test_empty_input(self) -> None:
+    def test_disconnected_fg_still_before_fv_by_kind_order(self) -> None:
+        # No ``feature_views`` edge — the FG and FVs are disconnected nodes,
+        # so ordering falls back to ``_KIND_ORDER``: FG must still precede FVs.
+        fv1 = _fv("orphan_fv1")
+        fv2 = _fv("orphan_fv2")
+        fg = _fg("LONE_FG", fv_refs=[])
+        ordered = order_specs_for_drop([fv1, fv2, fg])
+        names = [s["name"] for s in ordered]
+        assert names.index("LONE_FG") < names.index("orphan_fv1")
+        assert names.index("LONE_FG") < names.index("orphan_fv2")
+
+    def test_empty_input_returns_empty(self) -> None:
         assert order_specs_for_drop([]) == []
 
     def test_two_versions_of_one_fv_name_both_survive(self) -> None:

@@ -190,7 +190,10 @@ py_test(
         "short_regress",
     ],
     deps = [
-        ":decl_lib_loader",
+        # ``:decl_lib_planner`` (not just ``:decl_lib_loader``) because the
+        # authored-to-stored identifier resolution tests import
+        # ``invariants`` (``_full_spec_hash`` / ``compute_local_spec_hash``).
+        ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )
@@ -430,7 +433,10 @@ py_test(
         "tests/__init__.py",
         "tests/test_invariants_feature_group.py",
     ],
-    data = [":decl_loader_test_fixtures"],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
     main = "tests/test_invariants_feature_group.py",
     tags = [
         "feature:feature_store",

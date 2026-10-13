@@ -10,7 +10,7 @@ import pandas as pd
 from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.feature_store import feature_view
+from snowflake.ml.feature_store import feature_group, feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import inference_engine, openai_signatures, task, type_hints
@@ -163,14 +163,13 @@ class ModelVersion(lineage_node.LineageNode):
         service_ops: service_ops.ServiceOperator,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        retry: bool | None = False,
     ) -> "ModelVersion":
         self: "ModelVersion" = object.__new__(cls)
         self._model_ops = model_ops
         self._service_ops = service_ops
         self._model_name = model_name
         self._version_name = version_name
-        self._functions = self._get_functions(**({"retry": True} if retry else {}))
+        self._functions = self._get_functions()
         self._model_spec = None
         self._target_platforms = None
         super(cls, cls).__init__(
@@ -419,7 +418,7 @@ class ModelVersion(lineage_node.LineageNode):
             statement_params=statement_params,
         )
 
-    def _get_functions(self, *, retry: bool | None = False) -> list[model_manifest_schema.ModelFunctionInfo]:
+    def _get_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -430,7 +429,6 @@ class ModelVersion(lineage_node.LineageNode):
             model_name=self._model_name,
             version_name=self._version_name,
             statement_params=statement_params,
-            **({"retry": True} if retry else {}),
         )
 
     @telemetry.send_api_usage_telemetry(
@@ -1414,7 +1412,8 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: bool | None = None,
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
-        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]]
+        | None = None,
         adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
@@ -1460,9 +1459,9 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
-                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
-                service will fetch any missing feature columns from these sources before invoking the model. Currently
-                only one FeatureView per function is supported.
+                registered :class:`FeatureView` or :class:`FeatureGroup` objects whose columns should be looked up at
+                inference time. The model service will fetch any missing feature columns from these sources before
+                invoking the model. Currently only one source per function is supported.
             adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
                 :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
                 emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to
@@ -1492,7 +1491,8 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: bool | None = None,
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
-        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]]
+        | None = None,
         adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
@@ -1538,9 +1538,9 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
-                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
-                service will fetch any missing feature columns from these sources before invoking the model. Currently
-                only one FeatureView per function is supported.
+                registered :class:`FeatureView` or :class:`FeatureGroup` objects whose columns should be looked up at
+                inference time. The model service will fetch any missing feature columns from these sources before
+                invoking the model. Currently only one source per function is supported.
             adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
                 :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
                 emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to
@@ -1575,7 +1575,8 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: bool | None = None,
         inference_engine_options: dict[str, Any] | None = None,
         experimental_options: dict[str, Any] | None = None,
-        feature_sources_per_function: dict[str, list[feature_view.FeatureView]] | None = None,
+        feature_sources_per_function: dict[str, list[feature_view.FeatureView | feature_group.FeatureGroup]]
+        | None = None,
         adapters: dict[str, "ModelVersion"] | list["ModelVersion"] | None = None,
     ) -> str | async_job.AsyncJob:
         """Create an inference service with the given spec.
@@ -1623,9 +1624,9 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
-                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
-                service will fetch any missing feature columns from these sources before invoking the model. Currently
-                only one FeatureView per function is supported.
+                registered :class:`FeatureView` or :class:`FeatureGroup` objects whose columns should be looked up at
+                inference time. The model service will fetch any missing feature columns from these sources before
+                invoking the model. Currently only one source per function is supported.
             adapters: Optional mapping from service alias (``model =>`` / REST ``params.model``) to adapter
                 :class:`ModelVersion` objects, or a list of adapter versions. Dict keys become ``alias`` on each
                 emitted list item. A nonempty list and adapter-as-target omit ``alias`` (GS defaults each to

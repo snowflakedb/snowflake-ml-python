@@ -133,7 +133,9 @@ py_test(
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
+        "//snowflake/ml/experiment/_entities:entities",
         "//snowflake/ml/model",
+        "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )

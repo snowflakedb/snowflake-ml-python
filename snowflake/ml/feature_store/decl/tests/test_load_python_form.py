@@ -31,12 +31,20 @@ serialization, and Pydantic validation together.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
+from snowflake.ml.feature_store.decl.invariants import (
+    _full_spec_hash,
+    compute_local_spec_hash,
+    model_to_dict,
+)
 from snowflake.ml.feature_store.decl.loader import load_from_project
+from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 from snowflake.ml.feature_store.decl.spec_models import (
     BatchFeatureView,
     BatchSource,
@@ -577,6 +585,86 @@ class TestPythonFormScenario12_NoKindRequired:
 
         assert len(batch.specs) == 1
         assert batch.specs[0].kind == "StreamingFeatureView"
+
+
+class TestPythonFormIdentifierResolution:
+    """Python-form authoring resolves identifiers to the stored form like YAML.
+
+    Both authoring forms funnel through ``model_to_dict`` ->
+    ``compile_to_spec`` -> ``_full_spec_hash``, so the authored-to-stored
+    contract (an unquoted name folds to UPPER; a ``"quoted"`` name keeps its
+    case) applies identically.  These pins exercise that path from a loaded
+    ``.py`` module: a quoted mixed-case ``timestamp_col`` must match the
+    deployed stored form, while an unquoted spelling must NOT (the review's
+    false-NO_CHANGE guard).
+    """
+
+    _FV_PY_TEMPLATE = (
+        "from snowflake.ml.feature_store.decl.spec_models import (\n"
+        "    UDF, FSColumn, SourceRef, StreamingFeatureView,\n"
+        ")\n"
+        "fv = StreamingFeatureView(\n"
+        "    name='EVENT_FV',\n"
+        "    version='V1',\n"
+        "    online=True,\n"
+        "    entities=['USER_ID'],\n"
+        "    timestamp_col={ts!r},\n"
+        "    sources=[SourceRef(name='EVENTS', source_type='Stream')],\n"
+        "    udf=UDF(\n"
+        "        name='transform',\n"
+        "        engine='pandas',\n"
+        "        function_definition='def transform(df):\\n    return df\\n',\n"
+        "        output_columns=[FSColumn(name='USER_ID', type='StringType')],\n"
+        "    ),\n"
+        ")\n"
+    )
+
+    def _load_fv_model(self, project_root: Path, ts: str) -> dict[str, Any]:
+        """Load the template FV with timestamp_col ``ts`` and return its model dict.
+
+        Args:
+            project_root: Directory to root the ``sources/`` tree under.
+            ts: The authored ``timestamp_col`` string (e.g. ``'"eventTs"'`` for a
+                quoted authoring or ``'eventTs'`` for an unquoted one).
+
+        Returns:
+            The ``model_to_dict`` authoring dict for the loaded feature view.
+        """
+        body = self._FV_PY_TEMPLATE.format(ts=ts)
+        _make_sources_tree(project_root, feature_views={"event_fv.py": body})
+        batch = load_from_project(project_root, database="DB", schema="SCH")
+        fv = next(s for s in batch.specs if s.kind == "StreamingFeatureView")
+        return model_to_dict(fv)
+
+    def test_quoted_timestamp_matches_stored_form(self, tmp_path: Path) -> None:
+        """A quoted ``"eventTs"`` authored in Python hashes equal to the deployed ``eventTs``."""
+        quoted_model = self._load_fv_model(tmp_path, '"eventTs"')
+        # Snowflake persists a quoted ``"eventTs"`` as the bare, case-preserved
+        # stored form.  Derive the applied payload from the compiled wire spec so
+        # every non-identifier field is identical and only the stored timestamp differs.
+        applied = copy.deepcopy(compile_to_spec(quoted_model, "DB", "SCH"))
+        applied["spec"]["timestamp_field"] = "eventTs"
+        applied_hash = _full_spec_hash(applied)  # authored=False: unquote only
+
+        local_hash = compute_local_spec_hash(quoted_model, "DB", "SCH")  # authored=True
+        assert local_hash == applied_hash, (
+            'A quoted "eventTs" timestamp authored in the Python form must resolve '
+            "to the stored ``eventTs`` and re-plan NO_CHANGE."
+        )
+
+    def test_unquoted_timestamp_does_not_match_stored_form(self, tmp_path: Path) -> None:
+        """An unquoted ``eventTs`` authored in Python must NOT match the deployed ``eventTs``."""
+        quoted_model = self._load_fv_model(tmp_path / "quoted", '"eventTs"')
+        applied = copy.deepcopy(compile_to_spec(quoted_model, "DB", "SCH"))
+        applied["spec"]["timestamp_field"] = "eventTs"
+        applied_hash = _full_spec_hash(applied)
+
+        unquoted_model = self._load_fv_model(tmp_path / "unquoted", "eventTs")
+        local_hash = compute_local_spec_hash(unquoted_model, "DB", "SCH")
+        assert local_hash != applied_hash, (
+            "An unquoted ``eventTs`` timestamp authored in the Python form folds to "
+            "``EVENTTS`` and must not collide with a deployed case-sensitive ``eventTs``."
+        )
 
 
 if __name__ == "__main__":
