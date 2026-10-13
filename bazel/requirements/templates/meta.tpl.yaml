@@ -11,7 +11,7 @@ build:
 requirements:
   build:
     - python
-    - bazel==7.6.1
+    - bazel==7.7.1
     - pip
   run:
     - python>=3.10,<3.15
