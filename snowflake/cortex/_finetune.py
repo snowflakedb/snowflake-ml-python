@@ -28,7 +28,7 @@ class FinetuneError(Exception):
             original_exception: Original exception with an error code in its message.
         """
         self.original_exception = original_exception
-        self._pretty_msg = message + repr(self.original_exception) if self.original_exception is not None else ""
+        self._pretty_msg = message + (repr(self.original_exception) if self.original_exception is not None else "")
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self._pretty_msg!r})"
