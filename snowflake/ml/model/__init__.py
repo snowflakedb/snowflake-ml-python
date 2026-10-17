@@ -6,13 +6,11 @@ from snowflake.ml.model.models.huggingface import (
     SentenceTransformer,
     TransformersPipeline,
 )
-from snowflake.ml.model.models.huggingface_pipeline import HuggingFacePipelineModel
 from snowflake.ml.model.volatility import Volatility
 
 __all__ = [
     "CodePath",
     "ExportMode",
-    "HuggingFacePipelineModel",
     "Model",
     "ModelVersion",
     "PeftAdapter",

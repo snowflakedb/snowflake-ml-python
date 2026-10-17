@@ -356,6 +356,62 @@ class JobTest(parameterized.TestCase):
         result = mock_job._transform_path("relative/path/file.pkl")
         self.assertEqual(result, "@test_stage/test_path/relative/path/file.pkl")
 
+    def test_code_bundle_job_paths(self) -> None:
+        mock_job = jobs.MLJob[None]("test_db.test_schema.test_id", session=MagicMock())
+        mock_job._service_spec_cached = {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "main",
+                        "volumeMounts": [
+                            {"name": "stage-volume", "mountPath": "/mnt/job_stage"},
+                            {"name": "result-volume", "mountPath": "/mnt/job_result"},
+                        ],
+                        "env": {
+                            constants.STAGE_DISCOVERY_NAMESPACE_ENV_VAR: "notebook_project",
+                            constants.STAGE_DISCOVERY_STAGE_FQN_ENV_VAR: "TEST_DB.TEST_SCHEMA.MY_BUNDLE",
+                            constants.STAGE_DISCOVERY_VERSION_ENV_VAR: "VERSION$1",
+                            constants.RESULT_PATH_ENV_VAR: "mljob_result",
+                        },
+                    }
+                ],
+                "volumes": [
+                    {"name": "stage-volume", "source": "dynamic_stage_mount"},
+                    {
+                        "name": "result-volume",
+                        "source": "stage",
+                        "stageConfig": {"name": "@TEST_DB.TEST_SCHEMA.RESULT_STAGE"},
+                    },
+                ],
+            }
+        }
+
+        self.assertTrue(mock_job._is_code_bundle_job)
+        self.assertEqual(
+            mock_job._stage_path, "snow://notebook_project/TEST_DB.TEST_SCHEMA.MY_BUNDLE/versions/VERSION$1"
+        )
+        self.assertEqual(mock_job._result_stage_path, "@TEST_DB.TEST_SCHEMA.RESULT_STAGE")
+        self.assertEqual(mock_job._result_path, "@TEST_DB.TEST_SCHEMA.RESULT_STAGE/mljob_result")
+        self.assertEqual(
+            mock_job._transform_path("/mnt/job_result/metrics.json"), "@TEST_DB.TEST_SCHEMA.RESULT_STAGE/metrics.json"
+        )
+
+    def test_stage_paths_from_volumes_without_discovery(self) -> None:
+        mock_job = jobs.MLJob[None]("test_db.test_schema.test_id", session=MagicMock())
+        mock_job._service_spec_cached = {
+            "spec": {
+                "containers": [{"name": "main", "volumeMounts": [], "env": {}}],
+                "volumes": [
+                    {"name": "stage-volume", "source": "@payload_stage/job"},
+                    {"name": "result-volume", "source": "@payload_stage/job/output/JOB_ID"},
+                ],
+            }
+        }
+
+        self.assertFalse(mock_job._is_code_bundle_job)
+        self.assertEqual(mock_job._stage_path, "@payload_stage/job")
+        self.assertEqual(mock_job._result_stage_path, "@payload_stage/job/output/JOB_ID")
+
     def test_resolve_path_container_paths(self) -> None:
         """Test that resolve_path returns Path objects correctly.
 

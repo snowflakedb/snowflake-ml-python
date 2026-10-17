@@ -11,12 +11,17 @@ from typing import Iterable, Mapping
 
 from snowflake.ml.feature_store.spec.models import _SUPPORTED_TYPES
 from snowflake.ml.feature_store.stream_config import _snowpark_type_to_sql
-from snowflake.snowpark.types import DataType, StructType
+from snowflake.snowpark.types import DataType, StringType, StructType
 
 
 def schema_upper_name_map(schema: StructType) -> dict[str, DataType]:
     """Map uppercased column names to Snowpark types for a ``StructType``."""
     return {f.name.upper(): f.datatype for f in schema.fields}
+
+
+def _canonical_type(dt: DataType) -> DataType:
+    """Drop ``StringType`` length (VARCHAR length is not a type change); pass other types through."""
+    return StringType() if isinstance(dt, StringType) else dt
 
 
 def _schema_dict_must_use_supported_types(which: str, schema: Mapping[str, DataType]) -> None:
@@ -43,7 +48,8 @@ def get_table_schema_evolution_extend_only_commands(
     Extend-only means:
 
     - All columns in *old_schema* must appear in *new_schema* in the **same order** (no drops,
-      no reorderings) and with **identical** Snowpark types (no type changes).
+      no reorderings) and with **identical** Snowpark types (no type changes). String columns
+      compare by type only: VARCHAR length is ignored, so a length delta is not a type change.
     - *new_schema* may declare additional columns **at the end**; these become ``ADD COLUMN``
       statements.
 
@@ -73,7 +79,7 @@ def get_table_schema_evolution_extend_only_commands(
         ValueError: Unsupported type in either schema, *required_old_columns* missing from
             *old_schema*, fewer columns in *new_schema* than *old_schema* (implied drop), an
             existing column appears at a different position in *new_schema*, or an existing
-            column's type changed.
+            column's type changed (VARCHAR length changes excepted — they are ignored).
     """
     if required_old_columns is not None:
         old_keys_upper = {k.upper() for k in old_schema}
@@ -104,7 +110,7 @@ def get_table_schema_evolution_extend_only_commands(
 
     for col_name, old_type in old_schema.items():
         new_type = new_schema[col_name]
-        if old_type != new_type:
+        if _canonical_type(old_type) != _canonical_type(new_type):
             raise ValueError(
                 f"Column '{col_name}' type changed from {old_type} to {new_type}; "
                 "extend-only evolution does not support type changes."

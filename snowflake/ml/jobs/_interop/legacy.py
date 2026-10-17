@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from snowflake import snowpark
-from snowflake.ml.jobs._interop import exception_utils, results
+from snowflake.ml.jobs._interop import data_utils, exception_utils, results
 from snowflake.snowpark import exceptions as sp_exceptions
 
 
@@ -123,7 +123,7 @@ def fetch_result(
         RuntimeError: If both pickle and JSON result retrieval fail.
     """
     try:
-        with session.file.get_stream(result_path) as result_stream:
+        with data_utils.open_stream(result_path, session=session) as result_stream:
             return ExecutionResult.from_dict(pickle.load(result_stream))
     except (
         sp_exceptions.SnowparkSQLException,
@@ -137,7 +137,7 @@ def fetch_result(
         try:
             if result_json is None:
                 result_json_path = os.path.splitext(result_path)[0] + ".json"
-                with session.file.get_stream(result_json_path) as result_stream:
+                with data_utils.open_stream(result_json_path, session=session) as result_stream:
                     result_json = json.load(result_stream)
             return ExecutionResult.from_dict(result_json)
         except Exception as json_error:

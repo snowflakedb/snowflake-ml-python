@@ -54,6 +54,28 @@ ProgressCallback = Callable[[int, int, str], None]
 _RECREATE_SOURCE_OP_KIND: Any = getattr(OpKind, "RECREATE_SOURCE", None)
 
 
+def _qualify_table(name: str, database: str, schema: str) -> str:
+    """Prefix a bare table name with ``database.schema``; a dotted name is already qualified.
+
+    Guards against the double-prefix bug where an already-qualified
+    ``DB.SCHEMA.TABLE`` is re-prefixed to the unresolvable
+    ``DB.SCHEMA.DB.SCHEMA.TABLE``.
+
+    Args:
+        name: The table reference, either bare (``EVENTS``) or already
+            qualified (``DB.SCHEMA.EVENTS``).
+        database: Database to prepend when ``name`` is bare.
+        schema: Schema to prepend when ``name`` is bare.
+
+    Returns:
+        ``name`` unchanged when it already contains a ``.``; otherwise
+        ``database.schema.name``.
+    """
+    if "." in name:
+        return name
+    return f"{database}.{schema}.{name}"
+
+
 def _type_fallback(op_kind: Any) -> str:
     """Derive a coarse object-type label from an ``OpKind`` alone.
 
@@ -191,9 +213,9 @@ def _resolve_online_target_lag(payload: dict[str, Any]) -> str | None:
        ``"<n> seconds"`` when only the integer key is present.
 
     Returns ``None`` when neither key is set, so the caller can fall
-    back to its own default — ``_BATCH_OFT_TARGET_LAG`` ("10 seconds")
-    for online ``BatchFeatureView`` per the imperative API, or
-    ``"0 seconds"`` for streaming / realtime / FG payloads.
+    back to its own default — ``_POSTGRES_BATCH_OFT_TARGET_LAG`` for an
+    online ``BatchFeatureView`` (declarative online storage is Postgres),
+    or ``"0 seconds"`` for streaming / realtime / FG payloads.
 
     Args:
         payload: A plan op payload dict (post-``model_to_dict`` /
@@ -1883,13 +1905,139 @@ def _payload_forwards_refresh_freq(payload: dict[str, Any]) -> bool:
     return False
 
 
+def _fv_operational_update_kwargs(payload: dict[str, Any], default_warehouse: str) -> dict[str, Any]:
+    """Build the operational ``FeatureStore.update_feature_view`` kwargs for a payload.
+
+    Shared by ``_execute_update_feature_view`` (the ``UPDATE_FV`` fast path)
+    and ``_execute_evolve_feature_view`` (the append-only ``EVOLVE_FV`` path)
+    so a single ``snow feature apply`` that drifts both a structural
+    (transformation) field and an operational knob realises the whole authored
+    spec in one imperative call.  Before this helper, ``EVOLVE_FV`` forwarded
+    only ``updated_feature_df`` + ``desc`` and the warehouse / refresh cadence /
+    online-routing drift was silently deferred to a second apply.
+
+    Each operational field is kind-gated so a hand-built payload cannot smuggle
+    a kwarg onto a kind that ``FeatureStore.update_feature_view`` rejects:
+
+    * ``refresh_freq`` — the offline Dynamic Table cadence.  BatchFeatureView
+      always accepts it; a *tiled* StreamingFeatureView accepts it too (its
+      aggregate is an offline DT).  A non-tiled streaming FV (zero-lag VIEW)
+      and a RealtimeFeatureView (OFT-only) both reject it — the spec validator
+      ``FeatureView._reject_refresh_freq_on_stream_or_realtime`` enforces the
+      same boundary; ``STREAM_FV_TILING_REFRESH`` requires it on tiled
+      streaming.  On a tiled streaming update forwarding it alters the tile DT
+      ``TARGET_LAG`` (``ALTER DYNAMIC TABLE … SET TARGET_LAG``).
+    * ``warehouse`` — the managed Dynamic Table refresh warehouse, valid only
+      for FVs that materialise as a DT: every BatchFeatureView, and a
+      StreamingFeatureView only when it is tiled AND carries ``refresh_freq``.
+      A streaming FV without ``refresh_freq`` (non-tiled/continuous, or
+      tiled-without-refresh_freq) compiles to a zero-lag VIEW —
+      ``FeatureViewStatus.STATIC`` — which ``FeatureStore.update_feature_view``
+      rejects with error 2110 ("Static feature view '<NAME>' does not support
+      refresh_freq, warehouse, and initialization_warehouse.").  RealtimeFV
+      (OFT-only) never accepts it either.  Because ``payload`` is the full
+      authoring spec, ``refresh_freq`` presence is a reliable DT signal even
+      when only ``warehouse`` / ``desc`` drifted.  An append-only
+      BatchFeatureView always carries a cron ``refresh_freq`` (snapshot
+      accumulation requires it), so the warehouse is always forwarded on the
+      ``EVOLVE_FV`` path.
+    * ``online_config`` — intentionally NOT forwarded for a
+      StreamingFeatureView.  A streaming FV is *always online by design* (the
+      spec validator ``FeatureView._enforce_always_online_for_stream_or_realtime``
+      defaults ``online=True`` and rejects an explicit ``online=False``), so the
+      full authoring payload always carries ``online: true`` — the default
+      authored value, not a request to toggle online routing in place (the OFT
+      was already materialised at ``CREATE_FV`` time).  Forwarding
+      ``online_config=OnlineConfig(enable=True, ...)`` would drive
+      ``FeatureStore.update_feature_view`` into its enable path
+      ``_create_online_feature_table``, whose streaming branch asserts
+      ``feature_view.stream_config is not None``.  A StreamingFV recovered from
+      applied state as a zero-lag VIEW carries no ``stream_config``, so the
+      assertion fails and surfaces as the empty-message ``(1300) Update feature
+      view <NAME>/V1 failed:`` (see ``plans/done.bug_update_fv_error_1300.md``).
+      Genuinely changing a streaming FV's online routing is recreate-only.
+      ``BatchFeatureView`` (batch OFT path) and ``RealtimeFeatureView``
+      (OFT-only, non-streaming) still route online through here — so an
+      append-only BFV authoring ``online: false`` against a deployed-online FV
+      drops the OFT inside the same ``EVOLVE_FV`` apply (correct convergence).
+
+    ``initialization_warehouse`` is deliberately not modelled in ``decl/`` and
+    is therefore never forwarded here.
+
+    Args:
+        payload: The authoring-format spec dict from the plan op.
+        default_warehouse: Connection warehouse when the payload omits one
+            (only forwarded for a DT-materialising kind).
+
+    Returns:
+        A kwargs dict for ``FeatureStore.update_feature_view`` holding only the
+        operational fields that apply to this payload's kind.  Empty when no
+        operational field applies.
+    """
+    from snowflake.ml.feature_store.feature_view import OnlineConfig, OnlineStoreType
+
+    kind = payload.get("kind", "")
+    is_batch = kind == "BatchFeatureView"
+    is_tiled_streaming = kind == "StreamingFeatureView" and _payload_has_aggregation_windows(payload)
+
+    kwargs: dict[str, Any] = {}
+    if _payload_forwards_refresh_freq(payload):
+        schedule = payload.get("refresh_freq")
+        if schedule:
+            kwargs["refresh_freq"] = str(schedule)
+
+    materializes_as_dt = is_batch or (is_tiled_streaming and bool(payload.get("refresh_freq")))
+    if materializes_as_dt:
+        wh = payload.get("warehouse") or default_warehouse
+        if wh:
+            kwargs["warehouse"] = wh
+
+    if "description" in payload:
+        kwargs["desc"] = str(payload.get("description") or "")
+
+    online = payload.get("online")
+    if online is not None and kind != "StreamingFeatureView":
+        target_lag = _resolve_online_target_lag(payload)
+        if target_lag is None:
+            # Kind-aware default mirroring the CREATE_FV path:
+            #
+            # * ``BatchFeatureView`` → ``_POSTGRES_BATCH_OFT_TARGET_LAG``.
+            #   Declarative online storage is Postgres.
+            #   The spec validator ``_reject_target_lag_on_offline_batch_fv``
+            #   only allows authored ``target_lag`` on online BFVs, so this
+            #   branch covers an online BFV that elided the field.
+            # * ``StreamingFeatureView`` / ``RealtimeFeatureView`` →
+            #   ``"0 seconds"``.  The spec validator
+            #   ``_reject_target_lag_on_stream_or_realtime`` forbids
+            #   authoring ``target_lag`` on these kinds entirely
+            #   (Snowflake stamps ``target_lag_sec: 0`` on the deployed
+            #   OFT regardless and rejects any non-zero value), so the
+            #   default MUST be ``"0 seconds"`` — using the batch
+            #   default here is rejected for those kinds.
+            if kind == "BatchFeatureView":
+                from snowflake.ml.feature_store.feature_view import (
+                    _POSTGRES_BATCH_OFT_TARGET_LAG,
+                )
+
+                target_lag = _POSTGRES_BATCH_OFT_TARGET_LAG
+            else:
+                target_lag = "0 seconds"
+        kwargs["online_config"] = OnlineConfig(
+            enable=bool(online),
+            target_lag=target_lag,
+            store_type=OnlineStoreType.POSTGRES,
+        )
+
+    return kwargs
+
+
 def _execute_update_feature_view(fs: Any, op: Any, default_warehouse: str) -> None:
     """Apply ``OpKind.UPDATE_FV`` via ``FeatureStore.update_feature_view``.
 
     Routes the planner's operational-drift edits through the imperative
-    update path.  Post-B7, all three FV kinds are supported — see the
-    :data:`_UPDATE_FV_SUPPORTED_KINDS` docstring for the per-kind
-    operational surface.
+    update path via :func:`_fv_operational_update_kwargs`.  Post-B7, all
+    three FV kinds are supported — see the :data:`_UPDATE_FV_SUPPORTED_KINDS`
+    docstring (and the helper) for the per-kind operational surface.
 
     The recreate-only authoring fields (``stream_source``,
     ``transformation_fn``, ``feature_granularity``,
@@ -1907,8 +2055,6 @@ def _execute_update_feature_view(fs: Any, op: Any, default_warehouse: str) -> No
     Raises:
         ValueError: If ``payload["kind"]`` is not a supported FV kind.
     """
-    from snowflake.ml.feature_store.feature_view import OnlineConfig, OnlineStoreType
-
     payload = op.payload or {}
     name = str(payload.get("name", "") or op.name)
     version = str(payload.get("version", "V1") or "V1")
@@ -1919,107 +2065,10 @@ def _execute_update_feature_view(fs: Any, op: Any, default_warehouse: str) -> No
             f"declarative client; got kind={kind!r} for {name}/{version}."
         )
 
-    is_batch = kind == "BatchFeatureView"
-    # ``refresh_freq`` is the offline DT cadence.  BatchFeatureView always
-    # accepts it; a *tiled* StreamingFeatureView accepts it too (its
-    # aggregate is an offline Dynamic Table).  A non-tiled streaming FV
-    # (zero-lag VIEW) and a RealtimeFeatureView (OFT-only) both reject it
-    # — the spec validator ``FeatureView._reject_refresh_freq_on_stream_or_realtime``
-    # enforces the same boundary; ``STREAM_FV_TILING_REFRESH`` requires it
-    # on tiled streaming.  On a tiled streaming UPDATE_FV forwarding it
-    # alters the tile DT ``TARGET_LAG`` (``ALTER DYNAMIC TABLE … SET
-    # TARGET_LAG``).
-    is_tiled_streaming = kind == "StreamingFeatureView" and _payload_has_aggregation_windows(payload)
-
-    kwargs: dict[str, Any] = {}
-    # We gate defensively here so a hand-built payload cannot smuggle
-    # ``refresh_freq`` onto a non-tiled streaming / realtime UPDATE_FV.
-    if _payload_forwards_refresh_freq(payload):
-        schedule = payload.get("refresh_freq")
-        if schedule:
-            kwargs["refresh_freq"] = str(schedule)
-
-    # ``warehouse`` is the managed Dynamic Table refresh warehouse, so it
-    # is only valid for FVs that materialise as a DT: every
-    # BatchFeatureView, and a StreamingFeatureView only when it is tiled
-    # AND carries ``refresh_freq``.  A streaming FV without ``refresh_freq``
-    # (non-tiled/continuous, or tiled-without-refresh_freq) compiles to a
-    # zero-lag VIEW — ``FeatureViewStatus.STATIC`` — which
-    # ``FeatureStore.update_feature_view`` rejects with error 2110
-    # ("Static feature view '<NAME>' does not support refresh_freq,
-    # warehouse, and initialization_warehouse.").  RealtimeFV (OFT-only)
-    # never accepts it either.  Because ``payload`` is the full authoring
-    # spec, ``refresh_freq`` presence is a reliable DT signal even when
-    # only ``warehouse`` / ``desc`` drifted.
-    materializes_as_dt = is_batch or (is_tiled_streaming and bool(payload.get("refresh_freq")))
-    if materializes_as_dt:
-        wh = payload.get("warehouse") or default_warehouse
-        if wh:
-            kwargs["warehouse"] = wh
-
-    if "description" in payload:
-        kwargs["desc"] = str(payload.get("description") or "")
-
-    # ``online_config`` is intentionally NOT forwarded for a
-    # StreamingFeatureView ``UPDATE_FV``.  A streaming FV is *always online
-    # by design* (the spec validator
-    # ``FeatureView._enforce_always_online_for_stream_or_realtime`` defaults
-    # ``online=True`` and rejects an explicit ``online=False``), so the full
-    # authoring payload the planner attaches always carries ``online: true``
-    # — that is the default authored value, not a request to toggle online
-    # routing in place.  The OFT was already materialised at ``CREATE_FV``
-    # time.
-    #
-    # Forwarding ``online_config=OnlineConfig(enable=True, ...)`` here would
-    # drive ``FeatureStore.update_feature_view`` into its enable path
-    # ``_create_online_feature_table``, whose streaming branch asserts
-    # ``feature_view.stream_config is not None``.  A StreamingFV recovered
-    # from applied state as a zero-lag VIEW (``FeatureViewStatus.STATIC``)
-    # carries no ``stream_config``, so the assertion fails and surfaces as
-    # the empty-message ``(1300) Update feature view <NAME>/V1 failed:``
-    # (see ``plans/done.bug_update_fv_error_1300.md``).  So we omit
-    # ``online_config`` for streaming and still forward the other
-    # operational edits (``desc``, and tiled ``refresh_freq`` / warehouse)
-    # gathered above.  If online is the *only* payload signal, ``kwargs``
-    # stays empty and the guard below returns without an imperative call —
-    # a no-op, never the false-1300 path.  Genuinely changing a streaming
-    # FV's online routing is recreate-only (``RECREATE_FV``).
-    # ``BatchFeatureView`` (batch OFT path) and ``RealtimeFeatureView``
-    # (OFT-only, non-streaming) still route online through ``UPDATE_FV``.
-    online = payload.get("online")
-    if online is not None and kind != "StreamingFeatureView":
-        target_lag = _resolve_online_target_lag(payload)
-        if target_lag is None:
-            # Kind-aware default mirroring the CREATE_FV path:
-            #
-            # * ``BatchFeatureView`` → ``_BATCH_OFT_TARGET_LAG``
-            #   ("10 seconds").  The spec validator
-            #   ``_reject_target_lag_on_offline_batch_fv`` only allows
-            #   authored ``target_lag`` on online BFVs, so this branch
-            #   covers an online BFV that elided the field.
-            # * ``StreamingFeatureView`` / ``RealtimeFeatureView`` →
-            #   ``"0 seconds"``.  The spec validator
-            #   ``_reject_target_lag_on_stream_or_realtime`` forbids
-            #   authoring ``target_lag`` on these kinds entirely
-            #   (Snowflake stamps ``target_lag_sec: 0`` on the deployed
-            #   OFT regardless and rejects any non-zero value), so the
-            #   default MUST be ``"0 seconds"`` — using the BFV
-            #   default here surfaces as ``Invalid TARGET_LAG value
-            #   '10 seconds' specified for online feature table``.
-            if kind == "BatchFeatureView":
-                from snowflake.ml.feature_store.feature_view import (
-                    _BATCH_OFT_TARGET_LAG,
-                )
-
-                target_lag = _BATCH_OFT_TARGET_LAG
-            else:
-                target_lag = "0 seconds"
-        kwargs["online_config"] = OnlineConfig(
-            enable=bool(online),
-            target_lag=target_lag,
-            store_type=OnlineStoreType.POSTGRES,
-        )
-
+    kwargs = _fv_operational_update_kwargs(payload, default_warehouse)
+    # If online is the *only* payload signal on a streaming FV, ``kwargs``
+    # stays empty and we return without an imperative call — a no-op, never
+    # the false-1300 path described in the helper docstring.
     if not kwargs:
         return
 
@@ -2046,12 +2095,17 @@ def _execute_evolve_feature_view(
     Dynamic Table from the new DataFrame while retaining the accumulated
     snapshots.
 
-    Only ``updated_feature_df`` (and ``desc`` when authored) is forwarded:
-    operational knobs (refresh cadence, warehouse, online routing) drift is
-    detected and applied independently through ``UPDATE_FV`` — an ``EVOLVE_FV``
-    fires on a structural (transformation) diff, so mixing operational kwargs
-    into the reinitialise call is unnecessary and avoids core rejecting a
-    combined update.
+    ``updated_feature_df`` is merged with the operational kwargs from
+    :func:`_fv_operational_update_kwargs` (refresh cadence, warehouse, desc,
+    online routing) so a single ``snow feature apply`` that drifts both the
+    transformation *and* an operational knob realises the whole authored spec
+    in one call.  Core's ``updated_feature_df`` path applies those kwargs to the
+    desired-state FV before the DT ``CREATE OR REPLACE`` (see
+    ``FeatureStore.update_feature_view`` and
+    ``_recreate_append_only_feature_view_atomically``), so no redundant
+    follow-up ``UPDATE_FV`` is needed.  Without this merge the operational drift
+    was silently deferred to a second apply — the refresh would keep running on
+    the stale warehouse until then.
 
     Args:
         fs: Active ``FeatureStore`` instance.
@@ -2059,17 +2113,24 @@ def _execute_evolve_feature_view(
         session: Snowpark session used to build the replacement DataFrame.
         database: Default database for resolving unqualified source tables.
         schema: Default schema for resolving unqualified source tables.
-        default_warehouse: Unused today; accepted for dispatch symmetry with
-            the other FV executors.
+        default_warehouse: Connection warehouse forwarded as the refresh
+            warehouse when the payload omits one (append-only BFVs always
+            materialise as a Dynamic Table).
     """
-    del default_warehouse  # operational knobs are applied via UPDATE_FV
     payload = op.payload or {}
     name = str(payload.get("name", "") or op.name)
     version = str(payload.get("version", "V1") or "V1")
     updated_feature_df = _build_feature_df(payload, session, database, schema)
-    kwargs: dict[str, Any] = {"updated_feature_df": updated_feature_df}
-    if "description" in payload:
-        kwargs["desc"] = str(payload.get("description") or "")
+    kwargs = _fv_operational_update_kwargs(payload, default_warehouse)
+    kwargs["updated_feature_df"] = updated_feature_df
+    # Re-stamp FV_SOURCE_REFS with the authored sources (mirrors the CREATE_FV
+    # stamp) so the next plan recovers the new binding instead of the stale one
+    # and the EVOLVE loop converges to NO_CHANGE.
+    source_refs_payload = payload.get("sources")
+    if isinstance(source_refs_payload, list) and source_refs_payload:
+        canonical_refs = [dict(s) for s in source_refs_payload if isinstance(s, dict)]
+        if canonical_refs:
+            kwargs["_source_refs"] = canonical_refs
     fs.update_feature_view(name, version, **kwargs)
 
 
@@ -2937,10 +2998,11 @@ def _build_feature_view(
     # (above) and never crosses into this resolution path.
     #
     # Default policy when ``target_lag`` is absent:
-    # * ``BatchFeatureView`` → ``_BATCH_OFT_TARGET_LAG`` ("10 seconds"),
-    #   the same default the imperative ``register_feature_view`` /
-    #   ``_plan_online_update_existing`` path applies to a fresh online
-    #   batch FV.  Snowflake rejects ``"0 seconds"`` for batch OFTs.
+    # * ``BatchFeatureView`` → ``_POSTGRES_BATCH_OFT_TARGET_LAG``, the
+    #   Postgres batch default ``register_feature_view`` applies when
+    #   ``target_lag`` is omitted. Snowflake rejects ``"0 seconds"`` for
+    #   batch OFTs. Hybrid tables keep ``_BATCH_OFT_TARGET_LAG``; this path
+    #   is Postgres.
     # * ``StreamingFeatureView`` / ``RealtimeFeatureView`` /
     #   ``FeatureGroup`` → ``"0 seconds"`` (Snowflake requires this for
     #   those kinds — the runtime enforces it regardless).
@@ -2950,10 +3012,10 @@ def _build_feature_view(
             online_kind = payload.get("kind", "") if isinstance(payload.get("kind"), str) else ""
             if online_kind == "BatchFeatureView":
                 from snowflake.ml.feature_store.feature_view import (
-                    _BATCH_OFT_TARGET_LAG,
+                    _POSTGRES_BATCH_OFT_TARGET_LAG,
                 )
 
-                target_lag = _BATCH_OFT_TARGET_LAG
+                target_lag = _POSTGRES_BATCH_OFT_TARGET_LAG
             else:
                 target_lag = "0 seconds"
         kwargs["online_config"] = OnlineConfig(
@@ -3405,7 +3467,12 @@ def _build_feature_df(
             if table:
                 src_db = src.get("source_database", database)
                 src_schema = src.get("source_schema", schema)
-                fqn = f"{src_db}.{src_schema}.{table}"
+                # Guard against the double-prefix bug: an already-qualified
+                # ``DB.SCHEMA.EVENTS`` must not be re-prefixed to the
+                # unresolvable ``DB.SCHEMA.DB.SCHEMA.EVENTS`` (which fails the
+                # FV (re)create).  The schema-recovery and backfill sites
+                # already guard inline; this one did not.
+                fqn = _qualify_table(str(table), src_db, src_schema)
                 return session.table(fqn)
 
             query = src.get("query")

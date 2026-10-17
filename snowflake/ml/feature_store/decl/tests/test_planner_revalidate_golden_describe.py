@@ -28,8 +28,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
@@ -232,10 +230,6 @@ def _build_full_applied_state(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _BUG_BASH_GOLDEN.exists(),
-    reason="Golden spec USER_CLICK_STATS_DECL.json not yet captured.",
-)
 class TestValidateSpecsAgainstGoldenDescribe:
     """``validate_specs`` against the captured DESCRIBE payload must be clean."""
 
@@ -293,10 +287,6 @@ class TestValidateSpecsAgainstGoldenDescribe:
         )
 
 
-@pytest.mark.skipif(
-    not _BUG_BASH_GOLDEN.exists(),
-    reason="Golden spec USER_CLICK_STATS_DECL.json not yet captured.",
-)
 class TestGeneratePlanAgainstGoldenDescribe:
     """``generate_plan`` against the captured DESCRIBE payload must be NO_CHANGE."""
 
@@ -333,10 +323,6 @@ class TestGeneratePlanAgainstGoldenDescribe:
         )
 
 
-@pytest.mark.skipif(
-    not _BUG_BASH_GOLDEN.exists(),
-    reason="Golden spec USER_CLICK_STATS_DECL.json not yet captured.",
-)
 class TestValidateSpecsWithDivergentHash:
     """Force ``_check_idempotency`` MISS and pin the fall-through path.
 

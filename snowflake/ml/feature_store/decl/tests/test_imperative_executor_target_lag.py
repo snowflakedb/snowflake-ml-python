@@ -6,22 +6,22 @@ executor passes to ``OnlineConfig(target_lag=...)`` when applying an
 
 1. ``payload["target_lag"]`` (raw authoring shape)
 2. ``payload["target_lag_sec"]`` (post-``normalize_durations`` integer)
-3. ``None`` (caller defaults — ``_BATCH_OFT_TARGET_LAG`` ("10 seconds")
-   for online ``BatchFeatureView``, ``"0 seconds"`` for streaming /
-   realtime / FG which Snowflake requires for those kinds).
+3. ``None`` (caller defaults — ``_POSTGRES_BATCH_OFT_TARGET_LAG``
+   for online ``BatchFeatureView``, ``"0 seconds"`` for
+   streaming / realtime / FG which Snowflake requires for those kinds).
 
 After the ``feature_granularity`` / ``refresh_freq`` / ``target_lag``
 decoupling, ``refresh_freq`` is strictly the offline Dynamic Table
 refresh cadence and is **never** read by this helper.  The OFT
 TARGET_LAG default for a fresh online BFV that omits ``target_lag``
-comes from the caller (``_BATCH_OFT_TARGET_LAG``), not from the DT
-cadence.
+comes from the caller (``_POSTGRES_BATCH_OFT_TARGET_LAG``), not from
+the DT cadence.
 
 The behavioural section pins the BFV path end-to-end: a
 ``_build_feature_view`` invocation with ``online: true`` and
-``refresh_freq: "5 minutes"`` produces ``OnlineConfig(target_lag=
-"10 seconds", ...)`` (the imperative ``_BATCH_OFT_TARGET_LAG`` default)
-when no ``target_lag`` is authored, and the explicit value when it is.
+``refresh_freq: "5 minutes"`` produces an ``OnlineConfig`` with the
+Postgres batch default target lag when no ``target_lag`` is authored,
+and the explicit value when it is.
 The streaming-FV regression at the end confirms the existing
 ``"0 seconds"`` default still fires for streaming payloads.
 """
@@ -90,8 +90,8 @@ class TestResolveOnlineTargetLag:
         # offline DT refresh cadence and is never read by
         # ``_resolve_online_target_lag``.  A BFV authoring only
         # ``refresh_freq`` (and no ``target_lag``) returns ``None``
-        # so the caller can apply the imperative
-        # ``_BATCH_OFT_TARGET_LAG`` ("10 seconds") default.
+        # so the caller can apply the Postgres batch
+        # ``_POSTGRES_BATCH_OFT_TARGET_LAG`` default.
         assert _resolve_online_target_lag({"refresh_freq": "5 minutes"}) is None
         assert _resolve_online_target_lag({"refresh_freq": "1 hour"}) is None
 
@@ -167,15 +167,14 @@ def test_online_bfv_without_target_lag_uses_imperative_default() -> None:
     After the ``feature_granularity`` / ``refresh_freq`` /
     ``target_lag`` decoupling, ``refresh_freq`` is strictly the
     offline DT refresh cadence and is never read on the OFT path.
-    Online BFVs that omit ``target_lag`` get the imperative-API
-    default (``_BATCH_OFT_TARGET_LAG = "10 seconds"``) instead of the
-    pre-fix ``refresh_freq`` mirror.  Snowflake accepts ``"10
-    seconds"`` for batch OFTs and would have rejected ``"0 seconds"``
+    Online BFVs that omit ``target_lag`` get the Postgres batch
+    default (``_POSTGRES_BATCH_OFT_TARGET_LAG``) instead of the pre-fix
+    ``refresh_freq`` mirror.  Snowflake would have rejected ``"0 seconds"``
     here (``Invalid TARGET_LAG value '0 seconds' specified for online
     feature table. … '0 seconds' is only valid for
     StreamingFeatureView, RealtimeFeatureView, and FeatureGroup``), so
-    the executor's fallback to ``_BATCH_OFT_TARGET_LAG`` keeps the
-    apply path safe.
+    the executor's fallback to ``_POSTGRES_BATCH_OFT_TARGET_LAG`` keeps
+    the apply path safe.
     """
     payload = _minimal_batch_fv_payload()
     session = MagicMock()
@@ -193,9 +192,9 @@ def test_online_bfv_without_target_lag_uses_imperative_default() -> None:
     ):
         _build_feature_view(payload, session, "DB1", "SC1", "WH_CONNECTION_DEFAULT", fs=fs)
 
-    assert captured.get("target_lag") == "10 seconds", (
+    assert captured.get("target_lag") == "1 minute", (
         "online BFV without authored target_lag must default to "
-        "_BATCH_OFT_TARGET_LAG (the pre-fix refresh_freq mirror is "
+        "_POSTGRES_BATCH_OFT_TARGET_LAG (the pre-fix refresh_freq mirror is "
         "removed); see _resolve_online_target_lag docstring"
     )
     assert captured.get("enable") is True
@@ -269,7 +268,7 @@ def test_online_streaming_fv_without_target_lag_still_uses_zero_seconds_default(
 #
 # Pins the UPDATE_FV path's parity with the CREATE_FV kind-aware default
 # for the kinds that still route online through UPDATE_FV
-# (BFV → ``_BATCH_OFT_TARGET_LAG`` "10 seconds", RealtimeFV →
+# (BFV → ``_POSTGRES_BATCH_OFT_TARGET_LAG``, RealtimeFV →
 # ``"0 seconds"``).  ``StreamingFeatureView`` never builds an
 # ``online_config`` on the UPDATE path: a streaming FV is always online by
 # design, so ``online: true`` in the full authoring payload is the default
@@ -378,7 +377,7 @@ def test_update_realtime_fv_without_target_lag_defaults_to_zero_seconds() -> Non
 
 
 def test_update_batch_fv_without_target_lag_keeps_imperative_default() -> None:
-    """UPDATE_FV on an online ``BatchFeatureView`` must still use ``_BATCH_OFT_TARGET_LAG``.
+    """UPDATE_FV on an online ``BatchFeatureView`` must still use ``_POSTGRES_BATCH_OFT_TARGET_LAG``.
 
     Symmetric to the streaming/realtime regressions above — the
     kind-aware fallback must NOT regress the BFV default to
@@ -400,9 +399,9 @@ def test_update_batch_fv_without_target_lag_keeps_imperative_default() -> None:
     ):
         _execute_update_feature_view(fs, _make_update_fv_op(payload), "WH_CONNECTION_DEFAULT")
 
-    assert captured.get("target_lag") == "10 seconds", (
-        "UPDATE_FV on an online BatchFeatureView must keep the imperative "
-        "_BATCH_OFT_TARGET_LAG ('10 seconds') default; '0 seconds' is "
+    assert captured.get("target_lag") == "1 minute", (
+        "UPDATE_FV on an online BatchFeatureView must keep the Postgres "
+        "_POSTGRES_BATCH_OFT_TARGET_LAG default; '0 seconds' is "
         "rejected by Snowflake for batch OFTs"
     )
 

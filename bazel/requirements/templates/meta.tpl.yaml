@@ -7,6 +7,9 @@ source:
 
 build:
   noarch: python
+  script_env:
+    - BAZEL_DOWNLOADER_CONFIG
+    - BAZEL_REPOSITORY_CACHE
 
 requirements:
   build:

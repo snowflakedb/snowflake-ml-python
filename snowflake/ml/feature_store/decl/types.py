@@ -147,10 +147,13 @@ class SpecBatch(BaseModel):
     Attributes:
         specs: The parsed spec objects (``SpecBase`` subclass instances).
         source_files: The file paths that were loaded to produce this batch.
+        spec_sources: Originating path of each spec, index-aligned with
+            ``specs``. Empty when a loader did not build the batch.
     """
 
     specs: list[SpecBase] = []
     source_files: list[str] = []
+    spec_sources: list[str] = []
 
 
 class PlanFile(BaseModel):

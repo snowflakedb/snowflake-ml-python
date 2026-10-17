@@ -4,11 +4,7 @@ import tempfile
 
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import inference_engine
-from snowflake.ml.model._client.ops import service_ops
-from snowflake.ml.model.models import huggingface, huggingface_pipeline
-from snowflake.snowpark import async_job, session
+from snowflake.ml.model.models import huggingface
 
 
 class TransformersPipelineTest(absltest.TestCase):
@@ -36,6 +32,80 @@ class TransformersPipelineTest(absltest.TestCase):
         self.assertEqual(pipeline.model, "facebook/opt-125m")
         self.assertEqual(pipeline.task, "text-generation")
 
+    def test_infers_task_from_hub_for_remote_logging(self) -> None:
+        """When task is omitted, resolve it from Hub pipeline_tag."""
+        with absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.pipeline_tag = "text-generation"
+
+            pipeline = huggingface.TransformersPipeline(
+                model="facebook/opt-125m",
+            )
+
+            mock_hf_api.return_value.model_info.assert_called_once_with(
+                repo_id="facebook/opt-125m",
+                revision=None,
+                token=None,
+            )
+            self.assertEqual(pipeline.task, "text-generation")
+            self.assertEqual(pipeline.model, "facebook/opt-125m")
+
+    def test_infers_task_raises_when_pipeline_tag_missing(self) -> None:
+        """Fail clearly when Hub metadata has no pipeline_tag."""
+        with absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.pipeline_tag = None
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Unable to determine the HuggingFace pipeline task",
+            ):
+                huggingface.TransformersPipeline(model="some-org/untagged-model")
+
+    def test_lazy_upload_infers_task_from_same_model_info_call(self) -> None:
+        """Lazy upload reuses model_info for both file listing and task inference."""
+        repo_files = ["config.json", "model.safetensors", "tokenizer_config.json"]
+        repo_file_sizes = {
+            "config.json": 570,
+            "model.safetensors": 1000,
+            "tokenizer_config.json": 48,
+        }
+
+        with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download, absltest.mock.patch(
+            "huggingface_hub.hf_hub_download"
+        ) as mock_hf_hub_download, absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_info = mock_hf_api.return_value.model_info.return_value
+            mock_info.pipeline_tag = "text-generation"
+            mock_info.siblings = [
+                absltest.mock.Mock(rfilename=filename, size=repo_file_sizes[filename]) for filename in repo_files
+            ]
+
+            pipeline = huggingface.TransformersPipeline(
+                model="facebook/opt-125m",
+                compute_pool_for_log=None,
+                lazy_upload=True,
+            )
+
+            mock_snapshot_download.assert_not_called()
+            mock_hf_api.return_value.model_info.assert_called_once_with(
+                repo_id="facebook/opt-125m",
+                revision=None,
+                token=None,
+                files_metadata=True,
+            )
+            self.assertEqual(pipeline.task, "text-generation")
+            self.assertEqual(pipeline._lazy_repo_files, repo_files)
+            downloaded_filenames = {call.kwargs["filename"] for call in mock_hf_hub_download.call_args_list}
+            self.assertEqual(downloaded_filenames, {"tokenizer_config.json"})
+
+    def test_explicit_task_skips_hub_inference(self) -> None:
+        """An explicit task must not trigger a Hub lookup in remote mode."""
+        with absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            pipeline = huggingface.TransformersPipeline(
+                task="fill-mask",
+                model="google-bert/bert-base-uncased",
+            )
+            mock_hf_api.assert_not_called()
+            self.assertEqual(pipeline.task, "fill-mask")
+
     def test_wrapper(self) -> None:
         huggingface.TransformersPipeline(
             task="text-generation",
@@ -61,9 +131,7 @@ class TransformersPipelineTest(absltest.TestCase):
             download_snapshot=True,
         )
 
-        # Both task and model are required positional arguments
-        with self.assertRaises(TypeError):
-            huggingface.TransformersPipeline(model="facebook/opt-125m")  # type: ignore[call-arg]
+        # Model is required; task may be omitted and inferred from Hub metadata.
         with self.assertRaises(TypeError):
             huggingface.TransformersPipeline(task="text-generation")  # type: ignore[call-arg]
         with self.assertRaisesRegex(
@@ -71,7 +139,6 @@ class TransformersPipelineTest(absltest.TestCase):
             "Impossible to instantiate a pipeline without a model being specified.",
         ):
             huggingface.TransformersPipeline(task="text-generation", model=None)  # type: ignore[arg-type]
-
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to use non-string model as input for class TransformersPipeline.",
@@ -391,271 +458,6 @@ class TransformersPipelineTest(absltest.TestCase):
                     lazy_upload=False,
                 )
                 self.assertFalse(pipeline.has_chat_template)
-
-    def test_create_service(self) -> None:
-        """Test the create_service function with mocked ServiceOperator."""
-
-        # Mock session
-        mock_session = absltest.mock.Mock(spec=session.Session)
-        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
-        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
-        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
-
-        # Mock the ServiceOperator
-        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
-        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
-        mock_service_operator.create_service = mock_create_service
-
-        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
-            model="openai-community/gpt2",
-            task="text-generation",
-            trust_remote_code=True,
-            download_snapshot=False,
-        )
-
-        # Patch the ServiceOperator constructor to return our mock
-        with absltest.mock.patch(
-            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
-            return_value=mock_service_operator,
-        ):
-            # Call the create_service function
-            result = model_ref.log_model_and_create_service(
-                session=mock_session,
-                model_name="test_model",
-                version_name="v1",
-                service_name="test_service",
-                service_compute_pool="test_compute_pool",
-                image_repo="test_repo",
-                ingress_enabled=True,
-                min_instances=1,
-                max_instances=2,
-                num_workers=4,
-                max_batch_rows=100,
-                cpu_requests="1",
-                memory_requests="4Gi",
-                gpu_requests="1",
-                force_rebuild=True,
-                block=True,
-            )
-
-            # Check that the result is correct
-            self.assertEqual(result, "test_service_id")
-
-            # Verify specific parameters
-            args = mock_create_service.call_args.kwargs
-            self.assertEqual(args["database_name"], sql_identifier.SqlIdentifier("test_db"))
-            self.assertEqual(args["schema_name"], sql_identifier.SqlIdentifier("test_schema"))
-            self.assertEqual(args["model_name"], sql_identifier.SqlIdentifier("test_model"))
-            self.assertEqual(args["version_name"], sql_identifier.SqlIdentifier("v1"))
-            self.assertEqual(args["service_name"], sql_identifier.SqlIdentifier("test_service"))
-            self.assertIsNone(args["service_database_name"])
-            self.assertIsNone(args["service_schema_name"])
-            self.assertEqual(
-                args["hf_model_args"],
-                service_ops.HFModelArgs(
-                    hf_model_name="openai-community/gpt2",
-                    hf_task="text-generation",
-                    hf_tokenizer=None,
-                    hf_revision=None,
-                    hf_token=None,
-                    hf_trust_remote_code=True,
-                    hf_model_kwargs={},
-                    pip_requirements=None,
-                    conda_dependencies=None,
-                    comment=None,
-                    warehouse="test_warehouse",
-                ),
-            )
-            self.assertTrue(args["block"])
-
-        # Patch the ServiceOperator constructor to return our mock
-        with absltest.mock.patch(
-            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
-            return_value=mock_service_operator,
-        ):
-            # Call the create_service function
-            result = model_ref.log_model_and_create_service(
-                session=mock_session,
-                model_name="test_model",
-                version_name="v1",
-                service_name="test_service_db.test_service_schema.test_service",
-                service_compute_pool="test_compute_pool",
-                image_repo="test_repo",
-                ingress_enabled=True,
-                min_instances=1,
-                max_instances=2,
-                num_workers=4,
-                max_batch_rows=100,
-                cpu_requests="1",
-                memory_requests="4Gi",
-                gpu_requests="1",
-                force_rebuild=True,
-                block=True,
-            )
-
-            # Check that the result is correct
-            self.assertEqual(result, "test_service_id")
-
-            # Verify specific parameters
-            args = mock_create_service.call_args.kwargs
-            self.assertEqual(args["database_name"], sql_identifier.SqlIdentifier("test_db"))
-            self.assertEqual(args["schema_name"], sql_identifier.SqlIdentifier("test_schema"))
-            self.assertEqual(args["model_name"], sql_identifier.SqlIdentifier("test_model"))
-            self.assertEqual(args["version_name"], sql_identifier.SqlIdentifier("v1"))
-            self.assertEqual(args["service_name"], sql_identifier.SqlIdentifier("test_service"))
-            self.assertEqual(args["service_database_name"], sql_identifier.SqlIdentifier("test_service_db"))
-            self.assertEqual(args["service_schema_name"], sql_identifier.SqlIdentifier("test_service_schema"))
-            self.assertEqual(
-                args["hf_model_args"],
-                service_ops.HFModelArgs(
-                    hf_model_name="openai-community/gpt2",
-                    hf_task="text-generation",
-                    hf_tokenizer=None,
-                    hf_revision=None,
-                    hf_token=None,
-                    hf_trust_remote_code=True,
-                    hf_model_kwargs={},
-                    pip_requirements=None,
-                    conda_dependencies=None,
-                    comment=None,
-                    warehouse="test_warehouse",
-                ),
-            )
-            self.assertTrue(args["block"])
-
-    def test_create_service_async(self) -> None:
-        """Test the create_service function in async mode with mocked ServiceOperator."""
-
-        # Mock session
-        mock_session = absltest.mock.Mock(spec=session.Session)
-        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
-        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
-
-        # Mock async job
-        mock_async_job = absltest.mock.Mock(spec=async_job.AsyncJob)
-
-        # Mock the ServiceOperator
-        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
-        mock_create_service = absltest.mock.Mock(return_value=mock_async_job)
-        mock_service_operator.create_service = mock_create_service
-
-        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
-            model="openai-community/gpt2",
-            task="text-generation",
-            trust_remote_code=True,
-            download_snapshot=False,
-        )
-
-        # Patch the ServiceOperator constructor to return our mock
-        with absltest.mock.patch(
-            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
-            return_value=mock_service_operator,
-        ):
-            # Call the create_service function in non-blocking mode
-            result = model_ref.log_model_and_create_service(
-                session=mock_session,
-                model_name="test_model",
-                service_name="test_service",
-                service_compute_pool="test_compute_pool",
-                image_repo="test_repo",
-                block=False,  # Non-blocking mode
-            )
-
-            # Check that the result is an AsyncJob
-            self.assertIs(result, mock_async_job)
-
-            # Check that create_service was called with block=False
-            args = mock_create_service.call_args.kwargs
-            self.assertFalse(args["block"])
-
-    def test_create_service_with_inference_engine_options(self) -> None:
-        """Test the create_service function with inference engine options."""
-        # Mock session
-        mock_session = absltest.mock.Mock(spec=session.Session)
-        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
-        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
-        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
-
-        # Mock the ServiceOperator
-        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
-        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
-        mock_service_operator.create_service = mock_create_service
-
-        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
-            model="openai-community/gpt2",
-            task="text-generation",
-            trust_remote_code=True,
-            download_snapshot=False,
-        )
-
-        # Patch the ServiceOperator constructor to return our mock
-        with absltest.mock.patch(
-            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
-            return_value=mock_service_operator,
-        ):
-            result = model_ref.log_model_and_create_service(
-                session=mock_session,
-                model_name="test_model",
-                service_name="test_service",
-                service_compute_pool="test_compute_pool",
-                block=True,
-                inference_engine_options={
-                    "engine": inference_engine.InferenceEngine.VLLM,
-                    "engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
-                },
-            )
-            self.assertEqual(result, "test_service_id")
-            args = mock_create_service.call_args.kwargs
-            self.assertEqual(
-                args["inference_engine_args"],
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=["--max_tokens=100", "--temperature=0.7"],
-                ),
-            )
-
-    def test_create_service_with_inference_engine_options_invalid_task(self) -> None:
-        """Test the create_service function with inference engine options."""
-        # Mock session
-        mock_session = absltest.mock.Mock(spec=session.Session)
-        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
-        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
-        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
-
-        # Mock the ServiceOperator
-        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
-        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
-        mock_service_operator.create_service = mock_create_service
-
-        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
-            model="google-bert/bert-base-uncased",
-            task="fill-mask",
-            trust_remote_code=True,
-            download_snapshot=False,
-        )
-
-        # Patch the ServiceOperator constructor to return our mock
-        with absltest.mock.patch(
-            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
-            return_value=mock_service_operator,
-        ):
-            with self.assertRaises(ValueError) as cm:
-                model_ref.log_model_and_create_service(
-                    session=mock_session,
-                    model_name="test_model",
-                    service_name="test_service",
-                    service_compute_pool="test_compute_pool",
-                    block=True,
-                    inference_engine_options={
-                        "inference_engine": inference_engine.InferenceEngine.VLLM,
-                        "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
-                    },
-                )
-                self.assertEqual(
-                    str(cm.exception),
-                    "Currently, InferenceEngine using inference_engine_options is only supported for "
-                    "HuggingFace text-generation models.",
-                )
 
 
 if __name__ == "__main__":

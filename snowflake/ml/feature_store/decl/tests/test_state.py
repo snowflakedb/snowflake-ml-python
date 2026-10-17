@@ -574,6 +574,40 @@ class TestFetchAppliedStateWithSpecificationMap:
         assert not any("Click_FV" in k for k in fv_keys), fv_keys
         assert not any(":db.sch:" in k for k in fv_keys), fv_keys
 
+    def test_stale_metadata_schema_keys_on_deployed_show_row(self) -> None:
+        """Applied key/metadata must prefer the deployed SHOW-row identity.
+
+        A deployed SPECIFICATION can carry a stale session schema stamped at
+        creation time (``metadata.schema``) that diverges from where the OFT
+        actually lives (the SHOW-row ``schema_name``).  The exporter emits the
+        deployed identity, so the applied side must key on it too; otherwise
+        the FV re-plans as ``CREATE_FV`` (key divergence) or ``RECREATE_FV``
+        (the retained ``metadata.schema`` diverges the full-spec hash) on every
+        plan.
+        """
+        stale_spec = copy.deepcopy(self._SPEC_FULL)
+        stale_spec["metadata"]["database"] = "MYDB"
+        stale_spec["metadata"]["schema"] = "STALE_SESSION_SCH"
+        show_row = dict(self._SHOW_ROW)
+        show_row["database_name"] = "MYDB"
+        show_row["schema_name"] = "PUBLIC"
+
+        state = fetch_applied_state(
+            [show_row],
+            None,
+            specification_map={"CLICK_FV$V1$ONLINE": stale_spec},
+        )
+        fv_objs = [o for o in state.objects.values() if o.kind == "StreamingFeatureView"]
+        assert len(fv_objs) == 1
+        obj = fv_objs[0]
+        # Key must use the deployed schema (PUBLIC), not the stale metadata.
+        assert ":MYDB.PUBLIC:" in obj.key, obj.key
+        assert "STALE_SESSION_SCH" not in obj.key, obj.key
+        # The stored spec_payload metadata must also carry deployed identity so
+        # the full-spec content hash keys on PUBLIC (not the stale schema).
+        assert obj.spec_payload["metadata"]["schema"] == "PUBLIC", obj.spec_payload["metadata"]
+        assert obj.spec_payload["metadata"]["database"] == "MYDB", obj.spec_payload["metadata"]
+
     def test_specification_marks_from_specification_true(self) -> None:
         state = fetch_applied_state(
             [self._SHOW_ROW],

@@ -2227,6 +2227,62 @@ class TestBuildFeatureDfQueryPath:
         session.sql.assert_called_once_with("SELECT * FROM RAW.EVENTS")
 
 
+class TestBuildFeatureDfTableQualification:
+    """``_build_feature_df`` qualifies a bare ``table`` with the FV's
+    db/schema but must leave an already-qualified ``table`` untouched.
+
+    Bug B regression: a fully-qualified ``DB.SCHEMA.EVENTS`` that gets
+    re-prefixed to ``DB.SCHEMA.DB.SCHEMA.EVENTS`` is unresolvable, so the
+    feature view fails at (re)create.  The shared ``_qualify_table`` guard
+    (mirroring the schema-recovery and backfill sites) prevents the double
+    prefix.
+    """
+
+    def test_unqualified_table_gets_db_schema_prefix(self) -> None:
+        session = _mock_fv_session()
+        payload = {
+            "kind": "BatchFeatureView",
+            "name": "FV_BARE",
+            "version": "V1",
+            "entities": ["USER_ID"],
+            "sources": [{"name": "EVENTS", "source_type": "Batch", "table": "RAW_EVENTS"}],
+            "features": [],
+        }
+        _build_feature_df(payload, session, "DB", "SCH")
+        session.table.assert_called_once_with("DB.SCH.RAW_EVENTS")
+
+    def test_fully_qualified_table_is_not_double_prefixed(self) -> None:
+        session = _mock_fv_session()
+        payload = {
+            "kind": "BatchFeatureView",
+            "name": "FV_FQN",
+            "version": "V1",
+            "entities": ["USER_ID"],
+            "sources": [{"name": "EVENTS", "source_type": "Batch", "table": "RAW_DB.RAW_SCH.EVENTS"}],
+            "features": [],
+        }
+        _build_feature_df(payload, session, "DB", "SCH")
+        # The FV-level db/schema must NOT be prepended to an already-qualified
+        # table (would yield the unresolvable DB.SCH.RAW_DB.RAW_SCH.EVENTS).
+        session.table.assert_called_once_with("RAW_DB.RAW_SCH.EVENTS")
+
+
+class TestQualifyTable:
+    """Unit contract for the shared ``_qualify_table`` helper: prefix a
+    bare name, pass an already-qualified name through unchanged.
+    """
+
+    def test_unqualified_name_gets_prefixed(self) -> None:
+        from snowflake.ml.feature_store.decl.imperative_executor import _qualify_table
+
+        assert _qualify_table("EVENTS", "DB", "SCH") == "DB.SCH.EVENTS"
+
+    def test_already_qualified_name_passes_through(self) -> None:
+        from snowflake.ml.feature_store.decl.imperative_executor import _qualify_table
+
+        assert _qualify_table("DB.SCH.EVENTS", "OTHER_DB", "OTHER_SCH") == "DB.SCH.EVENTS"
+
+
 class TestRegisterStreamSource:
     """``CREATE_SOURCE`` for ``StreamingSource`` must call
     ``FeatureStore.register_stream_source`` so streaming feature views

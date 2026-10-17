@@ -12,16 +12,12 @@ from snowflake.ml.test_utils import exception_utils
 
 
 def _enable_lora_adapters(fn: Any) -> Any:
-    @mock.patch.object(
-        platform_capabilities.PlatformCapabilities,
-        "is_lora_adapters_enabled",
-        return_value=True,
-        autospec=True,
-    )
     @functools.wraps(fn)
-    def wrapped(self: Any, mock_enabled: mock.MagicMock, *args: Any, **kwargs: Any) -> Any:
-        with platform_capabilities.PlatformCapabilities.mock_features():
-            return fn(self, mock_enabled, *args, **kwargs)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            {platform_capabilities.ENABLE_LORA_ADAPTERS: True}
+        ):
+            return fn(self, *args, **kwargs)
 
     return wrapped
 
@@ -45,7 +41,7 @@ class PeftAdapterTest(absltest.TestCase):
                 peft.PeftAdapter(base_model=_base_model(), adapter_path="/tmp/adapter")
 
     @_enable_lora_adapters
-    def test_rejects_zero_sources(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_zero_sources(self) -> None:
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_error_code=error_codes.INVALID_ARGUMENT,
@@ -55,7 +51,7 @@ class PeftAdapterTest(absltest.TestCase):
             peft.PeftAdapter(base_model=_base_model())
 
     @_enable_lora_adapters
-    def test_rejects_two_sources(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_two_sources(self) -> None:
         cases: list[dict[str, Any]] = [
             {"adapter_path": "/tmp/a", "adapter_repo": "org/a"},
             {"adapter_path": "/tmp/a", "adapter": object()},
@@ -73,7 +69,7 @@ class PeftAdapterTest(absltest.TestCase):
                     peft.PeftAdapter(base_model=_base_model(), **kwargs)
 
     @_enable_lora_adapters
-    def test_accepts_each_single_source(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_accepts_each_single_source(self) -> None:
         base = _base_model()
         from_path = peft.PeftAdapter(base_model=base, adapter_path="/tmp/adapter")
         self.assertEqual(from_path.adapter_path, "/tmp/adapter")
@@ -96,7 +92,7 @@ class PeftAdapterTest(absltest.TestCase):
         self.assertIsNone(from_adapter.subfolder)
 
     @_enable_lora_adapters
-    def test_revision_requires_adapter_repo(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_revision_requires_adapter_repo(self) -> None:
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_error_code=error_codes.INVALID_ARGUMENT,
@@ -123,7 +119,7 @@ class PeftAdapterTest(absltest.TestCase):
             peft.PeftAdapter(base_model=_base_model(), revision="abc")
 
     @_enable_lora_adapters
-    def test_subfolder_accepted_with_path_or_repo(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_subfolder_accepted_with_path_or_repo(self) -> None:
         from_path = peft.PeftAdapter(
             base_model=_base_model(),
             adapter_path="/tmp/adapter",
@@ -139,7 +135,7 @@ class PeftAdapterTest(absltest.TestCase):
         self.assertEqual(from_repo.subfolder, "query_rewrite_lora")
 
     @_enable_lora_adapters
-    def test_subfolder_rejected_with_adapter(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_subfolder_rejected_with_adapter(self) -> None:
         with mock.patch.object(type_utils.LazyType, "isinstance", return_value=True, autospec=True):
             with exception_utils.assert_snowml_exceptions(
                 self,
@@ -150,7 +146,7 @@ class PeftAdapterTest(absltest.TestCase):
                 peft.PeftAdapter(base_model=_base_model(), adapter=mock.Mock(), subfolder="alpha")
 
     @_enable_lora_adapters
-    def test_adapter_must_be_peft_model(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_must_be_peft_model(self) -> None:
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_error_code=error_codes.INVALID_ARGUMENT,
@@ -160,7 +156,7 @@ class PeftAdapterTest(absltest.TestCase):
             peft.PeftAdapter(base_model=_base_model(), adapter={"not": "peft"})
 
     @_enable_lora_adapters
-    def test_base_model_must_be_model_version(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_base_model_must_be_model_version(self) -> None:
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_error_code=error_codes.INVALID_ARGUMENT,

@@ -2,7 +2,8 @@ import functools
 import os
 import pathlib
 import tempfile
-from typing import Any, cast
+from contextlib import contextmanager
+from typing import Any, Iterator, cast
 from unittest import mock
 
 import pandas as pd
@@ -143,16 +144,23 @@ def _legacy_model_spec(**overrides: Any) -> legacy_model_spec.LegacyModelSpec:
     return legacy_model_spec.LegacyModelSpec(cast(model_meta_schema.ModelMetadataDict, metadata))
 
 
+@contextmanager
+def _nested_mock_features(features: dict[str, Any]) -> Iterator[None]:
+    prev = pc.PlatformCapabilities._mock_features
+    merged = dict(prev or {})
+    merged.update(features)
+    pc.PlatformCapabilities.set_mock_features(merged)
+    try:
+        yield
+    finally:
+        pc.PlatformCapabilities.set_mock_features(prev)
+
+
 def _enable_lora_adapters(fn: Any) -> Any:
-    @mock.patch.object(
-        pc.PlatformCapabilities,
-        "is_lora_adapters_enabled",
-        return_value=True,
-        autospec=True,
-    )
     @functools.wraps(fn)
-    def wrapped(self: Any, mock_enabled: mock.MagicMock, *args: Any, **kwargs: Any) -> Any:
-        return fn(self, mock_enabled, *args, **kwargs)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with pc.PlatformCapabilities.mock_features({pc.ENABLE_LORA_ADAPTERS: True}):
+            return fn(self, *args, **kwargs)
 
     return wrapped
 
@@ -186,7 +194,7 @@ class ModelVersionImplTest(parameterized.TestCase):
     def _make_mv(self, model_name: str, version_name: str) -> model_version_impl.ModelVersion:
         with (
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
+            _nested_mock_features({pc.INLINE_DEPLOYMENT_SPEC_PARAMETER: "1.8.6"}),
         ):
             return model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
@@ -2636,7 +2644,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                 mv._is_peft_adapter_version()
 
     @_enable_lora_adapters
-    def test_adapter_create_service_forwards_one_item_list(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_create_service_forwards_one_item_list(self) -> None:
         adapter = self._adapter_mv()
         pin = self._base_mv()
         with (
@@ -2656,7 +2664,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.assertEqual(kwargs["service_compute_pool"], "SERVICE_COMPUTE_POOL")
 
     @_enable_lora_adapters
-    def test_create_service_list_adapters_omits_alias(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_create_service_list_adapters_omits_alias(self) -> None:
         adapter_mv = self._adapter_mv()
         other_mv = self._make_mv("SQL_GEN", "V2")
         mock_progress_status = create_mock_progress_status()
@@ -2693,7 +2701,7 @@ class ModelVersionImplTest(parameterized.TestCase):
             self.assertIsNone(spec.alias)
 
     @_enable_lora_adapters
-    def test_adapter_alias_charset_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_alias_charset_accepted(self) -> None:
         adapter_mv = self._adapter_mv()
         fqn_alias = self._default_adapter_alias(adapter_mv)
         mock_progress_status = create_mock_progress_status()
@@ -2721,7 +2729,7 @@ class ModelVersionImplTest(parameterized.TestCase):
                     self.assertEqual(kwargs["adapters"][0].alias, alias)
 
     @_enable_lora_adapters
-    def test_adapter_alias_equal_to_parent_model_name_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_alias_equal_to_parent_model_name_accepted(self) -> None:
         other_mv = self._adapter_mv()
         mock_progress_status = create_mock_progress_status()
         with (
@@ -2754,7 +2762,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         )
 
     @_enable_lora_adapters
-    def test_two_aliases_same_model_version_accepted(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_two_aliases_same_model_version_accepted(self) -> None:
         adapter_mv = self._adapter_mv()
         mock_progress_status = create_mock_progress_status()
         with (
@@ -2865,7 +2873,7 @@ class ModelVersionImplTest(parameterized.TestCase):
             mock_lineage.assert_not_called()
 
     @_enable_lora_adapters
-    def test_adapter_forward_alias_may_equal_base_parent_name(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_forward_alias_may_equal_base_parent_name(self) -> None:
         adapter = self._make_mv("MODEL", "ADAPTER")
         pin = self._make_mv("MODEL", "BASE")
         with (
@@ -2883,7 +2891,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         self.assertEqual(kwargs["adapters"], [adapter])
 
     @_enable_lora_adapters
-    def test_adapter_create_service_rejects_extra_adapters(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_create_service_rejects_extra_adapters(self) -> None:
         adapter = self._adapter_mv()
         pin = self._base_mv()
         extra = self._make_mv("OTHER", "V1")
@@ -2904,7 +2912,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         mock_lineage.assert_not_called()
 
     @_enable_lora_adapters
-    def test_create_service_serializes_adapters_to_ops(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_create_service_serializes_adapters_to_ops(self) -> None:
         adapter_mv = self._adapter_mv()
         mock_progress_status = create_mock_progress_status()
         with (
@@ -2937,7 +2945,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         )
 
     @_enable_lora_adapters
-    def test_adapter_run_batch_forwards_one_item_list(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_run_batch_forwards_one_item_list(self) -> None:
         adapter = self._adapter_mv()
         pin = self._base_mv()
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
@@ -2951,15 +2959,39 @@ class ModelVersionImplTest(parameterized.TestCase):
         ):
             adapter.run_batch(input_df, compute_pool="POOL", output_spec=output_spec)
         args, kwargs = mock_pin_run.call_args
-        alias = self._default_adapter_alias(adapter)
         self.assertEqual(kwargs["inference_spec"].adapters, [adapter])
-        self.assertEqual(kwargs["input_spec"].params["model"], alias)
+        self.assertIsNone(kwargs["input_spec"])
         self.assertIs(args[0], input_df)
         self.assertEqual(kwargs["compute_pool"], "POOL")
         self.assertIs(kwargs["output_spec"], output_spec)
 
     @_enable_lora_adapters
-    def test_adapter_run_batch_rejects_extra_adapters(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_run_batch_forwards_input_spec_unchanged(self) -> None:
+        adapter = self._adapter_mv()
+        pin = self._base_mv()
+        alias = self._default_adapter_alias(adapter)
+        params = {"model": alias, "temperature": 0.2}
+        input_spec = batch_inference_job_specs.InputSpec(params=params)
+        with (
+            mock.patch.object(
+                adapter, "_get_model_spec", return_value=_legacy_model_spec(model_type="peft_adapter"), autospec=True
+            ),
+            mock.patch.object(adapter, "lineage", return_value=[pin], autospec=True),
+            mock.patch.object(pin, "run_batch", autospec=True) as mock_pin_run,
+        ):
+            adapter.run_batch(
+                mock.MagicMock(spec=dataframe.DataFrame),
+                compute_pool="POOL",
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location="@output_stage"),
+                input_spec=input_spec,
+            )
+        _, kwargs = mock_pin_run.call_args
+        self.assertIs(kwargs["input_spec"], input_spec)
+        self.assertEqual(kwargs["input_spec"].params, {"model": alias, "temperature": 0.2})
+        self.assertEqual(params, {"model": alias, "temperature": 0.2})
+
+    @_enable_lora_adapters
+    def test_adapter_run_batch_rejects_extra_adapters(self) -> None:
         adapter = self._adapter_mv()
         pin = self._base_mv()
         extra = self._make_mv("OTHER", "V1")
@@ -2981,7 +3013,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         mock_lineage.assert_not_called()
 
     @_enable_lora_adapters
-    def test_run_batch_serializes_adapters_to_ops(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_run_batch_serializes_adapters_to_ops(self) -> None:
         adapter_mv = self._adapter_mv()
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
         output_spec = batch_inference_job_specs.OutputSpec(stage_location="@output_stage")
@@ -3026,7 +3058,7 @@ class ModelVersionImplTest(parameterized.TestCase):
         )
 
     @_enable_lora_adapters
-    def test_run_batch_list_adapters_omits_alias(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_run_batch_list_adapters_omits_alias(self) -> None:
         adapter_mv = self._adapter_mv()
         other_mv = self._make_mv("SQL_GEN", "V2")
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
@@ -3075,7 +3107,7 @@ class ModelVersionImplTest(parameterized.TestCase):
             self.assertIsNone(spec.alias)
 
     @_enable_lora_adapters
-    def test_run_batch_adapter_alias_charset(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_run_batch_adapter_alias_charset(self) -> None:
         adapter_mv = self._adapter_mv()
         fqn_alias = self._default_adapter_alias(adapter_mv)
         input_df = mock.MagicMock(spec=dataframe.DataFrame)

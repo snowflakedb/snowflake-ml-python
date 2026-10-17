@@ -377,15 +377,55 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_batch_inference_partition_on_write_enabled())
 
-    def test_lora_adapters_disabled_by_default(self) -> None:
-        """Test is_lora_adapters_enabled stays off until client release."""
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {
-                platform_capabilities.ENABLE_LORA_ADAPTERS: True,
-            }
-        ):
-            pc = platform_capabilities.PlatformCapabilities.get_instance()
-            self.assertFalse(pc.is_lora_adapters_enabled())
+    def test_enabled_lora_adapters_bool(self) -> None:
+        """Test is_lora_adapters_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_LORA_ADAPTERS: True,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_lora_adapters_enabled())
+
+    def test_disabled_lora_adapters_bool(self) -> None:
+        """Test is_lora_adapters_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_LORA_ADAPTERS: False,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_lora_adapters_enabled())
+
+    def test_is_lora_adapters_enabled_false(self) -> None:
+        """Test is_lora_adapters_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_lora_adapters_enabled())
 
     @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
     def test_mocking(self, live_commit: bool) -> None:

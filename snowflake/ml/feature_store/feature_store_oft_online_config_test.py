@@ -1,8 +1,10 @@
 """Unit tests for OFT SHOW row ``store_type`` → ``OnlineConfig`` reconstruction."""
 
 import datetime
+import functools
 import json
 import logging
+import warnings
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -12,6 +14,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import (
     feature_store as fs_mod,
+    feature_view as fv_mod,
     realtime_registration as rtfv_mod,
 )
 from snowflake.ml.feature_store.entity import Entity
@@ -604,6 +607,138 @@ class UpdateFeatureViewPreservesTiledIdentityTest(absltest.TestCase):
         self.assertEqual(temp_fv.online_config.store_type, OnlineStoreType.POSTGRES)
 
 
+class PlanOnlineEnableTargetLagTest(parameterized.TestCase):
+    """Target lag chosen when online storage is enabled on an offline feature view."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("postgres", OnlineStoreType.POSTGRES, "1 minute"),
+        ("hybrid", OnlineStoreType.HYBRID_TABLE, "10 seconds"),
+    )
+    def test_offline_view_gets_store_default(self, store_type: OnlineStoreType, expected_lag: str) -> None:
+        """An offline view read back from Snowflake carries no lag, so the store default applies."""
+        fv = _make_online_fv(store_type=OnlineStoreType.HYBRID_TABLE, current_lag=None, online=False)
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        strategy = fs._plan_online_enable(fv, OnlineConfig(enable=True, store_type=store_type))
+
+        assert strategy.final_config is not None
+        self.assertEqual(strategy.final_config.target_lag, expected_lag)
+
+    def test_disabled_online_config_json_has_no_target_lag(self) -> None:
+        """A feature view without an online feature table reports no target lag."""
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_find_object", MagicMock(return_value=[]))
+
+        config_json = fs._determine_online_config_from_oft("FV", "v1")
+
+        self.assertEqual(OnlineConfig.from_json(config_json), OnlineConfig(enable=False))
+
+
+_SHORT_LAG_WARNING = (
+    "target lag below 1 minute is not recommended with Postgres StoreType. "
+    "To improve data freshness, consider Streaming Feature Views."
+)
+
+
+def _short_lag_warnings(fn: Any) -> list[str]:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", UserWarning)
+        fn()
+    return [str(item.message) for item in caught if str(item.message) == _SHORT_LAG_WARNING]
+
+
+class WarnIfShortPostgresTargetLagTest(parameterized.TestCase):
+    """Which caller-supplied online configs warn about a short Postgres target lag."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("postgres_10s", OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES), None, True),
+        ("postgres_59_seconds", OnlineConfig(target_lag="59 seconds", store_type=OnlineStoreType.POSTGRES), None, True),
+        (
+            "lag_only_update_on_postgres",
+            OnlineConfig(target_lag="10s"),
+            OnlineStoreType.POSTGRES,
+            True,
+        ),
+        ("postgres_1_minute", OnlineConfig(target_lag="1 minute", store_type=OnlineStoreType.POSTGRES), None, False),
+        (
+            "postgres_60_seconds",
+            OnlineConfig(target_lag="60 seconds", store_type=OnlineStoreType.POSTGRES),
+            None,
+            False,
+        ),
+        ("postgres_omitted", OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES), None, False),
+        ("postgres_0_seconds", OnlineConfig(target_lag="0 seconds", store_type=OnlineStoreType.POSTGRES), None, False),
+        ("postgres_unparsable", OnlineConfig(target_lag="banana", store_type=OnlineStoreType.POSTGRES), None, False),
+        (
+            "postgres_disable",
+            OnlineConfig(enable=False, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+            None,
+            False,
+        ),
+        ("hybrid_10s", OnlineConfig(enable=True, target_lag="10s"), None, False),
+        ("hybrid_omitted", OnlineConfig(enable=True), None, False),
+        ("no_config", None, None, False),
+    )
+    def test_warning(
+        self,
+        online_config: OnlineConfig | None,
+        existing_store_type: OnlineStoreType | None,
+        expect_warning: bool,
+    ) -> None:
+        caught = _short_lag_warnings(
+            lambda: fv_mod.warn_if_short_postgres_target_lag(online_config, existing_store_type=existing_store_type)
+        )
+
+        self.assertEqual(caught, [_SHORT_LAG_WARNING] if expect_warning else [])
+
+
+class RegisterShortTargetLagWarningTest(parameterized.TestCase):
+    """register_feature_view warns about the lag the caller chose; building a FeatureView does not."""
+
+    def _make_draft_fv(self, online_config: OnlineConfig) -> FeatureView:
+        schema = StructType([StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())])
+        mock_df = MagicMock()
+        mock_df.columns = [f.name for f in schema.fields]
+        mock_df.schema = schema
+        mock_df.queries = {"queries": ["SELECT * FROM SRC"]}
+        return FeatureView(
+            name="LAG_FV",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=mock_df,
+            refresh_freq="1h",
+            online_config=online_config,
+        )
+
+    def test_constructing_feature_view_does_not_warn(self) -> None:
+        """Construction also runs when a deployed feature view is read back, so it must stay silent."""
+        caught = _short_lag_warnings(
+            lambda: self._make_draft_fv(
+                OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES)
+            )
+        )
+
+        self.assertEqual(caught, [])
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("postgres_10s", OnlineStoreType.POSTGRES, "10s", True),
+        ("postgres_1_minute", OnlineStoreType.POSTGRES, "1 minute", False),
+        ("hybrid_10s", OnlineStoreType.HYBRID_TABLE, "10s", False),
+    )
+    def test_register_warns_on_short_postgres_lag(
+        self, store_type: OnlineStoreType, target_lag: str, expect_warning: bool
+    ) -> None:
+        fv = self._make_draft_fv(OnlineConfig(enable=True, target_lag=target_lag, store_type=store_type))
+        fs = _make_store_for_update(fv)
+        fs._validate_entity_exists = MagicMock(return_value=True)
+        # An existing registration short-circuits right after the warning, so nothing is created.
+        fs._get_feature_view_if_exists = MagicMock(return_value=fv)
+
+        caught = _short_lag_warnings(lambda: fs.register_feature_view(fv, "v1"))
+
+        self.assertEqual(caught, [_SHORT_LAG_WARNING] if expect_warning else [])
+
+
 def _make_online_fv(*, store_type: OnlineStoreType, current_lag: str | None, online: bool) -> FeatureView:
     """Build a registered-looking FV whose online config is set without re-running validation."""
     schema = StructType([StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())])
@@ -739,6 +874,23 @@ class OnlineTargetLagChangeTest(parameterized.TestCase):
         fs.update_feature_view(name=fv, online_config=requested)
 
         fs._plan_feature_view_update_operations.assert_called_once()
+
+    def test_update_warns_on_explicit_short_postgres_lag(self) -> None:
+        """update_feature_view warns for a caller-supplied Postgres lag below the recommended minimum.
+
+        The registered view is already Postgres, so a lag-only update that omits store_type
+        still refers to that store. A lag at the recommended minimum does not warn.
+        """
+        for lag, expected in (("10s", [_SHORT_LAG_WARNING]), ("1 minute", [])):
+            with self.subTest(lag=lag):
+                fv = _make_online_fv(store_type=OnlineStoreType.POSTGRES, current_lag=lag, online=True)
+                fs = _make_store_for_update(fv)
+
+                caught = _short_lag_warnings(
+                    functools.partial(fs.update_feature_view, name=fv, online_config=OnlineConfig(target_lag=lag))
+                )
+
+                self.assertEqual(caught, expected)
 
     def test_update_is_not_refused_on_an_unreadable_lag(self) -> None:
         """OnlineConfig accepts any non-empty string, and this check does not police syntax.

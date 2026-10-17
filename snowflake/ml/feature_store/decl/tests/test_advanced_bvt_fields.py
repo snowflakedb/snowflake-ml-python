@@ -16,7 +16,7 @@ The six fields and their planner routing are:
                                    from ``backfill.initialize``)
 * ``storage_config``             — structural,  ``RECREATE_FV``
 * ``aggregation_secondary_keys`` — structural,  ``RECREATE_FV``
-                                   (private preview, max length 1; valid on
+                                   (max length 1; valid on
                                    tiled and non-tiled BFVs)
 """
 

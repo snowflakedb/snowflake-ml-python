@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from snowflake.ml.feature_store.decl import api as decl_api
+from snowflake.ml.feature_store.decl.api import _merge_template_vars
 from snowflake.ml.feature_store.decl.errors import SpecLoadError
 from snowflake.ml.feature_store.decl.loader import load_from_project
 from snowflake.ml.feature_store.decl.types import SpecBatch
@@ -394,6 +395,111 @@ class TestLoadFromProjectThreadsTemplateVarsToCompiler:
 
         ds = _get_spec(batch, "BatchSource", "EVENTS")
         assert "LIMIT 17" in ds.query
+
+
+# ---------------------------------------------------------------------------
+# Target database/schema exposed as overridable template variables
+# ---------------------------------------------------------------------------
+
+
+_SYMBOLIC_ENTITY_YAML = "kind: Entity\nname: USER\njoin_keys:\n  - name: USER_ID\n    type: StringType\n"
+_SYMBOLIC_BATCH_SOURCE_YAML = (
+    "kind: BatchSource\nname: USER_EVENTS\ntable: RAW_EVENTS\n" "columns:\n  - name: USER_ID\n    type: StringType\n"
+)
+_SYMBOLIC_FV_YAML = (
+    "kind: BatchFeatureView\n"
+    "name: USER_FEATURES\n"
+    "version: V1\n"
+    "online: false\n"
+    'database: "{{ database }}"\n'
+    'schema: "{{ schema }}"\n'
+    "entities:\n  - USER_ID\n"
+    "sources:\n  - name: USER_EVENTS\n    source_type: Batch\n"
+    "refresh_freq: 1 hour\n"
+)
+
+
+def _make_symbolic_project(root: Path, *, manifest_body: str) -> None:
+    (root / "manifest.yml").write_text(manifest_body)
+    sources = root / "sources"
+    (sources / "entities").mkdir(parents=True, exist_ok=True)
+    (sources / "datasources").mkdir(parents=True, exist_ok=True)
+    (sources / "feature_views").mkdir(parents=True, exist_ok=True)
+    (sources / "entities" / "USER.yaml").write_text(_SYMBOLIC_ENTITY_YAML)
+    (sources / "datasources" / "USER_EVENTS.yaml").write_text(_SYMBOLIC_BATCH_SOURCE_YAML)
+    (sources / "feature_views" / "USER_FEATURES.yaml").write_text(_SYMBOLIC_FV_YAML)
+
+
+class TestTargetDatabaseSchemaTemplateVars:
+    """The resolved target's ``database`` / ``schema`` are exposed as
+    Jinja variables ``{{ database }}`` / ``{{ schema }}`` so a spec can
+    reference its deployment location symbolically and stay portable
+    across targets.  They sit at the bottom of the precedence chain, so
+    a templating configuration or a ``--variable`` override still wins.
+    """
+
+    _MANIFEST_NO_TEMPLATING = (
+        "manifest_version: 1\n"
+        "type: feature_store\n"
+        "default_target: DEV\n"
+        "targets:\n"
+        "  DEV:\n"
+        "    account_identifier: ORG-ACCOUNT\n"
+        "    database: TARGET_DB\n"
+        "    schema: TARGET_SCH\n"
+    )
+
+    _MANIFEST_CONFIG_OVERRIDES_SCHEMA = (
+        "manifest_version: 1\n"
+        "type: feature_store\n"
+        "default_target: DEV\n"
+        "targets:\n"
+        "  DEV:\n"
+        "    account_identifier: ORG-ACCOUNT\n"
+        "    database: TARGET_DB\n"
+        "    schema: TARGET_SCH\n"
+        "    templating_config: OVR\n"
+        "templating:\n"
+        "  configurations:\n"
+        "    OVR:\n"
+        "      schema: CONFIG_SCH\n"
+    )
+
+    @staticmethod
+    def _resolve(tmp_path: Path, manifest_body: str) -> Any:
+        (tmp_path / "manifest.yml").write_text(manifest_body)
+        manifest = decl_api.load_manifest(tmp_path)
+        return manifest, decl_api.resolve_target(manifest, "DEV")
+
+    def test_merge_injects_target_db_schema(self, tmp_path: Path) -> None:
+        manifest, target = self._resolve(tmp_path, self._MANIFEST_NO_TEMPLATING)
+        merged = _merge_template_vars(manifest, target, None)
+        assert merged["database"] == "TARGET_DB"
+        assert merged["schema"] == "TARGET_SCH"
+
+    def test_templating_config_overrides_schema(self, tmp_path: Path) -> None:
+        manifest, target = self._resolve(tmp_path, self._MANIFEST_CONFIG_OVERRIDES_SCHEMA)
+        merged = _merge_template_vars(manifest, target, None)
+        # The configuration layers on top of the target-derived default.
+        assert merged["schema"] == "CONFIG_SCH"
+        # ``database`` (untouched by the configuration) still falls back to the target.
+        assert merged["database"] == "TARGET_DB"
+
+    def test_runtime_variable_overrides_schema(self, tmp_path: Path) -> None:
+        manifest, target = self._resolve(tmp_path, self._MANIFEST_NO_TEMPLATING)
+        merged = _merge_template_vars(manifest, target, {"schema": "RUNTIME_SCH"})
+        assert merged["schema"] == "RUNTIME_SCH"
+        assert merged["database"] == "TARGET_DB"
+
+    def test_load_project_renders_symbolic_db_schema(self, tmp_path: Path) -> None:
+        _make_symbolic_project(tmp_path, manifest_body=self._MANIFEST_NO_TEMPLATING)
+        manifest = decl_api.load_manifest(tmp_path)
+        target = decl_api.resolve_target(manifest, "DEV")
+        batch = decl_api.load_project(tmp_path, target=target)
+
+        fv = _get_spec(batch, "BatchFeatureView", "USER_FEATURES")
+        assert fv.database == "TARGET_DB"
+        assert fv.schema_ == "TARGET_SCH"
 
 
 if __name__ == "__main__":

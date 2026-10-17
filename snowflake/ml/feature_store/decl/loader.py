@@ -168,7 +168,9 @@ def load_python_file(filepath: str) -> list[tuple[str, Any]]:
         filepath: Absolute or relative path to the Python spec file.
 
     Returns:
-        List of ``(name, spec_object)`` tuples for locally-defined specs.
+        List of ``(name, spec_object)`` tuples for locally-defined specs,
+        one per distinct object — aliased re-assignments collapse to the
+        first name in ``dir`` order.
 
     Raises:
         ValueError: If the file cannot be loaded as a Python module.
@@ -205,12 +207,14 @@ def load_python_file(filepath: str) -> list[tuple[str, Any]]:
     defined_names = _get_defined_names(filepath)
     known_types = (FeatureView, FeatureGroup, StreamingSource, BatchSource, Entity, SpecBase)
     objects: list[tuple[str, Any]] = []
+    seen_ids: set[int] = set()
 
     for attr_name in dir(module):
         if attr_name.startswith("_") or attr_name not in defined_names:
             continue
         obj = getattr(module, attr_name)
-        if isinstance(obj, known_types):
+        if isinstance(obj, known_types) and id(obj) not in seen_ids:
+            seen_ids.add(id(obj))
             objects.append((attr_name, obj))
 
     return objects
@@ -492,6 +496,8 @@ def load_specs(
     expanded = expand_input_files(files)
     all_specs: list[SpecBase] = []
     source_files: list[str] = []
+    # One originating path per spec, index-aligned with all_specs.
+    spec_sources: list[str] = []
 
     pending = [(fp, None) for fp in expanded]
     max_passes = len(pending) + 1
@@ -507,6 +513,7 @@ def load_specs(
                 spec_dicts = process_file(filepath, config_source=config_source)
                 for d in spec_dicts:
                     all_specs.append(_dict_to_spec(d))
+                    spec_sources.append(filepath)
                 if filepath not in source_files:
                     source_files.append(filepath)
                 made_progress = True
@@ -526,7 +533,7 @@ def load_specs(
             break
         pending = still_pending
 
-    return SpecBatch(specs=all_specs, source_files=source_files)
+    return SpecBatch(specs=all_specs, source_files=source_files, spec_sources=spec_sources)
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +819,8 @@ def load_from_project(
 
     all_specs: list[SpecBase] = []
     source_files: list[str] = []
+    # Index-aligned with ``all_specs`` — see ``load_specs`` for the contract.
+    spec_sources: list[str] = []
 
     for subdir_name in _PROJECT_SUBDIRS:
         subdir = sources_root / subdir_name
@@ -854,8 +863,9 @@ def load_from_project(
                     schema=schema,
                 )
                 all_specs.append(_dict_to_spec(spec_dict))
+                spec_sources.append(filepath)
 
             if filepath not in source_files:
                 source_files.append(filepath)
 
-    return SpecBatch(specs=all_specs, source_files=source_files)
+    return SpecBatch(specs=all_specs, source_files=source_files, spec_sources=spec_sources)

@@ -551,7 +551,6 @@ py_library(
         "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/model/models:huggingface",
-        "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 

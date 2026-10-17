@@ -1,0 +1,302 @@
+{
+  "kind": "StreamingFeatureView",
+  "metadata": {
+    "client_version": "1.30.0",
+    "database": "JKEW_DB",
+    "internal_data_version": "1",
+    "name": "SK_ALL_AGGREGATIONS",
+    "oft_id": "766522857145522",
+    "schema": "JKEW_SCHEMA",
+    "spec_format_version": "1",
+    "version": "V1"
+  },
+  "offline_configs": [
+    {
+      "columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "AD_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TIMESTAMP",
+          "type": "TimestampType"
+        },
+        {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        {
+          "name": "AD_CATEGORY",
+          "type": "StringType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "SK_ALL_AGGREGATIONS$V1$UDF_TRANSFORMED",
+      "table_type": "UDFTransformed"
+    },
+    {
+      "columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "AD_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TILE_START",
+          "type": "TimestampType"
+        },
+        {
+          "name": "_PARTIAL_SUM_WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_COUNT_WATCH_SECONDS",
+          "type": "LongType"
+        },
+        {
+          "name": "_PARTIAL_MAX_WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_MIN_WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_MAX_IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        {
+          "name": "_PARTIAL_MIN_IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        {
+          "name": "_PARTIAL_SUMSQ_WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "_PARTIAL_DS_HLL_AD_CATEGORY",
+          "type": "BinaryType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "SK_ALL_AGGREGATIONS$V1",
+      "table_type": "Tiled"
+    }
+  ],
+  "online_store_type": "postgres",
+  "spec": {
+    "feature_aggregation_method": "continuous",
+    "feature_granularity_sec": 300,
+    "features": [
+      {
+        "output_column": {
+          "element_type": "StringType",
+          "name": "AD_ID_KEYS_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "AD_ID",
+          "type": "StringType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "sum",
+        "output_column": {
+          "element_type": "DoubleType",
+          "name": "SUM_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "count",
+        "output_column": {
+          "element_type": "LongType",
+          "name": "COUNT_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "max",
+        "output_column": {
+          "element_type": "DoubleType",
+          "name": "MAX_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "min",
+        "output_column": {
+          "element_type": "DoubleType",
+          "name": "MIN_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "max",
+        "output_column": {
+          "element_type": "BooleanType",
+          "name": "MAX_LONG_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "min",
+        "output_column": {
+          "element_type": "BooleanType",
+          "name": "MIN_LONG_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "avg",
+        "output_column": {
+          "element_type": "DoubleType",
+          "name": "AVG_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "stddev",
+        "output_column": {
+          "element_type": "DoubleType",
+          "name": "STDDEV_WATCH_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        "window_sec": 3600
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "UNIQUE_CATEGORIES_1H",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "name": "AD_CATEGORY",
+          "type": "StringType"
+        },
+        "window_sec": 3600
+      }
+    ],
+    "ordered_entity_column_names": [
+      "USER_ID"
+    ],
+    "ordered_secondary_key_column_names": [
+      "AD_ID"
+    ],
+    "sources": [
+      {
+        "columns": [
+          {
+            "name": "USER_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "AD_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "TIMESTAMP",
+            "type": "TimestampType"
+          },
+          {
+            "name": "WATCH_SECONDS",
+            "type": "DoubleType"
+          }
+        ],
+        "name": "AD_IMPRESSIONS_STREAM",
+        "source_type": "Stream"
+      }
+    ],
+    "timestamp_field": "TIMESTAMP",
+    "udf": {
+      "engine": "pandas",
+      "function_definition": "def compute_sk_all_agg_metrics(ad_impressions_stream: pd.DataFrame) -> pd.DataFrame:\n    \"\"\"Derive boolean and category columns for all-aggregation SK test.\"\"\"\n    df = ad_impressions_stream.copy()\n    df[\"IS_LONG_WATCH\"] = df[\"WATCH_SECONDS\"] >= 5.0\n    df[\"AD_CATEGORY\"] = \"cat_\" + df[\"AD_ID\"].astype(str)\n    return df[[\"USER_ID\", \"AD_ID\", \"TIMESTAMP\", \"WATCH_SECONDS\", \"IS_LONG_WATCH\", \"AD_CATEGORY\"]]\n",
+      "name": "compute_sk_all_agg_metrics",
+      "output_columns": [
+        {
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "AD_ID",
+          "type": "StringType"
+        },
+        {
+          "name": "TIMESTAMP",
+          "type": "TimestampType"
+        },
+        {
+          "name": "WATCH_SECONDS",
+          "type": "DoubleType"
+        },
+        {
+          "name": "IS_LONG_WATCH",
+          "type": "BooleanType"
+        },
+        {
+          "name": "AD_CATEGORY",
+          "type": "StringType"
+        }
+      ]
+    }
+  }
+}

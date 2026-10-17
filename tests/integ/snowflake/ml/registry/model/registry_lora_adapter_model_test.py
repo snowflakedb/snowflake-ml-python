@@ -17,10 +17,8 @@ from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
     lora_adapter_account_gate,
-    lora_adapters_enabled_patch,
+    test_env_utils,
 )
-
-lora_adapters_enabled_patch.enable()
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
 
@@ -92,11 +90,16 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
             model=_TINY_GPT2,
             max_length=200,
         )
+        # Without conda deps a pip test env packages torch from PyPI for Warehouse, and that solve
+        # differs between x86 and Arm (CUDA wheels), so the function create fails with 399404.
         return self.registry.log_model(
             model=model,
             model_name=model_name,
             version_name=version_name,
             signatures=signatures or openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE,
+            conda_dependencies=[
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ],
         )
 
     def _log_adapter(
@@ -124,6 +127,17 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
                 return str(value)
         self.fail(f"SHOW MODELS row has no model_type column: {sorted(row)}")
 
+    def _show_runnable_in(self, model_name: str, version_name: str) -> list[str]:
+        rows = self.session.sql(
+            f"SHOW VERSIONS LIKE '{version_name}' IN MODEL {self._test_db}.{self._test_schema}.{model_name}"
+        ).collect()
+        self.assertEqual(len(rows), 1, f"SHOW VERSIONS LIKE {version_name!r} returned {len(rows)} rows")
+        row = rows[0].as_dict()
+        for key, value in row.items():
+            if key.lower() == "runnable_in":
+                return list(json.loads(value))
+        self.fail(f"SHOW VERSIONS row has no runnable_in column: {sorted(row)}")
+
     def _chat_df_messages(self) -> dict[str, object]:
         return {
             "messages": [
@@ -138,16 +152,18 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
         pin on both ``target_method`` and the full ``ModelSignature`` object for each method.
         """
         base_mv = self._log_customer_base(model_name=self._name("BASE"), version_name="V1")
+        adapter_name = self._name("ADAPTER")
         with tempfile.TemporaryDirectory() as adapter_dir:
             adapter_mv = self._log_adapter(
                 base_mv=base_mv,
-                model_name=self._name("ADAPTER"),
+                model_name=adapter_name,
                 version_name="V1",
                 adapter_dir=_write_stub_adapter_dir(adapter_dir),
             )
         base_by_method = {fn["target_method"]: fn["signature"] for fn in base_mv.show_functions()}
         adapter_by_method = {fn["target_method"]: fn["signature"] for fn in adapter_mv.show_functions()}
         self.assertEqual(adapter_by_method, base_by_method)
+        self.assertEqual(self._show_runnable_in(adapter_name, "V1"), ["SNOWPARK_CONTAINER_SERVICES"])
 
     def test_adapter_as_base_rejected(self) -> None:
         base_mv = self._log_customer_base(model_name=self._name("BASE"), version_name="V1")

@@ -22,7 +22,7 @@ os.environ["TRANSFORMERS_CACHE"] = _HF_CACHE_DIR.name
 from snowflake.ml.model import openai_signatures  # noqa: E402
 from snowflake.ml.model._packager.model_env import model_env  # noqa: E402
 from snowflake.ml.model.inference_engine import InferenceEngine  # noqa: E402
-from snowflake.ml.model.models import huggingface, huggingface_pipeline  # noqa: E402
+from snowflake.ml.model.models import huggingface  # noqa: E402
 from tests.integ.snowflake.ml.registry.services import (  # noqa: E402
     registry_model_deployment_test_base,
 )
@@ -153,11 +153,11 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         if requires_token and not self.hf_token:
             self.skipTest(f"Skipping test for gated model {model_name} - HF_TOKEN not available")
 
-        model = huggingface_pipeline.HuggingFacePipelineModel(
+        model = huggingface.TransformersPipeline(
             task=task,
             model=model_name,
-            download_snapshot=False,
-            token=self.hf_token if requires_token else None,
+            token_or_secret=self.hf_token if requires_token else None,
+            compute_pool_for_log=None,
         )
 
         x_df_single = (

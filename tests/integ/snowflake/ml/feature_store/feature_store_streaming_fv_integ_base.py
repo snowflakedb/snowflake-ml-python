@@ -165,6 +165,7 @@ def wait_online_service_running_with_query_endpoint(
     poll_interval_s: float = 30.0,
     reuse_if_running: bool = True,
     on_recreate: Callable[[], None] | None = None,
+    size: str = "XS",
 ) -> None:
     """Bring up (or reuse) the spec-OFT Online Service and poll until RUNNING with a query endpoint.
 
@@ -188,6 +189,8 @@ def wait_online_service_running_with_query_endpoint(
         on_recreate: Optional callback invoked after each ``drop_online_service`` and before the
             subsequent ``create_online_service`` (e.g. to re-issue ``USE DATABASE`` /
             ``USE SCHEMA`` if dropping the service reset the session context).
+        size: Online Service size tier passed to ``create_online_service``. Defaults to ``"XS"``
+            so tests provision the smallest tier.
 
     Raises:
         RuntimeError: When the recreate budget is exhausted and the Online Service still
@@ -220,7 +223,7 @@ def wait_online_service_running_with_query_endpoint(
     maybe_override_feature_store_image_tag(session)
 
     try:
-        fs.create_online_service(producer_role, consumer_role)
+        fs.create_online_service(producer_role, consumer_role, size=size)
     except Exception as e:
         logger.warning("create_online_service raised: %s; will poll for RUNNING.", e)
 
@@ -244,7 +247,7 @@ def wait_online_service_running_with_query_endpoint(
                 if on_recreate is not None:
                     on_recreate()
                 try:
-                    fs.create_online_service(producer_role, consumer_role)
+                    fs.create_online_service(producer_role, consumer_role, size=size)
                 except (DatabaseError, SnowflakeMLException) as e:
                     logger.warning("create_online_service (recreate) raised: %s; will poll for RUNNING.", e)
                 break

@@ -1,9 +1,14 @@
 import io
 import json
+import os
+import posixpath
+import tempfile
 from typing import Any, Literal, Protocol, cast, overload
 
 from snowflake import snowpark
+from snowflake.connector import errors as connector_errors
 from snowflake.ml.jobs._interop import dto_schema
+from snowflake.snowpark._internal import error_message
 
 
 class StageFileWriter(io.IOBase):
@@ -60,13 +65,40 @@ def _is_stage_path(path: str) -> bool:
     return path.startswith("@") or path.startswith("snow://")
 
 
+class _DownloadedStageFile(io.BufferedReader):
+    """A downloaded stage file that removes its private download directory when closed."""
+
+    def __init__(self, path: str, download_dir: tempfile.TemporaryDirectory[str]) -> None:
+        super().__init__(io.FileIO(path, "rb"))
+        self._download_dir = download_dir
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._download_dir.cleanup()
+
+
+def _read_stage_file(session: snowpark.Session, path: str) -> io.BufferedReader:
+    """Download a stage file into a private local directory and open it there."""
+    download_dir = tempfile.TemporaryDirectory()
+    try:
+        try:
+            session.file.get(path, download_dir.name)
+        except connector_errors.OperationalError as e:
+            raise error_message.SnowparkClientExceptionMessages.SQL_EXCEPTION_FROM_OPERATIONAL_ERROR(e) from e
+        return _DownloadedStageFile(os.path.join(download_dir.name, posixpath.basename(path)), download_dir)
+    except BaseException:
+        download_dir.cleanup()
+        raise
+
+
 def open_stream(path: str, mode: str = "rb", session: snowpark.Session | None = None) -> io.IOBase:
     if _is_stage_path(path):
         if session is None:
             raise ValueError("Session is required when opening a stage path")
         if "r" in mode:
-            stream: io.IOBase = session.file.get_stream(path)  # type: ignore[assignment]
-            return stream
+            return _read_stage_file(session, path)
         elif "w" in mode:
             return StageFileWriter(session, path)
         else:

@@ -115,7 +115,7 @@ class TestRegistryFeatureRetrievalDeploymentInteg(registry_model_deployment_test
 
         os_started = time.time()
         try:
-            self.fs.create_online_service(producer_role, self._consumer_role)
+            self.fs.create_online_service(producer_role, self._consumer_role, size="XS")
         except Exception as exc:
             # Likely reused from a prior run; fall through and let the poll confirm health.
             logger.info("create_online_service raised (assuming reuse): %r", exc)

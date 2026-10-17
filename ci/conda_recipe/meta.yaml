@@ -15,9 +15,12 @@ about:
   summary: Snowflake ML Library
 build:
   noarch: python
+  script_env:
+    - BAZEL_DOWNLOADER_CONFIG
+    - BAZEL_REPOSITORY_CACHE
 package:
   name: snowflake-ml-python
-  version: 2.5.0
+  version: 2.6.0
 requirements:
   build:
     - python

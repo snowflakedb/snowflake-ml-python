@@ -36,7 +36,7 @@ py_test(
     srcs = ["snowpark_handlers_test.py"],
     optional_dependencies = ["scikit-learn"],
     tags = [
-        "feature:core",
+        "feature:modeling",
         "short_regress",
     ],
     deps = [

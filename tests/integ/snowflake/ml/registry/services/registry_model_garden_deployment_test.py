@@ -258,16 +258,6 @@ class TestRegistryModelGardenDeploymentInteg(registry_model_deployment_test_base
             lambda: mv.run(self._openai_call_input(), function_name="__call__", service_name=service_name)
         )
 
-    def _enable_ai_complete_session_params(self) -> None:
-        for stmt in (
-            "ALTER SESSION SET ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL = true",
-            "ALTER SESSION SET SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE = true",
-        ):
-            try:
-                self.session.sql(stmt).collect()
-            except Exception as e:
-                logger.warning("Could not set session parameter (%s): %s", stmt, e)
-
     def _invoke_ai_complete(self, service_name: str) -> Any:
         query = f"SELECT AI_COMPLETE('{service_name}', 'Say hello in one short sentence.') AS RESULT"
 
@@ -325,8 +315,6 @@ class TestRegistryModelGardenDeploymentInteg(registry_model_deployment_test_base
 
         model_fqn = f"SNOWFLAKE.MODELS.{model_name}"
         logger.info("Using Model Garden model %s", model_fqn)
-
-        self._enable_ai_complete_session_params()
 
         service_short_name = self._service_short_name
         service_name = f"{self._test_db}.{self._test_schema}.{service_short_name}"

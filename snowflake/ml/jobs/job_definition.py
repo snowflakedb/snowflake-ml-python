@@ -1,9 +1,7 @@
 import dataclasses
 import json
 import logging
-import os
-import sys
-from pathlib import PurePath, PurePosixPath
+from pathlib import PurePath
 from typing import Any, Callable, Generic, TypeVar
 from uuid import uuid4
 
@@ -19,6 +17,8 @@ from snowflake.ml.jobs._utils import (
     arg_protocol,
     constants,
     feature_flags,
+    object_naming,
+    option_parsing,
     payload_utils,
     query_helper,
     runtime_env_utils,
@@ -152,23 +152,12 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                     f"of compute pool '{self.compute_pool}'. Reduce min_instances or increase max_nodes."
                 )
 
-        database = self.database or self.session.get_current_database()
-        schema = self.schema or self.session.get_current_schema()
-
-        if database is None:
-            raise ValueError("Database must be specified either in the session context or as a parameter.")
-        if schema is None:
-            raise ValueError("Schema must be specified either in the session context or as a parameter.")
-
-        self.database = identifier.resolve_identifier(database)
-        self.schema = identifier.resolve_identifier(schema)
+        self.database, self.schema = object_naming.resolve_database_schema(self.session, self.database, self.schema)
 
         assert self.name is not None
         self.job_definition_id = identifier.get_schema_level_object_identifier(self.database, self.schema, self.name)
 
-        stage_path_parts = identifier.parse_snowflake_stage_path(self.stage_name.lstrip("@"))
-        stage_name_prefix = f"@{'.'.join(filter(None, stage_path_parts[:3]))}"
-        stage_path = PurePosixPath(f"{stage_name_prefix}{stage_path_parts[-1].rstrip('/')}/{self.name}")
+        stage_path = object_naming.build_object_stage_path(self.stage_name, self.name)
         self.stage_name = stage_path.as_posix()
 
         try:
@@ -182,13 +171,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 )
             raise
 
-        if feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
-            runtime_dict = {"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"}
-            if self.runtime_environment is not None:
-                runtime_dict["runtimeEnvironment"] = self.runtime_environment
-            self.runtime_environment = json.dumps(runtime_dict)
-
-        self.runtime_environment = runtime_env_utils.get_runtime_image(
+        self.runtime_environment = runtime_env_utils.resolve_runtime_image(
             self.session, self.compute_pool, self.runtime_environment
         )
 
@@ -333,26 +316,21 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         Create and register a new MLJobDefinition instance for internal use, avoid warning logs.
         """
         # Extract and validate parameters on the client side
-        entrypoint = kwargs.pop("entrypoint", None)
         target_instances = kwargs.pop("target_instances", 1)
-        min_instances = kwargs.pop("min_instances", target_instances)
+        options = option_parsing.pop_common_options(kwargs, target_instances)
+        min_instances = options.min_instances
+        database = options.database
+        schema = options.schema
+
+        entrypoint = kwargs.pop("entrypoint", None)
         parallel = kwargs.pop("parallel", False)
         preflight = kwargs.pop("preflight", None)
         pip_requirements = kwargs.pop("pip_requirements", None)
-        artifact_repositories = kwargs.pop("artifact_repositories", None)
-        if artifact_repositories is not None:
-            logger.warning("'artifact_repositories' is in public preview since 1.50.0.")
         external_access_integrations = kwargs.pop("external_access_integrations", None)
-        env_vars = kwargs.pop("env_vars", None)
         spec_overrides = kwargs.pop("spec_overrides", None)
         if spec_overrides is not None:
             _validate_spec_overrides(spec_overrides)
-        enable_metrics = kwargs.pop("enable_metrics", True)
         query_warehouse = kwargs.pop("query_warehouse", None)
-        imports = kwargs.pop("imports", None)
-        runtime_environment = kwargs.pop(
-            "runtime_environment", os.environ.get(constants.RUNTIME_IMAGE_TAG_ENV_VAR, None)
-        )
         overwrite = kwargs.pop("overwrite", False)
         name = kwargs.pop("name", None)
         comment = kwargs.pop("comment", None)
@@ -360,19 +338,10 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         arg_protocol_val = kwargs.pop("arg_protocol", arg_protocol.ArgProtocol.NONE)
         default_args = kwargs.pop("default_args", None)
 
-        database = kwargs.pop("database", None)
-        schema = kwargs.pop("schema", None)
+        option_parsing.check_database_schema(options)
+        option_parsing.warn_unknown_kwargs(kwargs)
+        option_parsing.check_instance_counts(options)
 
-        if database and not schema:
-            raise ValueError("Schema must be specified if database is specified.")
-
-        if kwargs:
-            logger.warning(f"Ignoring unknown kwargs: {kwargs.keys()}")
-
-        if target_instances < 1:
-            raise ValueError("target_instances must be greater than 0.")
-        if not (0 < min_instances <= target_instances):
-            raise ValueError("min_instances must be greater than 0 and less than or equal to target_instances.")
         if not isinstance(parallel, bool):
             raise ValueError("parallel must be a boolean.")
         if parallel and callable(source):
@@ -401,7 +370,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
 
         # Initialize JobPayload (validates source, entrypoint, and imports)
         payload = payload_utils.JobPayload(
-            source, entrypoint=entrypoint, pip_requirements=pip_requirements, imports=imports
+            source, entrypoint=entrypoint, pip_requirements=pip_requirements, imports=options.imports
         )
 
         return MLJobDefinition[_Args, _ReturnValue](
@@ -415,18 +384,18 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             parallel=parallel,
             preflight=preflight,
             external_access_integrations=external_access_integrations,
-            env_vars=env_vars,
+            env_vars=options.env_vars,
             spec_overrides=spec_overrides,
-            enable_metrics=enable_metrics,
+            enable_metrics=options.enable_metrics,
             query_warehouse=query_warehouse,
-            runtime_environment=runtime_environment,
+            runtime_environment=options.runtime_environment,
             overwrite=overwrite,
             arg_protocol=arg_protocol_val,
             default_args=default_args,
             database=database,
             schema=schema,
             payload=payload,
-            artifact_repositories=artifact_repositories,
+            artifact_repositories=options.artifact_repositories,
             comment=comment,
         )
 

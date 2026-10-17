@@ -60,6 +60,72 @@ _SCHEMA_EVOLUTION_SUCCESS_CASES: tuple[
             f'ALTER TABLE {_TABLE} DROP COLUMN "Y"',
         ],
     ),
+    # VARCHAR length is ignored: any string column compares equal to any other,
+    # so a length delta is a no-op (no ALTER). Snowflake VARCHARs are not
+    # pre-allocated by length, so widening/narrowing/max<->unbounded is safe.
+    (
+        "string_max_to_unbounded_noop",
+        {"X": StringType(16777216)},
+        {"X": StringType()},
+        [],
+        [],
+    ),
+    (
+        "string_unbounded_to_max_noop",
+        {"X": StringType()},
+        {"X": StringType(16777216)},
+        [],
+        [],
+    ),
+    (
+        "string_large_max_to_unbounded_noop",
+        {"X": StringType(134217728)},
+        {"X": StringType()},
+        [],
+        [],
+    ),
+    (
+        "string_unbounded_to_large_max_noop",
+        {"X": StringType()},
+        {"X": StringType(134217728)},
+        [],
+        [],
+    ),
+    (
+        "string_max_to_large_max_noop",
+        {"X": StringType(16777216)},
+        {"X": StringType(134217728)},
+        [],
+        [],
+    ),
+    (
+        "string_large_max_to_max_noop",
+        {"X": StringType(134217728)},
+        {"X": StringType(16777216)},
+        [],
+        [],
+    ),
+    (
+        "string_widening_noop",
+        {"X": StringType(10)},
+        {"X": StringType(20)},
+        [],
+        [],
+    ),
+    (
+        "string_narrowing_noop",
+        {"S": StringType(100)},
+        {"S": StringType(10)},
+        [],
+        [],
+    ),
+    (
+        "string_length_change_with_appended_column",
+        {"X": StringType(255)},
+        {"X": StringType(10), "Y": LongType()},
+        [f'ALTER TABLE {_TABLE} ADD COLUMN "Y" NUMBER(38,0)'],
+        [f'ALTER TABLE {_TABLE} DROP COLUMN "Y"'],
+    ),
 )
 
 # (case_name, old_schema, new_schema, exception_type, message_regex)
@@ -120,20 +186,6 @@ _SCHEMA_EVOLUTION_FAILURE_CASES: tuple[
         {"NEW": StringType()},
         ValueError,
         r"Column at position 0 mismatch",
-    ),
-    (
-        "string_widening_rejected",
-        {"X": StringType(10)},
-        {"X": StringType(20)},
-        ValueError,
-        r"Column 'X' type changed.*extend-only evolution does not support type changes",
-    ),
-    (
-        "string_narrowing_rejected",
-        {"S": StringType(100)},
-        {"S": StringType(10)},
-        ValueError,
-        r"Column 'S' type changed.*extend-only evolution does not support type changes",
     ),
     (
         "decimal_widening_rejected",

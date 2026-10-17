@@ -10,22 +10,19 @@ from absl.testing import absltest
 from snowflake.ml.model import (
     ModelVersion,
     PeftAdapter,
+    TransformersPipeline,
     inference_engine,
     openai_signatures,
 )
 from snowflake.ml.model._client.model import batch_inference_job_specs
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.snowpark import dataframe as snowpark_dataframe
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
     lora_adapter_account_gate,
-    lora_adapters_enabled_patch,
     test_env_utils,
 )
-
-lora_adapters_enabled_patch.enable()
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +142,10 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
         return batch_inference_job_specs.ResourcesSpec(gpu_requests="1")
 
     def _log_serving_base(self, *, model_name: str, version_name: str) -> ModelVersion:
-        model = huggingface_pipeline.HuggingFacePipelineModel(
-            task="text-generation",
+        model = TransformersPipeline(
             model=_SMOLLM2,
-            download_snapshot=False,
+            task="text-generation",
+            compute_pool_for_log=None,
         )
         return self.registry.log_model(
             model=model,
@@ -263,7 +260,7 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
             ),
         )
 
-    def test_adapter_run_batch_defaults_params_model(self) -> None:
+    def test_adapter_run_batch_with_params_model(self) -> None:
         base = self._log_serving_base(model_name=self._name("BASE"), version_name="V1")
         adapter = self._log_serving_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
         alias = f"{adapter.fully_qualified_model_name}/VERSIONS/{adapter.version_name}"
@@ -272,10 +269,25 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
             adapter,
             self.session.create_dataframe(self._chat_df()),
             output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            input_spec=batch_inference_job_specs.InputSpec(params={"model": alias}),
             resources_spec=self._gpu_resources(),
             inference_spec=self._vllm_inference_spec(),
             job_name=job_name,
             prediction_assert_fn=self._chat_validator(expected_model_substr=alias),
+        )
+
+    def test_adapter_run_batch_without_params_model_answers_as_base(self) -> None:
+        base = self._log_serving_base(model_name=self._name("BASE"), version_name="V1")
+        adapter = self._log_serving_adapter(base_mv=base, model_name=self._name("ADAPTER"), version_name="V1")
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        self._run_lora_job(
+            adapter,
+            self.session.create_dataframe(self._chat_df()),
+            output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+            resources_spec=self._gpu_resources(),
+            inference_spec=self._vllm_inference_spec(),
+            job_name=job_name,
+            prediction_assert_fn=self._chat_validator(expected_model_substr=base.model_name),
         )
 
 

@@ -130,6 +130,48 @@ class TestExportSpecsEmptyInput:
         assert result["directory"] == ""
 
 
+class TestExportFvUsesDeployedSchema:
+    """Bug A regression: the exported FV doc must declare the OFT's
+    authoritative deployed schema (the SHOW-row ``schema_name``), not a
+    stale ``metadata.schema`` carried in the SPECIFICATION (the session
+    schema at creation time).
+
+    When the exporter trusts a divergent ``metadata.schema``, the authored
+    ``spec_key`` keys on that stale schema while applied state keys on the
+    deployed schema, so the FV re-plans as ``CREATE_FV`` on every plan and
+    the round-trip is never idempotent.
+    """
+
+    def test_export_fv_schema_follows_deployed_not_stale_metadata(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        # Deployed OFT lives in PUBLIC (``_SHOW_ROW_1.schema_name``), but the
+        # SPECIFICATION metadata carries a stale session schema.
+        stale_spec = {
+            **_FULL_SPEC,
+            "metadata": {**_FULL_SPEC["metadata"], "database": "MYDB", "schema": "STALE_SESSION_SCH"},
+        }
+
+        export_specs(
+            show_rows=[_SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={"USER_CLICKS$V1$ONLINE": stale_spec},
+        )
+
+        fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
+        data = yaml.safe_load(fv_path.read_text())
+
+        # Schema/database must track the deployed OFT identity (PUBLIC / MYDB),
+        # never the stale session schema.  Omission is acceptable too (the
+        # loader fills db/schema from the deployment target directory).
+        assert data.get("schema") != "STALE_SESSION_SCH"
+        assert data.get("schema", "PUBLIC") == "PUBLIC"
+        assert data.get("database", "MYDB") == "MYDB"
+
+
 class TestExportSpecsFullFidelity:
     def test_full_spec_yaml_udf_uses_file_reference_not_inline_source(self, tmp_path: Path) -> None:
         """UDF source must be written to a sibling .py file; YAML carries ``file:`` ref only."""
@@ -3162,6 +3204,107 @@ class TestExportSpecsWithAppliedState:
         assert result["status"] == "exported"
         fv_path = tmp_path / "MYDB.PUBLIC" / "feature_views" / "user_clicks_v1.yaml"
         assert fv_path.exists()
+
+    def test_offline_fv_overlay_exports_deployed_schema_over_stale_spec_text(self, tmp_path: Path) -> None:
+        """An offline-only FV whose enriched ``spec_text`` metadata carries a
+        stale session schema must still export under its deployed schema.
+
+        The FV is absent from ``SHOW ONLINE FEATURE TABLES`` and reaches the
+        exporter only via ``_overlay_applied_state_on_export_inputs``, which
+        synthesises a show-row from the applied object's metadata.  Before the
+        fix the stale ``spec_text`` metadata leaked into the applied object and
+        the synthesised ``fallback_schema``, so the exported YAML carried the
+        stale schema; the applied state must key on the deployed location (the
+        list-FV row ``schema_name``) instead.
+
+        Args:
+            tmp_path: pytest tmpdir fixture — receives the exported tree.
+        """
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+        from snowflake.ml.feature_store.decl.state import fetch_applied_state
+
+        stale_row = {
+            "name": "OFFLINE_STALE_BFV",
+            "version": "V1",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "kind": "BATCH",
+            "entities": ["USER_ID"],
+            "online_enabled": False,
+            "target_lag": "1 minute",
+            "refresh_freq": "1 minute",
+            "warehouse": "TEST_WH",
+            "cluster_by": "",
+            "refresh_mode": "",
+            "desc": "",
+            "physical_dt_name": "OFFLINE_STALE_BFV$V1",
+            "source_refs": [
+                {
+                    "name": "RAW_EVENTS",
+                    "source_type": "Batch",
+                    "table": "RAW_EVENTS",
+                    "columns": [{"name": "USER_ID", "type": "StringType"}],
+                }
+            ],
+            "spec_text": {
+                "kind": "BatchFeatureView",
+                "metadata": {
+                    "database": "MYDB",
+                    "schema": "STALE_SESSION_SCH",
+                    "name": "OFFLINE_STALE_BFV",
+                    "version": "V1",
+                    "spec_format_version": "1",
+                    "internal_data_version": "1",
+                    "client_version": "0.1.0",
+                },
+                "offline_configs": [
+                    {
+                        "store_type": "snowflake",
+                        "table_type": "BatchTable",
+                        "database": "MYDB",
+                        "schema": "STALE_SESSION_SCH",
+                        "table": "OFFLINE_STALE_BFV$V1",
+                        "columns": [],
+                    }
+                ],
+                "spec": {
+                    "ordered_entity_column_names": ["USER_ID"],
+                    "sources": [],
+                    "features": [],
+                    "target_lag_sec": 60,
+                },
+            },
+        }
+
+        applied_state = fetch_applied_state(
+            raw_show_results=[],
+            raw_table_results=[],
+            specification_map={},
+            entity_rows=[],
+            dt_text_map={},
+            feature_view_rows=[stale_row],
+            default_database="MYDB",
+            default_schema="PUBLIC",
+        )
+
+        export_specs(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            applied_state=applied_state,
+        )
+
+        fv_files = list(tmp_path.rglob("OFFLINE_STALE_BFV_V1.yaml"))
+        assert fv_files, f"offline FV YAML not written; tree={[str(p) for p in tmp_path.rglob('*.yaml')]!r}"
+        data = yaml.safe_load(fv_files[0].read_text())
+        assert data["schema"] == "PUBLIC", (
+            "exported offline FV must carry the deployed schema (PUBLIC), not the "
+            f"stale spec_text session schema; got schema={data.get('schema')!r}"
+        )
+        assert data["database"] == "MYDB", data.get("database")
 
 
 # ---------------------------------------------------------------------------

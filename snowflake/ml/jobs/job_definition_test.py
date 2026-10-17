@@ -406,6 +406,48 @@ class MLJobDefinitionTest(parameterized.TestCase):
         assert result.spec_options.env_vars is not None
         self.assertEqual(result.spec_options.env_vars[constants.LAUNCH_BACKEND_ENV_VAR], "ray")
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        (
+            "spec_overrides_before_database",
+            {"spec_overrides": {"spec": {"volumes": [{"name": "stage-volume"}]}}, "database": "DB"},
+            "may not override the managed volume",
+        ),
+        ("database_before_instance_counts", {"database": "DB", "target_instances": 0}, "Schema must be specified"),
+        (
+            "instance_counts_before_parallel",
+            {"target_instances": 1, "min_instances": 2, "parallel": "yes"},
+            "min_instances must be greater than 0",
+        ),
+    )
+    def test_create_validation_order(self, kwargs: dict[str, Any], expected_error: str) -> None:
+        with self.assertRaisesRegex(ValueError, expected_error):
+            job_definition.MLJobDefinition._create(
+                source="entry.py",
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                entrypoint="entry.py",
+                name="entry",
+                **kwargs,
+            )
+
+    def test_create_warns_unknown_kwargs_before_instance_count_error(self) -> None:
+        with (
+            self.assertLogs("snowflake.ml.jobs", level="WARNING") as logs,
+            self.assertRaisesRegex(ValueError, "target_instances must be greater than 0"),
+        ):
+            job_definition.MLJobDefinition._create(
+                source="entry.py",
+                compute_pool="POOL",
+                stage_name="@payload_stage/job",
+                session=self.session,
+                entrypoint="entry.py",
+                name="entry",
+                target_instances=0,
+                bogus=1,
+            )
+        self.assertTrue(any("Ignoring unknown kwargs" in line and "bogus" in line for line in logs.output), logs.output)
+
     def test_parallel_non_bool_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "parallel must be a boolean"):
             job_definition.MLJobDefinition._create(

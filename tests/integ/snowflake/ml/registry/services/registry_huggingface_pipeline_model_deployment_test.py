@@ -5,7 +5,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import compute_pool, openai_signatures
-from snowflake.ml.model.models import huggingface, huggingface_pipeline
+from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -115,10 +115,10 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         )
 
     def test_token_classification_with_model_logging(self) -> None:
-        model = huggingface_pipeline.HuggingFacePipelineModel(
+        model = huggingface.TransformersPipeline(
             task="token-classification",
             model="dslim/bert-base-NER",
-            download_snapshot=False,
+            compute_pool_for_log=None,
         )
 
         x_df = pd.DataFrame(

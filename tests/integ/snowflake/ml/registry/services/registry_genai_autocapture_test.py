@@ -14,7 +14,7 @@ from retrying import retry
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.inference_engine import InferenceEngine
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -82,10 +82,10 @@ class RegistryGenAIAutocaptureTest(registry_model_deployment_test_base.RegistryM
 
     def _deploy_test_service(self) -> None:
         """Deploy a vLLM-backed text-generation model with autocapture enabled."""
-        model = huggingface_pipeline.HuggingFacePipelineModel(
+        model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",
-            download_snapshot=False,
+            compute_pool_for_log=None,
         )
 
         input_data = pd.DataFrame.from_records(

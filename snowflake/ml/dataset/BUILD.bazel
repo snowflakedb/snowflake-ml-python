@@ -44,6 +44,19 @@ py_test(
     ],
 )
 
+py_test(
+    name = "dataset_test",
+    srcs = ["dataset_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":dataset",
+        "//snowflake/ml/_internal/utils:snowpark_dataframe_utils",
+    ],
+)
+
 py_library(
     name = "dataset",
     srcs = [

@@ -40,6 +40,11 @@ snowpark SDK.
 
 ## Module Map
 
+<!-- markdownlint-disable MD013 -->
+<!-- Long descriptive cells: a markdown table cell cannot be wrapped without
+     breaking the table, so MD013 is intentionally relaxed for the module-map
+     block below. Keep prose elsewhere in this file under 120 columns. -->
+
 | Module | Responsibility |
 |--------|---------------|
 | `__init__.py` | Public API re-exports (`api`, `types`, `errors`, `enums`, `spec_models`) |
@@ -143,7 +148,12 @@ snowpark SDK.
   `state.py`). On a mismatch it emits `RECREATE_FV` with a reason
   that names the full-spec path; the structural fingerprint is the
   fallback when SPECIFICATION is unavailable. `Plan.warnings`
-  records which path was used per FV.  For `FeatureGroup` specs,
+  records which path was used per FV.  A source diff routes through
+  `compute_source_diff_kind`: a `StreamingSource` recreate is
+  destructive (real drop + re-register) while a `BatchSource` recreate
+  is non-destructive (executor no-op; the consuming FV op is the
+  `--destructive` gate). Pinned by `tests/test_planner_stream_source.py`.
+  For `FeatureGroup` specs,
   the planner uses `fg_content_hash` (see `invariants.py` notes
   above) — a hash match emits `NO_CHANGE`, a new key emits
   non-destructive `CREATE_FG`, a hash mismatch emits
@@ -413,7 +423,8 @@ The loader applies a **spec-first with UDF fallback** rule to every
 
 1. Try to exec the file as a Python spec module.
 2. If exec succeeds AND yields ≥1 module-level spec instance, those
-   become specs in the batch.
+   become specs in the batch. Two names bound to one object (an alias
+   re-assignment) collapse to a single spec by object identity.
 3. If exec succeeds with zero spec instances, the file is treated as a
    pure UDF body — silently dropped from BOTH the spec list and
    `source_files`. (A sibling YAML's `udf.file:` mechanism still reads
@@ -655,11 +666,14 @@ phases (Phases 1–6 of the advanced BFV plan) follow this template verbatim:
    shapes (e.g. `storage_config`), construct the snowml-core dataclass
    (`StorageConfig(format=StorageFormat(...), external_volume=..., ...)`)
    via a lazy import inside the function (the wheel-isolation rule forbids
-   top-level imports of `feature_view.py`).  For operational fields, mirror
-   the change in `_execute_update_feature_view` so the `UPDATE_FV` plan op
-   forwards the kwarg to `fs.update_feature_view`.  **Kind-gate any Dynamic
+   top-level imports of `feature_view.py`).  For operational fields, add the
+   kwarg to `_fv_operational_update_kwargs` (the single builder shared by both
+   `_execute_update_feature_view` and `_execute_evolve_feature_view`), so the
+   field lands on the `UPDATE_FV` fast path **and** the append-only `EVOLVE_FV`
+   path at once — otherwise a single apply that drifts both the transformation
+   and the new field would silently defer it.  **Kind-gate any Dynamic
    Table-only operational kwarg.**  `refresh_freq` and `warehouse` are DT
-   refresh knobs, so `_execute_update_feature_view` forwards them only for a
+   refresh knobs, so the helper forwards them only for a
    FV that materialises as a managed DT: `materializes_as_dt = is_batch or
    (is_tiled_streaming and payload carries refresh_freq)`.  A streaming FV
    without `refresh_freq` (non-tiled/continuous, or tiled-without-`refresh_freq`)
@@ -949,6 +963,39 @@ same way — but it is moot: `spec_key` already upper-cases names before the
 match, so such a name never resolves to its applied object regardless. Extend
 the `6b1` fix there rather than re-quoting `metadata.name` on export.
 
+**Applied identity keys on the deployed SHOW row, not SPECIFICATION
+`metadata`.** A deployed `DESCRIBE … TYPE = SPECIFICATION` payload can carry a
+stale session `metadata.database` / `metadata.schema` stamped at create time,
+while the OFT actually lives where the `SHOW ONLINE FEATURE TABLES` row
+(`database_name` / `schema_name`) says. The exporter already emits that deployed
+identity (Bug A, `_build_full_fidelity_fv`), so `fetch_applied_state` keys both
+the applied `spec_key` **and** the stamped `spec_payload.metadata` on the
+SHOW-row identity (precedence: SHOW row → `metadata` → connection default).
+Because `_normalize_for_full_spec_hash` retains `metadata.database` /
+`metadata.schema`, stamping the deployed identity onto the payload (not just the
+key) is what keeps the full-spec content hash symmetric with the export; keying
+the `spec_key` alone would still loop on `RECREATE_FV`. Pinned by
+`test_state.test_stale_metadata_schema_keys_on_deployed_show_row` and
+`test_export_plan_round_trip.TestExportThenPlanStaleMetadataSchema`.
+
+The same deployed-identity rule governs the **offline-only FV path**, where
+there is no `SHOW ONLINE FEATURE TABLES` row at all. `_build_offline_fv_object`
+reconstructs the applied object from the list-FV row plus core's enriched
+`spec_text`; that `spec_text` is produced by `_serialize_batch_fv_spec`, which
+stamps `metadata.database` / `metadata.schema` from the FeatureStore session
+config (`self._config.*.resolved()`) rather than where the Dynamic Table lives.
+So the builder stamps the deployed location — the list-FV row's `database_name`
+/ `schema_name` — onto `spec_payload.metadata` after adopting `spec_text`, with
+the same precedence (row → `metadata` → connection default). This keeps the
+offline-FV `spec_key`, full-spec hash, **and** the exporter's synthesized
+show-row `fallback_database` / `fallback_schema` (built in
+`_overlay_applied_state_on_export_inputs` from `spec_payload.metadata`) all
+agreed on the deployed identity, so an offline FV reaching the exporter solely
+via the applied-state overlay exports under its deployed schema and does not
+diverge on key/hash. Pinned by
+`test_offline_bfv_state.TestOfflineBfvStaleSpecTextMetadata` and
+`test_exporter.test_offline_fv_overlay_exports_deployed_schema_over_stale_spec_text`.
+
 ### Aggregation `function_params` fidelity (acd `precision`, empty params)
 
 Three related fixes keep tiled-aggregation projects off the `RECREATE_FV` loop
@@ -981,6 +1028,117 @@ and out of apply-time crashes:
   param-less aggregation (e.g. `count`). `_drop_empty_function_params` drops the
   empty dict on both hash halves so the project stays `NO_CHANGE`; a populated
   dict stays hash-significant.
+
+### Append-only snapshot-preserving evolution (`EVOLVE_FV`)
+
+An `append_only: true` BatchFeatureView accumulates history in a companion
+`$SNAPSHOTS` table, so a destructive `RECREATE_FV` on a transformation edit
+would silently wipe it. When the full-spec hashes differ and **both** the local
+and the deployed spec are append-only, the planner classifies the diff with
+`invariants.append_only_schema_evolution_kind(local_compiled, applied_payload)`,
+which reports the differing sections via `full_spec_changed_properties`:
+
+- `"preserving"` — only `spec.sources` changed **and** the binding analysis
+  proves the output schema is untouched: a table retarget, or a query rewrite
+  whose SELECT list is identical or whose only edit is a predicate.
+- `"extend_only"` — a query-backed source's SELECT list gained new *trailing*
+  columns, existing columns untouched (older snapshot rows simply carry NULLs
+  for the new columns). The executor materialises these because `session.sql`
+  runs the rewritten query and core extends the `$SNAPSHOTS` table in place.
+- `"breaking"` — anything else (entities, timestamp, refresh mode, cluster-by,
+  secondary keys, the `append_only` toggle, **any** `spec.features` edit, **a
+  query SELECT-list drop / reorder / retype**), or a normalisation failure. The
+  safe default.
+
+A `spec.features` delta is *always* `breaking`. Append-only forbids tiling (the
+authoring validator rejects `function` / `window_sec` aggregations), so a
+surviving feature entry on an append-only BFV is necessarily a 1:1 rename — and
+`imperative_executor._build_features` drops a rename-only entry (no `function` /
+`window_sec`), so an `EVOLVE_FV` promise would re-emit on every replan and never
+converge. The underlying non-materialization of non-tiled BFV renames is a
+pre-existing executor gap tracked in
+`dev/plans/bug_append_only_bfv_feature_rename_not_materialized.md`; until it is
+fixed the convergent way to rename a column on an append-only BFV is in the
+source SQL (`SELECT AMOUNT AS AMOUNT_OUT …`), which lands as the `extend_only` /
+`preserving` SELECT-list path above.
+
+Because `compile_to_spec` parks a query-backed source's SQL in `spec.sources`
+and leaves `spec.features` empty, *any* SELECT-list edit would otherwise look
+like a bare `spec.sources` change and evolve in place — then fail at apply when
+core's extend-only check rejects the position/type mismatch. So a `spec.sources`
+delta is handed to `invariants._source_binding_evolution_kind`, which reads the
+raw (pre-hash-normalisation) bindings, pairs them (by `name`, else by position),
+and per query-vs-query pair inspects the projection via two
+`compiler.py` helpers:
+
+- `extract_select_output_columns(sql)` returns the ordered output column names
+  of a provable single `SELECT` (an optional leading `WITH` CTE block is
+  skipped; names resolve through `identifier.resolve_identifier` exactly as core
+  does), or `None` when the shape cannot be proven (`SELECT *`, an unaliased
+  expression, or a set operation on the outer query). Equal lists →
+  `preserving`; the applied list a strict prefix of the local list →
+  `extend_only`; a reorder/drop/retype → `breaking`.
+- `strip_sql_predicates(sql)` is the fallback when a list is unprovable: it drops
+  every `WHERE` group and canonicalises the remainder. Identical remainders
+  prove only predicates changed (`preserving`); otherwise `breaking`. A guard
+  rejects the strip if it changes the set-operation count (so a `WHERE` group
+  cannot swallow an entire `UNION` branch).
+
+A table binding on *both* sides stays `preserving` — the new table's schema is
+unknowable at plan time and an in-place retarget is the documented happy path. A
+table↔query flip is `breaking`: the query side's output schema is visible, so it
+is not waved through like a pure table retarget.
+
+The first two verdicts emit the non-destructive `OpKind.EVOLVE_FV`, which the
+executor applies as `FeatureStore.update_feature_view(updated_feature_df=...)` —
+reinitialising the offline Dynamic Table in place while retaining `$SNAPSHOTS`,
+`SNOWML_SNAPSHOT_STATUS`, and the snapshot-append Task. `"breaking"` falls
+through to `RECREATE_FV`, whose reason string names the output-schema change and
+the `$SNAPSHOTS` loss (`--allow-recreate` required).
+
+`EVOLVE_FV` carries the authored operational knobs too. Because `warehouse`,
+`refresh_freq`, `desc`, and `online_store_type` are stripped from the structural
+hash, a single apply that retargets the source **and** changes one of them
+classifies as `preserving`/`extend_only` — so the operational drift would be
+invisible to a second op. `_execute_evolve_feature_view` therefore merges
+`updated_feature_df` with the shared `_fv_operational_update_kwargs(payload,
+default_warehouse)` and issues **one** `update_feature_view` call. Core's
+`updated_feature_df` path applies `warehouse` / `refresh_freq` / `online_config`
+to the desired-state FV before the DT `CREATE OR REPLACE`
+(`_recreate_append_only_feature_view_atomically`), so the whole authored spec is
+realised in that single apply (an authored `online: false` against a
+deployed-online FV drops the OFT in the same call). An append-only BFV always
+carries a cron `refresh_freq`, so the refresh warehouse is always forwarded.
+
+`_execute_evolve_feature_view` also forwards the authored `payload["sources"]` as
+`_source_refs` (mirroring the CREATE_FV stamp). Core re-stamps `FV_SOURCE_REFS`
+from it as the terminal step of `_recreate_append_only_feature_view_atomically`,
+so the next plan recovers the **new** binding and converges to `NO_CHANGE`.
+Without the re-stamp the recovered baseline keeps the stale query, so the evolved
+YAML re-emits `EVOLVE_FV` forever and a revert hashes to a silent `NO_CHANGE`.
+
+Both gates matter: core rejects `updated_feature_df` on a non-append-only FV,
+and `append_only` is in `_BATCH_FV_STRUCTURAL_INNER_KEYS` so flipping the flag
+always recreates. `_strip_default_append_only` drops a falsy `append_only` from
+both hash inputs, so a plain BFV never drifts on the snowml-core default
+`False`. `compute_local_spec_and_hash` returns the compiled dict alongside the
+hash so the planner does not re-run `compile_to_spec` for the classifier.
+
+The full-spec hash compares two halves — the *authored* (local) spec freshly
+compiled from the project and the *applied* spec recovered from `DESCRIBE … TYPE
+= SPECIFICATION`. Every caller routes through a single entry point per half:
+`_hash_local_half` / `_normalize_local_half` for the authored side (the
+planner's `compute_local_spec_hash` / `compute_local_spec_and_hash` and the
+classifier's local normalisation) and `_normalize_applied_half` for the applied
+side. On this slice the two halves normalise identically, so the forwarders are
+thin. They exist so `jkew/decl-fs/6e1.1`'s asymmetric SQL-identifier
+canonicalisation (authored resolves SQL syntax to Snowflake's stored form,
+applied only unquotes) is threaded **here only** at `6e-int`: because both
+branches edit `compute_local_spec_hash`'s body, the merge raises a visible
+conflict instead of silently keeping applied semantics on the planner's authored
+hash. Pinned by `tests/test_advanced_bvt_append_only.py` (including the
+mixed-case `test_local_half_entry_points_agree_for_mixed_case_spec` canary) and
+`tests/test_append_only_bfv_validation.py`.
 
 ### Exporter kind-filter + source-less BatchFV skip (init on legacy schemas)
 

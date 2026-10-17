@@ -176,12 +176,14 @@ class SentenceTransformerTest(absltest.TestCase):
         )
         self.assertIsNone(model.has_chat_template)
 
-    def test_existing_transformers_pipeline_still_requires_task(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "Impossible to instantiate a pipeline without a task"):
-            huggingface.TransformersPipeline(
-                task=None,
+    def test_existing_transformers_pipeline_infers_task_when_omitted(self) -> None:
+        with absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.pipeline_tag = "text-generation"
+            pipeline = huggingface.TransformersPipeline(
                 model="some-model",
             )
+            self.assertEqual(pipeline.task, "text-generation")
+            mock_hf_api.return_value.model_info.assert_called_once()
 
 
 if __name__ == "__main__":

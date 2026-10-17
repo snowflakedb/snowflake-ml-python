@@ -32,16 +32,12 @@ _CALLER_SIGNATURES_RE = r"signatures= is not supported"
 
 
 def _enable_lora_adapters(fn: Any) -> Any:
-    @mock.patch.object(
-        platform_capabilities.PlatformCapabilities,
-        "is_lora_adapters_enabled",
-        return_value=True,
-        autospec=True,
-    )
     @functools.wraps(fn)
-    def wrapped(self: Any, mock_enabled: mock.MagicMock, *args: Any, **kwargs: Any) -> Any:
-        with platform_capabilities.PlatformCapabilities.mock_features():
-            return fn(self, mock_enabled, *args, **kwargs)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            {platform_capabilities.ENABLE_LORA_ADAPTERS: True}
+        ):
+            return fn(self, *args, **kwargs)
 
     return wrapped
 
@@ -136,7 +132,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
         self.assertEqual(loaded.signatures, {})
 
     @_enable_lora_adapters
-    def test_can_handle_peft_adapter_not_raw_peft_model(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_can_handle_peft_adapter_not_raw_peft_model(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -145,7 +141,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
             self.assertFalse(peft_adapter_handler.PeftAdapterModelHandler.can_handle({"not": "peft"}))
 
     @_enable_lora_adapters
-    def test_required_blob_options_fqn_and_version(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_required_blob_options_fqn_and_version(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -159,7 +155,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self._assert_staged_artifact_has_no_signatures(model_dir)
 
     @_enable_lora_adapters
-    def test_peft_type_from_adapter_config(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_peft_type_from_adapter_config(self) -> None:
         cases: list[tuple[str, dict[str, Any], str | None]] = [
             ("lora", {}, "lora"),
             ("uppercase_lora", {"config_overrides": {"peft_type": "LORA"}}, "lora"),
@@ -181,7 +177,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                             self.assertEqual(options["peft_type"], expected)
 
     @_enable_lora_adapters
-    def test_lora_rank_from_positive_int_r(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_lora_rank_from_positive_int_r(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir, r=16)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -190,7 +186,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_rank"], 16)
 
     @_enable_lora_adapters
-    def test_missing_r_omits_lora_rank(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_missing_r_omits_lora_rank(self) -> None:
         cases: list[tuple[str, dict[str, Any]]] = [
             ("missing", {"omit_r": True}),
             ("non_int", {"r": "8"}),
@@ -206,7 +202,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                         self.assertNotIn("lora_rank", _peft_blob_options(meta))
 
     @_enable_lora_adapters
-    def test_lora_extra_vocab_size_copied_when_present(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_lora_extra_vocab_size_copied_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir, extra_vocab=256)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -215,7 +211,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_extra_vocab_size"], 256)
 
     @_enable_lora_adapters
-    def test_lora_extra_vocab_size_omitted_when_absent(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_lora_extra_vocab_size_omitted_when_absent(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -247,7 +243,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
         self.assertEqual(options["base_model_version"], _BASE_VERSION)
 
     @_enable_lora_adapters
-    def test_rejects_disagreeing_caller_signatures(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_disagreeing_caller_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -267,7 +263,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir, signatures=disagreeing)
 
     @_enable_lora_adapters
-    def test_rejects_empty_caller_signatures(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_empty_caller_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -281,7 +277,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir, signatures={})
 
     @_enable_lora_adapters
-    def test_rejects_matching_caller_signatures(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_matching_caller_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             expected = _with_model_signature()
@@ -296,7 +292,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir, signatures={"__call__": expected})
 
     @_enable_lora_adapters
-    def test_rejects_sample_input_data(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_sample_input_data(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -312,14 +308,10 @@ class PeftAdapterHandlerTest(absltest.TestCase):
     def test_flag_off_refuses_save(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir)
-            with mock.patch.object(
-                platform_capabilities.PlatformCapabilities,
-                "is_lora_adapters_enabled",
-                return_value=True,
-                autospec=True,
+            with platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_LORA_ADAPTERS: True}
             ):
-                with platform_capabilities.PlatformCapabilities.mock_features():
-                    wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
+                wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
             with platform_capabilities.PlatformCapabilities.mock_features():
                 with tempfile.TemporaryDirectory() as model_dir:
                     with exception_utils.assert_snowml_exceptions(
@@ -331,7 +323,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                         _save(adapter=wrapper, model_dir=model_dir)
 
     @_enable_lora_adapters
-    def test_requires_adapter_config(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_requires_adapter_config(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir, include_config=False)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -345,7 +337,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir)
 
     @_enable_lora_adapters
-    def test_missing_weights_still_logs(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_missing_weights_still_logs(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir, include_weights=False)
             wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=adapter_dir)
@@ -358,7 +350,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_rank"], 8)
 
     @_enable_lora_adapters
-    def test_skips_file_symlinks_in_adapter_dir(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_skips_file_symlinks_in_adapter_dir(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             adapter_dir = os.path.join(root, "adapter")
             _write_adapter_dir(adapter_dir, include_weights=False)
@@ -379,7 +371,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertNotIn("adapter_model.safetensors", copied)
 
     @_enable_lora_adapters
-    def test_rejects_symlink_adapter_config(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_rejects_symlink_adapter_config(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             adapter_dir = os.path.join(root, "adapter")
             os.makedirs(adapter_dir, exist_ok=True)
@@ -402,7 +394,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir)
 
     @_enable_lora_adapters
-    def test_copies_all_top_level_files_and_skips_dirs(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_copies_all_top_level_files_and_skips_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(
                 adapter_dir,
@@ -441,7 +433,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertNotIn("alpha", copied)
 
     @_enable_lora_adapters
-    def test_stage_and_snow_url_adapter_path_not_supported(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_stage_and_snow_url_adapter_path_not_supported(self) -> None:
         for path in ("@db.schema.stage/adapter", "snow://model/DB.SCHEMA.ADAPTER/versions/V1"):
             with self.subTest(path=path):
                 wrapper = peft_adapter.PeftAdapter(base_model=_make_base(), adapter_path=path)
@@ -455,7 +447,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                         _save(adapter=wrapper, model_dir=model_dir)
 
     @_enable_lora_adapters
-    def test_adapter_repo_downloads_all_top_level_files(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_adapter_repo_downloads_all_top_level_files(self) -> None:
         mock_hub = mock.MagicMock()
 
         def _fake_download(
@@ -498,7 +490,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_rank"], 4)
 
     @_enable_lora_adapters
-    def test_subfolder_with_adapter_path_joins_child(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_subfolder_with_adapter_path_joins_child(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             _write_adapter_dir(adapter_dir, extra_files={"parent_only.txt": "skip"})
             _write_adapter_dir(
@@ -524,7 +516,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_rank"], 16)
 
     @_enable_lora_adapters
-    def test_subfolder_with_adapter_repo_uses_allow_patterns(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_subfolder_with_adapter_repo_uses_allow_patterns(self) -> None:
         mock_hub = mock.MagicMock()
         nested = "loras/style_v1"
 
@@ -566,7 +558,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                 self.assertEqual(_peft_blob_options(meta)["lora_rank"], 4)
 
     @_enable_lora_adapters
-    def test_missing_config_at_subfolder_names_subfolder(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_missing_config_at_subfolder_names_subfolder(self) -> None:
         with tempfile.TemporaryDirectory() as adapter_dir:
             os.makedirs(os.path.join(adapter_dir, "empty_child"))
             wrapper = peft_adapter.PeftAdapter(
@@ -584,7 +576,7 @@ class PeftAdapterHandlerTest(absltest.TestCase):
                     _save(adapter=wrapper, model_dir=model_dir)
 
     @_enable_lora_adapters
-    def test_nested_hub_layout_without_subfolder_fails_missing_config(self, _mock_enabled: mock.MagicMock) -> None:
+    def test_nested_hub_layout_without_subfolder_fails_missing_config(self) -> None:
         mock_hub = mock.MagicMock()
 
         def _fake_download(

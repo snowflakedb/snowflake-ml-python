@@ -64,7 +64,6 @@ class TestRegistryModelGardenPreloggedDeploymentInteg(garden.TestRegistryModelGa
     def test_model_garden_service(self) -> None:
         model_name = self._require_model_garden_model()
         logger.info("Using pre-logged Model Garden model SNOWFLAKE.MODELS.%s", model_name)
-        self._enable_ai_complete_session_params()
 
         service_short_name = self._service_short_name
         service_name = f"{self._test_db}.{self._test_schema}.{service_short_name}"
