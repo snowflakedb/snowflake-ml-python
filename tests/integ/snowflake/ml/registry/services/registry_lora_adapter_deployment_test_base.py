@@ -22,22 +22,19 @@ import yaml  # noqa: E402
 from snowflake.ml.model import (  # noqa: E402
     ModelVersion,
     PeftAdapter,
+    TransformersPipeline,
     openai_signatures,
 )
 from snowflake.ml.model._packager.model_env import model_env  # noqa: E402
 from snowflake.ml.model.inference_engine import InferenceEngine  # noqa: E402
-from snowflake.ml.model.models import huggingface_pipeline  # noqa: E402
 from tests.integ.snowflake.ml.registry.services import (  # noqa: E402
     registry_model_deployment_test_base,
 )
 from tests.integ.snowflake.ml.test_utils import (  # noqa: E402
     db_manager,
     lora_adapter_account_gate,
-    lora_adapters_enabled_patch,
     test_env_utils,
 )
-
-lora_adapters_enabled_patch.enable()
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
 _SMOLLM2 = "HuggingFaceTB/SmolLM2-135M-Instruct"
@@ -60,10 +57,13 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
     cache_dir: tempfile.TemporaryDirectory
     _original_hf_accept_encoding: str | None = None
     _original_hf_endpoint: str | None = None
+    _original_hf_hub_disable_xet_env: str | None = None
+    _original_hf_hub_disable_xet: bool = False
 
     @classmethod
     def setUpClass(cls) -> None:
         import huggingface_hub
+        import huggingface_hub.constants
 
         super().setUpClass()
         cls.cache_dir = _HF_CACHE_DIR
@@ -73,6 +73,12 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
         if "HF_ENDPOINT" in os.environ:
             cls._original_hf_endpoint = os.environ["HF_ENDPOINT"]
             del os.environ["HF_ENDPOINT"]
+        # huggingface_hub reads HF_ENDPOINT at import, so adapter downloads can still go through the
+        # Artifactory HF proxy, which has no xet-read-token endpoint. The constant is read per download.
+        cls._original_hf_hub_disable_xet_env = os.environ.get("HF_HUB_DISABLE_XET")
+        cls._original_hf_hub_disable_xet = huggingface_hub.constants.HF_HUB_DISABLE_XET
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        huggingface_hub.constants.HF_HUB_DISABLE_XET = True
         hf_session = huggingface_hub.get_session()
         cls._original_hf_accept_encoding = hf_session.headers.get("Accept-Encoding")
         hf_session.headers["Accept-Encoding"] = "identity"
@@ -80,7 +86,13 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
     @classmethod
     def tearDownClass(cls) -> None:
         import huggingface_hub
+        import huggingface_hub.constants
 
+        huggingface_hub.constants.HF_HUB_DISABLE_XET = cls._original_hf_hub_disable_xet
+        if cls._original_hf_hub_disable_xet_env is not None:
+            os.environ["HF_HUB_DISABLE_XET"] = cls._original_hf_hub_disable_xet_env
+        else:
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
         if _ORIGINAL_TRANSFORMERS_CACHE is not None:
             os.environ["TRANSFORMERS_CACHE"] = _ORIGINAL_TRANSFORMERS_CACHE
         else:
@@ -205,10 +217,10 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
         ]
 
     def _log_serving_base(self, *, model_name: str, version_name: str) -> ModelVersion:
-        model = huggingface_pipeline.HuggingFacePipelineModel(
-            task="text-generation",
+        model = TransformersPipeline(
             model=_SMOLLM2,
-            download_snapshot=False,
+            task="text-generation",
+            compute_pool_for_log=None,
         )
         return self.registry.log_model(
             model=model,

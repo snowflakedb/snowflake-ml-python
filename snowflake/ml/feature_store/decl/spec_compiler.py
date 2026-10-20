@@ -566,6 +566,13 @@ def compile_to_spec(
     if isinstance(secondary_keys, list) and secondary_keys:
         spec["aggregation_secondary_keys"] = [str(c) for c in secondary_keys]
 
+    # ``append_only`` opts a BatchFeatureView into the imperative snapshot-
+    # accumulation path.  Only emit it when truthy so a plain BFV never carries
+    # the default ``False`` into the structural hash (the applied side omits it
+    # too — see ``invariants._strip_default_append_only``).
+    if kind == "BatchFeatureView" and bool(spec_dict.get("append_only")):
+        spec["append_only"] = True
+
     if kind != "BatchFeatureView" and udf and isinstance(udf, dict):
         spec["udf"] = _compile_udf(udf)
 

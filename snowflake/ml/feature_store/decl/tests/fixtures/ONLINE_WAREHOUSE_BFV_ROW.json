@@ -1,0 +1,148 @@
+{
+  "append_only": false,
+  "cluster_by": "[\"UID_RAW\", \"EVENT_TS\"]",
+  "database_name": "JKEW_DB",
+  "desc": "Mirror of an AIMLDEV online-only BatchFV for warehouse-drift capture.",
+  "entities": [
+    "MIRROR_WH_ENTITY"
+  ],
+  "kind": "BATCH",
+  "name": "MIRROR_WAREHOUSE_BFV",
+  "online_enabled": true,
+  "physical_dt_name": "MIRROR_WAREHOUSE_BFV$V1",
+  "refresh_freq": "0 6 * * 2 UTC",
+  "refresh_mode": "FULL",
+  "schema_name": "JKEW_SCHEMA",
+  "source_refs": [
+    {
+      "columns": [
+        {
+          "name": "UID_RAW",
+          "type": "StringType"
+        },
+        {
+          "name": "EVENT_TS",
+          "type": "TimestampType"
+        },
+        {
+          "name": "AMOUNT",
+          "type": "DoubleType"
+        },
+        {
+          "name": "CATEGORY",
+          "type": "StringType"
+        }
+      ],
+      "name": "MIRROR_WAREHOUSE_SRC",
+      "query": "SELECT UID_RAW, EVENT_TS, AMOUNT, CATEGORY FROM JKEW_DB.JKEW_SCHEMA.MIRROR_WAREHOUSE_SEED",
+      "source_type": "Batch"
+    }
+  ],
+  "spec_text": {
+    "kind": "BatchFeatureView",
+    "metadata": {
+      "client_version": "1.52.0",
+      "database": "JKEW_DB",
+      "internal_data_version": "1",
+      "name": "MIRROR_WAREHOUSE_BFV",
+      "schema": "JKEW_SCHEMA",
+      "spec_format_version": "1",
+      "version": "V1"
+    },
+    "offline_configs": [
+      {
+        "columns": [
+          {
+            "length": 16777216,
+            "name": "UID_RAW",
+            "type": "StringType"
+          },
+          {
+            "name": "EVENT_TS",
+            "type": "TimestampType"
+          },
+          {
+            "name": "AMOUNT",
+            "type": "DoubleType"
+          },
+          {
+            "length": 16777216,
+            "name": "CATEGORY",
+            "type": "StringType"
+          }
+        ],
+        "database": "JKEW_DB",
+        "schema": "JKEW_SCHEMA",
+        "store_type": "snowflake",
+        "table": "MIRROR_WAREHOUSE_BFV$V1",
+        "table_type": "BatchSource"
+      }
+    ],
+    "online_store_type": "postgres",
+    "spec": {
+      "cluster_by": [
+        "UID_RAW",
+        "EVENT_TS"
+      ],
+      "features": [
+        {
+          "output_column": {
+            "name": "AMOUNT",
+            "type": "DoubleType"
+          },
+          "source_column": {
+            "name": "AMOUNT",
+            "type": "DoubleType"
+          }
+        },
+        {
+          "output_column": {
+            "length": 16777216,
+            "name": "CATEGORY",
+            "type": "StringType"
+          },
+          "source_column": {
+            "length": 16777216,
+            "name": "CATEGORY",
+            "type": "StringType"
+          }
+        }
+      ],
+      "ordered_entity_column_names": [
+        "UID_RAW"
+      ],
+      "refresh_mode": "FULL",
+      "sources": [
+        {
+          "columns": [
+            {
+              "name": "UID_RAW",
+              "type": "StringType"
+            },
+            {
+              "name": "EVENT_TS",
+              "type": "TimestampType"
+            },
+            {
+              "name": "AMOUNT",
+              "type": "DoubleType"
+            },
+            {
+              "name": "CATEGORY",
+              "type": "StringType"
+            }
+          ],
+          "name": "MIRROR_WAREHOUSE_SRC",
+          "query": "SELECT UID_RAW, EVENT_TS, AMOUNT, CATEGORY FROM JKEW_DB.JKEW_SCHEMA.MIRROR_WAREHOUSE_SEED",
+          "source_type": "Batch"
+        }
+      ],
+      "target_lag_sec": 0,
+      "timestamp_field": "EVENT_TS",
+      "warehouse": "JKEW_WH"
+    }
+  },
+  "target_lag": "",
+  "version": "V1",
+  "warehouse": "JKEW_WH"
+}

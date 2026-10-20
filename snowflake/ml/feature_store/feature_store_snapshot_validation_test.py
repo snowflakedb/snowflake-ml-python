@@ -24,6 +24,7 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
     AppendOnlyMetadata,
+    FvSourceRefsMetadata,
 )
 
 
@@ -1669,6 +1670,49 @@ class RecreateAppendOnlyFeatureViewAtomicallyTest(absltest.TestCase):
             rollback_task_idx, rollback_oft_idx, f"Task rollback must follow OFT rollback, got {executed}"
         )
         self.assertGreater(schema_drop_idx, rollback_task_idx, f"Schema rollback must run last, got {executed}")
+
+    def test_recreate_persists_source_refs_when_provided(self) -> None:
+        """A successful recreate re-stamps ``FV_SOURCE_REFS`` from ``_source_refs`` so the
+        next declarative plan recovers the new binding (``NO_CHANGE``), not the stale one."""
+        fs, old_fv, new_fv, new_schema = self._setup()
+
+        fs._create_dynamic_table = MagicMock()
+        fs._create_online_feature_table = MagicMock()
+        fs._create_scheduled_refresh_task = MagicMock()
+
+        sources = [{"name": "SRC1", "source_type": "Batch", "query": "SELECT USER_ID FROM RAW WHERE AMOUNT > 0"}]
+        fs._recreate_append_only_feature_view_atomically(
+            old_feature_view=old_fv,
+            new_feature_view=new_fv,
+            feature_view_name=SqlIdentifier("SNAP_FV$V1"),
+            fully_qualified_name="TEST_DB.TEST_SCHEMA.SNAP_FV$V1",
+            version="V1",
+            new_schema=new_schema,
+            _source_refs=sources,
+        )
+
+        fs._metadata_manager.save_feature_view_source_refs.assert_called_once_with(
+            new_fv.name, "V1", FvSourceRefsMetadata(sources=sources)
+        )
+
+    def test_recreate_skips_source_refs_when_absent(self) -> None:
+        """No ``_source_refs`` (pure imperative caller) leaves ``FV_SOURCE_REFS`` untouched."""
+        fs, old_fv, new_fv, new_schema = self._setup()
+
+        fs._create_dynamic_table = MagicMock()
+        fs._create_online_feature_table = MagicMock()
+        fs._create_scheduled_refresh_task = MagicMock()
+
+        fs._recreate_append_only_feature_view_atomically(
+            old_feature_view=old_fv,
+            new_feature_view=new_fv,
+            feature_view_name=SqlIdentifier("SNAP_FV$V1"),
+            fully_qualified_name="TEST_DB.TEST_SCHEMA.SNAP_FV$V1",
+            version="V1",
+            new_schema=new_schema,
+        )
+
+        fs._metadata_manager.save_feature_view_source_refs.assert_not_called()
 
 
 if __name__ == "__main__":

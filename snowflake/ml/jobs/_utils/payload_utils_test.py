@@ -7,11 +7,12 @@ import subprocess
 import sys
 import tempfile
 import typing
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable, Generator
 
 from absl.testing import absltest, parameterized
 
+from snowflake import snowpark
 from snowflake.ml.jobs._utils import payload_utils, stage_utils, type_utils
 from snowflake.ml.jobs._utils.payload_utils_test_helper import dummy_function
 from snowflake.ml.jobs._utils.test_file_helper import resolve_path
@@ -332,6 +333,20 @@ class PayloadUtilsTests(parameterized.TestCase):
                 payload_utils.validate_import_path(source, import_path)
             except Exception as e:
                 self.fail(f"validate_import_path() raised an exception unexpectedly: {e}")
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("@test_stage/src", "copy files into @payload_stage/app/ from @test_stage/src/"),
+        (
+            '@repo/branches/"feature/configure-cicd"/src',
+            'copy files into @payload_stage/app/ from @repo/branches/"feature/configure-cicd"/src/',
+        ),
+    )
+    def test_upload_payloads_copies_stage_directory(self, source: str, expected_sql: str) -> None:
+        session = absltest.mock.create_autospec(snowpark.Session, instance=True)
+        payload_utils.upload_payloads(
+            session, PurePath("@payload_stage/app"), type_utils.PayloadSpec(stage_utils.resolve_path(source))
+        )
+        session.sql.assert_called_once_with(expected_sql)
 
 
 if __name__ == "__main__":

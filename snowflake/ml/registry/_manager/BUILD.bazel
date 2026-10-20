@@ -20,6 +20,7 @@ py_library(
         "//snowflake/ml/model:target_platform",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_packager:model_handler",
         "//snowflake/ml/model/_packager/model_env",
     ],
 )
@@ -67,6 +68,7 @@ py_test(
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_impl",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

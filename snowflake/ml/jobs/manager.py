@@ -179,7 +179,9 @@ def delete_job(job: str | jb.MLJob[Any], session: snowpark.Session | None = None
     """Delete a job service from the backend. Status and logs will be lost."""
     job = job if isinstance(job, jb.MLJob) else get_job(job, session=session)
     session = job._session
-    if job._stage_path:
+    # A code-bundle job mounts the bundle's payload, which other executions of the bundle still use;
+    # it is cleaned up by delete_code_bundle instead.
+    if job._stage_path and not job._is_code_bundle_job:
         # The stage path originates from the job's SPCS service spec, which can be influenced by the
         # (untrusted) job submitter. Interpolating it unescaped into a REMOVE statement would let a
         # submitter redirect the cleanup to an arbitrary stage and abuse REMOVE syntax using the

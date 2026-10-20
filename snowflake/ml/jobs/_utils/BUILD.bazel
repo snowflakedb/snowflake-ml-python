@@ -45,6 +45,47 @@ py_library(
     ],
 )
 
+py_library(
+    name = "object_naming",
+    srcs = ["object_naming.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_test(
+    name = "object_naming_test",
+    srcs = ["object_naming_test.py"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
+    deps = [
+        ":object_naming",
+    ],
+)
+
+py_library(
+    name = "option_parsing",
+    srcs = ["option_parsing.py"],
+    deps = [
+        ":constants",
+    ],
+)
+
+py_test(
+    name = "option_parsing_test",
+    srcs = ["option_parsing_test.py"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
+    deps = [
+        ":constants",
+        ":option_parsing",
+    ],
+)
+
 py_test(
     name = "stage_utils_test",
     srcs = ["stage_utils_test.py"],
@@ -98,6 +139,7 @@ py_library(
     srcs = ["runtime_env_utils.py"],
     deps = [
         ":constants",
+        ":feature_flags",
         ":query_helper",
     ],
 )
@@ -110,6 +152,7 @@ py_test(
         "short_regress",
     ],
     deps = [
+        ":feature_flags",
         ":runtime_env_utils",
     ],
 )

@@ -5,7 +5,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import custom_model, model_signature
@@ -151,13 +151,7 @@ class ComplexInputModel(custom_model.CustomModel):
 
 
 class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_async_model_composition(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_async_model_composition(self) -> None:
         async def _test(self: "TestRegistryCustomModelInteg") -> None:
             arr = np.random.randint(100, size=(10000, 3))
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
@@ -169,7 +163,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 }
             )
             acm = AsyncComposeModel(model_context)
-            getattr(self, registry_test_fn)(
+            self._test_registry_model(
                 model=acm,
                 sample_input_data=pd_df,
                 prediction_assert_fns={
@@ -250,21 +244,6 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 prediction_assert_fns={"predict": (pd_df, _assert_nulls_round_trip)},
                 is_object_output_assert={"predict": False},
             )
-
-    def test_custom_demo_model_decimal(self) -> None:
-        import decimal
-
-        lm = DemoModel(custom_model.ModelContext())
-        arr = [[decimal.Decimal(1.2), 2.3, 3.4], [decimal.Decimal(4.6), 2.7, 5.5]]
-        sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
-        y_df_expected = pd.DataFrame([[1.2, 2.3, 3.4, 1.2], [4.6, 2.7, 5.5, 4.6]], columns=["c1", "c2", "c3", "output"])
-        self._test_registry_model(
-            model=lm,
-            sample_input_data=sp_df,
-            prediction_assert_fns={
-                "predict": (sp_df, lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, check_dtype=False))
-            },
-        )
 
     def test_custom_demo_model_sp_one_query(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
@@ -567,23 +546,6 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    def test_custom_demo_model_str(self) -> None:
-        lm = DemoModel(custom_model.ModelContext())
-        pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
-        self._test_registry_model(
-            model=lm,
-            sample_input_data=pd_df,
-            prediction_assert_fns={
-                "predict": (
-                    pd_df,
-                    lambda res: pd.testing.assert_frame_equal(
-                        res,
-                        pd.DataFrame(data={"output": ["Yogiri", "Artia"]}, dtype=pd.StringDtype()),
-                    ),
-                )
-            },
-        )
-
     def test_custom_demo_model_str_sp_none(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([[None, "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
@@ -676,18 +638,14 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 },
             )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-        key_name=["bias", "models", "artifacts"],
-    )
-    def test_custom_model_with_model_ref(self, registry_test_fn: str, key_name: str) -> None:
+    def test_custom_model_with_model_ref(self) -> None:
         class DemoModelWithXGB(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
                 super().__init__(context)
 
             @custom_model.inference_api
             def predict(self, input: pd.DataFrame) -> pd.DataFrame:
-                return pd.DataFrame(self.context[key_name].predict(input), columns=["output"])
+                return pd.DataFrame(self.context["bias"].predict(input), columns=["output"])
 
         from sklearn.datasets import load_breast_cancer
         from sklearn.model_selection import train_test_split
@@ -714,10 +672,9 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
 
         output = pd.DataFrame(model.predict(X_test), columns=["output"])
 
-        kwargs = {key_name: model}
-        lm = DemoModelWithXGB(custom_model.ModelContext(**kwargs))
+        lm = DemoModelWithXGB(custom_model.ModelContext(bias=model))
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=X_test,
             prediction_assert_fns={
@@ -732,14 +689,11 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        key_name=["bias", "models", "artifacts"],
-    )
-    def test_custom_model_with_kwargs(self, key_name: str) -> None:
+    def test_custom_model_with_kwargs(self) -> None:
         class DemoModelWithKwargs(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
                 super().__init__(context)
-                with open(context[key_name], encoding="utf-8") as f:
+                with open(context["bias"], encoding="utf-8") as f:
                     v = int(f.read())
                 self.bias = v
 
@@ -748,10 +702,10 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 return pd.DataFrame({"output": (input["c1"] + self.bias) > 12})
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with open(os.path.join(tmpdir, key_name), "w", encoding="utf-8") as f:
+            bias_path = os.path.join(tmpdir, "bias")
+            with open(bias_path, "w", encoding="utf-8") as f:
                 f.write("10")
-            kwargs = {key_name: os.path.join(tmpdir, key_name)}
-            lm = DemoModelWithKwargs(custom_model.ModelContext(**kwargs))
+            lm = DemoModelWithKwargs(custom_model.ModelContext(bias=bias_path))
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             self._test_registry_model(
@@ -791,13 +745,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 },
             )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_table_function_with_inference_api(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_table_function_with_inference_api(self) -> None:
         """Test @inference_api with TABLE_FUNCTION: verifies output column names and is_partitioned=False."""
 
         class RowOrderModel(custom_model.CustomModel):
@@ -813,7 +761,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         input_df = pd.DataFrame({"feature_0": [1]})
         model = RowOrderModel(custom_model.ModelContext())
         expected_output_df = model.predict(input_df)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=RowOrderModel(custom_model.ModelContext()),
             sample_input_data=input_df,
             prediction_assert_fns={

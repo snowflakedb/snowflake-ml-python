@@ -18,6 +18,8 @@ import re
 from typing import Any
 
 import sqlparse
+from sqlparse.sql import Identifier, IdentifierList, Where
+from sqlparse.tokens import DML, Keyword, Literal, Name, Wildcard
 
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.decl.enums import normalize_type
@@ -41,6 +43,11 @@ _SQL_TRAILING_TERMINATORS = re.compile(r"(?:\s*;\s*)+$")
 
 # Duration keys that should be renamed to their _sec counterparts.
 _DURATION_KEYS = frozenset({"feature_granularity", "target_lag", "window", "offset"})
+
+# Top-level set-operation keywords.  A query joined by any of these has no
+# single projection list to compare, so the SELECT-list analysis bails to the
+# predicate-strip proof instead (see :func:`extract_select_output_columns`).
+_SQL_SET_OPERATIONS: frozenset[str] = frozenset({"UNION", "UNION ALL", "INTERSECT", "EXCEPT", "MINUS"})
 
 
 def _decode_join_keys(raw: Any) -> list[str]:
@@ -386,6 +393,197 @@ def canonicalize_sql_for_hash(sql: str) -> str:
     except Exception:  # noqa: BLE001 — fall back to whitespace-only normalisation
         formatted = sql
     return normalize_sql_whitespace(formatted)
+
+
+def _select_output_name(item: Identifier) -> str | None:
+    """Resolve one ``SELECT`` projection item to its output column name.
+
+    The output name is the item's explicit ``AS`` alias when present, else the
+    bare column name (``t.USER_ID`` → ``USER_ID``).  The name is read from the
+    raw ``Name`` / quoted-identifier token so a ``"quoted"`` identifier keeps
+    its case and quoting, then resolved through
+    :func:`snowflake.ml._internal.utils.identifier.resolve_identifier` — the
+    same rule the applied-state recovery uses — so an unquoted authored name
+    and the core-upper-cased name collapse to one canonical form.
+
+    An unaliased expression (``a + b``, ``SUM(b)``) has no provable output
+    name and returns ``None`` so the caller falls back to the predicate-strip
+    proof rather than guessing.
+
+    Args:
+        item: A single ``sqlparse`` ``Identifier`` from the projection list.
+
+    Returns:
+        The canonical output column name, or ``None`` when it cannot be proven.
+    """
+    flat = item.flatten()
+    names = [t for t in flat if t.ttype is Name or t.ttype is Literal.String.Symbol]
+    if not names:
+        return None
+    if item.get_alias():
+        raw = names[-1].value
+    else:
+        real = item.get_real_name()
+        if not real:
+            return None
+        raw = next((n.value for n in reversed(names) if n.value.strip('"') == real), None)
+        if raw is None:
+            return None
+    try:
+        return identifier.resolve_identifier(raw)
+    except ValueError:
+        return None
+
+
+def extract_select_output_columns(sql: str) -> list[str] | None:
+    """Return the ordered output column names of a single ``SELECT``, or ``None``.
+
+    Used by the append-only ``BatchFeatureView`` evolution classifier to decide
+    whether a query-body edit changed the projected output schema (a drop /
+    reorder / retype → destructive ``RECREATE_FV``) or only its predicates (a
+    ``WHERE``-only rewrite → in-place ``EVOLVE_FV``).  Because
+    :func:`spec_compiler.compile_to_spec` parks a query-backed source's SQL in
+    ``spec.sources`` and leaves ``spec.features`` empty, the SELECT list is the
+    only place the output schema is visible.
+
+    Returns ``None`` (the caller then falls back to the predicate-strip proof)
+    whenever the shape cannot be *proven*:
+
+    * not a single statement, or not a ``SELECT`` (after an optional leading
+      ``WITH`` common-table-expression block, which is skipped so a CTE-backed
+      query parses like a plain one);
+    * the outer query is joined by a set operation (``UNION`` / ``INTERSECT`` /
+      ``EXCEPT`` / ``MINUS``) — a set operation nested *inside* a CTE definition
+      does not count, since only the outer projection list matters;
+    * the projection contains a ``*`` wildcard, a non-identifier item, or an
+      unaliased expression (see :func:`_select_output_name`).
+
+    Args:
+        sql: The query body (already comment-stripped / whitespace-normalised
+            at compile time, but this helper does not rely on that).
+
+    Returns:
+        The ordered list of canonical output column names, or ``None`` when the
+        projection cannot be proven.
+    """
+    if not sql:
+        return None
+    try:
+        statements = sqlparse.parse(sql)
+    except Exception:  # noqa: BLE001 — never raise from a hashing / planning boundary
+        return None
+    if len(statements) != 1:
+        return None
+    toks = [t for t in statements[0].tokens if not t.is_whitespace]
+    idx = 0
+    # Skip a leading ``WITH <cte-defs>`` block so the outer SELECT is reached.
+    if idx < len(toks) and toks[idx].ttype is Keyword.CTE:
+        idx += 1
+        if idx < len(toks) and isinstance(toks[idx], (Identifier, IdentifierList)):
+            idx += 1
+    if idx >= len(toks) or toks[idx].ttype is not DML or toks[idx].value.upper() != "SELECT":
+        return None
+    # Outer-query set-operation scan: only top-level keyword tokens count, so a
+    # set operation buried inside a CTE definition does not disqualify a query
+    # whose outer projection list is perfectly readable.
+    for tok in toks[idx:]:
+        if tok.ttype is Keyword and tok.value.upper() in _SQL_SET_OPERATIONS:
+            return None
+    idx += 1
+    projection: list[Any] = []
+    for tok in toks[idx:]:
+        if tok.ttype is Keyword and tok.value.upper() == "FROM":
+            break
+        if tok.ttype is Keyword and tok.value.upper() in ("DISTINCT", "ALL"):
+            continue
+        projection.append(tok)
+    items: list[Any] = []
+    for tok in projection:
+        if isinstance(tok, IdentifierList):
+            items.extend(tok.get_identifiers())
+        else:
+            items.append(tok)
+    if not items:
+        return None
+    out: list[str] = []
+    for item in items:
+        if getattr(item, "ttype", None) is Wildcard:
+            return None
+        if not isinstance(item, Identifier):
+            return None
+        name = _select_output_name(item)
+        if name is None:
+            return None
+        out.append(name)
+    return out or None
+
+
+def _count_set_operations(sql: str) -> int:
+    """Count top-level-flattened set-operation keywords in *sql* (``-1`` on error)."""
+    try:
+        parsed = sqlparse.parse(sql)
+    except Exception:  # noqa: BLE001 — defensive; see :func:`strip_sql_predicates`
+        return -1
+    if not parsed:
+        return -1
+    count = 0
+    for tok in parsed[0].flatten():
+        if tok.ttype is Keyword and tok.value.upper() in _SQL_SET_OPERATIONS:
+            count += 1
+    return count
+
+
+def strip_sql_predicates(sql: str) -> str | None:
+    """Return *sql* with every ``WHERE`` clause removed, canonicalised, or ``None``.
+
+    The append-only evolution classifier uses this as a cheap *proof of SELECT-
+    list equality* for queries :func:`extract_select_output_columns` cannot read
+    (set operations, unaliased expressions).  If the ``WHERE``-stripped,
+    :func:`canonicalize_sql_for_hash`-normalised remainders of two query bodies
+    are byte-identical, then only predicates changed and the projected schema is
+    untouched — so a ``WHERE``-only rewrite of such a query still evolves in
+    place.
+
+    Every ``sqlparse`` ``Where`` group is dropped recursively.  A ``Where``
+    group runs to end-of-statement, so on Snowflake-only trailing clauses
+    (``QUALIFY`` / ``ORDER BY`` / ``LIMIT``) it swallows them too; that is
+    harmless because those clauses sit *after* the projection and never carry
+    output columns.  The one dangerous case — a ``Where`` group swallowing
+    across a set-operation boundary and deleting an entire ``UNION`` branch — is
+    rejected by requiring the set-operation count to survive the strip.
+
+    Args:
+        sql: The query body to strip predicates from.
+
+    Returns:
+        The canonicalised, ``WHERE``-free SQL, or ``None`` when *sql* is empty,
+        is not a single statement, cannot be parsed, or the strip would change
+        the set-operation count.
+    """
+    if not sql:
+        return None
+    try:
+        statements = sqlparse.parse(sql)
+    except Exception:  # noqa: BLE001 — never raise from a hashing / planning boundary
+        return None
+    if len(statements) != 1:
+        return None
+
+    def _walk(token: Any) -> str:
+        parts: list[str] = []
+        for child in token.tokens:
+            if isinstance(child, Where):
+                continue
+            parts.append(_walk(child) if child.is_group else child.value)
+        return "".join(parts)
+
+    try:
+        stripped = _walk(statements[0])
+    except Exception:  # noqa: BLE001 — defensive against malformed parse trees
+        return None
+    if _count_set_operations(stripped) != _count_set_operations(sql):
+        return None
+    return canonicalize_sql_for_hash(stripped)
 
 
 def to_authoring_identifier(value: Any) -> Any:

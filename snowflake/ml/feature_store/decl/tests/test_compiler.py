@@ -9,6 +9,7 @@ from snowflake.ml.feature_store.decl.compiler import (
     _decode_join_keys,
     canonicalize_sql_for_hash,
     compile_spec,
+    extract_select_output_columns,
     inline_query_source,
     inline_udf_source,
     normalize_durations,
@@ -16,6 +17,7 @@ from snowflake.ml.feature_store.decl.compiler import (
     normalize_types,
     parse_duration_to_seconds,
     strip_sql_comments,
+    strip_sql_predicates,
     to_authoring_identifier,
     to_comparison_identifier,
 )
@@ -656,6 +658,138 @@ class TestCanonicalizeSqlForHash:
 
     def test_defensive_on_unparsable_input(self) -> None:
         assert isinstance(canonicalize_sql_for_hash("))) not sql"), str)
+
+
+# ---------------------------------------------------------------------------
+# extract_select_output_columns — 6e1.3 (append-only SELECT-list classifier)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSelectOutputColumns:
+    """``extract_select_output_columns`` returns the ordered output column
+    names of a provable single ``SELECT`` (resolving case the way core does),
+    or ``None`` when the projection cannot be proven so the caller can fall
+    back to the predicate-strip proof."""
+
+    def test_simple_select(self) -> None:
+        assert extract_select_output_columns("SELECT USER_ID, EVENT_TS FROM RAW") == ["USER_ID", "EVENT_TS"]
+
+    def test_where_clause_ignored(self) -> None:
+        assert extract_select_output_columns("SELECT USER_ID, EVENT_TS FROM RAW WHERE AMOUNT > 0") == [
+            "USER_ID",
+            "EVENT_TS",
+        ]
+
+    def test_reorder_reflected_in_order(self) -> None:
+        assert extract_select_output_columns("SELECT USER_ID, AMOUNT, EVENT_TS FROM RAW") == [
+            "USER_ID",
+            "AMOUNT",
+            "EVENT_TS",
+        ]
+
+    def test_drop_reflected(self) -> None:
+        assert extract_select_output_columns("SELECT USER_ID FROM RAW") == ["USER_ID"]
+
+    def test_lowercase_resolves_to_upper(self) -> None:
+        assert extract_select_output_columns("select user_id, event_ts from raw") == ["USER_ID", "EVENT_TS"]
+
+    def test_qualified_names_strip_table_prefix(self) -> None:
+        assert extract_select_output_columns("SELECT t.USER_ID, u.EVENT_TS FROM t JOIN u ON 1=1") == [
+            "USER_ID",
+            "EVENT_TS",
+        ]
+
+    def test_distinct_skipped(self) -> None:
+        assert extract_select_output_columns("SELECT DISTINCT a, b FROM t") == ["A", "B"]
+
+    def test_aliased_aggregate_uses_alias(self) -> None:
+        assert extract_select_output_columns("SELECT a, SUM(b) AS tot FROM t GROUP BY a") == ["A", "TOT"]
+
+    def test_aliased_cast_uses_alias(self) -> None:
+        assert extract_select_output_columns("SELECT CAST(x AS NUMBER) AS y FROM t") == ["Y"]
+
+    def test_aliased_expression_uses_alias(self) -> None:
+        assert extract_select_output_columns("SELECT a + b AS s FROM t") == ["S"]
+
+    def test_quoted_identifier_preserves_case(self) -> None:
+        assert extract_select_output_columns('SELECT "mixedCase", PLAIN FROM t') == ['"mixedCase"', "PLAIN"]
+
+    def test_quoted_alias_preserves_case(self) -> None:
+        assert extract_select_output_columns('SELECT a AS "Keep", b FROM t') == ['"Keep"', "B"]
+
+    def test_cte_outer_select_is_read(self) -> None:
+        assert extract_select_output_columns("WITH c AS (SELECT a, b FROM r) SELECT a, b FROM c") == ["A", "B"]
+
+    def test_cte_with_nested_set_op_still_reads_outer(self) -> None:
+        sql = "WITH c AS (SELECT a FROM x UNION SELECT b FROM y) SELECT z FROM c"
+        assert extract_select_output_columns(sql) == ["Z"]
+
+    def test_wildcard_returns_none(self) -> None:
+        assert extract_select_output_columns("SELECT * FROM t") is None
+
+    def test_unaliased_expression_returns_none(self) -> None:
+        assert extract_select_output_columns("SELECT a + b FROM t") is None
+
+    def test_unaliased_aggregate_returns_none(self) -> None:
+        assert extract_select_output_columns("SELECT a, SUM(b) FROM t GROUP BY a") is None
+
+    def test_outer_set_operation_returns_none(self) -> None:
+        assert extract_select_output_columns("SELECT a FROM t UNION ALL SELECT b FROM u") is None
+
+    def test_empty_returns_none(self) -> None:
+        assert extract_select_output_columns("") is None
+
+    def test_unparsable_returns_none(self) -> None:
+        assert extract_select_output_columns("))) not sql") is None
+
+
+# ---------------------------------------------------------------------------
+# strip_sql_predicates — 6e1.3 (append-only SELECT-list classifier)
+# ---------------------------------------------------------------------------
+
+
+class TestStripSqlPredicates:
+    """``strip_sql_predicates`` removes every ``WHERE`` clause and canonicalises
+    the remainder, so two query bodies that differ only in predicates compare
+    equal (proving the SELECT list is unchanged).  The set-operation count must
+    survive the strip, or it returns ``None``."""
+
+    def test_where_only_change_strips_equal(self) -> None:
+        a = strip_sql_predicates("SELECT a, b FROM r WHERE x > 0")
+        b = strip_sql_predicates("SELECT a, b FROM r WHERE x > 99")
+        assert a is not None and a == b
+
+    def test_added_where_strips_equal_to_no_where(self) -> None:
+        a = strip_sql_predicates("SELECT a, b FROM r WHERE x > 0")
+        b = strip_sql_predicates("SELECT a, b FROM r")
+        assert a is not None and a == b
+
+    def test_select_list_change_differs(self) -> None:
+        a = strip_sql_predicates("SELECT a, b FROM r")
+        b = strip_sql_predicates("SELECT a FROM r")
+        assert a is not None and b is not None and a != b
+
+    def test_cte_where_only_change_strips_equal(self) -> None:
+        a = strip_sql_predicates("WITH c AS (SELECT a, b FROM r WHERE x > 0) SELECT a, b FROM c")
+        b = strip_sql_predicates("WITH c AS (SELECT a, b FROM r) SELECT a, b FROM c")
+        assert a is not None and a == b
+
+    def test_set_op_where_only_change_strips_equal(self) -> None:
+        a = strip_sql_predicates("SELECT a FROM t WHERE z = 1 UNION ALL SELECT b FROM u")
+        b = strip_sql_predicates("SELECT a FROM t UNION ALL SELECT b FROM u")
+        assert a is not None and a == b
+
+    def test_set_op_branch_change_differs(self) -> None:
+        a = strip_sql_predicates("SELECT a FROM t UNION ALL SELECT b FROM u")
+        b = strip_sql_predicates("SELECT a FROM t UNION ALL SELECT c FROM u")
+        assert a is not None and b is not None and a != b
+
+    def test_empty_returns_none(self) -> None:
+        assert strip_sql_predicates("") is None
+
+    def test_unparsable_is_defensive(self) -> None:
+        result = strip_sql_predicates("))) not sql")
+        assert result is None or isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,290 @@
+{
+  "desc": "Mirror of AIMLDEV CONTENT_EVENT_AGGREGATIONS_FV for SK replan capture.",
+  "kind": "BatchFeatureView",
+  "metadata": {
+    "client_version": "1.52.0",
+    "database": "JKEW_DB",
+    "internal_data_version": "1",
+    "name": "MIRROR_CONTENT_AGG_FV",
+    "oft_id": "766522863144986",
+    "schema": "JKEW_SCHEMA",
+    "spec_format_version": "1",
+    "version": "V1"
+  },
+  "offline_configs": [
+    {
+      "columns": [
+        {
+          "length": 16777216,
+          "name": "USER_ID",
+          "type": "StringType"
+        },
+        {
+          "length": 16777216,
+          "name": "OFFER_KEY",
+          "type": "StringType"
+        },
+        {
+          "name": "TILE_START",
+          "type": "TimestampType"
+        },
+        {
+          "name": "_PARTIAL_DS_HLL_RECOMMENDATION_CLICK_ID",
+          "type": "BinaryType"
+        },
+        {
+          "name": "_PARTIAL_DS_HLL_RECOMMENDATION_VIEW_ID",
+          "type": "BinaryType"
+        }
+      ],
+      "database": "JKEW_DB",
+      "schema": "JKEW_SCHEMA",
+      "store_type": "snowflake",
+      "table": "MIRROR_CONTENT_AGG_FV$V1",
+      "table_type": "BatchSource"
+    }
+  ],
+  "online_store_type": "postgres",
+  "spec": {
+    "cluster_by": [
+      "USER_ID",
+      "TILE_START"
+    ],
+    "feature_aggregation_method": "tiles",
+    "feature_granularity_sec": 86400,
+    "features": [
+      {
+        "output_column": {
+          "element_type": "StringType",
+          "length": 16777216,
+          "name": "OFFER_KEY_KEYS_86400S",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "OFFER_KEY",
+          "type": "StringType"
+        },
+        "window_sec": 86400
+      },
+      {
+        "output_column": {
+          "element_type": "StringType",
+          "length": 16777216,
+          "name": "OFFER_KEY_KEYS_604800S",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "OFFER_KEY",
+          "type": "StringType"
+        },
+        "window_sec": 604800
+      },
+      {
+        "output_column": {
+          "element_type": "StringType",
+          "length": 16777216,
+          "name": "OFFER_KEY_KEYS_1209600S",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "OFFER_KEY",
+          "type": "StringType"
+        },
+        "window_sec": 1209600
+      },
+      {
+        "output_column": {
+          "element_type": "StringType",
+          "length": 16777216,
+          "name": "OFFER_KEY_KEYS_2419200S",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "OFFER_KEY",
+          "type": "StringType"
+        },
+        "window_sec": 2419200
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "CLICKS_1DAY",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_CLICK_ID",
+          "type": "StringType"
+        },
+        "window_sec": 86400
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "CLICKS_1WEEK",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_CLICK_ID",
+          "type": "StringType"
+        },
+        "window_sec": 604800
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "CLICKS_2WEEKS",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_CLICK_ID",
+          "type": "StringType"
+        },
+        "window_sec": 1209600
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "CLICKS_4WEEKS",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_CLICK_ID",
+          "type": "StringType"
+        },
+        "window_sec": 2419200
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "VIEWS_1DAY",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_VIEW_ID",
+          "type": "StringType"
+        },
+        "window_sec": 86400
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "VIEWS_1WEEK",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_VIEW_ID",
+          "type": "StringType"
+        },
+        "window_sec": 604800
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "VIEWS_2WEEKS",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_VIEW_ID",
+          "type": "StringType"
+        },
+        "window_sec": 1209600
+      },
+      {
+        "function": "approx_count_distinct",
+        "function_params": {
+          "hll_lg_k": 8
+        },
+        "output_column": {
+          "element_type": "LongType",
+          "name": "VIEWS_4WEEKS",
+          "type": "ArrayType"
+        },
+        "source_column": {
+          "length": 16777216,
+          "name": "RECOMMENDATION_VIEW_ID",
+          "type": "StringType"
+        },
+        "window_sec": 2419200
+      }
+    ],
+    "ordered_entity_column_names": [
+      "USER_ID",
+      "OFFER_KEY"
+    ],
+    "ordered_secondary_key_column_names": [
+      "OFFER_KEY"
+    ],
+    "refresh_freq": "1 day",
+    "refresh_mode": "AUTO",
+    "sources": [
+      {
+        "columns": [
+          {
+            "name": "USER_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "EVENT_TS",
+            "type": "TimestampType"
+          },
+          {
+            "name": "RECOMMENDATION_CLICK_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "RECOMMENDATION_VIEW_ID",
+            "type": "StringType"
+          },
+          {
+            "name": "OFFER_KEY",
+            "type": "StringType"
+          }
+        ],
+        "name": "MIRROR_CONTENT_EVENTS_SRC",
+        "query": "SELECT USER_ID, OFFER_KEY, EVENT_TS, RECOMMENDATION_CLICK_ID, RECOMMENDATION_VIEW_ID FROM JKEW_DB.JKEW_SCHEMA.MIRROR_CONTENT_EVENTS_SEED",
+        "source_type": "Batch"
+      }
+    ],
+    "target_lag_sec": 60,
+    "timestamp_field": "EVENT_TS"
+  }
+}

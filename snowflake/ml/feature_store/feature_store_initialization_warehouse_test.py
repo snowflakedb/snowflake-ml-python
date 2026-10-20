@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -83,6 +84,67 @@ class CreateDynamicTableQueryTest(absltest.TestCase):
         query = self._build(fv)
         self.assertIn("DYNAMIC ICEBERG TABLE", query)
         self.assertIn("INITIALIZATION_WAREHOUSE = LARGE_WH", query)
+
+
+class DynamicTableInitializeParseTest(absltest.TestCase):
+    """``_DT_INITIALIZE_PATTERN`` recovers ``INITIALIZE`` from the Dynamic Table
+    DDL in ``SHOW DYNAMIC TABLES.text`` during reconstruction.
+
+    The capture must be bounded to the parameter value so a quoted literal in
+    the query body (e.g. ``'click'``) is not swallowed, which previously made
+    reconstruction fail ``FeatureView`` validation for imperatively-registered
+    SQL feature views.
+    """
+
+    def _parse(self, text: str) -> str | None:
+        m = re.match(fs_mod._DT_INITIALIZE_PATTERN, text)
+        return m.group("initialize") if m is not None else None
+
+    def test_imperative_case_when_literal_parses_value_only(self) -> None:
+        text = (
+            "CREATE DYNAMIC TABLE DB.SCH.F_APPEND_ONLY_CASE$V1(UUID, EVENT_TS, CLICKS) "
+            "initialize = 'ON_CREATE' warehouse = USER_WH AS "
+            "SELECT UUID, MAX(EVENT_TS) AS EVENT_TS,\n"
+            "SUM(CASE WHEN EVENT_TYPE = 'click' THEN 1 ELSE 0 END) AS CLICKS "
+            "FROM EVENTS GROUP BY UUID"
+        )
+        self.assertEqual(self._parse(text), "ON_CREATE")
+
+    def test_imperative_count_if_and_in_list_literals(self) -> None:
+        text = (
+            "CREATE DYNAMIC TABLE DB.SCH.E_APPEND_ONLY$V1(UUID, CLICKS, INTERACTIONS) "
+            "initialize = 'ON_CREATE' warehouse = USER_WH AS "
+            "SELECT UUID, COUNT_IF(EVENT_TYPE = 'click') AS CLICKS, "
+            "COUNT_IF(EVENT_TYPE IN ('click', 'view')) AS INTERACTIONS "
+            "FROM EVENTS GROUP BY UUID"
+        )
+        self.assertEqual(self._parse(text), "ON_CREATE")
+
+    def test_imperative_no_string_literals(self) -> None:
+        text = (
+            "CREATE DYNAMIC TABLE DB.SCH.G$V1(UUID, TOTAL) "
+            "initialize = 'ON_CREATE' warehouse = USER_WH AS "
+            "SELECT UUID, SUM(AMOUNT) AS TOTAL FROM EVENTS GROUP BY UUID"
+        )
+        self.assertEqual(self._parse(text), "ON_CREATE")
+
+    def test_on_schedule_value_round_trips(self) -> None:
+        text = (
+            "CREATE DYNAMIC TABLE DB.SCH.H$V1(UUID, CLICKS) "
+            "initialize = 'ON_SCHEDULE' warehouse = USER_WH AS "
+            "SELECT UUID, SUM(CASE WHEN EVENT_TYPE = 'click' THEN 1 ELSE 0 END) AS CLICKS "
+            "FROM EVENTS GROUP BY UUID"
+        )
+        self.assertEqual(self._parse(text), "ON_SCHEDULE")
+
+    def test_declarative_create_or_replace_does_not_match(self) -> None:
+        text = (
+            "CREATE OR REPLACE DYNAMIC TABLE DB.SCH.D$V1(UUID, CLICKS) "
+            "initialize = 'ON_CREATE' warehouse = USER_WH AS "
+            "SELECT UUID, SUM(CASE WHEN EVENT_TYPE = 'click' THEN 1 ELSE 0 END) AS CLICKS "
+            "FROM EVENTS GROUP BY UUID"
+        )
+        self.assertIsNone(self._parse(text))
 
 
 if __name__ == "__main__":

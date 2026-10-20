@@ -14,6 +14,8 @@ from typing import Any, Literal, Mapping
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.feature_store.decl.compiler import (
     canonicalize_sql_for_hash,
+    extract_select_output_columns,
+    strip_sql_predicates,
     to_comparison_identifier,
 )
 from snowflake.ml.feature_store.decl.spec_models import SpecBase
@@ -64,6 +66,11 @@ _FINGERPRINT_TYPE_MAP: dict[str, str] = {
 
 
 _SOURCE_KIND_ALIASES: frozenset[str] = frozenset({"StreamingSource", "BatchSource"})
+
+# FeatureView subkinds (batch / streaming / realtime) are one physical object.
+# Only _check_duplicate_spec_keys collapses them; spec_key keeps the real
+# subkind because applied-state lookups and planner routing depend on it.
+_FV_DUPLICATE_ALIASES: frozenset[str] = _FV_RECREATE_KINDS
 
 
 def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> str:
@@ -433,6 +440,27 @@ def _canonicalize_columns(columns: Any) -> list[dict[str, str]]:
     return sorted(out, key=lambda x: x["name"])
 
 
+# Source *location* keys that are implicit in the Datasource ``spec_key``
+# qualifier (``kind:database.schema:NAME``) and therefore must NOT drive the
+# structural diff computed by :func:`compute_source_diff_kind`.  The applied
+# side (``state._datasource_objects_from_specs``) always stamps
+# ``database`` / ``schema`` from the FV metadata, while a source referenced
+# only by orphaned-OFT FVs is exported as a bare columns-only YAML with none
+# of these keys — leaving them in the hash produces a spurious
+# ``RECREATE_SOURCE`` after ``snow feature init``.  The physical ``table`` /
+# ``query`` binding is deliberately NOT in this set: a genuine relocation must
+# still surface as a recreate.
+_SOURCE_LOCATION_KEYS: frozenset[str] = frozenset(
+    {
+        "database",
+        "schema",
+        "schema_",
+        "source_database",
+        "source_schema",
+    }
+)
+
+
 def compute_source_diff_kind(
     local_payload: dict[str, Any],
     applied_payload: dict[str, Any],
@@ -443,17 +471,22 @@ def compute_source_diff_kind(
     already has an applied counterpart:
 
     * ``recreate`` — the structural shape differs: a column added, removed or
-      retyped, or a swapped store type, table, query or producer type.  This
-      is destructive, so it needs an explicit opt-in.
+      retyped, or a swapped store type, table, query or producer type.  The
+      planner marks a StreamingSource recreate destructive (real drop +
+      re-register) but a BatchSource recreate non-destructive (executor no-op;
+      the consuming FV op is the ``--destructive`` gate).
     * ``update_desc_only`` — the shape matches but the description differs.
     * ``no_change`` — both match.
 
     Both sides are stripped to a structurally-stable shape before hashing.
     Descriptions are dropped from both; the producer-protocol ``type`` is
     dropped from the local side only, since the runtime row never carries it.
-    Columns are canonicalised symmetrically, and dropped from both sides when
-    the applied side recovered none — the usual shape for a table-backed batch
-    source, where keeping them would force a needless recreate.  Queries are
+    The target-implicit location keys (``database`` / ``schema`` /
+    ``source_database`` / ``source_schema``) are dropped from both sides since
+    they are already encoded in the ``Datasource`` ``spec_key``.  Columns are
+    canonicalised symmetrically, and dropped from both sides when the applied
+    side recovered none — the usual shape for a table-backed batch source,
+    where keeping them would force a needless recreate.  Queries are
     canonicalised so a comment or whitespace edit stays cosmetic.  A structural
     mismatch short-circuits the description comparison, since description drift
     is free inside a recreate.
@@ -467,6 +500,18 @@ def compute_source_diff_kind(
     """
     stripped_local = _strip_volatile_source_keys(local_payload, strip_type=True)
     stripped_applied = _strip_volatile_source_keys(applied_payload, strip_type=False)
+
+    # Location keys (``database`` / ``schema`` / ``source_database`` /
+    # ``source_schema``) are implicit in the Datasource ``spec_key``
+    # qualifier and asymmetric across the diff surface: the applied side
+    # always stamps ``database`` / ``schema`` while a bare orphaned-FV export
+    # carries none.  Drop them from BOTH sides so they never drive a spurious
+    # ``RECREATE_SOURCE`` (see ``_SOURCE_LOCATION_KEYS``).  The physical
+    # ``table`` / ``query`` binding stays in the hash, so a genuine relocation
+    # still surfaces as a recreate.
+    for _loc_key in _SOURCE_LOCATION_KEYS:
+        stripped_local.pop(_loc_key, None)
+        stripped_applied.pop(_loc_key, None)
 
     # Columns canonicalization (Bug 1 closure — Phase B5).  Pop the
     # raw value off BOTH sides, run each through the same
@@ -576,9 +621,9 @@ _RUNTIME_STAMPED_SPEC_KEYS: frozenset[str] = frozenset(
 # unedited round-trip emits ``NO_CHANGE``.  An operator who authors a
 # non-default value keeps the key in the hash.
 #
-# ``refresh_mode`` is intentionally excluded: Snowflake resolves it to
-# INCREMENTAL or FULL, not AUTO, so there is no symmetric default to strip.
-# Applied-side refresh_mode is handled asymmetrically in
+# ``refresh_mode`` is kept out of this dict: its ``AUTO`` sentinel is stripped
+# directly in :func:`_strip_default_operational_fields`, and a resolved
+# INCREMENTAL / FULL is handled asymmetrically in
 # :func:`_normalize_applied_bfv_for_hash` and
 # :func:`batch_feature_view_structural_equivalent`.
 _BFV_OPERATIONAL_DEFAULTS: dict[str, str] = {
@@ -604,8 +649,11 @@ def _strip_default_operational_fields(inner: dict[str, Any]) -> None:
     ``initialize`` is stamped at create time and recovered from the deployed
     table text, but the local side only emits it when the operator authored it.
     Dropping it when it matches the default keeps the two sides hashing
-    identically.  ``refresh_mode`` is left alone — Snowflake resolves it to
-    INCREMENTAL or FULL, never AUTO, so it needs asymmetric handling instead.
+    identically.  ``refresh_mode == "AUTO"`` is stripped symmetrically — it is
+    Snowflake's "unset" sentinel (the validator only accepts FULL / INCREMENTAL)
+    while a live tiled-online DESCRIBE still reports it; an authored FULL /
+    INCREMENTAL stays hash-significant and is handled asymmetrically in
+    :func:`_normalize_applied_bfv_for_hash`.
 
     Args:
         inner: The ``spec`` sub-dict of a BatchFV payload, mutated in place.
@@ -616,6 +664,8 @@ def _strip_default_operational_fields(inner: dict[str, Any]) -> None:
     for key, default in _BFV_OPERATIONAL_DEFAULTS.items():
         if inner.get(key) == default:
             inner.pop(key, None)
+    if str(inner.get("refresh_mode") or "").upper() == "AUTO":
+        inner.pop("refresh_mode", None)
 
 
 def _normalize_applied_bfv_for_hash(
@@ -652,10 +702,12 @@ def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
     """Drop ``cluster_by`` from a BatchFV inner spec when it matches the default.
 
     snowml-core defaults the cluster list to the ordered entity columns, plus a
-    tile-start column for tiled views.  YAML that leaves the key out compiles
-    without it while the applied side recovers the deployed default, so both
-    sides must drop it to hash identically.  An operator who authors a
-    non-default list keeps the key, so editing it still forces a recreate.
+    tile-start column for tiled views or the ``timestamp_col`` for a non-tiled
+    BFV that has one (the append-only snapshot shape).  YAML that leaves the key
+    out compiles without it while the applied side recovers the deployed
+    default, so both sides must drop it to hash identically.  An operator who
+    authors a non-default list keeps the key, so editing it still forces a
+    recreate.
 
     Tiling is detected from either half of the diff, so the helper works
     symmetrically.
@@ -673,7 +725,14 @@ def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
         return
     entities_uc = [str(e).upper() for e in entities]
     cluster_uc = [str(c).upper() for c in cluster_by]
-    if cluster_uc == entities_uc or cluster_uc == entities_uc + ["TILE_START"]:
+    defaults = [entities_uc, entities_uc + ["TILE_START"]]
+    # Non-tiled BFVs with a timestamp column (e.g. every append-only BFV)
+    # default to ``[<entities>..., <timestamp_col>]``.  The compiled inner
+    # spec carries the timestamp under ``timestamp_field``.
+    timestamp_field = inner.get("timestamp_field")
+    if timestamp_field:
+        defaults.append(entities_uc + [str(timestamp_field).upper()])
+    if cluster_uc in defaults:
         inner.pop("cluster_by", None)
 
 
@@ -702,6 +761,153 @@ def _normalise_feature_column_types(features: Any) -> None:
             promoted = _BFV_TYPE_PROMOTION.get(_ctype) if isinstance(_ctype, str) else None
             if promoted is not None:
                 col["type"] = promoted
+
+
+# --- secondary-key FROM SPECIFICATION provenance -----------------------------
+# snowml-core's spec builders (``feature_store._build_batch_feature_view_spec``
+# and ``streaming_registration._build_streaming_feature_view_spec``) rewrite the
+# deployed spec of any BatchFV/StreamingFV carrying ``aggregation_secondary_keys``
+# in three ways the local decl compiler never mirrors, so a clean apply-then-plan
+# loops on ``RECREATE_FV``.  Confirmed against live ``DESCRIBE ... TYPE =
+# SPECIFICATION`` captures of a tiled online BatchFV
+# (``golden_specs/CONTENT_AGG_BATCH_SK.json``) and a continuous online StreamingFV
+# (``golden_specs/CONTENT_AGG_STREAM_SK.json``):
+#
+#   1. the SK is appended to ``ordered_entity_column_names``
+#      (``["USER_ID","OFFER_KEY"]`` vs local ``["USER_ID"]``);
+#   2. every real aggregation ``output_column`` becomes ``ArrayType`` with a
+#      server-chosen ``element_type`` (authored ``StringType`` -> ``LongType`` for
+#      ``approx_count_distinct``) -- fully derived from (function, source type),
+#      never operator-authored;
+#   3. one synthesised SK-array feature is added per distinct window
+#      (``<SK>_KEYS_<window>S``: sourced from the SK, ``ArrayType`` output, no
+#      ``function``) -- pure core derivation from the SK column.
+#
+# ``_strip_secondary_key_derivations`` canonicalises all three so the authored
+# local compile and the ``snow feature export`` recovery converge on the same
+# hash, while preserving the SK identity and real aggregation fields
+# (``function`` / ``window_sec`` / ``function_params`` / ``source_column`` /
+# ``output_column.name``) so genuine edits still bump the hash.
+#
+# Batch + Streaming are scoped by the caller; SK-gating here keeps the streaming
+# detection-safety contract intact for non-SK streaming ArrayType FVs (their
+# ``element_type`` stays independently hash-significant -- see
+# ``test_streaming_fv_array_element_type_roundtrip``).  For an SK streaming FV the
+# ``element_type`` is a pure server derivation and is dropped like batch, with a
+# genuine change caught by the retained fields (see
+# ``test_element_type_change_still_bumps_hash``).
+
+
+def _secondary_key_set(inner: dict[str, Any]) -> set[str]:
+    """Comparison-folded set of the spec's secondary-key columns, or empty when none.
+
+    Uses ``to_comparison_identifier`` (the same case-insensitive fold the
+    exporter's SK filters use) rather than raw ``.upper()``: these are
+    comparison sites, not the case-preserving identity sites the stored-form
+    canonicalization protects.
+
+    Args:
+        inner: The ``spec`` sub-dict of a BatchFV/StreamingFV spec_payload.
+
+    Returns:
+        The comparison-folded secondary-key column names, or an empty set when
+        the spec declares none.
+    """
+    sk_raw = inner.get("ordered_secondary_key_column_names") or inner.get("aggregation_secondary_keys") or []
+    return {to_comparison_identifier(s) for s in sk_raw if s} if isinstance(sk_raw, list) else set()
+
+
+def _strip_sk_from_entities(inner: dict[str, Any], sk_set: set[str]) -> None:
+    """(1) Drop the SK from the entity-column list (identity kept in the SK field)."""
+    entities = inner.get("ordered_entity_column_names")
+    if isinstance(entities, list):
+        inner["ordered_entity_column_names"] = [c for c in entities if to_comparison_identifier(c) not in sk_set]
+
+
+def _is_synthesised_sk_array_feature(feat: Any, sk_set: set[str]) -> bool:
+    """(3) True for the synthesised SK-array feature: sourced from the SK, an
+    ``ArrayType`` output, and no aggregation ``function``.
+
+    Args:
+        feat: A single ``features[]`` entry (dict or otherwise).
+        sk_set: Comparison-folded secondary-key column names.
+
+    Returns:
+        ``True`` if ``feat`` is the pure SK-array derivation, else ``False``.
+    """
+    if not isinstance(feat, dict):
+        return False
+    # Bind before isinstance so mypy narrows away the None from dict.get.
+    source_column = feat.get("source_column")
+    output_column = feat.get("output_column")
+    sc = source_column if isinstance(source_column, dict) else {}
+    oc = output_column if isinstance(output_column, dict) else {}
+    return (
+        to_comparison_identifier(sc.get("name")) in sk_set
+        and feat.get("function") in (None, "")
+        and str(oc.get("type")) == "ArrayType"
+    )
+
+
+def _strip_server_derived_agg_output(feat: Any) -> Any:
+    """(2) On a real aggregation feature, drop the server-derived
+    ``output_column`` type wrapping (``type`` / ``element_type`` / ``length``,
+    redundant with the retained function + source type) and the runtime-default
+    VARCHAR ``length`` the deployed spec stamps onto the ``source_column``.
+
+    Args:
+        feat: A single ``features[]`` entry, mutated in place when a dict.
+
+    Returns:
+        The same ``feat`` (unchanged for non-dict entries).
+    """
+    if not isinstance(feat, dict):
+        return feat
+    oc = feat.get("output_column")
+    if feat.get("function") not in (None, "") and isinstance(oc, dict):
+        for _k in ("type", "element_type", "length"):
+            oc.pop(_k, None)
+    sc = feat.get("source_column")
+    if isinstance(sc, dict):
+        _strip_runtime_stamped_columns([sc])
+    return feat
+
+
+def _strip_secondary_key_derivations(inner: dict[str, Any]) -> None:
+    """Drop snowml-core's secondary-key ``FROM SPECIFICATION`` derivations so an
+    operator-authored SK feature view and its ``snow feature export`` recovery
+    hash identically (stops the planner looping on ``RECREATE_FV``).  SK-gated
+    no-op; the SK identity and real aggregation fields are preserved so genuine
+    edits still bump the hash.  See the module comment above for the three server
+    rewrites this reverses.
+
+    The SK-membership comparisons here are the read/hash-path mirror of the
+    exporter's write-path SK filters (``exporter._secondary_key_columns`` /
+    ``exporter._authoring_features``), and share their canonical
+    ``to_comparison_identifier`` fold.  The case-insensitive match is
+    intentional (the DESIGN's "comparison form"), not a leftover of the
+    ``.upper()`` -> stored-form identity migration: the SK *identity* is
+    preserved in stored form via ``aggregation_secondary_keys`` so a genuine
+    mixed-case SK rename still bumps the hash.
+
+    Args:
+        inner: The ``spec`` sub-dict of a BatchFV/StreamingFV spec_payload,
+            mutated in place.  Non-dict inputs and SK-absent specs are no-ops.
+    """
+    if not isinstance(inner, dict):
+        return
+    sk_set = _secondary_key_set(inner)
+    if not sk_set:
+        return
+    _strip_sk_from_entities(inner, sk_set)  # (1)
+    features = inner.get("features")
+    if not isinstance(features, list):
+        return
+    inner["features"] = [
+        _strip_server_derived_agg_output(feat)  # (2) + runtime length
+        for feat in features
+        if not _is_synthesised_sk_array_feature(feat, sk_set)  # (3)
+    ]
 
 
 def _canonical_function_spelling(fn: Any) -> Any:
@@ -1241,10 +1447,21 @@ def _normalize_for_full_spec_hash(spec: dict[str, Any], *, authored: bool = Fals
             _strip_runtime_stamped_columns(udf.get("output_columns"))
         # BatchFV parity normalisation (see docstring).
         if kind in _FV_HASH_NORMALISE_KINDS:
+            # Reconcile snowml-core's secondary-key round-trip transforms (SK
+            # appended to entity cols, ArrayType-wrapped aggregation outputs,
+            # synthesised per-window SK-array features).  SK-gated no-op otherwise.
+            if kind in ("BatchFeatureView", "StreamingFeatureView"):
+                _strip_secondary_key_derivations(inner)
             inner["sources"] = _normalise_fv_sources_for_hash(inner.get("sources"))
             features = inner.get("features")
             if isinstance(features, list):
                 inner["features"] = [f for f in features if not _is_auto_derived_feature(f)]
+            # Fold the applied wire key ``ordered_secondary_key_column_names``
+            # into the authoring key ``aggregation_secondary_keys`` so both sides
+            # hash identically (value preserved, so a real SK change still bumps).
+            wire_sk = inner.pop("ordered_secondary_key_column_names", None)
+            if wire_sk and "aggregation_secondary_keys" not in inner:
+                inner["aggregation_secondary_keys"] = wire_sk
             # Canonicalize the stddev spelling ("stddev" -> "std") across
             # batch + streaming tiled features so the SPECIFICATION spelling
             # does not diverge from the imperative wire token when hashing.
@@ -1267,6 +1484,7 @@ def _normalize_for_full_spec_hash(spec: dict[str, Any], *, authored: bool = Fals
         if kind == "BatchFeatureView":
             _strip_default_operational_fields(inner)
             _strip_default_cluster_by(inner)
+            _strip_default_append_only(inner)
             _normalise_feature_column_types(inner.get("features"))
     return cleaned
 
@@ -1297,6 +1515,57 @@ def _full_spec_hash(spec: dict[str, Any], *, authored: bool = False) -> str:
     """
     canonical = json.dumps(_normalize_for_full_spec_hash(spec, authored=authored), sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Authored (local) vs applied half of the full-spec hash
+# ---------------------------------------------------------------------------
+# The full-spec hash compares two halves: the *authored* (local) spec, freshly
+# compiled from the project files, and the *applied* spec recovered from
+# ``DESCRIBE ... TYPE = SPECIFICATION``.  On this slice the two halves are
+# normalised identically, so these are thin forwarders.  They exist as the
+# *single* entry point for each half so that when jkew/decl-fs/6e1.1 lands its
+# SQL-identifier canonicalisation (which makes the two halves asymmetric:
+# ``authored=True`` resolves SQL syntax to Snowflake's stored form, ``False``
+# only unquotes), the authored/applied distinction is threaded **here only** --
+# at ``6e-int`` -- rather than silently defaulting to applied semantics on the
+# authored side.  Keeping every caller routed through these forwarders is why
+# the ``6e-int`` merge surfaces a visible conflict instead of a wrong default.
+def _normalize_local_half(spec: dict[str, Any]) -> dict[str, Any]:
+    """Normalise the *authored* (local) half of the full-spec hash.
+
+    Args:
+        spec: The compiled local spec dict (``compile_to_spec`` output).
+
+    Returns:
+        The normalised spec dict ready for hashing / property diffing.
+    """
+    return _normalize_for_full_spec_hash(spec, authored=True)
+
+
+def _normalize_applied_half(spec: dict[str, Any]) -> dict[str, Any]:
+    """Normalise the *applied* (deployed) half of the full-spec hash.
+
+    Args:
+        spec: The applied spec dict recovered from ``DESCRIBE ... TYPE =
+            SPECIFICATION``.
+
+    Returns:
+        The normalised spec dict ready for hashing / property diffing.
+    """
+    return _normalize_for_full_spec_hash(spec, authored=False)
+
+
+def _hash_local_half(spec: dict[str, Any]) -> str:
+    """Hash the *authored* (local) half of the full-spec hash.
+
+    Args:
+        spec: The compiled local spec dict (``compile_to_spec`` output).
+
+    Returns:
+        64-character lowercase hex SHA-256 digest.
+    """
+    return _full_spec_hash(spec, authored=True)
 
 
 def compute_local_spec_hash(
@@ -1332,9 +1601,334 @@ def compute_local_spec_hash(
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
     compiled = compile_to_spec(model_dict, database, schema, entity_join_keys=entity_join_keys)
-    # Authored half: resolve SQL-syntax identifiers to Snowflake's stored form
-    # so they compare against the applied side's already-resolved identifiers.
-    return _full_spec_hash(compiled, authored=True)
+    # Route through the authored-half entry point so 6e1.1's identifier
+    # canonicalisation is threaded here only (see _hash_local_half).
+    return _hash_local_half(compiled)
+
+
+# Normalized ``spec.*`` property paths whose change *may* be a pure
+# *transformation* edit (the source SQL body / table binding) rather than an
+# output-schema change.  Membership here no longer *assumes* the edit is
+# schema-preserving: a ``spec.sources`` delta is handed to
+# :func:`_source_binding_evolution_kind`, which inspects the query SELECT list
+# (a drop / reorder / retype projects a different schema and must recreate) and
+# only returns ``"preserving"`` for a table retarget or a predicate-only query
+# rewrite.  ``spec.sources`` is the compiled binding (projected to a
+# ``[{table}]`` / ``[{query}]`` shape by :func:`_normalise_fv_sources_for_hash`
+# for the hash), so a comment / whitespace-only edit never reaches here (it is
+# already canonicalised to ``NO_CHANGE`` upstream).
+_APPEND_ONLY_TRANSFORM_ONLY_PROPS: frozenset[str] = frozenset({"spec.sources"})
+
+# Evolution-kind severity ordering (ascending).  ``_worst_evolution_kind``
+# folds the per-section verdicts to the most destructive outcome.
+_EVOLUTION_KIND_SEVERITY: dict[str, int] = {"preserving": 0, "extend_only": 1, "breaking": 2}
+
+
+def _worst_evolution_kind(*kinds: str) -> str:
+    """Return the most destructive of *kinds* (``breaking`` > ``extend_only`` > ``preserving``).
+
+    Args:
+        *kinds: Evolution-kind labels to fold.
+
+    Returns:
+        The label with the highest severity; ``"preserving"`` when no args.
+    """
+    worst = "preserving"
+    for kind in kinds:
+        if _EVOLUTION_KIND_SEVERITY.get(kind, 2) > _EVOLUTION_KIND_SEVERITY.get(worst, 0):
+            worst = kind
+    return worst
+
+
+def _raw_fv_sources(spec: Any) -> list[dict[str, Any]]:
+    """Return the un-normalised ``spec.sources`` list of a compiled / applied spec.
+
+    Reads the raw binding entries (``name`` / ``table`` / ``query`` / ...)
+    *before* :func:`_normalise_fv_sources_for_hash` projects them to the
+    ``[{binding}]`` hash shape, so the SELECT-list analysis can see the actual
+    SQL body.
+
+    Args:
+        spec: A compiled-local or applied spec dict.
+
+    Returns:
+        The ``spec.sources`` list of dicts, or an empty list when absent.
+    """
+    inner = spec.get("spec") if isinstance(spec, dict) else None
+    sources = inner.get("sources") if isinstance(inner, dict) else None
+    if not isinstance(sources, list):
+        return []
+    return [s for s in sources if isinstance(s, dict)]
+
+
+def _pair_sources_by_binding(
+    local_sources: list[dict[str, Any]],
+    applied_sources: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]] | None:
+    """Pair local and applied source entries for a one-to-one binding comparison.
+
+    Pairs by uppercased ``name`` when both sides carry a complete, distinct
+    name set that matches; otherwise by position when the two lists are the same
+    length (the author-side and recovery-side logical names can differ for a
+    query-backed source).  Returns ``None`` when neither strategy applies, which
+    the caller treats as ``"breaking"``.
+
+    Args:
+        local_sources: Raw local ``spec.sources`` entries.
+        applied_sources: Raw applied ``spec.sources`` entries.
+
+    Returns:
+        A list of ``(local, applied)`` pairs, or ``None`` when the sources
+        cannot be aligned.
+    """
+    if not local_sources or not applied_sources:
+        return None
+
+    def _name_index(sources: list[dict[str, Any]]) -> dict[str, dict[str, Any]] | None:
+        names = [str(s.get("name") or "").strip().upper() for s in sources]
+        if all(names) and len(set(names)) == len(names):
+            return dict(zip(names, sources))
+        return None
+
+    local_by_name = _name_index(local_sources)
+    applied_by_name = _name_index(applied_sources)
+    if local_by_name is not None and applied_by_name is not None and set(local_by_name) == set(applied_by_name):
+        return [(local_by_name[name], applied_by_name[name]) for name in local_by_name]
+    if len(local_sources) == len(applied_sources):
+        return list(zip(local_sources, applied_sources))
+    return None
+
+
+def _binding_pair_evolution_kind(local_src: dict[str, Any], applied_src: dict[str, Any]) -> str:
+    """Classify a single local-vs-applied source binding edit.
+
+    * A table binding on *both* sides is ``"preserving"`` — the new table's
+      schema is unknowable at plan time and a retarget is the in-place happy path.
+    * A table ↔ query flip is ``"breaking"``: the query side's output schema is
+      visible, so it is not waved through like a pure table retarget.
+    * Query-vs-query: compare the proven SELECT lists.  Equal → ``"preserving"``;
+      the applied list a strict prefix of the local list → ``"extend_only"``;
+      any reorder / drop / retype → ``"breaking"``.  When either SELECT list
+      cannot be proven, fall back to the predicate-strip proof: identical
+      ``WHERE``-free bodies prove the projection is unchanged (``"preserving"``),
+      otherwise ``"breaking"``.
+
+    Args:
+        local_src: One raw local ``spec.sources`` entry.
+        applied_src: The paired raw applied ``spec.sources`` entry.
+
+    Returns:
+        One of ``"preserving"``, ``"extend_only"``, ``"breaking"``.
+    """
+    local_query = local_src.get("query")
+    applied_query = applied_src.get("query")
+    local_has_query = isinstance(local_query, str) and bool(local_query.strip())
+    applied_has_query = isinstance(applied_query, str) and bool(applied_query.strip())
+    if local_has_query != applied_has_query:
+        return "breaking"  # table ↔ query flip exposes a visible output schema
+    if not (isinstance(local_query, str) and local_query.strip()):
+        return "preserving"  # table → table retarget (schema unknowable at plan time)
+    if not (isinstance(applied_query, str) and applied_query.strip()):
+        return "preserving"  # defensive: both sides are queries past the flip check
+
+    local_cols = extract_select_output_columns(local_query)
+    applied_cols = extract_select_output_columns(applied_query)
+    if local_cols is not None and applied_cols is not None:
+        if local_cols == applied_cols:
+            return "preserving"
+        if len(local_cols) > len(applied_cols) and local_cols[: len(applied_cols)] == applied_cols:
+            return "extend_only"
+        return "breaking"
+
+    # Unprovable SELECT list — fall back to the predicate-strip equality proof.
+    local_stripped = strip_sql_predicates(local_query)
+    applied_stripped = strip_sql_predicates(applied_query)
+    if local_stripped is not None and local_stripped == applied_stripped:
+        return "preserving"
+    return "breaking"
+
+
+def _source_binding_evolution_kind(local_compiled: dict[str, Any], applied_payload: dict[str, Any]) -> str:
+    """Classify the ``spec.sources`` delta of an append-only BatchFeatureView edit.
+
+    Reads the raw (pre-hash-normalisation) source bindings from both sides,
+    pairs them (:func:`_pair_sources_by_binding`), and folds the per-pair
+    verdicts (:func:`_binding_pair_evolution_kind`) to the most destructive
+    outcome.  Unalignable source lists are ``"breaking"``.
+
+    Args:
+        local_compiled: The compiled local spec dict (``compile_to_spec``).
+        applied_payload: The deployed ``AppliedObject.spec_payload``.
+
+    Returns:
+        One of ``"preserving"``, ``"extend_only"``, ``"breaking"``.
+    """
+    local_sources = _raw_fv_sources(local_compiled)
+    applied_sources = _raw_fv_sources(applied_payload)
+    pairs = _pair_sources_by_binding(local_sources, applied_sources)
+    if pairs is None:
+        return "breaking"
+    return _worst_evolution_kind(*(_binding_pair_evolution_kind(loc, app) for loc, app in pairs))
+
+
+def _strip_default_append_only(inner: dict[str, Any]) -> None:
+    """Drop ``append_only`` from a BatchFV inner spec when it is the default.
+
+    The local compiler only emits ``append_only`` when the operator authored
+    ``true``, but a deployed ``DESCRIBE … TYPE = SPECIFICATION`` payload (or a
+    ``list_feature_views`` row) may stamp the snowml-core default ``False``.
+    Strip the key whenever its value is falsy so a plain BFV hashes identically
+    on the local and applied sides, and an append-only BFV (``True``) still
+    contributes to the structural hash.
+
+    Args:
+        inner: The ``spec`` sub-dict of a BatchFV spec_payload (mutated in
+            place).  Non-dict inputs are no-ops.
+    """
+    if not isinstance(inner, dict):
+        return
+    if "append_only" in inner and not inner.get("append_only"):
+        inner.pop("append_only", None)
+
+
+def append_only_schema_evolution_kind(
+    local_compiled: dict[str, Any],
+    applied_payload: dict[str, Any],
+) -> str:
+    """Classify a hash-differing append-only BatchFeatureView edit.
+
+    Called by the planner *after* the full-spec hash has already been found to
+    differ, to decide whether the edit can be applied in place (preserving the
+    ``$SNAPSHOTS`` history via ``EVOLVE_FV``) or requires a destructive
+    ``RECREATE_FV``.  Both sides are normalised with the same
+    :func:`_normalize_for_full_spec_hash` /
+    :func:`_normalize_applied_bfv_for_hash` pipeline used for the hash itself,
+    then :func:`full_spec_changed_properties` reports which ``spec.*`` sections
+    differ:
+
+    * ``"preserving"`` — the difference is limited to the source binding and the
+      binding analysis (:func:`_source_binding_evolution_kind`) proves the
+      output schema is unchanged: a table retarget, or a query rewrite whose
+      SELECT list is identical / a predicate-only edit.
+    * ``"extend_only"`` — additionally a query-backed source's SELECT list
+      gained new trailing columns (existing columns untouched); the executor
+      materialises these because ``session.sql`` yields the new column and core
+      extends the ``$SNAPSHOTS`` table in place.
+    * ``"breaking"`` — any other structural difference (entities, timestamp,
+      refresh mode, cluster-by, secondary keys, ``append_only`` toggle, **any**
+      ``spec.features`` edit, **a query SELECT-list drop / reorder / retype**,
+      …), or a normalisation failure.  The safe default: the caller emits the
+      destructive ``RECREATE_FV``.
+
+    A ``spec.features`` delta is always ``breaking``: a surviving feature entry
+    on an append-only BFV is necessarily a rename (``function`` / ``window_sec``
+    aggregations are rejected by the authoring validator because append-only
+    forbids tiling), and ``imperative_executor._build_features`` drops a
+    rename-only entry, so an EVOLVE_FV promise would re-emit on every replan and
+    never converge.
+
+    Args:
+        local_compiled: The compiled local spec dict (``compile_to_spec``).
+        applied_payload: The deployed ``AppliedObject.spec_payload``.
+
+    Returns:
+        One of ``"preserving"``, ``"extend_only"``, ``"breaking"``.
+    """
+    if not isinstance(local_compiled, dict) or not isinstance(applied_payload, dict):
+        return "breaking"
+    try:
+        applied_for_norm = _normalize_applied_bfv_for_hash(applied_payload, local_compiled)
+        # Authored vs applied half routed through the single entry points so
+        # 6e1.1's identifier canonicalisation is threaded here only.
+        local_norm = _normalize_local_half(local_compiled)
+        applied_norm = _normalize_applied_half(applied_for_norm)
+        changed = set(full_spec_changed_properties(local_norm, applied_norm))
+    except Exception:  # noqa: BLE001 — defensive; never break the planner
+        return "breaking"
+    if not changed:
+        # Nothing structural differs after normalisation.  The caller only
+        # reaches the classifier on a hash mismatch, so this is a defensive
+        # safe-to-evolve outcome (e.g. a pure canonicalisation gap).
+        return "preserving"
+    # Any section beyond the source binding is structural and always breaking
+    # (entities, timestamp, cluster-by, append_only, secondary keys, and
+    # ``spec.features``: a surviving feature entry is a rename the EVOLVE_FV
+    # executor cannot materialise, so promising it would never converge).
+    if changed - _APPEND_ONLY_TRANSFORM_ONLY_PROPS:
+        return "breaking"
+    # The only remaining difference is the ``spec.sources`` binding: inspect the
+    # query SELECT list so a drop / reorder / retype recreates while a table
+    # retarget, predicate-only rewrite, or trailing-column append evolves in
+    # place.
+    return _source_binding_evolution_kind(local_compiled, applied_payload)
+
+
+def compute_local_spec_and_hash(
+    model_dict: dict[str, Any],
+    database: str,
+    schema: str,
+    *,
+    entity_join_keys: Mapping[str, list[str]] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Compile a local FV spec dict; return ``(compiled_spec, full_spec_hash)``.
+
+    Like :func:`compute_local_spec_hash` but also surfaces the compiled dict
+    so callers that need both the hash and the spec for a field-level diff
+    avoid calling ``compile_to_spec`` a second time.
+
+    Args:
+        model_dict: Spec dict from :func:`model_to_dict`.
+        database: Snowflake database name (used as ``metadata.database``).
+        schema: Snowflake schema name (used as ``metadata.schema``).
+        entity_join_keys: Optional entity-name → join-key-columns map
+            forwarded to :func:`compile_to_spec` so the wire field
+            ``ordered_entity_column_names`` matches the applied side.
+
+    Returns:
+        Tuple of ``(compiled_spec, hash_hex)`` where ``hash_hex`` is the
+        64-character lowercase hex SHA-256 digest of the compiled spec.
+    """
+    from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
+
+    compiled = compile_to_spec(model_dict, database, schema, entity_join_keys=entity_join_keys)
+    # Route through the authored-half entry point so 6e1.1's identifier
+    # canonicalisation is threaded here only (see _hash_local_half).
+    return compiled, _hash_local_half(compiled)
+
+
+def full_spec_changed_properties(local_normalized: dict[str, Any], applied_normalized: dict[str, Any]) -> list[str]:
+    """Return sorted dot-path property names that differ between two normalized specs.
+
+    Both inputs must already be processed by :func:`_normalize_for_full_spec_hash`
+    so the comparison is over the same canonical shape used for hashing.
+    Compares the inner ``spec`` dict key-by-key and returns paths like
+    ``"spec.udf"``, ``"spec.features"``, ``"spec.sources"``, ``"spec.entities"``.
+    Top-level keys outside ``spec`` that differ are returned without a prefix.
+
+    Args:
+        local_normalized: Normalized local compiled spec dict.
+        applied_normalized: Normalized applied (deployed) spec dict.
+
+    Returns:
+        Sorted list of dot-path property names for sections that differ.
+        Empty list when the two dicts are identical after normalization.
+    """
+    changed: list[str] = []
+    local_inner = local_normalized.get("spec") if isinstance(local_normalized, dict) else None
+    applied_inner = applied_normalized.get("spec") if isinstance(applied_normalized, dict) else None
+
+    if isinstance(local_inner, dict) and isinstance(applied_inner, dict):
+        all_keys = set(local_inner) | set(applied_inner)
+        for key in all_keys:
+            if local_inner.get(key) != applied_inner.get(key):
+                changed.append(f"spec.{key}")
+    elif isinstance(local_normalized, dict) and isinstance(applied_normalized, dict):
+        non_spec_keys = (set(local_normalized) | set(applied_normalized)) - {"spec"}
+        for key in non_spec_keys:
+            if local_normalized.get(key) != applied_normalized.get(key):
+                changed.append(key)
+
+    return sorted(changed)
 
 
 def fg_content_hash(spec: dict[str, Any]) -> str:
@@ -2387,6 +2981,67 @@ def _check_database_schema_mismatch(
 # ---------------------------------------------------------------------------
 
 
+def _check_duplicate_spec_keys(
+    specs: list[SpecBase],
+    spec_sources: list[str],
+    target_database: str,
+    target_schema: str,
+) -> list[ValidationResult]:
+    """Reject specs that share one :func:`spec_key`.
+
+    ``spec_sources`` is index-aligned with ``specs``. A short or empty
+    list names the missing file ``<unknown>`` instead of raising.
+    Distinct versions or schemas are not duplicates.
+
+    Args:
+        specs: Parsed specs, grouped by identity.
+        spec_sources: Originating path of each spec. May be empty.
+        target_database: Fallback database for :func:`spec_key`.
+        target_schema: Fallback schema for :func:`spec_key`.
+
+    Returns:
+        One ``ERROR`` ``DUPLICATE_SPEC_KEY`` per key claimed more than once.
+    """
+    results: list[ValidationResult] = []
+
+    # spec_key -> {"name": display name, "files": [source, ...]},
+    # first-seen order preserved so the error message is deterministic.
+    by_key: dict[str, dict[str, Any]] = {}
+    for idx, spec_obj in enumerate(specs):
+        data = model_to_dict(spec_obj)
+        key = spec_key(data, database=target_database, schema=target_schema)
+        kind = data.get("kind", "")
+        if kind in _FV_DUPLICATE_ALIASES:
+            # Collapse the FV subkind prefix so a batch and a streaming FV
+            # sharing one name+version resolve to the same key.  count=1 only
+            # rewrites the leading ``kind:`` token, leaving ``:VERSION`` intact.
+            key = key.replace(f"{kind}:", "FeatureView:", 1)
+        source = spec_sources[idx] if idx < len(spec_sources) else "<unknown>"
+        entry = by_key.setdefault(key, {"name": data.get("name", ""), "files": []})
+        entry["files"].append(source or "<unknown>")
+
+    for key, entry in by_key.items():
+        files: list[str] = entry["files"]
+        if len(files) < 2:
+            continue
+        name = entry["name"]
+        joined = ", ".join(files)
+        results.append(
+            _result(
+                "ERROR",
+                "DUPLICATE_SPEC_KEY",
+                f"{name}: {len(files)} spec files define the same object "
+                f"({key}) — {joined}. Object identity comes from the spec body "
+                "(name / version / database / schema), not the filename or "
+                "feature-view subkind (batch / streaming / realtime). Remove "
+                "or rename one.",
+                name,
+            )
+        )
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Source compatibility checker
 # ---------------------------------------------------------------------------
@@ -2417,6 +3072,10 @@ _BATCH_FV_STRUCTURAL_INNER_KEYS: frozenset[str] = frozenset(
         "initialize",
         "storage_config",
         "aggregation_secondary_keys",
+        # ``append_only`` toggles the imperative snapshot-accumulation path
+        # (companion ``$SNAPSHOTS`` table + CRON refresh Task); flipping it is
+        # structural, so it must fall through to ``RECREATE_FV``.
+        "append_only",
     }
 )
 
@@ -2507,13 +3166,9 @@ def batch_feature_view_structural_equivalent(
     )
 
 
-def _check_batch_feature_view_constraints(
-    spec: dict[str, Any],
-    batch_source_specs: dict[str, dict[str, Any]],
-) -> list[ValidationResult]:
-    """Validate ``BatchFeatureView`` authoring rules (no UDF, batch sources, tiling)."""
+def _check_batch_fv_udf(name: str, spec: dict[str, Any]) -> list[ValidationResult]:
+    """BatchFeatureView cannot carry a UDF transform (offline store cannot run it)."""
     results: list[ValidationResult] = []
-    name = spec.get("name", "")
     udf = spec.get("udf")
     if udf and isinstance(udf, dict) and len(udf) > 0:
         results.append(
@@ -2525,18 +3180,26 @@ def _check_batch_feature_view_constraints(
                 name,
             )
         )
+    return results
 
-    # ``_is_auto_derived_feature`` recognises the 1:1 passthrough entries
-    # snowml-core's ``DESCRIBE … TYPE = SPECIFICATION`` round-trip auto-
-    # generates from the source columns for any non-tiled BatchFV that
-    # omits an explicit ``features:`` block (already stripped before
-    # hashing in :func:`_full_spec_hash` and :func:`_check_idempotency`).
-    # The tiling-invariant check must apply the same stripping; otherwise
-    # every freshly-exported batch FV (e.g. step 4 of docs/BUG_BASH.md)
-    # trips BATCH_FV_TILING_* against a non-tiled FV and blocks every
-    # downstream plan.
-    raw_features = spec.get("features") or []
-    features = [f for f in raw_features if not _is_auto_derived_feature(f)]
+
+def _check_batch_fv_tiling(
+    name: str,
+    spec: dict[str, Any],
+    features: list[Any],
+) -> list[ValidationResult]:
+    """A tiled BatchFeatureView (non-empty authored ``features``) requires the
+    timestamp / granularity / aggregation-method / refresh fields.
+
+    Args:
+        name: The feature view name, used in error messages.
+        spec: The BatchFeatureView spec dict.
+        features: Authored ``features`` with auto-derived entries stripped.
+
+    Returns:
+        Validation results for any missing tiling fields.
+    """
+    results: list[ValidationResult] = []
     if features:
         if not spec.get("timestamp_col"):
             results.append(
@@ -2578,8 +3241,29 @@ def _check_batch_feature_view_constraints(
                     name,
                 )
             )
+    return results
 
-    # ``aggregation_secondary_keys`` constraint (private preview): max
+
+def _check_batch_fv_secondary_keys(
+    name: str,
+    spec: dict[str, Any],
+    features: list[Any],
+    batch_source_specs: dict[str, dict[str, Any]],
+) -> list[ValidationResult]:
+    """``aggregation_secondary_keys`` rules: max length 1,
+    plus a soft nudge when the key is absent from the source ``columns``.
+
+    Args:
+        name: The feature view name, used in error messages.
+        spec: The BatchFeatureView spec dict.
+        features: Authored ``features`` with auto-derived entries stripped.
+        batch_source_specs: Resolved BatchSource specs keyed by name.
+
+    Returns:
+        Validation results for the secondary-key constraints.
+    """
+    results: list[ValidationResult] = []
+    # ``aggregation_secondary_keys`` constraint: max
     # length 1 (current Snowflake cap).  The field is NOT tiled-only — on
     # a tiled BFV it adds a secondary group-by to each aggregation, and on
     # a non-tiled (passthrough) BFV it is still a first-class identity
@@ -2596,13 +3280,60 @@ def _check_batch_feature_view_constraints(
                 _result(
                     "ERROR",
                     "BATCH_FV_SECONDARY_KEYS_MAX_LENGTH",
-                    f"{name}: ``aggregation_secondary_keys`` is capped at length 1 in the "
-                    "current private preview; got "
+                    f"{name}: ``aggregation_secondary_keys`` is capped at length 1; got "
                     f"{len(secondary_keys)} entries.",
                     name,
                 )
             )
+        # Soft nudge — a tiled BFV synthesizes a ``_SECONDARY_KEY_ARRAY``
+        # aggregation over the secondary key, so recovery's resolution pool
+        # (rebuilt from ``FV_SOURCE_REFS`` columns) must contain it.  The
+        # executor now auto-includes the key in the stamped source columns and
+        # in the recovery pool, so an omission no longer loops on
+        # ``RECREATE_FV`` — but listing the secondary key on the source is
+        # still the clearer authoring shape.  Emit a WARNING (never an ERROR:
+        # already-deployed FVs whose YAML omits the key must keep planning).
+        if features:
+            available: set[str] = set()
+            for src in spec.get("sources", []) or []:
+                if not isinstance(src, dict):
+                    continue
+                for col in src.get("columns") or []:
+                    if isinstance(col, dict) and col.get("name"):
+                        available.add(_to_stored_form(col["name"], authored=True))
+                resolved = batch_source_specs.get(str(src.get("name", "")))
+                if isinstance(resolved, dict):
+                    for col in resolved.get("columns") or []:
+                        if isinstance(col, dict) and col.get("name"):
+                            available.add(_to_stored_form(col["name"], authored=True))
+            for sk in secondary_keys:
+                if _to_stored_form(sk, authored=True) not in available:
+                    results.append(
+                        _result(
+                            "WARNING",
+                            "BATCH_FV_SECONDARY_KEY_ABSENT_FROM_SOURCE_COLUMNS",
+                            f"{name}: ``aggregation_secondary_keys`` column '{sk}' is not listed in "
+                            "the source ``columns``. It is auto-included in FV_SOURCE_REFS so "
+                            "replans still converge, but adding it to the BatchSource ``columns`` "
+                            "is the recommended authoring shape.",
+                            name,
+                        )
+                    )
+    return results
 
+
+def _check_batch_fv_storage(name: str, spec: dict[str, Any]) -> list[ValidationResult]:
+    """Iceberg ``storage_config`` must declare an ``external_volume`` (or omit the
+    block to accept the native-storage / FeatureStore default).
+
+    Args:
+        name: The feature view name, used in error messages.
+        spec: The BatchFeatureView spec dict.
+
+    Returns:
+        Validation results for the iceberg storage constraint.
+    """
+    results: list[ValidationResult] = []
     # Iceberg ``storage_config`` requires an ``external_volume`` at the
     # authoring level.  Runtime fallback to
     # ``FeatureStore.default_iceberg_external_volume`` is the imperative
@@ -2628,7 +3359,26 @@ def _check_batch_feature_view_constraints(
                         name,
                     )
                 )
+    return results
 
+
+def _check_batch_fv_sources(
+    name: str,
+    spec: dict[str, Any],
+    batch_source_specs: dict[str, dict[str, Any]],
+) -> list[ValidationResult]:
+    """Each ``sources[]`` entry must resolve to a BatchSource with a table/query
+    and must not use a realtime ``source_type``.
+
+    Args:
+        name: The feature view name, used in error messages.
+        spec: The BatchFeatureView spec dict.
+        batch_source_specs: Resolved BatchSource specs keyed by name.
+
+    Returns:
+        Validation results for the source constraints.
+    """
+    results: list[ValidationResult] = []
     for src in spec.get("sources", []):
         if not isinstance(src, dict):
             continue
@@ -2678,7 +3428,41 @@ def _check_batch_feature_view_constraints(
                     name,
                 )
             )
+    return results
 
+
+def _check_batch_feature_view_constraints(
+    spec: dict[str, Any],
+    batch_source_specs: dict[str, dict[str, Any]],
+) -> list[ValidationResult]:
+    """Validate ``BatchFeatureView`` authoring rules (no UDF, tiling, secondary
+    keys, iceberg storage, batch sources).  Each concern lives in its own
+    ``_check_batch_fv_*`` helper below.
+
+    Args:
+        spec: The BatchFeatureView spec dict.
+        batch_source_specs: Resolved BatchSource specs keyed by name.
+
+    Returns:
+        The combined validation results from every ``_check_batch_fv_*`` helper.
+    """
+    name = spec.get("name", "")
+    # ``_is_auto_derived_feature`` recognises the 1:1 passthrough entries
+    # snowml-core's ``DESCRIBE … TYPE = SPECIFICATION`` round-trip auto-
+    # generates from the source columns for any non-tiled BatchFV that
+    # omits an explicit ``features:`` block (already stripped before
+    # hashing in :func:`_full_spec_hash` and :func:`_check_idempotency`).
+    # The tiling-invariant check must apply the same stripping; otherwise
+    # every freshly-exported batch FV (e.g. step 4 of docs/BUG_BASH.md)
+    # trips BATCH_FV_TILING_* against a non-tiled FV and blocks every
+    # downstream plan.
+    features = [f for f in (spec.get("features") or []) if not _is_auto_derived_feature(f)]
+    results: list[ValidationResult] = []
+    results += _check_batch_fv_udf(name, spec)
+    results += _check_batch_fv_tiling(name, spec, features)
+    results += _check_batch_fv_secondary_keys(name, spec, features, batch_source_specs)
+    results += _check_batch_fv_storage(name, spec)
+    results += _check_batch_fv_sources(name, spec, batch_source_specs)
     return results
 
 
@@ -2928,6 +3712,16 @@ def validate_specs(
         Combined list of errors and warnings.
     """
     results: list[ValidationResult] = []
+
+    # Before the per-spec loop: an idempotent batch must still report duplicates.
+    results.extend(
+        _check_duplicate_spec_keys(
+            batch.specs,
+            batch.spec_sources,
+            target_database,
+            target_schema,
+        )
+    )
 
     # Build lookup data from the batch for cross-spec dependency checks.
     # We need source names from ALL specs in this batch.

@@ -84,8 +84,8 @@ class BatchInferenceTask(DAGTask):
                 adapter versions. Dict keys become ``alias`` on each emitted list item. A
                 nonempty list and adapter-as-target omit ``alias``. Omit, ``None``, ``{}``, or
                 ``[]`` attaches none. Constructing the task on an adapter version is equivalent
-                to running the lineage pin with a one-item list, and defaults job-level
-                ``params.model`` to the defaulted alias when unset.
+                to running the lineage pin with a one-item list. Set ``input_spec.params["model"]``
+                to the defaulted alias to score the adapter; omit it and the base answers.
             image_build_spec: Optional image build block.
             function_name: Model function name. Resolved against the model's function list
                 when omitted.
@@ -132,14 +132,10 @@ class BatchInferenceTask(DAGTask):
             raise ValueError("Exactly one of query or input_stage_location must be provided.")
 
         inference_spec, raw_adapters = batch_inference_job_specs.split_inference_adapters(self._inference_spec)
-        deploy_target, adapters_map, input_spec = self._model_version._prepare_lora_batch(
-            adapters=raw_adapters,
-            input_spec=self._input_spec,
-            input_spec_cls=batch_inference_job_specs.InputSpec,
-        )
+        deploy_target, adapters_map = self._model_version._prepare_lora_batch(adapters=raw_adapters)
 
         target_function_info = deploy_target._validate_batch_inference_request(
-            input_spec=input_spec,
+            input_spec=self._input_spec,
             resources_spec=self._resources_spec,
             function_name=self._function_name,
         )
@@ -157,7 +153,7 @@ class BatchInferenceTask(DAGTask):
             function_name=target_function_info["target_method"],
             query=self._query,
             input_stage_location=self._input_stage_location,
-            input_spec=input_spec,
+            input_spec=self._input_spec,
             output_spec=self._output_spec,
             resources_spec=self._resources_spec,
             inference_spec=inference_spec,

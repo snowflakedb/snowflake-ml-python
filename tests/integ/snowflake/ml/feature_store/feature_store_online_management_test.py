@@ -161,7 +161,7 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertIsNotNone(fv_rows[0]["ONLINE_CONFIG"])
         list_online_config = json.loads(fv_rows[0]["ONLINE_CONFIG"])
         self.assertFalse(list_online_config["enable"])
-        self.assertEqual(list_online_config["target_lag"], "10 seconds")
+        self.assertIsNone(list_online_config["target_lag"])
 
         # Verify no online table exists
         online_tables = self._session.sql(
@@ -645,7 +645,7 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertFalse(offline_config["enable"])
         self.assertNotIn("refresh_mode", offline_config)
         self.assertNotIn("scheduling_state", offline_config)
-        self.assertEqual(offline_config["target_lag"], "10 seconds")
+        self.assertIsNone(offline_config["target_lag"])
 
     def test_overwrite_feature_view_with_online(self) -> None:
         """Test overwriting feature view with different online configuration."""

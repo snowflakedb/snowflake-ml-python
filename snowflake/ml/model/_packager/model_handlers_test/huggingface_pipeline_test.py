@@ -27,7 +27,7 @@ from snowflake.ml.model._packager.model_handlers.huggingface import (
 )
 from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._signatures import utils
-from snowflake.ml.model.models import huggingface as hf_base, huggingface_pipeline
+from snowflake.ml.model.models import huggingface as hf_base
 
 if TYPE_CHECKING:
     import transformers
@@ -120,8 +120,8 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
     def _check_loaded_pipeline_wrapper_object(
         self,
-        original: huggingface_pipeline.HuggingFacePipelineModel | hf_base.TransformersPipeline,
-        loaded: huggingface_pipeline.HuggingFacePipelineModel | hf_base.TransformersPipeline,
+        original: hf_base.TransformersPipeline,
+        loaded: hf_base.TransformersPipeline,
         use_gpu: bool = False,
     ) -> None:
         original_dict = original.__dict__

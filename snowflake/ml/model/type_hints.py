@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 
     import snowflake.ml.model.custom_model
     import snowflake.ml.model.models.huggingface
-    import snowflake.ml.model.models.huggingface_pipeline
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
 
@@ -105,7 +104,7 @@ SupportedNoSignatureRequirementsModelType = Union[
     "mlflow.pyfunc.PyFuncModel",
     "transformers.Pipeline",
     "sentence_transformers.SentenceTransformer",
-    "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
+    "snowflake.ml.model.models.huggingface.TransformersPipeline",
     "snowflake.ml.model.models.huggingface.SentenceTransformer",
     "snowflake.ml.model.models.huggingface.PeftAdapter",
 ]
@@ -133,8 +132,8 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | torch.jit.ScriptModule      | torchscript.py   | _TorchScriptHandler    |
 | tensorflow.Module     | tensorflow.py   | _TensorFlowHandler    |
 | mlflow.pyfunc.PyFuncModel | mlflow.py   | _MLFlowHandler |
-| transformers.Pipeline | huggingface_pipeline.py | _HuggingFacePipelineHandler |
-| huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
+| transformers.Pipeline | huggingface/_handler.py | TransformersPipelineHandler |
+| models.huggingface.TransformersPipeline | huggingface/_handler.py | TransformersPipelineHandler |
 | sentence_transformers.SentenceTransformer | sentence_transformers.py | _SentenceTransformerHandler |
 | models.huggingface.SentenceTransformer | models/huggingface.py | _SentenceTransformerHandler |
 | keras.Model | keras.py | _KerasHandler |

@@ -243,7 +243,7 @@ _FV_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "refresh_freq",
     # ``target_lag`` is the authoring-form OFT staleness — online-only
     # by validator contract; rare in practice (most online BFVs accept
-    # the imperative default ``"10 seconds"``) but exported when present.
+    # the Postgres batch default) but exported when present.
     "target_lag",
     "sources",
     "features",
@@ -437,8 +437,10 @@ def _build_full_fidelity_fv(
             Expected shape: ``{kind, metadata, offline_configs, spec, ...}``.
         fallback_name: Name to use if ``metadata.name`` is absent.
         fallback_version: Version to use if ``metadata.version`` is absent.
-        fallback_database: Database to use if ``metadata.database`` is absent.
-        fallback_schema: Schema to use if ``metadata.schema`` is absent.
+        fallback_database: Authoritative deployed database (the SHOW-row
+            ``database_name``) emitted as the FV's ``database``.
+        fallback_schema: Authoritative deployed schema (the SHOW-row
+            ``schema_name``) emitted as the FV's ``schema``.
         warnings: Optional mutable list any export-degradation warning is
             appended to (e.g. an append-only flag dropped because the recovered
             spec cannot satisfy the loader's companion contract).  ``None``
@@ -461,8 +463,15 @@ def _build_full_fidelity_fv(
         "kind": kind,
         "name": metadata.get("name", fallback_name),
         "version": metadata.get("version", fallback_version),
-        "database": metadata.get("database", fallback_database),
-        "schema": metadata.get("schema", fallback_schema),
+        # ``database`` / ``schema`` track the OFT's authoritative deployed
+        # identity (the SHOW-row ``database_name`` / ``schema_name`` threaded in
+        # as ``fallback_*``), NOT ``metadata``.  A deployed SPECIFICATION can
+        # carry a stale session schema stamped at creation time; emitting it
+        # makes the exported ``spec_key`` diverge from applied state (which keys
+        # on the deployed schema), so the FV re-plans as ``CREATE_FV`` on every
+        # plan and the round-trip is never idempotent (Bug A).
+        "database": fallback_database,
+        "schema": fallback_schema,
     }
 
     # ``StreamingFeatureView`` and ``RealtimeFeatureView`` are always
@@ -1471,6 +1480,13 @@ def _overlay_applied_state_on_export_inputs(
 
         if oft_name in existing_oft_names:
             continue
+        # The synth row's ``database_name`` / ``schema_name`` become the FV's
+        # ``fallback_database`` / ``fallback_schema`` downstream, so they must be
+        # the deployed location.  ``spec_payload.metadata`` is deployed-authoritative
+        # here: ``state._build_offline_fv_object`` stamps the list-FV row's
+        # ``database_name`` / ``schema_name`` onto ``metadata`` (over any stale
+        # ``spec_text`` session schema), so reading it keys the synth row on the
+        # applied object's deployed location — not a stale creation-time schema.
         _md = spec_payload.get("metadata")
         metadata = _md if isinstance(_md, dict) else {}
         synth_db = metadata.get("database") or default_database

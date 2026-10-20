@@ -1,6 +1,6 @@
 """Phase 6 — declarative-side coverage for ``aggregation_secondary_keys``.
 
-``aggregation_secondary_keys`` is a private-preview knob on
+``aggregation_secondary_keys`` is a knob on
 ``BatchFeatureView``.  On a **tiled** BFV it adds a secondary group-by
 column to every aggregation; on a **non-tiled** (passthrough) BFV it is
 still a first-class identity column — the imperative register path
@@ -8,8 +8,7 @@ persists it, ``_build_batch_feature_view_spec`` folds it into
 ``entity_columns`` / ``secondary_key_columns``, and the POSTGRES OFT
 widens its primary key with it — so the declarative surface must accept
 it there too (otherwise ``snow feature init`` re-exports a spec the
-loader would reject).  Snowflake caps the list at length 1 in this
-preview.
+loader would reject).  Snowflake caps the list at length 1.
 
 The one remaining authoring constraint is enforced at plan time so the
 operator gets a clear error before apply:
@@ -59,6 +58,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.exporter import _build_full_fidelity_fv
@@ -456,6 +457,74 @@ def test_exporter_recovers_secondary_keys_from_inner_spec() -> None:
         fallback_schema="SC1",
     )
     assert doc.get("aggregation_secondary_keys") == ["SESSION_ID"]
+
+
+@pytest.mark.parametrize(
+    "sk, source_col, expect_warning",
+    [
+        # Same authoring spelling -> same stored form -> present, no warning.
+        ("offerKey", "offerKey", False),
+        # Unquoted SK folds to UPPER; an unquoted source folds the same way.
+        ("OFFERKEY", "offerKey", False),
+        # Both quoted -> stored ``offerKey`` on each side -> present.
+        ('"offerKey"', '"offerKey"', False),
+        # Quoted SK (stored ``offerKey``) vs unquoted source (stored ``OFFERKEY``)
+        # are distinct columns -> warning.
+        ('"offerKey"', "offerKey", True),
+        # Unquoted SK (stored ``OFFERKEY``) vs quoted source (stored ``offerKey``)
+        # are distinct columns -> warning.
+        ("offerKey", '"offerKey"', True),
+        # Both quoted but different case -> case-sensitive, distinct columns ->
+        # warning.  This is the case a raw ``.upper()`` fold silently missed.
+        ('"offerKey"', '"OFFERKEY"', True),
+    ],
+)
+def test_secondary_key_source_column_presence_uses_stored_form(sk: str, source_col: str, expect_warning: bool) -> None:
+    """The ABSENT-from-source warning compares the SK against source columns in
+    Snowflake **stored form**, not a raw ``.upper()`` fold.
+
+    Two identifiers name the same column iff their stored forms are equal: an
+    unquoted name folds to UPPER, a ``"quoted"`` name preserves case (see the
+    SQL-identifier canonicalization contract in ``DESIGN.md`` and
+    ``invariants._to_stored_form``).  A raw ``.upper()`` kept the quotes and
+    upper-cased their contents (``"offerKey"`` -> ``"OFFERKEY"``), so it both
+    missed genuine mismatches (a quoted ``"offerKey"`` SK vs a quoted
+    ``"OFFERKEY"`` source) and raised spurious warnings.
+
+    Args:
+        sk: Authoring spelling of the secondary key.
+        source_col: Authoring spelling of the source column the secondary
+            key is checked against.
+        expect_warning: Whether
+            ``BATCH_FV_SECONDARY_KEY_ABSENT_FROM_SOURCE_COLUMNS`` should fire.
+    """
+    payload = _tiled_batch_fv_authoring(aggregation_secondary_keys=[sk])
+    fv = FeatureView.model_validate(payload)
+    ent = Entity(
+        kind="Entity",
+        name="USER",
+        join_keys=[FSColumn(name="USER_ID", type="StringType")],
+    )
+    src = BatchSource(
+        kind="BatchSource",
+        name="SRC1",
+        table="RAW_EVENTS",
+        columns=[
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name=source_col, type="StringType"),
+        ],
+    )
+    results = validate_specs(
+        SpecBatch(specs=[ent, src, fv]),
+        AppliedState(objects={}),
+        target_database="DB1",
+        target_schema="SC1",
+    )
+    codes = [r.code for r in results]
+    fired = "BATCH_FV_SECONDARY_KEY_ABSENT_FROM_SOURCE_COLUMNS" in codes
+    assert (
+        fired is expect_warning
+    ), f"SK={sk!r} source_col={source_col!r}: expected warning={expect_warning}, got codes={codes!r}"
 
 
 if __name__ == "__main__":

@@ -452,8 +452,7 @@ _DT_OR_VIEW_QUERY_PATTERN = re.compile(
 
 _DT_INITIALIZE_PATTERN = re.compile(
     r"""CREATE\ DYNAMIC\ TABLE\ .*
-        initialize\ =\ '(?P<initialize>.*)'\ .*?
-        AS\ .*
+        initialize\ =\ '(?P<initialize>\w+)'
     """,
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
@@ -1306,9 +1305,10 @@ class FeatureStore:
                 error_code=error_codes.INVALID_ARGUMENT, original_exception=e
             ) from e
 
+        fv_mod.warn_if_short_postgres_target_lag(feature_view.online_config)
+
         # RTFVs are OFT-only (no DT/View, no preamble/postamble).
         if feature_view.is_realtime_feature_view:
-            logger.warning("RealtimeFeatureView is in Public Preview since 1.43.0.")
             from snowflake.ml.feature_store.realtime_registration import (
                 register_realtime_feature_view,
             )
@@ -1345,7 +1345,6 @@ class FeatureStore:
 
             if feature_view.online and feature_view.online_config is not None:
                 if feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
-                    logger.warning("POSTGRES online store type is in Public Preview since 1.43.0.")
                     online_service.assert_online_service_running_with_query_endpoint(
                         self._session,
                         self._config.database,
@@ -1582,6 +1581,7 @@ class FeatureStore:
         desc: str | None = None,
         online_config: fv_mod.OnlineConfig | None = None,
         updated_feature_df: DataFrame | None = None,
+        _source_refs: list[dict[str, Any]] | None = None,
     ) -> FeatureView:
         ...
 
@@ -1597,6 +1597,7 @@ class FeatureStore:
         desc: str | None = None,
         online_config: fv_mod.OnlineConfig | None = None,
         updated_feature_df: DataFrame | None = None,
+        _source_refs: list[dict[str, Any]] | None = None,
     ) -> FeatureView:
         ...
 
@@ -1612,6 +1613,7 @@ class FeatureStore:
         desc: str | None = None,
         online_config: fv_mod.OnlineConfig | None = None,
         updated_feature_df: DataFrame | None = None,
+        _source_refs: list[dict[str, Any]] | None = None,
     ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
@@ -1640,6 +1642,8 @@ class FeatureStore:
                 definition. When set, the returned :class:`~snowflake.ml.feature_store.feature_view.FeatureView`
                 is reinitialized from this dataframe (same session as the ``FeatureStore``). Not supported for
                 streaming, realtime, or rollup feature views.
+            _source_refs: Internal. Authored source-ref list re-stamped as ``FV_SOURCE_REFS`` on the
+                ``updated_feature_df`` recreate so declarative replans recover the new binding. Ignored otherwise.
 
         Returns:
             Updated FeatureView.
@@ -1699,9 +1703,6 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
-        if online_config is not None and online_config.store_type == OnlineStoreType.POSTGRES:
-            logger.warning("POSTGRES online store type is in Public Preview since 1.43.0.")
-
         # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
 
@@ -1758,6 +1759,12 @@ class FeatureStore:
         # rule is a feature-view invariant; check the target config on a copy since the live rebuild
         # path does not re-run __init__ validation.
         if online_config is not None:
+            fv_mod.warn_if_short_postgres_target_lag(
+                online_config,
+                existing_store_type=(
+                    feature_view.online_config.store_type if feature_view.online_config is not None else None
+                ),
+            )
             probe_fv = feature_view.copy()
             probe_fv._online_config = online_config
             try:
@@ -1847,6 +1854,7 @@ class FeatureStore:
                 version=str(feature_view.version),
                 old_feature_view=feature_view,
                 new_schema=new_schema,
+                _source_refs=_source_refs,
             )
 
             # The CREATE OR REPLACE recreate above already applied refresh_freq / warehouse /
@@ -2406,14 +2414,13 @@ class FeatureStore:
         ingestion throughout. Poll :meth:`get_online_service_status` until ``status`` is
         ``RUNNING`` and ``size`` is the requested size.
 
-        Which direction a change may go is decided server-side, not here: at present only
-        increases are accepted and a request for a smaller size is rejected, pending server
-        support for decreases. A request for the size the Online Service is already at is
-        rejected either way. The Online Service must be ``RUNNING`` to be resized, and one
-        created at ``"XS"`` cannot be resized at all -- it is a prototyping tier, and reaching a
-        larger size means re-creating the Online Service. Re-requesting the size a change is
-        already converging to does nothing, while requesting a different size while a change is
-        in flight is rejected.
+        Resize up or down to any other tier in one call, in either direction and across multiple
+        tiers (for example, from ``"S"`` directly to ``"L"``, or from ``"2XL"`` down to ``"M"``).
+        A request for the size the Online Service is already at is rejected. The Online Service
+        must be ``RUNNING`` to be resized, and one created at ``"XS"`` cannot be resized at all --
+        it is a prototyping tier, and reaching a larger size means re-creating the Online Service.
+        Re-requesting the size a change is already converging to does nothing, while requesting a
+        different size while a change is in flight is rejected.
 
         Args:
             size: Size to change the Online Service to, one of ``"S"``, ``"M"``, ``"L"``,
@@ -3149,7 +3156,6 @@ class FeatureStore:
 
         # noqa: DAR401
         """
-        logger.warning("FeatureGroup is in Public Preview since 1.43.0.")
         return fg_mod.register_feature_group(self, feature_group, version)
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -3451,7 +3457,6 @@ class FeatureStore:
             -------------------------------------------------------------------------------------...
 
         """
-        logger.warning("StreamSource is in Public Preview since 1.43.0.")
 
         if self._metadata_manager.stream_source_exists(stream_source.name.resolved()):
             warnings.warn(
@@ -4654,7 +4659,7 @@ class FeatureStore:
         default_target_lag = (
             feature_view.online_config.target_lag
             if feature_view.online_config and feature_view.online_config.target_lag
-            else fv_mod._BATCH_OFT_TARGET_LAG
+            else fv_mod._default_online_target_lag(online_config.store_type)
         )
         final_config = fv_mod.OnlineConfig(
             enable=True,
@@ -4909,6 +4914,7 @@ class FeatureStore:
         # update-only kwargs
         old_feature_view: FeatureView | None = None,
         new_schema: dict[str, DataType] | None = None,
+        _source_refs: list[dict[str, Any]] | None = None,
     ) -> None:
         """Single named entry point for materializing a feature view's offline + online resources.
 
@@ -4948,6 +4954,8 @@ class FeatureStore:
                 restore on rollback).
             new_schema: ``"update"``-only. Target column types in canonical order, used to
                 derive extend-only snapshot DDL.
+            _source_refs: ``"update"``-only. Authored source refs re-stamped as ``FV_SOURCE_REFS``
+                inside the atomic recreate; ``None`` leaves the metadata untouched.
 
         Raises:
             ValueError: If required kwargs for the chosen ``mode`` are missing.
@@ -4976,6 +4984,7 @@ class FeatureStore:
                 fully_qualified_name=fully_qualified_name,
                 version=version,
                 new_schema=new_schema,
+                _source_refs=_source_refs,
             )
 
     def _materialize_register_path(
@@ -5062,6 +5071,7 @@ class FeatureStore:
         fully_qualified_name: str,
         version: str,
         new_schema: dict[str, DataType],
+        _source_refs: list[dict[str, Any]] | None = None,
     ) -> None:
         """Recreate the offline DT, online table, and refresh task for an append_only FV update.
 
@@ -5098,6 +5108,8 @@ class FeatureStore:
             version: Version string for the FV (used by online table creation).
             new_schema: Target column types in canonical order, used to derive the
                 extend-only snapshot DDL.
+            _source_refs: Authored source refs re-stamped as ``FV_SOURCE_REFS`` as the terminal
+                forward step; ``None`` leaves the metadata untouched.
 
         Raises:
             SnowflakeMLException: [INVALID_ARGUMENT] if the schema change is not
@@ -5299,6 +5311,15 @@ class FeatureStore:
                 )
                 self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
                     statement_params=self._telemetry_stmp
+                )
+
+            # Step 5: re-stamp FV_SOURCE_REFS so the next declarative plan recovers the
+            # new binding (NO_CHANGE) instead of the stale one. Terminal step: a failure
+            # here still triggers the compensating rollback of DT/task/OFT, and nothing
+            # follows, so no row is left half-written (no compensating action needed).
+            if _source_refs:
+                self._metadata_manager.save_feature_view_source_refs(
+                    new_feature_view.name, version, FvSourceRefsMetadata(sources=list(_source_refs))
                 )
         except Exception as forward_error:
             logger.warning(
@@ -8508,8 +8529,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             else:
                 return online_config.to_json()
         else:
-            # No online feature table found - return default disabled config
-            online_config = fv_mod.OnlineConfig(enable=False, target_lag=fv_mod._BATCH_OFT_TARGET_LAG)
+            # No online feature table found. Leave target_lag unset so enabling online later
+            # applies the default for the requested store type.
+            online_config = fv_mod.OnlineConfig(enable=False)
             return online_config.to_json()
 
     def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> tuple[_FeatureViewMetadata, str]:
@@ -8998,7 +9020,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     seen_join_keys.add(resolved_secondary_key)
                     ordered_join_keys.append(resolved_secondary_key)
         primary_key_clause = fv_mod.build_oft_primary_key_clause(ordered_join_keys)
-        target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._BATCH_OFT_TARGET_LAG
+        target_lag_value = (
+            config.target_lag if config.target_lag is not None else fv_mod._default_online_target_lag(config.store_type)
+        )
         # StreamingFeatureView OFTs are spec-backed and require request-time freshness.
         if feature_view.is_streaming:
             target_lag_value = fv_mod._NON_BATCH_OFT_TARGET_LAG

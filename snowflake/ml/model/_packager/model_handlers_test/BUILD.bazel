@@ -241,7 +241,6 @@ py_test(
         "//snowflake/ml/model/_packager:model_packager",
         "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/model/models:huggingface",
-        "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 
@@ -275,6 +274,10 @@ py_test(
     name = "sentence_transformers_test",
     timeout = "eternal",
     srcs = ["sentence_transformers_test.py"],
+    env = {
+        # Artifactory HF proxy has no xet-read-token endpoint.
+        "HF_HUB_DISABLE_XET": "1",
+    },
     optional_dependencies = ["transformers"],
     shard_count = 4,
     tags = [

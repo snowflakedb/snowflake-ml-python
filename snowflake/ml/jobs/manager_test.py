@@ -99,6 +99,34 @@ class ManagerTest(parameterized.TestCase):
             msg=f"delete_job executed a REMOVE built from an invalid stage path: {remove_statements}",
         )
 
+    def test_delete_job_keeps_code_bundle_payload(self) -> None:
+        service_spec = {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "main",
+                        "env": {
+                            constants.STAGE_DISCOVERY_NAMESPACE_ENV_VAR: "notebook_project",
+                            constants.STAGE_DISCOVERY_STAGE_FQN_ENV_VAR: "TEST_DB.TEST_SCHEMA.MY_BUNDLE",
+                            constants.STAGE_DISCOVERY_VERSION_ENV_VAR: "VERSION$3",
+                        },
+                    }
+                ],
+                "volumes": [{"name": constants.STAGE_VOLUME_NAME, "source": "dynamic_stage_mount"}],
+            }
+        }
+        mock_session = MagicMock()
+        mock_job = jobs.MLJob[None]("TEST_DB.TEST_SCHEMA.JOB", session=mock_session)
+        mock_job._service_spec_cached = service_spec
+
+        with patch("snowflake.ml.jobs.manager.query_helper.run_query", return_value=[]) as mock_run_query:
+            jobs.delete_job(mock_job)
+
+        mock_session.sql.assert_not_called()
+        mock_run_query.assert_called_once_with(
+            mock_session, "DROP SERVICE IDENTIFIER(?)", params=("TEST_DB.TEST_SCHEMA.JOB",)
+        )
+
     @parameterized.parameters(  # type: ignore[misc]
         (jobs.submit_file, {"file_path": "entry.py"}),
         (jobs.submit_directory, {"dir_path": "src", "entrypoint": "entry.py"}),

@@ -341,7 +341,7 @@ class Dataset(lineage_node.LineageNode):
         metadata = dataset_metadata.DatasetMetadata(
             source_query=source_query,
             owner=self._session.sql("SELECT CURRENT_USER()").collect(statement_params=_TELEMETRY_STATEMENT_PARAMS)[0][
-                "CURRENT_USER()"
+                0
             ],
             exclude_cols=exclude_cols,
             label_cols=label_cols,

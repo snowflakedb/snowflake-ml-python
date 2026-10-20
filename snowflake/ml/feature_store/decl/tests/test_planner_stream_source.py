@@ -317,6 +317,38 @@ class TestPlanSourceFourWayDecision:
         assert src_ops[0].kind == OpKind.RECREATE_SOURCE
         assert src_ops[0].destructive is True
 
+    def test_applied_batch_source_recreate_is_non_destructive(self) -> None:
+        """``applied is not None`` + a ``BatchSource`` binding change → RECREATE_SOURCE,
+        but **non-destructive**.
+
+        A query/binding change to a query-backed BatchSource is informational:
+        the executor no-ops the source recreate, and the consuming FV's op is
+        the real ``--allow-recreate`` gate.  (A ``StreamingSource`` recreate
+        stays destructive — see
+        :meth:`test_applied_columns_differ_emits_recreate_source` and
+        :meth:`test_applied_source_type_differs_emits_recreate_source`.)
+        """
+        src = _batch_source(name="ORDERS", table="ORDERS_RAW_V2")
+        batch = SpecBatch(specs=[_entity_user(), src])
+        # Same source_type (Batch) so the recreate is driven by the binding
+        # change, not a kind flip; drop a column on the applied side so the
+        # structural fingerprint mismatches and the diff returns ``"recreate"``.
+        applied_obj = _applied_datasource(
+            name="ORDERS",
+            source_type="Batch",
+            columns=[
+                {"name": "USER_ID", "type": "StringType"},
+                {"name": "AMOUNT", "type": "FloatType"},
+            ],
+        )
+        applied = AppliedState(objects={applied_obj.key: applied_obj})
+
+        plan = generate_plan(batch, applied, PlanOptions(), database=_DB, schema=_SCHEMA)
+        src_ops = _ops_by_name(plan, "ORDERS")
+        assert len(src_ops) == 1
+        assert src_ops[0].kind == OpKind.RECREATE_SOURCE, f"expected RECREATE_SOURCE; got {src_ops[0].kind.value}"
+        assert src_ops[0].destructive is False, "BatchSource recreate is an executor no-op; must be non-destructive"
+
 
 # ---------------------------------------------------------------------------
 # Orphan-drop pass

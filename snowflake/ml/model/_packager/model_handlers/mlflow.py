@@ -4,7 +4,6 @@ import os
 import pathlib
 import tempfile
 import warnings
-from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Callable, cast, final
 
 import numpy as np
@@ -62,27 +61,6 @@ def _ensure_serializable_objects(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@contextlib.contextmanager
-def _sqlite_tracking_backend() -> Generator[str, None, None]:
-    """Point MLflow's tracking backend at a throwaway SQLite store, restoring the previous URI on exit.
-
-    Yields:
-        The id of a temporary experiment backed by the SQLite store.
-    """
-    import mlflow
-
-    previous_uri = mlflow.get_tracking_uri()
-    with tempfile.TemporaryDirectory() as tracking_dir:
-        db_path = os.path.join(tracking_dir, "mlflow.db")
-        artifact_root = pathlib.Path(tracking_dir, "artifacts").as_uri()
-        mlflow.set_tracking_uri(f"sqlite:///{db_path}")
-        try:
-            experiment_id = mlflow.create_experiment("snowflake_ml_mlflow_relog", artifact_location=artifact_root)
-            yield experiment_id
-        finally:
-            mlflow.set_tracking_uri(previous_uri)
-
-
 def _get_native_model(model: "mlflow.pyfunc.PyFuncModel") -> Any:
     """Return the flavor's native model, unwrapping MLflow's PyFunc wrapper when one is present.
 
@@ -105,15 +83,15 @@ def _get_native_model(model: "mlflow.pyfunc.PyFuncModel") -> Any:
 def _get_sklearn_serialization_kwargs(model: "mlflow.pyfunc.PyFuncModel") -> dict[str, Any]:
     """Return the scikit-learn serialization settings the model was originally saved with.
 
-    Re-logging without them lets the artifact switch serialization backends, since MLflow's default
-    has changed across versions. A switched backend pulls in a serializer dependency that the model's
-    environment does not declare, which then fails to load at inference time.
+    A later save that omits them uses MLflow's current default backend. That default has changed
+    across versions, and a switched backend needs a serializer the model's environment does not
+    declare.
 
     Args:
         model: The loaded MLflow PyFunc model.
 
     Returns:
-        Keyword arguments to forward to ``mlflow.sklearn.log_model``.
+        Keyword arguments to forward to ``mlflow.sklearn.save_model``.
     """
     import mlflow
 
@@ -125,26 +103,24 @@ def _get_sklearn_serialization_kwargs(model: "mlflow.pyfunc.PyFuncModel") -> dic
     }
 
 
-def _re_log_to_mlflow_run(
+def _resave_mlflow_model(
     model: "mlflow.pyfunc.PyFuncModel",
-    experiment_id: str,
-) -> "mlflow.pyfunc.PyFuncModel":
-    """Re-log a locally-saved MLflow model into a proper MLflow tracking run.
+    dest_root: str,
+) -> tuple["mlflow.pyfunc.PyFuncModel", str]:
+    """Write a model that has no tracking run into a local directory.
 
-    Models created with ``mlflow.*.save_model()`` and loaded from a local path
-    lack a backing tracking run: their ``Model`` metadata has no ``artifact_path``
-    or ``run_id``, so ``get_model_info()`` fails and artifact download cannot
-    resolve the URI. This function uses the flavor-specific ``log_model`` to
-    persist the underlying model implementation into a new MLflow run so that
-    all metadata and artifact operations succeed.
+    ``mlflow.*.save_model()`` models have no run id, so there is no artifact URI to download. The
+    flavor's ``save_model`` writes a directory this handler can copy, without opening a tracking
+    store. Scikit-learn models are saved from the native estimator, with the serialization settings
+    the model was originally saved with.
 
     Args:
-        model: An mlflow.pyfunc.PyFuncModel whose metadata is missing tracking
-            run information (no ``artifact_path`` or ``run_id``).
-        experiment_id: Id of the experiment (in the active tracking store) to create the run under.
+        model: An mlflow.pyfunc.PyFuncModel whose metadata has no tracking run.
+        dest_root: Directory that will contain the re-saved model. The caller keeps it alive until
+            the artifacts have been copied.
 
     Returns:
-        A new mlflow.pyfunc.PyFuncModel backed by a real MLflow tracking run.
+        The reloaded model and the directory it was saved to (``dest_root/model``).
 
     Raises:
         ValueError: If the model's flavor loader module cannot be determined or imported.
@@ -155,7 +131,7 @@ def _re_log_to_mlflow_run(
 
     pyfunc_flavor = model.metadata.flavors.get(mlflow.pyfunc.FLAVOR_NAME)
     if pyfunc_flavor is None:
-        raise ValueError("Cannot re-log an MLflow model without a PyFunc flavor.")
+        raise ValueError("Cannot re-save an MLflow model without a PyFunc flavor.")
 
     loader_module_name = pyfunc_flavor.get("loader_module")
     if loader_module_name is None:
@@ -165,36 +141,31 @@ def _re_log_to_mlflow_run(
         )
 
     loader_module = importlib.import_module(loader_module_name)
-
-    artifact_path = "model"
-    with mlflow.start_run(experiment_id=experiment_id) as run:
-        logger.warning(
-            "Model was created with save_model() and lacks tracking metadata. Auto re-logging the model",
+    save_path = os.path.join(dest_root, "model")
+    logger.warning(
+        "Model was created with save_model() and lacks tracking metadata. Auto re-saving the model",
+    )
+    if loader_module_name == "mlflow.pyfunc.model":
+        python_model = getattr(model._model_impl, "python_model", model._model_impl)
+        if python_model is None:
+            raise ValueError("The PyFunc model has no python_model attribute.")
+        mlflow.pyfunc.save_model(
+            path=save_path,
+            python_model=python_model,
+            signature=model.metadata.signature,
         )
-        if loader_module_name == "mlflow.pyfunc.model":
-            python_model = getattr(model._model_impl, "python_model", model._model_impl)
-            if python_model is None:
-                raise ValueError("The PyFunc model has no python_model attribute.")
-            mlflow.pyfunc.log_model(
-                artifact_path=artifact_path,
-                python_model=python_model,
-                signature=model.metadata.signature,
-            )
-        elif hasattr(loader_module, "log_model"):
-            log_model_kwargs = (
-                _get_sklearn_serialization_kwargs(model) if loader_module_name == "mlflow.sklearn" else {}
-            )
-            loader_module.log_model(
-                _get_native_model(model),
-                artifact_path=artifact_path,
-                signature=model.metadata.signature,
-                **log_model_kwargs,
-            )
-        else:
-            raise ValueError(f"The MLflow flavor module '{loader_module_name}' does not have a log_model function.")
-        new_model = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/{artifact_path}")
+    elif hasattr(loader_module, "save_model"):
+        save_model_kwargs = _get_sklearn_serialization_kwargs(model) if loader_module_name == "mlflow.sklearn" else {}
+        loader_module.save_model(
+            _get_native_model(model),
+            path=save_path,
+            signature=model.metadata.signature,
+            **save_model_kwargs,
+        )
+    else:
+        raise ValueError(f"The MLflow flavor module '{loader_module_name}' does not have a save_model function.")
 
-    return new_model
+    return mlflow.pyfunc.load_model(save_path), save_path
 
 
 def _parse_mlflow_env(model_uri: str, env: model_env.ModelEnv) -> model_env.ModelEnv:
@@ -279,39 +250,34 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
         assert isinstance(model, mlflow.pyfunc.PyFuncModel)
 
-        needs_re_log = False
+        user_model_uri = kwargs.get("model_uri")
+        # A logged model exposes a resolvable artifact URI. A save_model() object does not:
+        # get_model_info() raises on MLflow 2.x, or reports run_id=None on 3.x. When the caller
+        # also passed model_uri, that directory is the artifact source and is copied as-is.
+        resolved_model_uri = None
         try:
             model_info = model.metadata.get_model_info()
-            # MLflow 3.x: save_model models may have run_id=None, causing
-            # downstream operations like download_artifacts to fail.
-            if model_info.run_id is None:
-                needs_re_log = True
+            if model_info.run_id is not None:
+                resolved_model_uri = model_info.model_uri
         except AttributeError:
-            # MLflow 2.x: save_model models lack the artifact_path attribute
-            # entirely, so get_model_info() raises AttributeError.
-            needs_re_log = True
+            pass
 
-        # A re-logged model's URIs resolve only while their SQLite backend is active, so keep it open
-        # across dependency parsing and artifact download below. Non-re-logged models never enter it.
-        with contextlib.ExitStack() as tracking_stack:
-            if needs_re_log:
-                experiment_id = tracking_stack.enter_context(_sqlite_tracking_backend())
-                model = _re_log_to_mlflow_run(model, experiment_id)
-                model_info = model.metadata.get_model_info()
+        # Signature, flavors, and metadata live on the in-memory model whether or not it has a run.
+        mlflow_signature = model.metadata.signature
+        flavors = model.metadata.flavors
+        mlflow_model_metadata = model.metadata.metadata
 
-            user_model_uri = kwargs.get("model_uri")
-            # For artifact download, always use the tracked model_info URI when re-logged
-            # (it has the correct MLflow artifact structure). Fall back to user-supplied URI
-            # or model_info URI for non-re-logged models.
-            if needs_re_log:
-                artifact_uri = model_info.model_uri
-            else:
-                artifact_uri = user_model_uri or model_info.model_uri
-            # For dependency parsing, prefer user-supplied URI since re-logged models
-            # may not preserve the original conda environment.
-            deps_uri = user_model_uri or model_info.model_uri
+        # A re-saved directory has to stay on disk through dependency parsing and the artifact copy.
+        with contextlib.ExitStack() as artifact_stack:
+            artifact_uri = user_model_uri or resolved_model_uri
+            if artifact_uri is None:
+                resave_root = artifact_stack.enter_context(tempfile.TemporaryDirectory())
+                _, artifact_uri = _resave_mlflow_model(model, resave_root)
+            # Re-saving writes a new environment. Prefer the caller's original model directory when
+            # they supplied one, so the packaged dependencies stay the ones they saved.
+            deps_uri = user_model_uri or artifact_uri
 
-            pyfunc_flavor_info = model_info.flavors.get(mlflow.pyfunc.FLAVOR_NAME, None)
+            pyfunc_flavor_info = flavors.get(mlflow.pyfunc.FLAVOR_NAME, None)
             if pyfunc_flavor_info is None:
                 raise ValueError("Cannot save MLFlow model that does not have PyFunc flavor.")
 
@@ -322,11 +288,10 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
                 else:
                     handlers_utils.validate_target_methods(model, cls.DEFAULT_TARGET_METHODS)
                     model_meta.signatures = {
-                        cls._DEFAULT_TARGET_METHOD: model_signature.ModelSignature.from_mlflow_sig(model_info.signature)
+                        cls._DEFAULT_TARGET_METHOD: model_signature.ModelSignature.from_mlflow_sig(mlflow_signature)
                     }
 
             # Port MLFlow metadata
-            mlflow_model_metadata = model_info.metadata
             if mlflow_model_metadata and not kwargs.get("ignore_mlflow_metadata", False):
                 if not model_meta.metadata:
                     model_meta.metadata = {}

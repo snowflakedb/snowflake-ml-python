@@ -14,7 +14,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.inference_engine import InferenceEngine
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -218,10 +218,10 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
     @pytest.mark.conda_incompatible
     def test_inference_with_HF_model(self, inference_engine: InferenceEngine) -> None:
         # Define model
-        model = huggingface_pipeline.HuggingFacePipelineModel(
+        model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B",
-            download_snapshot=False,
+            compute_pool_for_log=None,
         )
 
         # Define test input data

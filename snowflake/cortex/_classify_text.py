@@ -6,24 +6,23 @@ from typing_extensions import deprecated
 from snowflake import snowpark
 from snowflake.cortex._util import (
     CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
-    call_sql_function,
+    SnowflakeAuthenticationException,
     warn_cortex_deprecated,
 )
 from snowflake.ml._internal import telemetry
-from snowflake.snowpark import functions
+from snowflake.snowpark import context, functions
 
 _AI_CLASSIFY_FUNCTION_NAME = "AI_CLASSIFY"
-# Legacy CLASSIFY_TEXT always returned exactly one label. AI_CLASSIFY defaults to single-label mode, but
-# we set output_mode explicitly so the single-label contract can't drift and multi-label results can
-# never leak through.
-_AI_CLASSIFY_SINGLE_LABEL_CONFIG = {"output_mode": "single"}
+# AI_CLASSIFY requires its config argument to be a constant object literal. A Python dict is rendered by
+# Snowpark as PARSE_JSON('...')::OBJECT, which the server rejects ("... is not a constant"), so emit the
+# config as a SQL object constant via sql_expr -- this mirrors snowflake.snowpark.functions.ai_classify.
+# Legacy CLASSIFY_TEXT was always single-label, so set output_mode explicitly to keep that contract.
+_AI_CLASSIFY_SINGLE_LABEL_CONFIG_SQL = "{'output_mode': 'single'}"
 
 
 def _adapt_ai_classify_result(result: Any) -> str:
     """Map an AI_CLASSIFY result to the legacy CLASSIFY_TEXT {"label": ...} JSON string."""
-    # Legacy classify_text returned the raw CLASSIFY_TEXT OBJECT, which the immediate (non-Column) path
-    # collects as a JSON string such as '{"label": "positive"}'. We reproduce that exact shape so
-    # existing callers that json.loads the result and read ["label"] keep working.
+    # Used for non-Column results (e.g. a dict/JSON string): reproduce the legacy single-label object shape.
     parsed: Any = result
     if isinstance(result, str):
         try:
@@ -38,6 +37,20 @@ def _adapt_ai_classify_result(result: Any) -> str:
         elif parsed.get("label") is not None:
             label = parsed.get("label")
     return json.dumps({"label": label})
+
+
+def _ai_classify_label_column(
+    str_input: str | snowpark.Column,
+    categories: list[str] | snowpark.Column,
+) -> snowpark.Column:
+    """Call AI_CLASSIFY in single-label mode and re-wrap to the legacy CLASSIFY_TEXT {"label": ...} OBJECT."""
+    result = functions.builtin(_AI_CLASSIFY_FUNCTION_NAME)(
+        str_input, categories, functions.sql_expr(_AI_CLASSIFY_SINGLE_LABEL_CONFIG_SQL)
+    )
+    # AI_CLASSIFY returns {"labels": [...]}; collapse to the legacy single {"label": ...}. Subscript access
+    # (not functions.get with a bare string, which Snowpark treats as a column identifier) uses literal keys.
+    label = functions.coalesce(result["labels"][0], result["label"])
+    return functions.object_construct(functions.lit("label"), label)
 
 
 @telemetry.send_api_usage_telemetry(
@@ -56,32 +69,25 @@ def classify_text(
         session: The snowpark session to use. Will be inferred by context if not specified.
 
     Returns:
-        A column of classification responses.
+        A column of classification responses (legacy CLASSIFY_TEXT {"label": ...} shape).
+
+    Raises:
+        SnowflakeAuthenticationException: if no session is provided and none is active.
     """
     warn_cortex_deprecated("classify_text", "ai_classify")
-    result = _classify_text_impl(
-        _AI_CLASSIFY_FUNCTION_NAME, str_input, categories, _AI_CLASSIFY_SINGLE_LABEL_CONFIG, session=session
-    )
-    if isinstance(result, snowpark.Column):
-        # AI_CLASSIFY returns {"labels": [...]}; re-wrap as the legacy CLASSIFY_TEXT {"label": ...} OBJECT
-        # so downstream SQL that reads col["label"] is unchanged. Subscript access (not functions.get with
-        # a bare string, which Snowpark treats as a column identifier) extracts the field by literal key.
-        label = functions.coalesce(result["labels"][0], result["label"])
-        return functions.object_construct(functions.lit("label"), label)
-    return _adapt_ai_classify_result(result)
+    column = _ai_classify_label_column(str_input, categories)
+    if isinstance(str_input, snowpark.Column) or isinstance(categories, snowpark.Column):
+        return column
 
-
-def _classify_text_impl(
-    function: str,
-    str_input: str | snowpark.Column,
-    categories: list[str] | snowpark.Column,
-    config: dict[str, Any] | None = None,
-    session: snowpark.Session | None = None,
-) -> str | snowpark.Column:
-    args: list[Any] = [str_input, categories]
-    if config is not None:
-        args.append(config)
-    return cast(str | snowpark.Column, call_sql_function(function, session, *args))
+    # Immediate (literal) path: evaluate and return the collected OBJECT as a JSON string, exactly as the
+    # legacy CLASSIFY_TEXT immediate path did.
+    session = session or context.get_active_session()
+    if session is None:
+        raise SnowflakeAuthenticationException(
+            """Session required. Provide the session through a session=... argument or ensure an active session is
+            available in your environment."""
+        )
+    return cast(str, session.create_dataframe([snowpark.Row()]).select(column).collect()[0][0])
 
 
 ClassifyText = deprecated(

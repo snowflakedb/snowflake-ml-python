@@ -26,10 +26,7 @@ from snowflake.ml.model._signatures import (
     core as model_signature_core,
     utils as model_signature_utils,
 )
-from snowflake.ml.model.models import (
-    huggingface as huggingface_base,
-    huggingface_pipeline,
-)
+from snowflake.ml.model.models import huggingface as huggingface_base
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +43,6 @@ class TransformersPipelineHandler(
     _base.BaseModelHandler[
         Union[
             huggingface_base.TransformersPipeline,
-            huggingface_pipeline.HuggingFacePipelineModel,
             "transformers.Pipeline",
         ]
     ]
@@ -69,18 +65,10 @@ class TransformersPipelineHandler(
     def can_handle(
         cls,
         model: model_types.SupportedModelType,
-    ) -> TypeGuard[
-        Union[
-            huggingface_base.TransformersPipeline,
-            huggingface_pipeline.HuggingFacePipelineModel,
-            "transformers.Pipeline",
-        ]
-    ]:
+    ) -> TypeGuard[Union[huggingface_base.TransformersPipeline, "transformers.Pipeline"]]:
         if isinstance(model, huggingface_base.SentenceTransformer):
             return False
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
-            return True
-        if isinstance(model, huggingface_pipeline.HuggingFacePipelineModel):
             return True
         if isinstance(model, huggingface_base.TransformersPipeline):
             return True
@@ -90,16 +78,10 @@ class TransformersPipelineHandler(
     def cast_model(
         cls,
         model: model_types.SupportedModelType,
-    ) -> Union[
-        huggingface_base.TransformersPipeline,
-        huggingface_pipeline.HuggingFacePipelineModel,
-        "transformers.Pipeline",
-    ]:
+    ) -> Union[huggingface_base.TransformersPipeline, "transformers.Pipeline"]:
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             return model
-        elif isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
-            model, huggingface_base.TransformersPipeline
-        ):
+        elif isinstance(model, huggingface_base.TransformersPipeline):
             return model
         else:
             raise ValueError(f"Model {model} is not a valid Hugging Face model.")
@@ -110,7 +92,6 @@ class TransformersPipelineHandler(
         name: str,
         model: Union[
             huggingface_base.TransformersPipeline,
-            huggingface_pipeline.HuggingFacePipelineModel,
             "transformers.Pipeline",
         ],
         model_meta: model_meta_api.ModelMetadata,
@@ -136,9 +117,7 @@ class TransformersPipelineHandler(
             else:
                 has_chat_template = False
         else:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
-                model, huggingface_base.TransformersPipeline
-            )
+            assert isinstance(model, huggingface_base.TransformersPipeline)
             task = model.task
             pretrained_model_name = model.model
             framework = getattr(model, "framework", None)
@@ -156,9 +135,7 @@ class TransformersPipelineHandler(
                 **model._postprocess_params,  # type:ignore[attr-defined]
             }
         else:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
-                model, huggingface_base.TransformersPipeline
-            )
+            assert isinstance(model, huggingface_base.TransformersPipeline)
             params = {**model.__dict__, **model.model_kwargs}
 
         inferred_pipe_sig = model_signature_utils.huggingface_pipeline_signature_auto_infer(
@@ -338,12 +315,10 @@ class TransformersPipelineHandler(
     def _load_pickle_model(
         pickle_file: str,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
-    ) -> huggingface_pipeline.HuggingFacePipelineModel | huggingface_base.TransformersPipeline:
+    ) -> huggingface_base.TransformersPipeline:
         with open(pickle_file, "rb") as f:
             m = cloudpickle.load(f)
-        assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
-            m, huggingface_base.TransformersPipeline
-        )
+        assert isinstance(m, huggingface_base.TransformersPipeline)
         torch_dtype: str | None = None
         device_config = None
         if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
@@ -364,9 +339,7 @@ class TransformersPipelineHandler(
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
-    ) -> Union[
-        huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline, "transformers.Pipeline"
-    ]:
+    ) -> Union[huggingface_base.TransformersPipeline, "transformers.Pipeline"]:
         handlers_utils.redirect_hf_cache_to_writable_dir()
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -422,7 +395,7 @@ class TransformersPipelineHandler(
 
         def _create_pipeline_from_model(
             model_blob_file_or_dir_path: str,
-            m: huggingface_pipeline.HuggingFacePipelineModel | huggingface_base.TransformersPipeline,
+            m: huggingface_base.TransformersPipeline,
             **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
         ) -> "transformers.Pipeline":
             import transformers
@@ -447,27 +420,27 @@ class TransformersPipelineHandler(
             # case 1: LEGACY logging, repo snapshot is not logged
             if os.path.isfile(model_blob_file_or_dir_path):
                 # LEGACY logging that had model as a pickle file in the model blob directory
-                # the logged model is a huggingface_pipeline.HuggingFacePipelineModel object
+                # the logged model is a TransformersPipeline object
                 # the model_blob_file_or_dir_path is the pickle file that holds
-                # the huggingface_pipeline.HuggingFacePipelineModel object
+                # the TransformersPipeline object
                 # the snapshot of the repo is not logged
                 return cls._load_pickle_model(model_blob_file_or_dir_path)
             else:
                 assert os.path.isdir(model_blob_file_or_dir_path)
-                # the logged model is a huggingface_pipeline.HuggingFacePipelineModel object
-                # the pickle_file holds the huggingface_pipeline.HuggingFacePipelineModel object
+                # the logged model is a TransformersPipeline object
+                # the pickle_file holds the TransformersPipeline object
                 pickle_file = os.path.join(model_blob_file_or_dir_path, cls.MODEL_PICKLE_FILE)
                 m = cls._load_pickle_model(pickle_file)
 
                 # case 2: logging without the snapshot of the repo
                 if not is_repo_downloaded:
-                    # we return the huggingface_pipeline.HuggingFacePipelineModel object
+                    # we return the TransformersPipeline object
                     return m
                 # case 3: logging with the snapshot of the repo
                 else:
                     # the model_blob_file_or_dir_path is the directory that holds
                     # weights of the model from `huggingface_hub.snapshot_download`
-                    # the huggingface_pipeline.HuggingFacePipelineModel object is logged
+                    # the TransformersPipeline object is logged
                     # with a snapshot of the repo, we create a transformers.Pipeline object
                     # by reading the snapshot directory
                     return _create_pipeline_from_model(model_blob_file_or_dir_path, m, **kwargs)
@@ -476,7 +449,6 @@ class TransformersPipelineHandler(
     def convert_as_custom_model(
         cls,
         raw_model: Union[
-            huggingface_pipeline.HuggingFacePipelineModel,
             huggingface_base.TransformersPipeline,
             "transformers.Pipeline",
         ],
@@ -488,9 +460,7 @@ class TransformersPipelineHandler(
 
         from snowflake.ml.model import custom_model
 
-        if isinstance(raw_model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
-            raw_model, huggingface_base.TransformersPipeline
-        ):
+        if isinstance(raw_model, huggingface_base.TransformersPipeline):
             if version.parse(transformers.__version__) < version.parse("4.32.0"):
                 # Backward compatibility since HF interface change.
                 raw_model.__dict__["use_auth_token"] = raw_model.__dict__["token"]
@@ -532,15 +502,14 @@ class TransformersPipelineHandler(
 def _get_task_handler(
     raw_model: Union[
         "transformers.Pipeline",
-        huggingface_pipeline.HuggingFacePipelineModel,
         huggingface_base.TransformersPipeline,
     ],
 ) -> "HuggingFaceTaskHandler":
     """Return the appropriate task handler for the given model.
 
     Args:
-        raw_model: A HuggingFace model — either a ``transformers.Pipeline``,
-            ``HuggingFacePipelineModel``, or ``TransformersPipeline`` wrapper.
+        raw_model: A HuggingFace model — either a ``transformers.Pipeline``
+            or ``TransformersPipeline`` wrapper.
 
     Returns:
         A HuggingFaceTaskHandler instance for the model's task.

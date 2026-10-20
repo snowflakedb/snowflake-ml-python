@@ -1693,7 +1693,14 @@ def _merge_template_vars(
 
     Implements the D5 precedence rule:
 
-        ``defaults < configurations[target.templating_config] < runtime_vars``
+        ``target db/schema < defaults <
+        configurations[target.templating_config] < runtime_vars``
+
+    The resolved target's ``database`` / ``schema`` are seeded at the
+    bottom of the chain as the ``{{ database }}`` / ``{{ schema }}``
+    variables, so a spec can reference its deployment location
+    symbolically and stay portable across targets while a templating
+    default/configuration or a ``--variable`` override still wins.
 
     Dictionary-typed defaults cannot be overridden at runtime; a
     :class:`ValueError` is raised naming the offending key.  This mirrors
@@ -1706,14 +1713,16 @@ def _merge_template_vars(
     Args:
         manifest: Parsed manifest carrying ``templating.defaults`` and
             ``templating.configurations``.
-        target: Resolved target; its ``templating_config`` selects which
+        target: Resolved target; supplies the ``database`` / ``schema``
+            template vars and its ``templating_config`` selects which
             configuration is layered on top of the defaults.
         runtime_vars: ``--variable key=value`` overrides supplied at the
             CLI.  ``None`` and ``{}`` are treated identically.
 
     Returns:
-        New dict containing the merged template variables.  The input
-        manifest / runtime_vars are never mutated.
+        New dict containing the merged template variables (always
+        including ``database`` / ``schema``).  The input manifest /
+        runtime_vars are never mutated.
 
     Raises:
         ValueError: If ``runtime_vars`` attempts to override a
@@ -1721,7 +1730,8 @@ def _merge_template_vars(
     """
     defaults = dict(manifest.templating.defaults)
 
-    merged: dict[str, Any] = dict(defaults)
+    merged: dict[str, Any] = {"database": target.database, "schema": target.schema}
+    merged.update(defaults)
     if target.templating_config:
         configuration = manifest.templating.configurations.get(target.templating_config) or {}
         merged.update(configuration)

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -eux
-# --repository_cache="" disables the repository cache. The repository cache won't be
-# cleaned by `bazel clean --expunge`, thus would leave trace.
-bazel build --config=build --repository_cache="" --config="py${PY_VER}" //:wheel
+# The repository cache is not cleaned by `bazel clean --expunge`, so it must live outside
+# the conda build prefix; an unset BAZEL_REPOSITORY_CACHE disables it.
+BAZEL_EXTRA_BUILD_FLAGS=(--repository_cache="${BAZEL_REPOSITORY_CACHE:-}")
+if [[ -n "${BAZEL_DOWNLOADER_CONFIG:-}" ]]; then
+    BAZEL_EXTRA_BUILD_FLAGS+=(--experimental_downloader_config="${BAZEL_DOWNLOADER_CONFIG}")
+fi
+bazel build --config=build "${BAZEL_EXTRA_BUILD_FLAGS[@]}" --config="py${PY_VER}" //:wheel
 pip install --no-dependencies "$(bazel info bazel-bin)"/dist/*.whl
 # We need to remove all the bazel's output because `conda build` looks at the diff of
 # the working environment before and after running this script. And bazel's output

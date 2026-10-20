@@ -367,9 +367,8 @@ class FeatureView(SpecBase):
     # values raises ``ValidationError`` at load time.
     initialize: Literal["ON_CREATE", "ON_SCHEDULE"] | None = None
     storage_config: StorageConfig | None = None
-    # ``aggregation_secondary_keys`` is private-preview; valid on both
-    # tiled and non-tiled BFVs (on a non-tiled FV it is a spec/OFT
-    # identity column, not a no-op).  The only authoring constraint — the
+    # ``aggregation_secondary_keys`` is valid on
+    # tiled BFVs. The only authoring constraint — the
     # length-1 cap — is enforced by
     # ``invariants._check_batch_feature_view_constraints`` so the error
     # message can name the offending FV.  Default ``None`` keeps the

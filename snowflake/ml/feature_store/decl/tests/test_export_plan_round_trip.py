@@ -575,6 +575,135 @@ class TestExportThenPlanEmitsNoChange:
 
 
 # ---------------------------------------------------------------------------
+# Stale-metadata round-trip: a deployed SPECIFICATION whose ``metadata.schema``
+# diverges from the SHOW-row ``schema_name`` must still plan as NO_CHANGE.  The
+# exporter emits the deployed identity (SHOW row), so the applied side must key
+# AND hash on that same deployed identity; otherwise the FV loops on CREATE_FV
+# (key divergence) or RECREATE_FV (the retained ``metadata.schema`` diverges the
+# full-spec hash) on every plan.
+# ---------------------------------------------------------------------------
+
+
+def _stale_metadata_applied_state(
+    spec_payload: dict[str, Any],
+    *,
+    deployed_database: str,
+    deployed_schema: str,
+) -> object:
+    """Build an AppliedState where the SPECIFICATION metadata schema is stale.
+
+    The SHOW row and entity rows use the deployed identity
+    (``deployed_database`` / ``deployed_schema``) while ``spec_payload``'s
+    ``metadata`` keeps its own (possibly stale) database/schema — reproducing a
+    SPECIFICATION stamped against a stale session schema.
+
+    Args:
+        spec_payload: SPECIFICATION-shape FV dict carrying a stale ``metadata``.
+        deployed_database: The OFT's real deployed database (SHOW-row).
+        deployed_schema: The OFT's real deployed schema (SHOW-row).
+
+    Returns:
+        object: an AppliedState whose FV / entity objects key on the deployed
+        identity.
+    """
+    spec_payload = copy.deepcopy(spec_payload)
+    _canonicalise_spec_identifiers(spec_payload, authored=True)
+    metadata = spec_payload.get("metadata", {})
+    name = metadata.get("name", "")
+    version = metadata.get("version", "")
+    oft_name = f"{name.upper()}${version.upper()}$ONLINE"
+
+    show_rows = [
+        {
+            "name": oft_name,
+            "database_name": deployed_database,
+            "schema_name": deployed_schema,
+            "scheduling_state": "ACTIVE",
+        }
+    ]
+    spec_map = {oft_name: spec_payload}
+
+    entity_rows = []
+    for col_name in spec_payload.get("spec", {}).get("ordered_entity_column_names", []):
+        entity_rows.append(
+            {
+                "name": f"SNOWML_FEATURE_STORE_ENTITY_{col_name.upper()}",
+                "database_name": deployed_database,
+                "schema_name": deployed_schema,
+                "allowed_values": f'["{col_name.upper()}"]',
+            }
+        )
+
+    return fetch_applied_state(
+        show_rows,
+        None,
+        specification_map=spec_map,
+        entity_rows=entity_rows,
+        default_database=deployed_database,
+        default_schema=deployed_schema,
+    )
+
+
+class TestExportThenPlanStaleMetadataSchema:
+    """Pin: a stale SPECIFICATION ``metadata.schema`` round-trips to NO_CHANGE."""
+
+    def test_stale_metadata_schema_round_trips_to_no_change(self, tmp_path: Path) -> None:
+        """Deployed FV in MYDB.PUBLIC with metadata.schema=STALE plans as NO_CHANGE."""
+        stale_spec = copy.deepcopy(_STREAMING_SPEC)
+        stale_spec["metadata"]["database"] = "MYDB"
+        stale_spec["metadata"]["schema"] = "STALE_SESSION_SCH"
+
+        applied_state = _stale_metadata_applied_state(
+            stale_spec,
+            deployed_database="MYDB",
+            deployed_schema="PUBLIC",
+        )
+
+        name = stale_spec["metadata"]["name"]
+        version = stale_spec["metadata"]["version"]
+        oft_name = f"{name.upper()}${version.upper()}$ONLINE"
+
+        # The exporter emits the deployed identity (SHOW row), so export under
+        # the real deployed MYDB.PUBLIC regardless of the stale metadata.
+        export_specs(
+            show_rows=[
+                {
+                    "name": oft_name,
+                    "database_name": "MYDB",
+                    "schema_name": "PUBLIC",
+                    "scheduling_state": "ACTIVE",
+                }
+            ],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={oft_name: stale_spec},
+        )
+
+        export_root = tmp_path / "MYDB.PUBLIC"
+        batch = load_specs([f"{export_root}/..."])
+
+        errors, plan = _validate_and_plan(
+            batch,
+            applied_state,
+            PlanOptions(),
+            database="MYDB",
+            schema="PUBLIC",
+        )
+
+        assert errors == [], f"validation failed on stale-metadata round-trip: {errors!r}"
+
+        op_kinds = {op.kind.value for op in plan.ops}
+        non_no_change_ops = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
+        assert non_no_change_ops == [], (
+            "Stale-metadata round-trip must be NO_CHANGE (the applied side must key and "
+            "hash on the deployed SHOW-row identity, not the stale metadata.schema); got "
+            f"{op_kinds!r}, non-NO_CHANGE ops = {non_no_change_ops!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Orphan-entity round-trip: export(...entity_rows=...) → plan ./... emits
 # zero DROP_ENTITY ops even when the schema has tags not referenced by any FV
 # ---------------------------------------------------------------------------
@@ -1583,7 +1712,7 @@ def _c1_tiled_bfv_authoring(*, warehouse: str) -> dict[str, Any]:
     The aggregation + secondary-key surface is held constant across
     the local + applied baselines so the only divergence the planner
     can observe is the warehouse value.  Single-element
-    ``aggregation_secondary_keys`` respects the private-preview cap
+    ``aggregation_secondary_keys`` respects the cap
     enforced by
     :func:`invariants._check_batch_feature_view_constraints`.
 

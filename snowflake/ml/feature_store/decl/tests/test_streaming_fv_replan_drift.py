@@ -53,8 +53,6 @@ import json
 import sys
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _canonical_spec_for_hash,
@@ -99,8 +97,7 @@ def _load_golden_specification() -> dict[str, Any]:
     Returns:
         Parsed golden dict — the BUG_BASH §5 FV's DESCRIBE payload.
     """
-    if not _BUG_BASH_GOLDEN.exists():
-        pytest.skip(f"golden fixture {_BUG_BASH_GOLDEN} not captured yet")
+    assert _BUG_BASH_GOLDEN.exists(), f"required golden fixture missing: {_BUG_BASH_GOLDEN}"
     golden: dict[str, Any] = json.loads(_BUG_BASH_GOLDEN.read_text())
     return golden
 

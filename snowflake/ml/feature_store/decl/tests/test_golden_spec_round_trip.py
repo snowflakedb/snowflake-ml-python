@@ -29,6 +29,7 @@ from snowflake.ml.feature_store.decl.exporter import export_specs
 from snowflake.ml.feature_store.decl.invariants import (
     _VOLATILE_METADATA_KEYS,
     _full_spec_hash,
+    _normalize_applied_bfv_for_hash,
 )
 from snowflake.ml.feature_store.decl.loader import load_specs
 from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
@@ -137,7 +138,21 @@ def test_golden_spec_hash_symmetry(golden_path: Any, tmp_path: Path) -> None:
 
     compiled = compile_to_spec(loaded_dict, db, schema)
 
-    if _full_spec_hash(compiled) != _full_spec_hash(spec_payload):
+    # Mirror the planner's BatchFV comparison contract (``planner.generate_plan``):
+    # the authored/local half (SQL-syntax identifiers) resolves to stored form via
+    # ``authored=True`` while the applied/stored golden unquotes only (``authored=False``
+    # default).  For a BatchFeatureView the applied half is first routed through
+    # ``_normalize_applied_bfv_for_hash`` so Snowflake-resolved ``refresh_mode``
+    # (INCREMENTAL / FULL / AUTO) the operator never authored does not diverge the
+    # hash; a case-sensitive secondary key would otherwise spuriously trip
+    # ``VERSION_CONFLICT`` on a clean round-trip.
+    local_hash = _full_spec_hash(compiled, authored=True)
+    if fv_kind == "BatchFeatureView":
+        applied_hash = _full_spec_hash(_normalize_applied_bfv_for_hash(spec_payload, compiled))
+    else:
+        applied_hash = _full_spec_hash(spec_payload)
+
+    if local_hash != applied_hash:
         expected = json.dumps(_strip_volatile(spec_payload), sort_keys=True, indent=2)
         actual = json.dumps(_strip_volatile(compiled), sort_keys=True, indent=2)
         pytest.fail(

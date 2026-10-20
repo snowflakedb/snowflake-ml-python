@@ -12,6 +12,9 @@ DEFAULT_PYTHON_VERSION = "3.10"
 STAGE_MOUNT_PATH_ENV_VAR = "MLRS_STAGE_MOUNT_PATH"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
 RESULT_PATH_ENV_VAR = "MLRS_RESULT_PATH"
+STAGE_DISCOVERY_NAMESPACE_ENV_VAR = "MLRS_STAGE_DISCOVERY_NAMESPACE"
+STAGE_DISCOVERY_STAGE_FQN_ENV_VAR = "MLRS_STAGE_DISCOVERY_STAGE_FQN"
+STAGE_DISCOVERY_VERSION_ENV_VAR = "MLRS_STAGE_DISCOVERY_VERSION"
 MIN_INSTANCES_ENV_VAR = "MLRS_MIN_INSTANCES"
 TARGET_INSTANCES_ENV_VAR = "SNOWFLAKE_JOBS_COUNT"
 # Immutable instance count captured at job submission.
@@ -73,6 +76,12 @@ ENABLE_HEALTH_CHECKS = "false"
 JOB_POLL_INITIAL_DELAY_SECONDS = 5
 JOB_POLL_MAX_DELAY_SECONDS = 30
 JOB_SPCS_TIMEOUT_SECONDS = 30
+# Maximum time to wait for EXECUTE CODE BUNDLE to create its ML Job, which includes job service creation.
+CODE_BUNDLE_JOB_ID_TIMEOUT_SECONDS = 300
+# Code bundle history can list a job id shortly before the job's service exists; how long to wait for it,
+# and how often to check whether it exists yet.
+CODE_BUNDLE_SERVICE_WAIT_SECONDS = 30
+CODE_BUNDLE_SERVICE_POLL_SECONDS = 5
 
 # Log start and end messages
 LOG_START_MSG = "--------------------------------\nML job started\n--------------------------------"

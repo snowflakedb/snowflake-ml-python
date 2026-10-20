@@ -51,8 +51,8 @@ class TransformersPipeline:
 
     def __init__(
         self,
-        task: str | None,
         model: str,
+        task: str | None = None,
         *,
         revision: str | None = None,
         token_or_secret: str | None = None,
@@ -73,12 +73,13 @@ class TransformersPipeline:
         https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.pipeline
 
         Args:
-            task: The HuggingFace pipeline task name (e.g. ``"text-classification"``). Required
-                when constructing ``TransformersPipeline`` directly. Subclasses that set
-                ``_requires_task = False`` (such as ``SentenceTransformer``) may pass ``None``.
-                For available tasks, please refer to Transformers's documentation.
             model: The model that will be used by the pipeline to make predictions. This can only be a model identifier
                 currently. Must be explicitly provided.
+            task: The HuggingFace pipeline task name (e.g. ``"text-classification"``). If omitted,
+                the task is inferred from the model's Hub ``pipeline_tag`` (requires
+                ``huggingface_hub``). Subclasses that set ``_requires_task = False``
+                (such as ``SentenceTransformer``) leave task as ``None``. For available
+                tasks, please refer to Transformers's documentation.
             revision: When passing a task name or a string model identifier: The specific model version to use. It can
                 be a branch name, a tag name, or a commit id, since we use a git-based system for storing models and
                 other artifacts on huggingface.co, so `revision` can be any identifier allowed by git. Defaults to None.
@@ -103,6 +104,8 @@ class TransformersPipeline:
             kwargs: Additional keyword arguments passed along to the specific pipeline init (see the documentation for
                 the corresponding pipeline class for possible values).
 
+        Raises:
+            RuntimeError: If ``model`` is invalid, or if ``task`` cannot be inferred from Hub metadata.
 
         .. # noqa: DAR003
         """
@@ -115,7 +118,7 @@ class TransformersPipeline:
         token_or_secret = self._handle_deprecated_auth_token(model_kwargs, token_or_secret)
 
         tokenizer = kwargs.get("tokenizer", None)
-        self._validate_inputs(task, model)
+        self._validate_model(model)
 
         self._validate_device_map(kwargs, model_kwargs)
 
@@ -123,7 +126,18 @@ class TransformersPipeline:
         self._lazy_file_sizes: dict[str, int] | None = None
         self._lazy_download_kwargs: dict[str, Any] | None = None
 
-        repo_snapshot_dir = self._download_snapshot_if_needed(
+        # Snowflake secrets cannot authenticate to Hugging Face Hub from the client.
+        hub_token = None if uses_secret else token_or_secret
+        # Lazy upload already fetches model_info; resolve task from that response to avoid a second Hub call.
+        will_lazy_upload = logging_mode == _LoggingMode.SNAPSHOT_DOWNLOAD and not uses_secret and lazy_upload
+        if task is None and self._requires_task and not will_lazy_upload:
+            task = self._infer_task_from_hub(
+                model=model,
+                revision=revision,
+                token_or_secret=hub_token,
+            )
+
+        repo_snapshot_dir, task = self._download_snapshot_if_needed(
             logging_mode=logging_mode,
             uses_secret=uses_secret,
             model=model,
@@ -133,7 +147,14 @@ class TransformersPipeline:
             ignore_patterns=ignore_patterns,
             lazy_upload=lazy_upload,
             task=task,
+            resolve_task=will_lazy_upload and task is None and self._requires_task,
         )
+
+        if task is None and self._requires_task:
+            raise RuntimeError(
+                f"Unable to determine the HuggingFace pipeline task for model '{model}'. "
+                "Provide task explicitly, or ensure the model has a pipeline tag on Hugging Face Hub."
+            )
 
         self.has_chat_template = self._has_chat_template(
             logging_mode=logging_mode,
@@ -235,26 +256,15 @@ class TransformersPipeline:
             return use_auth_token
         return token_or_secret
 
-    def _validate_inputs(
-        self,
-        task: str | None,
-        model: str | None,
-    ) -> None:
-        """Validate the input arguments for pipeline creation.
+    def _validate_model(self, model: object) -> None:
+        """Validate the model identifier for pipeline creation.
 
         Args:
-            task: The pipeline task.
             model: The model identifier.
 
         Raises:
-            RuntimeError: If input arguments are invalid.
+            RuntimeError: If the model identifier is missing or invalid.
         """
-        if task is None and self._requires_task:
-            raise RuntimeError(
-                "Impossible to instantiate a pipeline without a task being specified. "
-                "Please provide a task name explicitly."
-            )
-
         if model is None:
             raise RuntimeError(
                 "Impossible to instantiate a pipeline without a model being specified. "
@@ -263,6 +273,70 @@ class TransformersPipeline:
 
         if not isinstance(model, str):
             raise RuntimeError(f"Impossible to use non-string model as input for class {self.__class__.__name__}.")
+
+    @staticmethod
+    def _task_from_pipeline_tag(*, model: str, pipeline_tag: str | None) -> str:
+        """Convert a Hub pipeline_tag into a required task string.
+
+        Args:
+            model: The HuggingFace model identifier (for error messages).
+            pipeline_tag: The Hub ``pipeline_tag`` value, if present.
+
+        Returns:
+            The pipeline task string.
+
+        Raises:
+            RuntimeError: If ``pipeline_tag`` is missing.
+        """
+        if not pipeline_tag:
+            raise RuntimeError(
+                f"Unable to determine the HuggingFace pipeline task for model '{model}'. "
+                "Provide task explicitly, or ensure the model has a pipeline tag on Hugging Face Hub."
+            )
+        logger.info(
+            "Inferred HuggingFace pipeline task '%s' for model '%s' from Hub metadata.",
+            pipeline_tag,
+            model,
+        )
+        return pipeline_tag
+
+    @classmethod
+    def _infer_task_from_hub(
+        cls,
+        *,
+        model: str,
+        revision: str | None,
+        token_or_secret: str | None,
+    ) -> str:
+        """Infer the pipeline task from Hugging Face Hub model metadata.
+
+        Args:
+            model: The HuggingFace model identifier.
+            revision: Optional revision (branch, tag, or commit).
+            token_or_secret: HuggingFace auth token, or None for public models.
+
+        Returns:
+            The inferred pipeline task.
+
+        Raises:
+            ImportError: If ``huggingface_hub`` is not installed.
+        """
+        try:
+            import huggingface_hub as hf_hub
+        except ImportError:
+            raise ImportError(
+                "The `huggingface_hub` package is required to infer the pipeline task when "
+                "`task` is not provided. Install it with: pip install huggingface_hub, "
+                "or provide task explicitly."
+            ) from None
+
+        api = hf_hub.HfApi()
+        repo_info = api.model_info(
+            repo_id=model,
+            revision=revision,
+            token=token_or_secret,
+        )
+        return cls._task_from_pipeline_tag(model=model, pipeline_tag=repo_info.pipeline_tag)
 
     @staticmethod
     def _validate_device_map(kwargs: dict[str, Any], model_kwargs: dict[str, Any]) -> None:
@@ -321,7 +395,8 @@ class TransformersPipeline:
         ignore_patterns: list[str] | str | None,
         lazy_upload: bool,
         task: str | None,
-    ) -> str | None:
+        resolve_task: bool = False,
+    ) -> tuple[str | None, str | None]:
         """Download the model snapshot if in SNAPSHOT_DOWNLOAD mode.
 
         Args:
@@ -334,25 +409,26 @@ class TransformersPipeline:
             ignore_patterns: Patterns of files to exclude.
             lazy_upload: Whether to list repo files and defer weight downloads until log time.
             task: The pipeline task.
+            resolve_task: When True, infer ``task`` from Hub ``pipeline_tag`` during lazy upload.
 
         Returns:
-            The path to the downloaded snapshot directory, or None if not downloaded.
+            A tuple of (snapshot directory path or None, resolved task).
         """
         if logging_mode != _LoggingMode.SNAPSHOT_DOWNLOAD:
-            return None
+            return None, task
 
         if uses_secret:
             # Cannot use secret for local download, will download during deployment
-            return None
+            return None, task
 
         if model is None:
-            return None
+            return None, task
 
         try:
             import huggingface_hub as hf_hub
         except ImportError:
             logger.info("huggingface_hub package is not installed, skipping snapshot download")
-            return None
+            return None, task
 
         if lazy_upload:
             return self._prepare_lazy_repo_upload(
@@ -363,14 +439,18 @@ class TransformersPipeline:
                 allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
                 task=task,
+                resolve_task=resolve_task,
             )
 
-        return hf_hub.snapshot_download(
-            repo_id=model,
-            revision=revision,
-            token=token_or_secret,
-            allow_patterns=allow_patterns,
-            ignore_patterns=ignore_patterns,
+        return (
+            hf_hub.snapshot_download(
+                repo_id=model,
+                revision=revision,
+                token=token_or_secret,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            ),
+            task,
         )
 
     def _lazy_metadata_seed_files(
@@ -466,8 +546,23 @@ class TransformersPipeline:
         allow_patterns: list[str] | str | None,
         ignore_patterns: list[str] | str | None,
         task: str | None,
-    ) -> str:
-        """List repo files and download only metadata needed before log_model."""
+        resolve_task: bool = False,
+    ) -> tuple[str, str | None]:
+        """List repo files and download only metadata needed before log_model.
+
+        Args:
+            hf_hub: The ``huggingface_hub`` module.
+            model: The model identifier.
+            revision: The model revision.
+            token_or_secret: The auth token or secret.
+            allow_patterns: Patterns of files to include.
+            ignore_patterns: Patterns of files to exclude.
+            task: The pipeline task, if already known.
+            resolve_task: When True, infer ``task`` from Hub ``pipeline_tag``.
+
+        Returns:
+            A tuple of (metadata staging directory, resolved task).
+        """
         api = hf_hub.HfApi()
         repo_info = api.model_info(
             repo_id=model,
@@ -475,6 +570,9 @@ class TransformersPipeline:
             token=token_or_secret,
             files_metadata=True,
         )
+        if resolve_task:
+            task = self._task_from_pipeline_tag(model=model, pipeline_tag=repo_info.pipeline_tag)
+
         repo_files = [sibling.rfilename for sibling in repo_info.siblings]
         size_by_file = {sibling.rfilename: sibling.size for sibling in repo_info.siblings if sibling.size is not None}
         filtered_files = self._filter_repo_files(
@@ -504,7 +602,7 @@ class TransformersPipeline:
             "repo_id": model,
             "revision": revision,
         }
-        return metadata_dir
+        return metadata_dir, task
 
     _CHAT_TEMPLATE_TASKS = frozenset(
         {
@@ -731,8 +829,8 @@ class SentenceTransformer(TransformersPipeline):
                 Defaults to True. Set to False to download the entire repository before logging.
         """
         super().__init__(
-            task=None,
             model=model,
+            task=None,
             revision=revision,
             token_or_secret=token_or_secret,
             trust_remote_code=trust_remote_code,

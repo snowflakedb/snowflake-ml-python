@@ -16,10 +16,13 @@ from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
     _normalize_applied_bfv_for_hash,
+    _normalize_for_full_spec_hash,
+    append_only_schema_evolution_kind,
     batch_feature_view_structural_equivalent,
-    compute_local_spec_hash,
+    compute_local_spec_and_hash,
     compute_source_diff_kind,
     fg_content_hash,
+    full_spec_changed_properties,
     model_to_dict,
     spec_key,
     structural_fingerprint_hash,
@@ -34,6 +37,31 @@ from snowflake.ml.feature_store.decl.types import (
     SpecBatch,
     ValidationResult,
 )
+
+
+def _applied_spec_is_append_only(applied_payload: Any) -> bool:
+    """True when a deployed BatchFV ``spec_payload`` is append-only.
+
+    The append-only marker rides in the inner ``spec.append_only`` field of the
+    ``DESCRIBE … TYPE = SPECIFICATION`` payload (and is stripped when falsy by
+    :func:`invariants._strip_default_append_only`).  The planner gates
+    ``EVOLVE_FV`` on BOTH sides being append-only: evolving a deployed
+    *non*-append-only FV via ``update_feature_view(updated_feature_df=...)`` is
+    rejected by core, and an ``append_only`` toggle (false ↔ true) is a
+    schema-breaking change that must recreate.
+
+    Args:
+        applied_payload: The deployed ``AppliedObject.spec_payload`` (or any).
+
+    Returns:
+        ``True`` iff *applied_payload* carries a truthy inner
+        ``spec.append_only``.
+    """
+    if not isinstance(applied_payload, dict):
+        return False
+    inner = applied_payload.get("spec")
+    return bool(isinstance(inner, dict) and inner.get("append_only"))
+
 
 # Map spec kind to the appropriate OpKind for CREATE operations.
 _CREATE_OP: dict[str, OpKind] = {
@@ -334,7 +362,6 @@ def _refresh_freq_drifted(
                     rem_target_lag_sec = int(_parsed_top) if _parsed_top is not None else None
                 except Exception:  # noqa: BLE001
                     rem_target_lag_sec = None
-
     # Primary path: derive local seconds from ``refresh_freq`` (the
     # canonical DT cadence source) and compare against the applied
     # wire-form value.  Mirrors the BUG_BASH §7 fixture pin.
@@ -375,6 +402,8 @@ def _refresh_freq_drifted(
     loc_target_lag_sec = loc_spec.get("target_lag_sec") if isinstance(loc_spec, dict) else None
     if loc_target_lag_sec is not None and rem_target_lag_sec is not None and loc_target_lag_sec != rem_target_lag_sec:
         return True
+    if _warehouse_drifted(local_authoring, applied_payload):
+        return True
     return False
 
 
@@ -409,13 +438,40 @@ def _online_config_drifted(
     """
     from snowflake.ml.feature_store.decl.spec_compiler import compile_to_spec
 
+    # Streaming / Realtime FVs are always online by the declarative contract
+    # (the model rejects ``online: false`` for these kinds) and derive the
+    # online store type from the account online store — the operator can author
+    # neither the enablement nor the store type, and
+    # ``FeatureStore.update_feature_view`` cannot change online routing on these
+    # kinds (it raises error 1300 / 2110).  When such an FV was deployed with
+    # ``online_enabled=False``, its ``DESCRIBE … TYPE = SPECIFICATION`` payload
+    # carries no ``online_store_type`` (applied side is ``None``) while
+    # ``compile_to_spec`` still derives a concrete store type — a
+    # derived-local-vs-absent-applied mismatch that is not an actionable
+    # operational drift.  Treating it as drift produced a spurious ``UPDATE_FV``
+    # on every clean re-plan (bug_operational_field_drift_streaming_bfvs), so an
+    # absent applied store type on an always-online kind is ``NO_CHANGE``.  A
+    # genuinely divergent applied store type (truthy but different, e.g.
+    # ``snowflake`` vs ``postgres``) is still real drift.
+    always_online = local_authoring.get("kind", "") in (
+        "StreamingFeatureView",
+        "RealtimeFeatureView",
+    )
     try:
         loc = compile_to_spec(local_authoring, database, schema)
     except Exception:  # noqa: BLE001 — fall back to authoring-dict comparison
         local_online = bool(local_authoring.get("online", False))
         applied_online = (applied_payload.get("online_store_type") or "") != ""
+        if always_online and not applied_online:
+            return False
         return local_online != applied_online
-    return loc.get("online_store_type") != applied_payload.get("online_store_type")
+    loc_ost = loc.get("online_store_type")
+    applied_ost = applied_payload.get("online_store_type")
+    if loc_ost == applied_ost:
+        return False
+    if always_online and not applied_ost:
+        return False
+    return True
 
 
 def _split_operational_vs_structural(
@@ -543,6 +599,52 @@ def _warehouse_drifted(local_authoring: dict[str, Any], applied_payload: dict[st
         # Authored a value, deployed-side recovery has none — drift.
         return True
     return str(raw_rem).strip().upper() != local_norm
+
+
+_FULL_SPEC_CHANGE_GENERIC_REASON = (
+    "Full-spec change detected (UDF source, source columns, "
+    "aggregation, or target lag); dropping and recreating "
+    "(OFTs cannot be updated in place)."
+)
+
+
+def _build_full_spec_change_reason(
+    local_compiled: Any,
+    applied_spec: Any,
+    kind: str,
+) -> str:
+    """Build a specific or generic RECREATE_FV reason string for full-spec changes.
+
+    Normalizes both sides via :func:`_normalize_for_full_spec_hash` (applying
+    the BatchFV-specific parity normalisation for ``BatchFeatureView``), then
+    calls :func:`full_spec_changed_properties` to list the exact spec sections
+    that differ.  Falls back to the generic reason when either side is absent
+    or the diff returns nothing.
+
+    Args:
+        local_compiled: The compiled local spec dict, or ``None``.
+        applied_spec: The raw applied spec_payload dict, or ``None``.
+        kind: The FeatureView kind string (e.g. ``"BatchFeatureView"``).
+
+    Returns:
+        A reason string naming the changed ``spec.*`` properties, or the
+        generic full-spec-change fallback.
+    """
+    if not isinstance(local_compiled, dict) or not isinstance(applied_spec, dict):
+        return _FULL_SPEC_CHANGE_GENERIC_REASON
+    try:
+        applied_for_norm = applied_spec
+        if kind == "BatchFeatureView":
+            applied_for_norm = _normalize_applied_bfv_for_hash(applied_spec, local_compiled)
+        local_norm = _normalize_for_full_spec_hash(local_compiled, authored=True)
+        applied_norm = _normalize_for_full_spec_hash(applied_for_norm, authored=False)
+        changed = full_spec_changed_properties(local_norm, applied_norm)
+        if changed:
+            props = ", ".join(changed)
+            return f"Full-spec change: {props} changed; dropping and recreating " "(OFTs cannot be updated in place)."
+    except Exception:  # noqa: BLE001 — defensive; never break the planner
+        pass
+    return _FULL_SPEC_CHANGE_GENERIC_REASON
 
 
 def generate_plan(
@@ -727,14 +829,32 @@ def generate_plan(
                     )
                 )
             else:  # "recreate"
+                # ``BatchSource`` is virtual at the runtime level — its identity
+                # lives inside the consuming FV's offline Dynamic Table, and the
+                # executor's ``RECREATE_SOURCE`` handler is an informational
+                # no-op for BatchSource payloads
+                # (:func:`imperative_executor._execute_recreate_stream_source`).
+                # The real destructive gate is the consuming FV's ``RECREATE_FV``
+                # / ``EVOLVE_FV`` op, so a BatchSource binding change must NOT
+                # itself demand ``--destructive`` — otherwise a
+                # snapshot-preserving ``EVOLVE_FV`` on an append-only BFV would
+                # be blocked by its own source's phantom destructive op.
+                # ``StreamingSource`` recreate stays destructive (it issues a
+                # real delete + re-register).
+                source_recreate_destructive = kind != "BatchSource"
+                source_recreate_reason = (
+                    "Source schema or binding changed; dropping and re-registering. " "Requires --destructive."
+                    if source_recreate_destructive
+                    else "Source binding changed; informational only — BatchSource is virtual "
+                    "(the consuming feature view's op applies the change)."
+                )
                 ops.append(
                     PlanOp(
                         kind=_RECREATE_OP[kind],
                         name=name,
                         depends_on=[],
-                        destructive=True,
-                        reason="Source schema or binding changed; dropping and "
-                        "re-registering. Requires --destructive.",
+                        destructive=source_recreate_destructive,
+                        reason=source_recreate_reason,
                         payload=data,
                     )
                 )
@@ -760,9 +880,10 @@ def generate_plan(
         # FeatureGroup uses its own (much simpler) content hash; everything
         # else stays on the structural fingerprint.
         used_full_spec = False
+        local_compiled: Any = None
         if applied.from_specification and kind in _RECREATE_OP:
             try:
-                current_hash = compute_local_spec_hash(
+                local_compiled, current_hash = compute_local_spec_and_hash(
                     data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
                 )
                 used_full_spec = True
@@ -787,14 +908,15 @@ def generate_plan(
         # mismatch when the operator never authored the field.
         applied_compare_hash = applied.content_hash
         if used_full_spec and kind == "BatchFeatureView" and isinstance(applied.spec_payload, dict):
-            from snowflake.ml.feature_store.decl.spec_compiler import (  # noqa: PLC0415
-                compile_to_spec,
-            )
-
             try:
-                local_compiled = compile_to_spec(
-                    data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
-                )
+                if local_compiled is None:
+                    from snowflake.ml.feature_store.decl.spec_compiler import (  # noqa: PLC0415
+                        compile_to_spec,
+                    )
+
+                    local_compiled = compile_to_spec(
+                        data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
+                    )
                 applied_normalized = _normalize_applied_bfv_for_hash(applied.spec_payload, local_compiled)
                 applied_compare_hash = _full_spec_hash(applied_normalized)
             except Exception:  # noqa: BLE001 — defensive fallback
@@ -946,14 +1068,77 @@ def generate_plan(
             )
             continue
 
+        # Append-only BatchFeatureView snapshot-preserving evolution.  A plain
+        # RECREATE_FV drops the FV and its ``$SNAPSHOTS`` companion, wiping the
+        # accumulated history.  When BOTH the local and deployed sides are
+        # append-only and the diff is schema-preserving (transformation-only)
+        # or a pure feature-append, route to the non-destructive ``EVOLVE_FV``
+        # op instead: the executor reinitialises the offline Dynamic Table via
+        # ``FeatureStore.update_feature_view(updated_feature_df=...)``, which
+        # preserves ``$SNAPSHOTS``, ``SNOWML_SNAPSHOT_STATUS``, and the append
+        # Task.  Schema-breaking edits (entities / timestamp / refresh mode /
+        # cluster-by / feature drop-reorder-retype / ``append_only`` toggle)
+        # fall through to the destructive ``RECREATE_FV`` below.
+        # Set when an append-only BatchFeatureView edit classifies as
+        # ``breaking`` below, so the destructive recreate reason can name the
+        # output-schema change and the ``$SNAPSHOTS`` loss instead of the
+        # generic full-spec string.
+        append_only_breaking = False
+        if (
+            kind == "BatchFeatureView"
+            and used_full_spec
+            and applied.from_specification
+            and isinstance(applied.spec_payload, dict)
+            and bool(data.get("append_only"))
+            and _applied_spec_is_append_only(applied.spec_payload)
+        ):
+            if local_compiled is None:
+                from snowflake.ml.feature_store.decl.spec_compiler import (  # noqa: PLC0415
+                    compile_to_spec,
+                )
+
+                local_compiled = compile_to_spec(data, db_for_compile, sch_for_compile)
+            evolution_kind = append_only_schema_evolution_kind(local_compiled, applied.spec_payload)
+            append_only_breaking = evolution_kind == "breaking"
+            if evolution_kind in ("preserving", "extend_only"):
+                evolve_reason = (
+                    "Append-only feature view: transformation changed but output schema "
+                    "preserved; reinitialising the offline Dynamic Table in place via "
+                    "FeatureStore.update_feature_view(updated_feature_df=...) — $SNAPSHOTS "
+                    "history is retained (no drop + recreate)."
+                    if evolution_kind == "preserving"
+                    else "Append-only feature view: output schema extended (new trailing "
+                    "columns); reinitialising the offline Dynamic Table in place via "
+                    "FeatureStore.update_feature_view(updated_feature_df=...) — $SNAPSHOTS "
+                    "history is retained (no drop + recreate)."
+                )
+                ops.append(
+                    PlanOp(
+                        kind=OpKind.EVOLVE_FV,
+                        name=name,
+                        depends_on=[],
+                        destructive=False,
+                        reason=evolve_reason,
+                        payload=data,
+                    )
+                )
+                continue
+
         recreate_kind = _RECREATE_OP.get(kind, OpKind.RECREATE_FV)
-        recreate_reason = (
-            "Full-spec change detected (UDF source, source columns, "
-            "aggregation, or target lag); dropping and recreating "
-            "(OFTs cannot be updated in place)."
-            if used_full_spec
-            else "Structural change detected; dropping and recreating " "(OFTs cannot be updated in place)."
-        )
+        if append_only_breaking:
+            recreate_reason = (
+                "Append-only feature view: the transformation changes the output "
+                "schema (a query SELECT-list drop / reorder / retype, or another "
+                "structural edit), so the offline Dynamic Table cannot be "
+                "reinitialised in place; dropping and recreating — the accumulated "
+                "$SNAPSHOTS history is discarded (requires --destructive)."
+            )
+        elif used_full_spec:
+            recreate_reason = _build_full_spec_change_reason(local_compiled, applied.spec_payload, kind)
+        else:
+            recreate_reason = (
+                "Structural change detected; dropping and recreating " "(OFTs cannot be updated in place)."
+            )
         ops.append(
             PlanOp(
                 kind=recreate_kind,

@@ -142,6 +142,24 @@ py_test(
 )
 
 py_test(
+    name = "loader_duplicate_specs_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_loader_duplicate_specs.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_loader_duplicate_specs.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "loader_feature_groups_test",
     srcs = [
         "tests/__init__.py",
@@ -655,6 +673,63 @@ py_test(
 )
 
 py_test(
+    name = "advanced_bvt_append_only_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_advanced_bvt_append_only.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_advanced_bvt_append_only.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "online_warehouse_drift_idempotency_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_online_warehouse_drift_idempotency.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_online_warehouse_drift_idempotency.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "append_only_bfv_validation_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_append_only_bfv_validation.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_append_only_bfv_validation.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "python_codegen_test",
     srcs = [
         "tests/__init__.py",
@@ -668,6 +743,24 @@ py_test(
     ],
     deps = [
         ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "planner_online_config_drift_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_online_config_drift.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_online_config_drift.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )
@@ -704,6 +797,24 @@ py_test(
     ],
     deps = [
         ":decl_lib_planner",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "fv_desc_round_trip_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_fv_desc_round_trip.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_fv_desc_round_trip.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )
@@ -1580,6 +1691,66 @@ py_test(
 )
 
 py_test(
+    name = "secondary_key_recovery_pool_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_secondary_key_recovery_pool.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_secondary_key_recovery_pool.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "streaming_fv_array_element_type_roundtrip_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_streaming_fv_array_element_type_roundtrip.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_streaming_fv_array_element_type_roundtrip.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "streaming_fv_python_form_drift_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_streaming_fv_python_form_drift.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_streaming_fv_python_form_drift.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "advanced_bvt_storage_config_test",
     srcs = [
         "tests/__init__.py",
@@ -1813,6 +1984,24 @@ py_test(
 )
 
 py_test(
+    name = "append_only_export_gate_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_append_only_export_gate.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_append_only_export_gate.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "cron_refresh_freq_parity_test",
     srcs = [
         "tests/__init__.py",
@@ -1843,6 +2032,24 @@ py_test(
     ],
     deps = [
         ":decl_lib",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
+    name = "planner_versioned_feature_views_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_planner_versioned_feature_views.py",
+    ],
+    data = [":decl_loader_test_fixtures"],
+    main = "tests/test_planner_versioned_feature_views.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )

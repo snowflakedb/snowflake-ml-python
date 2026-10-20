@@ -6,13 +6,7 @@ from absl.testing import absltest
 
 from snowflake.ml.model import PeftAdapter, openai_signatures, target_platform
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
-from tests.integ.snowflake.ml.test_utils import (
-    db_manager,
-    lora_adapter_account_gate,
-    lora_adapters_enabled_patch,
-)
-
-lora_adapters_enabled_patch.enable()
+from tests.integ.snowflake.ml.test_utils import db_manager, lora_adapter_account_gate
 
 _TINY_GPT2 = "hf-internal-testing/tiny-gpt2-with-chatml-template"
 
@@ -68,8 +62,8 @@ class TestRegistryLoraAdapterLogFunctionsInteg(registry_model_test_base.Registry
         """
         import transformers
 
-        # SPCS-only: this case only needs G4 catalog methods after commit, not a warehouse embed of
-        # the local snowflake-ml-python library.
+        # SPCS-only base: this case only needs G4 catalog methods after commit, not a warehouse embed of
+        # the local snowflake-ml-python library. The adapter gets SPCS-only from the client default.
         spcs_only = [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
         base_mv = self.registry.log_model(
             model=transformers.pipeline(
@@ -90,7 +84,6 @@ class TestRegistryLoraAdapterLogFunctionsInteg(registry_model_test_base.Registry
                 ),
                 model_name=self._name("ADAPTER"),
                 version_name="V1",
-                target_platforms=spcs_only,
             )
         base_by_method = {fn["target_method"]: fn["signature"] for fn in base_mv.show_functions()}
         adapter_by_method = {fn["target_method"]: fn["signature"] for fn in adapter_mv.show_functions()}

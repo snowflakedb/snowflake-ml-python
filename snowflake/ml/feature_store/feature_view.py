@@ -29,7 +29,6 @@ from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 from snowflake.ml.feature_store.tile_sql_generator import _TILE_START_COL
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
-from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     DateType,
@@ -44,6 +43,10 @@ if TYPE_CHECKING:
     from snowflake.ml.feature_store.stream_config import StreamConfig
 
 _BATCH_OFT_TARGET_LAG = "10 seconds"
+# Postgres batch online feature tables default higher than hybrid. Lags below the
+# recommended minimum are accepted but warned about; see warn_if_short_postgres_target_lag.
+_POSTGRES_BATCH_OFT_TARGET_LAG = "1 minute"
+_POSTGRES_MIN_RECOMMENDED_TARGET_LAG_SECONDS = 60
 _NON_BATCH_OFT_TARGET_LAG = "0 seconds"
 _DEFAULT_CONTINUOUS_FEATURE_GRANULARITY = "1m"
 _MIN_FEATURE_GRANULARITY_SECONDS = 60
@@ -177,6 +180,61 @@ class OnlineConfig:
         elif isinstance(data["store_type"], str):
             data["store_type"] = OnlineStoreType(data["store_type"])
         return cls(**data)
+
+
+def _default_online_target_lag(store_type: OnlineStoreType) -> str:
+    """Target lag for an online feature table whose config omits one.
+
+    Args:
+        store_type: Online store backing the table.
+
+    Returns:
+        The default target lag for that store.
+    """
+    if store_type == OnlineStoreType.POSTGRES:
+        return _POSTGRES_BATCH_OFT_TARGET_LAG
+    return _BATCH_OFT_TARGET_LAG
+
+
+def warn_if_short_postgres_target_lag(
+    online_config: OnlineConfig | None,
+    *,
+    existing_store_type: OnlineStoreType | None = None,
+) -> None:
+    """Warn when a caller sets a Postgres online target lag below the recommended minimum.
+
+    ``"0 seconds"`` is skipped: it is the only lag streaming and realtime
+    online feature tables accept, and Snowflake rejects it for batch ones.
+    An unparsable lag is left to the existing target-lag validation.
+
+    Args:
+        online_config: Caller-supplied online configuration, or ``None``.
+        existing_store_type: Store type already registered on the feature view.
+            An update that sets ``target_lag`` without restating ``store_type``
+            still refers to this store.
+    """
+    if online_config is None or online_config.enable is False or online_config.target_lag is None:
+        return
+    store_type = online_config.store_type
+    if store_type != OnlineStoreType.POSTGRES and existing_store_type == OnlineStoreType.POSTGRES:
+        store_type = OnlineStoreType.POSTGRES
+    if store_type != OnlineStoreType.POSTGRES:
+        return
+    if online_config.target_lag == _NON_BATCH_OFT_TARGET_LAG:
+        return
+    from snowflake.ml.feature_store.interval_utils import interval_to_seconds
+
+    try:
+        seconds = interval_to_seconds(online_config.target_lag)
+    except ValueError:
+        return
+    if seconds < _POSTGRES_MIN_RECOMMENDED_TARGET_LAG_SECONDS:
+        warnings.warn(
+            "target lag below 1 minute is not recommended with Postgres StoreType. "
+            "To improve data freshness, consider Streaming Feature Views.",
+            category=UserWarning,
+            stacklevel=2,
+        )
 
 
 @dataclass
@@ -783,9 +841,6 @@ class FeatureView(lineage_node.LineageNode):
                 default clustering keys. Default is to use the join keys from entities in the view.
             online_config: Configuration for online storage. If provided with ``enable=True``,
                 online storage will be enabled. Defaults to ``None`` (no online storage).
-
-                .. note::
-                    This feature is currently in preview.
             feature_granularity: The tile interval for time-series aggregations (e.g., "1h", "1d").
                 When specified along with ``features``, enables tile-based aggregation where a
                 Dynamic Table stores pre-computed partial aggregations (tiles), and dataset
@@ -801,9 +856,6 @@ class FeatureView(lineage_node.LineageNode):
                 Supported functions: SUM, COUNT, AVG, MIN, MAX, STD, VAR, APPROX_COUNT_DISTINCT,
                 APPROX_PERCENTILE. Each secondary key may not be an entity join key, must exist in
                 ``feature_df``, and is not supported with lifetime windows or list aggregations.
-
-                .. note::
-                    This feature is currently in Public Preview.
             feature_aggregation_method: The aggregation method for tiled streaming feature views.
                 Supports ``FeatureAggregationMethod.TILES`` (default) or
                 ``FeatureAggregationMethod.CONTINUOUS``.  Only applicable to streaming feature
@@ -830,9 +882,6 @@ class FeatureView(lineage_node.LineageNode):
                 When provided, ``feature_df`` serves as backfill data, and an online feature table
                 with a streaming spec is automatically created.  Requires ``timestamp_col`` and
                 ``feature_df``.  Online storage is always enabled with the ``POSTGRES`` store type.
-
-                .. note::
-                    This feature is currently in Public Preview.
             realtime_config: Configuration for realtime feature views using
                 :class:`RealtimeConfig`. When provided, the feature view is request-time-computed
                 (no offline backing); ``compute_fn`` runs against per-row request data joined
@@ -842,9 +891,6 @@ class FeatureView(lineage_node.LineageNode):
                 ``features`` / ``cluster_by`` / ``aggregation_secondary_keys`` /
                 ``feature_aggregation_method``. Online storage is always enabled with the
                 ``POSTGRES`` store type.
-
-                .. note::
-                    This feature is currently in Public Preview.
             _kwargs: Reserved kwargs for system generated args.
 
                 .. caution::
@@ -951,10 +997,6 @@ class FeatureView(lineage_node.LineageNode):
         # reserved for a future change. The shape is plural-list now so the
         # API is forward-compatible.
         if aggregation_secondary_keys is not None:
-            snowpark_utils.warning(
-                "FeatureView.aggregation_secondary_keys",
-                "Parameter aggregation_secondary_keys is in Public Preview since 1.43.0.",
-            )
             if len(aggregation_secondary_keys) > 1:
                 raise ValueError(
                     f"aggregation_secondary_keys currently supports a single element; "

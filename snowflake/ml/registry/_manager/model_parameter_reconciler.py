@@ -229,7 +229,30 @@ class ModelParameterReconciler:
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
         if self._target_platforms:
             # Convert any string target platforms to TargetPlatform objects
-            return [model_types.TargetPlatform(platform) for platform in self._target_platforms]
+            reconciled_target_platforms = [model_types.TargetPlatform(platform) for platform in self._target_platforms]
+
+            # PEFT adapters are served only through a service of their pinned base; they cannot run in a Warehouse.
+            if self._is_peft_adapter() and set(reconciled_target_platforms) != set(
+                target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+            ):
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "PEFT adapters can only target Snowpark Container Services. Set "
+                        '`target_platforms=["SNOWPARK_CONTAINER_SERVICES"]` or omit `target_platforms` to use '
+                        "that default."
+                    ),
+                )
+
+            return reconciled_target_platforms
+
+        # PEFT adapters are served only through a service of their pinned base; they cannot run in a Warehouse.
+        if self._is_peft_adapter():
+            logger.info(
+                "Logging a PEFT adapter without specifying `target_platforms`. "
+                'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
+            )
+            return [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
 
         # Default the target platform to warehouse if not specified and any table function exists
         if self._has_table_function():
@@ -253,6 +276,13 @@ class ModelParameterReconciler:
             ]
 
         return None
+
+    def _is_peft_adapter(self) -> bool:
+        """Check if the model being logged is a PEFT adapter."""
+        from snowflake.ml.model._packager import model_handler
+
+        handler = model_handler.find_handler(self._model)
+        return handler is not None and handler.HANDLER_TYPE == "peft_adapter"
 
     def _has_table_function(self) -> bool:
         """Check if any table function exists in options."""

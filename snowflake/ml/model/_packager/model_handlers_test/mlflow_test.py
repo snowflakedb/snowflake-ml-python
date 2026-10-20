@@ -25,7 +25,7 @@ from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 # MLflow 3.x deprecates the local ./mlruns file-store tracking backend by default. These tests
 # create throwaway file-store tracking runs as fixtures, so opt in for the test process. The
-# handler does not rely on this: it routes its own internal runs through a temporary SQLite backend.
+# handler does not rely on this: models without a tracking run are re-saved to a local directory.
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
 
@@ -190,24 +190,10 @@ class MLFlowHandlerTest(absltest.TestCase):
             pk_reload.load()
             assert isinstance(pk_reload.model, mlflow.pyfunc.PyFuncModel)
 
-    def test_sqlite_tracking_backend_sets_and_restores(self) -> None:
-        # The handler routes its internal re-log runs through a temporary SQLite tracking backend
-        # and must restore the caller's tracking URI afterward, without touching MLFLOW_ALLOW_FILE_STORE.
-        env_var = "MLFLOW_ALLOW_FILE_STORE"
-        previous_uri = mlflow.get_tracking_uri()
-
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop(env_var, None)
-            with mlflow_handler._sqlite_tracking_backend() as experiment_id:
-                self.assertTrue(mlflow.get_tracking_uri().startswith("sqlite:///"))
-                self.assertIsNotNone(experiment_id)
-                self.assertNotIn(env_var, os.environ)
-            self.assertEqual(mlflow.get_tracking_uri(), previous_uri)
-            self.assertNotIn(env_var, os.environ)
-
-    def test_mlflow_save_model_relog_uses_sqlite_backend(self) -> None:
-        # A save_model() model has no backing run, so save() must re-log it through the temporary
-        # SQLite tracking backend. load_model reads artifacts directly and opens no run.
+    def test_mlflow_save_model_resaves_without_tracking_store(self) -> None:
+        # A save_model() model has no backing run, so save() re-saves it to a local directory.
+        # That path must leave the process tracking URI and MLFLOW_ALLOW_FILE_STORE unchanged.
+        # load_model reads artifacts directly and does not re-save.
         db = datasets.load_diabetes(as_frame=True)
         X_train, _, y_train, _ = model_selection.train_test_split(db.data, db.target)
         rf = ensemble.RandomForestRegressor(n_estimators=10, max_depth=3, max_features=3)
@@ -219,11 +205,13 @@ class MLFlowHandlerTest(absltest.TestCase):
             mlflow.sklearn.save_model(rf, save_path, signature=signature)
             mlflow_pyfunc_model = mlflow.pyfunc.load_model(save_path)
 
+            previous_uri = mlflow.get_tracking_uri()
+            allow_file_store = os.environ.get("MLFLOW_ALLOW_FILE_STORE")
             with mock.patch.object(
                 mlflow_handler,
-                "_sqlite_tracking_backend",
-                wraps=mlflow_handler._sqlite_tracking_backend,
-            ) as sqlite_backend:
+                "_resave_mlflow_model",
+                wraps=mlflow_handler._resave_mlflow_model,
+            ) as resave_model:
                 pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk.save(
                     name="model1",
@@ -233,19 +221,32 @@ class MLFlowHandlerTest(absltest.TestCase):
                 assert pk.meta
                 blob_options = cast(model_meta_schema.MLFlowModelBlobOptions, pk.meta.models["model1"].options)
                 self.assertFalse(os.path.isabs(blob_options["artifact_path"]))
-                # save_model models have no backing run, so save() must re-log via the SQLite backend.
-                save_time_backend_calls = sqlite_backend.call_count
-                self.assertGreaterEqual(save_time_backend_calls, 1)
+                save_time_resave_calls = resave_model.call_count
+                self.assertGreaterEqual(save_time_resave_calls, 1)
+                self.assertEqual(mlflow.get_tracking_uri(), previous_uri)
+                self.assertEqual(os.environ.get("MLFLOW_ALLOW_FILE_STORE"), allow_file_store)
 
                 pk_reload = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
                 pk_reload.load()
                 self.assertIsInstance(pk_reload.model, mlflow.pyfunc.PyFuncModel)
-                # load_model loads directly from disk without opening a run, so no extra backend call.
-                self.assertEqual(sqlite_backend.call_count, save_time_backend_calls)
+                self.assertEqual(resave_model.call_count, save_time_resave_calls)
 
-    def test_mlflow_save_model_relog_preserves_native_model_and_serialization_format(self) -> None:
-        # Re-logging must hand the scikit-learn estimator, not MLflow's PyFunc wrapper, to the flavor's
-        # log_model, and must keep the serialization backend the model was saved with. The skops backend
+                # The caller's directory is already a complete model, so it is copied as-is.
+                pk_with_uri = model_packager.ModelPackager(os.path.join(tmpdir, "model_with_uri"))
+                pk_with_uri.save(
+                    name="model_with_uri",
+                    model=mlflow_pyfunc_model,
+                    options={
+                        "model_uri": save_path,
+                        "relax_version": False,
+                        "ignore_mlflow_dependencies": True,
+                    },
+                )
+                self.assertEqual(resave_model.call_count, save_time_resave_calls)
+
+    def test_mlflow_save_model_resave_preserves_native_model_and_serialization_format(self) -> None:
+        # Re-saving must hand the scikit-learn estimator, not MLflow's PyFunc wrapper, to the flavor's
+        # save_model, and must keep the serialization backend the model was saved with. The skops backend
         # (MLflow's default from 3.14 on) rejects the wrapper, and silently switching backends adds a
         # serializer dependency that the model environment does not declare.
         db = datasets.load_diabetes(as_frame=True)
@@ -264,14 +265,13 @@ class MLFlowHandlerTest(absltest.TestCase):
             )
             saved_model = mlflow.pyfunc.load_model(save_path)
 
-            with mlflow_handler._sqlite_tracking_backend() as experiment_id:
-                re_logged_model = mlflow_handler._re_log_to_mlflow_run(saved_model, experiment_id)
+            re_saved_model, _ = mlflow_handler._resave_mlflow_model(saved_model, tmpdir)
 
-                self.assertIsInstance(re_logged_model.get_raw_model(), ensemble.RandomForestRegressor)
-                self.assertEqual(
-                    re_logged_model.metadata.flavors[mlflow.sklearn.FLAVOR_NAME]["serialization_format"],
-                    mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
-                )
+            self.assertIsInstance(re_saved_model.get_raw_model(), ensemble.RandomForestRegressor)
+            self.assertEqual(
+                re_saved_model.metadata.flavors[mlflow.sklearn.FLAVOR_NAME]["serialization_format"],
+                mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+            )
 
     def test_mlflow_model_df_inputs(self) -> None:
         db = datasets.load_diabetes(as_frame=True)
@@ -427,7 +427,7 @@ class MLFlowHandlerTest(absltest.TestCase):
 
     def test_mlflow_model_from_save_model(self) -> None:
         """Models created via mlflow.*.save_model() and loaded from a local path should
-        be automatically re-logged and packagable without needing model_uri."""
+        be automatically re-saved and packagable without needing model_uri."""
         db = datasets.load_diabetes(as_frame=True)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
         rf = ensemble.RandomForestRegressor(n_estimators=100, max_depth=6, max_features=3)
@@ -441,7 +441,7 @@ class MLFlowHandlerTest(absltest.TestCase):
 
             saved_model = mlflow.pyfunc.load_model(save_path)
 
-            # Without model_uri, packaging should succeed via automatic re-logging.
+            # Without model_uri, packaging should succeed via automatic re-saving.
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_no_uri"))
             pk.save(
                 name="pkg_no_uri",
@@ -516,7 +516,7 @@ class MLFlowHandlerTest(absltest.TestCase):
 
     def test_mlflow_python_model_from_save_model(self) -> None:
         """PythonModel subclasses saved via mlflow.pyfunc.save_model() and loaded
-        from a local path should be automatically re-logged and packagable."""
+        from a local path should be automatically re-saved and packagable."""
 
         class EchoModel(mlflow.pyfunc.PythonModel):
             def predict(self, context, model_input):  # type: ignore[no-untyped-def]

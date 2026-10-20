@@ -1,3 +1,5 @@
+import os
+import pathlib
 import tempfile
 from importlib import metadata as importlib_metadata
 
@@ -27,6 +29,29 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
         ),
         "name": "mlflow-env",
     }
+
+    def setUp(self) -> None:
+        super().setUp()
+        # start_run() needs a tracking directory. Use a new file-store directory instead of
+        # MLflow's default SQLite store. MLflow 3 opens a file store only when
+        # MLFLOW_ALLOW_FILE_STORE is set, and it creates the default experiment only when that
+        # directory does not exist yet.
+        self._mlflow_tracking_dir = tempfile.TemporaryDirectory()
+        self._previous_mlflow_tracking_uri = mlflow.get_tracking_uri()
+        self._previous_allow_file_store = os.environ.get("MLFLOW_ALLOW_FILE_STORE")
+        os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+        mlflow.set_tracking_uri(pathlib.Path(self._mlflow_tracking_dir.name) / "tracking")
+
+    def tearDown(self) -> None:
+        try:
+            mlflow.set_tracking_uri(self._previous_mlflow_tracking_uri)
+            if self._previous_allow_file_store is None:
+                os.environ.pop("MLFLOW_ALLOW_FILE_STORE", None)
+            else:
+                os.environ["MLFLOW_ALLOW_FILE_STORE"] = self._previous_allow_file_store
+            self._mlflow_tracking_dir.cleanup()
+        finally:
+            super().tearDown()
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("log_model_df_input", True, False, False),
@@ -87,12 +112,14 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
             )
 
     @staticmethod
-    def _create_echo_model_fixtures() -> tuple[
-        "mlflow.pyfunc.PythonModel",
-        pd.DataFrame,
-        "mlflow.models.ModelSignature",
-        dict,
-    ]:
+    def _create_echo_model_fixtures() -> (
+        tuple[
+            "mlflow.pyfunc.PythonModel",
+            pd.DataFrame,
+            "mlflow.models.ModelSignature",
+            dict,
+        ]
+    ):
         """Return an EchoModel instance, sample input DataFrame, inferred signature, and conda env."""
 
         class EchoModel(mlflow.pyfunc.PythonModel):

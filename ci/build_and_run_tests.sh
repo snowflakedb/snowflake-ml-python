@@ -190,6 +190,14 @@ EXT=""
 BAZEL_ADDITIONAL_BUILD_FLAGS=()
 BAZEL_ADDITIONAL_STARTUP_FLAGS=()
 
+# The downloader config only exists in the internal repository; it routes Bazel's GitHub
+# downloads through a mirror. It is exported so the conda recipe build can use it too.
+BAZEL_DOWNLOADER_CONFIG_PATH="${WORKSPACE}/${SNOWML_DIR}/ci/internal/bazel_downloader.cfg"
+if [[ -f "${BAZEL_DOWNLOADER_CONFIG_PATH}" ]]; then
+    BAZEL_ADDITIONAL_BUILD_FLAGS+=(--experimental_downloader_config="${BAZEL_DOWNLOADER_CONFIG_PATH}")
+    export BAZEL_DOWNLOADER_CONFIG="${BAZEL_DOWNLOADER_CONFIG_PATH}"
+fi
+
 # Computing artifact location
 # Detect the platform, also update some platform specific bazel settings
 case "$(uname)" in
@@ -310,6 +318,12 @@ echo "Extracted Package Version from code: ${VERSION}"
 
 # Generate and copy auto-gen tests.
 "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build --config=py${PYTHON_VERSION} "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
+
+# The conda recipe build runs Bazel with an output root inside the conda build prefix, so
+# its default repository cache would start empty. Point it at this build's cache, which
+# survives `bazel clean --expunge` and already holds the external repositories.
+BAZEL_REPOSITORY_CACHE="$("${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" info repository_cache)"
+export BAZEL_REPOSITORY_CACHE
 
 # Rsync cannot work well with path that has drive letter in Windows,
 # Thus, rsync has to use relative path instead of absolute ones.

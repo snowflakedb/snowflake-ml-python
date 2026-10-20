@@ -126,6 +126,17 @@ class MLJob(Generic[T], SerializableSessionMixin):
     @property
     def _stage_path(self) -> str | None:
         """Get the job's artifact storage stage location."""
+        env = self._container_spec.get("env") or {}
+        # A code-bundle job's stage volume is a dynamic mount of the bundle's versioned stage; the mount
+        # itself carries no location, so it is rebuilt from the discovery variables the service publishes.
+        bundle_stage_path = stage_utils.try_build_versioned_stage_path(
+            namespace=env.get(constants.STAGE_DISCOVERY_NAMESPACE_ENV_VAR),
+            stage_fqn=env.get(constants.STAGE_DISCOVERY_STAGE_FQN_ENV_VAR),
+            version=env.get(constants.STAGE_DISCOVERY_VERSION_ENV_VAR),
+        )
+        if bundle_stage_path is not None:
+            return bundle_stage_path
+
         volumes = self._service_spec["spec"]["volumes"]
         stage_volume = next((v for v in volumes if v["name"] == constants.STAGE_VOLUME_NAME), None)
         if stage_volume is None:
@@ -134,6 +145,12 @@ class MLJob(Generic[T], SerializableSessionMixin):
             return cast(str, stage_volume["stageConfig"]["name"])
         else:
             return cast(str, stage_volume["source"])
+
+    @property
+    def _is_code_bundle_job(self) -> bool:
+        """Whether this job runs from a code bundle, whose stage volume is the bundle's shared payload."""
+        env = self._container_spec.get("env") or {}
+        return bool(env.get(constants.STAGE_DISCOVERY_STAGE_FQN_ENV_VAR))
 
     @property
     def _result_path(self) -> str:

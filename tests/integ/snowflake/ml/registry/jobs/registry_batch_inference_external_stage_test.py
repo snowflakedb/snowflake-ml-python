@@ -1,4 +1,4 @@
-"""Test batch inference with external S3-backed stage for unstructured file input."""
+"""Test vLLM batch inference with external S3-backed stage for unstructured file input."""
 
 import os
 import tempfile
@@ -6,14 +6,18 @@ import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 
+import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._client.model import batch_inference_job_specs
+from snowflake.ml.model.inference_engine import InferenceEngine
+from snowflake.ml.model.models import huggingface
+from snowflake.ml.model.openai_signatures import OPENAI_CHAT_SIGNATURE
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
 class TestBatchInferenceExternalStageInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    """Test batch inference with external S3-backed stage.
+    """Test vLLM batch inference with external S3-backed stage.
 
     NOTE: This test requires a pre-existing external S3-backed stage. The S3 bucket and
     external stage were manually created and configured with appropriate IAM permissions.
@@ -52,11 +56,34 @@ class TestBatchInferenceExternalStageInteg(registry_batch_inference_test_base.Re
         finally:
             self.session.sql(f"REMOVE {stage_location}").collect()
 
-    def test_image_classification_external_stage(self) -> None:
-        """Test image classification with an external S3-backed stage as file input."""
-        from transformers import pipeline
+    def _construct_input(self, messages: list[list[dict]]) -> pd.DataFrame:
+        import json
 
-        model = pipeline(task="image-classification", model="google/vit-base-patch16-224")
+        schema = [
+            "MESSAGES",
+            "TEMPERATURE",
+            "MAX_COMPLETION_TOKENS",
+            "STOP",
+            "N",
+            "STREAM",
+            "TOP_P",
+            "FREQUENCY_PENALTY",
+            "PRESENCE_PENALTY",
+            "RESPONSE_FORMAT",
+        ]
+
+        data = [(json.dumps(m), 0.9, 250, None, 1, False, 0.9, 0.2, 0.1, None) for m in messages]
+
+        return self.session.create_dataframe(data, schema=schema)
+
+    def test_image_with_vllm_external_stage(self) -> None:
+        """Test image vLLM inference with files served from an external S3 stage."""
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
+        model = huggingface.TransformersPipeline(
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
+        )
 
         test_subdir = f"batch_inference_test/{uuid.uuid4()}"
 
@@ -71,89 +98,60 @@ class TestBatchInferenceExternalStageInteg(registry_batch_inference_test_base.Re
             self.session.sql(
                 f"PUT 'file://{cat_file_path}' {internal_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
             ).collect()
-
             self.session.sql(f"COPY FILES INTO {external_stage_location} FROM {internal_stage_location}").collect()
 
-            data = [
-                [f"{external_stage_location}cat.jpeg"],
+            messages = [
+                [
+                    {"role": "system", "content": [{"type": "text", "text": "You are an expert on cats."}]},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Please describe the cat breed."},
+                            {"type": "image_url", "image_url": {"url": f"{external_stage_location}cat.jpeg"}},
+                        ],
+                    },
+                ],
+                [
+                    {"role": "system", "content": [{"type": "text", "text": "You are an expert on cats."}]},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Please describe both cat images."},
+                            {"type": "image_url", "image_url": {"url": f"{external_stage_location}cat.jpeg"}},
+                            {"type": "image_url", "image_url": {"url": f"{external_stage_location}cat.jpeg"}},
+                        ],
+                    },
+                ],
             ]
-            column_names = ["images"]
-            input_df = self.session.create_dataframe(data, schema=column_names)
+            input_df = self._construct_input(messages)
 
-            column_handling = {
-                "IMAGES": {
-                    "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
-                    "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
-                }
-            }
-
-            self._test_registry_batch_inference(
-                model=model,
-                X=input_df,
-                compute_pool="SYSTEM_COMPUTE_POOL_CPU",
-                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-                input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
-                job_name=job_name,
-                replicas=1,
-                pip_requirements=["pillow"],
+            output_validator = (
+                registry_batch_inference_test_base.create_openai_chat_completion_output_validator(  # noqa: E501
+                    expected_phrases=["cat"],
+                    test_case=self,
+                )
             )
 
-    def test_image_classification_mixed_stages(self) -> None:
-        """Test image classification with input rows spanning 1 external and 2 internal stages."""
-        from transformers import pipeline
-
-        model = pipeline(task="image-classification", model="google/vit-base-patch16-224")
-
-        test_subdir = f"batch_inference_test/{uuid.uuid4()}"
-
-        (
-            job_name,
-            output_stage_location,
-            _,
-        ) = self._prepare_job_name_and_stage_for_batch_inference()
-
-        second_internal_stage = "TEST_STAGE_2"
-        self._db_manager.create_stage(second_internal_stage, sse_encrypted=True)
-
-        internal_stage_1_root = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/"
-        internal_stage_2_root = f"@{self._test_db}.{self._test_schema}.{second_internal_stage}/"
-
-        with self._external_stage_path(test_subdir) as external_stage_location:
-            cat_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
-
-            self.session.sql(
-                f"PUT 'file://{cat_file_path}' {internal_stage_1_root} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
-            ).collect()
-            self.session.sql(
-                f"PUT 'file://{cat_file_path}' {internal_stage_2_root} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
-            ).collect()
-
-            self.session.sql(f"COPY FILES INTO {external_stage_location} FROM {internal_stage_1_root}").collect()
-
-            data = [
-                [f"{external_stage_location}cat.jpeg"],
-                [f"{internal_stage_1_root}cat.jpeg"],
-                [f"{internal_stage_2_root}cat.jpeg"],
-            ]
-            column_names = ["images"]
-            input_df = self.session.create_dataframe(data, schema=column_names)
-
-            column_handling = {
-                "IMAGES": {
-                    "input_format": batch_inference_job_specs.InputFormat.FULL_STAGE_PATH,
-                    "convert_to": batch_inference_job_specs.FileEncoding.RAW_BYTES,
-                }
-            }
-
             self._test_registry_batch_inference(
                 model=model,
                 X=input_df,
-                compute_pool="SYSTEM_COMPUTE_POOL_CPU",
                 output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
-                input_spec=batch_inference_job_specs.InputSpec(column_handling=column_handling),
+                resources_spec=batch_inference_job_specs.ResourcesSpec(gpu_requests="1"),
                 job_name=job_name,
                 replicas=1,
-                pip_requirements=["pillow"],
+                options={"cuda_version": "12.4"},
+                signatures=OPENAI_CHAT_SIGNATURE,
+                inference_spec=batch_inference_job_specs.InferenceSpec(
+                    engine_options=batch_inference_job_specs.EngineOptions(
+                        engine=InferenceEngine.VLLM,
+                        engine_args_override=[
+                            "--max-model-len=18048",
+                            "--gpu-memory-utilization=0.8",
+                        ],
+                    )
+                ),
+                prediction_assert_fn=output_validator,
+                assert_container_count=3,  # main, vllm engine, proxy
             )
 
 

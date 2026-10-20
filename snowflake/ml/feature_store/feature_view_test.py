@@ -1827,6 +1827,7 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         features: list[Feature] | None = None,
         refresh_freq: str | None = "1h",
         refresh_mode: str | None = "AUTO",
+        target_lag: str | None = "30s",
     ) -> FeatureView:
         """Create a non-tiled FeatureView with mocked DataFrame.
 
@@ -1841,6 +1842,10 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         mock_df.schema = schema
 
         entity = Entity(name="test_entity", join_keys=entity_keys)
+        if target_lag is None:
+            online_config = OnlineConfig(enable=True, store_type=store_type)
+        else:
+            online_config = OnlineConfig(enable=True, target_lag=target_lag, store_type=store_type)
         return FeatureView(
             name="test_fv",
             entities=[entity],
@@ -1848,7 +1853,7 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             timestamp_col=timestamp_col,
             refresh_freq=refresh_freq,
             refresh_mode=refresh_mode,
-            online_config=OnlineConfig(enable=True, target_lag="30s", store_type=store_type),
+            online_config=online_config,
             feature_granularity=feature_granularity,
             aggregation_secondary_keys=aggregation_secondary_keys,
             features=features,
@@ -2324,6 +2329,29 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
                 aggregation_secondary_keys=["AD_ID"],
                 features=[Feature.sum("AMOUNT", "24h").alias("AMOUNT_SUM_24H")],
             )
+
+    def test_omitted_target_lag_uses_store_default(self) -> None:
+        """Without a target_lag, each store type's table is created with that store's default lag."""
+        for store_type, expected_lag in (
+            (OnlineStoreType.POSTGRES, "1 minute"),
+            (OnlineStoreType.HYBRID_TABLE, "10 seconds"),
+        ):
+            with self.subTest(store_type=store_type):
+                fv = self._make_feature_view(
+                    entity_keys=["USER_ID"],
+                    columns=["USER_ID", "AMOUNT"],
+                    column_types=[StringType(), DoubleType()],
+                    store_type=store_type,
+                    target_lag=None,
+                )
+                fs = self._make_mock_feature_store(postgres_online_service_running=True)
+                fs._session.table.return_value.schema = StructType(
+                    [StructField("USER_ID", StringType()), StructField("AMOUNT", DoubleType())]
+                )
+
+                fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+                self.assertIn(f"TARGET_LAG='{expected_lag}'", self._first_online_feature_table_sql(fs))
 
 
 class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):

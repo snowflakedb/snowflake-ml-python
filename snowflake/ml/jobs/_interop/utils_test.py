@@ -1,6 +1,6 @@
-import io
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -534,19 +534,23 @@ class TestInteropUtils(parameterized.TestCase):
         wrap_exceptions: bool = False,
     ) -> None:
         result_path = "@dummy_stage/result.json"
-        data_str = json.dumps(data)  # NOTE: Need to do this outside mock_get_stream to make closure work correctly
+        data_str = json.dumps(data)  # NOTE: Need to do this outside mock_get to make closure work correctly
 
-        def mock_get_stream(path: str, *args: Any, **kwargs: Any) -> io.BytesIO:
-            # Hacky behavior: If the input path is result_path, return the encoded JSON data
-            # Else, return secondary_data
+        def mock_get(path: str, target_directory: str, *args: Any, **kwargs: Any) -> list[Any]:
+            # Hacky behavior: If the input path is result_path, download the encoded JSON data
+            # Else, download secondary_data
             # Note that path must be a stage path to trigger this mock, else it'll try to read from disk
             if path == result_path:
-                return io.BytesIO(data_str.encode("utf-8"))
-            if secondary_data is None:
+                content = data_str.encode("utf-8")
+            elif secondary_data is None:
                 raise sp_exceptions.SnowparkSQLException(f"No secondary data, path: {path}")
-            return io.BytesIO(secondary_data)
+            else:
+                content = secondary_data
+            with open(os.path.join(target_directory, posixpath.basename(path)), "wb") as f:
+                f.write(content)
+            return []
 
-        self.mock_session.file.get_stream.side_effect = mock_get_stream
+        self.mock_session.file.get.side_effect = mock_get
 
         result = u.load(result_path, session=self.mock_session)
         self.assertIsInstance(result, ExecutionResult)
@@ -609,19 +613,23 @@ class TestInteropUtils(parameterized.TestCase):
     ) -> None:
         result_path = "@dummy_stage/result.json"
         if isinstance(data, dict):
-            data = json.dumps(data)  # NOTE: Need to do this outside mock_get_stream to make closure work correctly
+            data = json.dumps(data)  # NOTE: Need to do this outside mock_get to make closure work correctly
 
-        def mock_get_stream(path: str, *args: Any, **kwargs: Any) -> io.BytesIO:
-            # Hacky behavior: If the input path is result_path, return the encoded JSON data
-            # Else, return secondary_data
+        def mock_get(path: str, target_directory: str, *args: Any, **kwargs: Any) -> list[Any]:
+            # Hacky behavior: If the input path is result_path, download the encoded JSON data
+            # Else, download secondary_data
             # Note that path must be a stage path to trigger this mock, else it'll try to read from disk
             if path == result_path:
-                return io.BytesIO(data.encode("utf-8"))
-            if secondary_data is None:
+                content = data.encode("utf-8")
+            elif secondary_data is None:
                 raise sp_exceptions.SnowparkSQLException(f"No secondary data, path: {path}")
-            return io.BytesIO(secondary_data)
+            else:
+                content = secondary_data
+            with open(os.path.join(target_directory, posixpath.basename(path)), "wb") as f:
+                f.write(content)
+            return []
 
-        self.mock_session.file.get_stream.side_effect = mock_get_stream
+        self.mock_session.file.get.side_effect = mock_get
 
         with self.assertRaisesRegex(type(expected_error), re.escape(str(expected_error))):
             _ = u.load(result_path, session=self.mock_session)

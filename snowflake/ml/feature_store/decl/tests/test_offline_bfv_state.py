@@ -534,5 +534,86 @@ class TestAdvancedOfflineBfvHashRoundTrip:
         assert applied_hash != local_hash
 
 
+# ===========================================================================
+# Bug A (offline path) — a stale ``spec_text`` metadata.schema must not leak
+# into the applied key / content hash.  ``_serialize_batch_fv_spec`` stamps
+# ``metadata.*`` from the FeatureStore session config, which can diverge from
+# where the DT physically lives (the list-FV row's ``schema_name``).  The
+# applied state must key on the deployed location, mirroring the SHOW-row
+# precedence in ``fetch_applied_state``.
+# ===========================================================================
+
+_STALE_SESSION_SCH = "STALE_SESSION_SCH"
+
+
+def _stale_spec_text_bfv_row() -> dict[str, Any]:
+    """A list-FV row whose enriched ``spec_text`` carries a stale session schema.
+
+    The ``spec_text`` metadata keys on ``_STALE_SESSION_SCH`` while the row's
+    deployed ``schema_name`` is ``_SCH`` — reproducing the Bug A offline-path
+    gap (core serializes ``metadata.*`` from the session config, not the DT's
+    physical location).
+
+    Returns:
+        A ``feature_view_rows`` entry carrying the stale ``spec_text``.
+    """
+    row = _imperative_list_fv_row(online_enabled=False)
+    row["spec_text"] = {
+        "kind": "BatchFeatureView",
+        "metadata": {
+            "database": _DB,
+            "schema": _STALE_SESSION_SCH,
+            "name": _FV_NAME,
+            "version": _FV_VERSION,
+            "spec_format_version": "1",
+            "internal_data_version": "1",
+            "client_version": "0.1.0",
+        },
+        "offline_configs": [
+            {
+                "store_type": "snowflake",
+                "table_type": "BatchTable",
+                "database": _DB,
+                "schema": _STALE_SESSION_SCH,
+                "table": _OFFLINE_DT_NAME,
+                "columns": [],
+            }
+        ],
+        "spec": {
+            "ordered_entity_column_names": ["USER_ID"],
+            "sources": [],
+            "features": [],
+            "target_lag_sec": 60,
+        },
+    }
+    return row
+
+
+class TestOfflineBfvStaleSpecTextMetadata:
+    """The applied key and stamped metadata must use the deployed location
+    (the list-FV row ``schema_name``), not the stale ``spec_text`` metadata.
+    """
+
+    def test_applied_key_uses_deployed_schema_over_stale_spec_text(self) -> None:
+        state = fetch_applied_state(
+            raw_show_results=[],
+            raw_table_results=[],
+            specification_map={},
+            entity_rows=[],
+            dt_text_map={},
+            feature_view_rows=[_stale_spec_text_bfv_row()],
+            default_database=_DB,
+            default_schema=_SCH,
+        )
+        expected_key = f"BatchFeatureView:{_DB}.{_SCH}:{_FV_NAME}:{_FV_VERSION}"
+        assert expected_key in state.objects, list(state.objects)
+        obj = state.objects[expected_key]
+        assert _STALE_SESSION_SCH not in obj.key, obj.key
+        # Stamped metadata must carry the deployed identity so the full-spec
+        # content hash keys on the deployed schema too (not the stale value).
+        assert obj.spec_payload["metadata"]["schema"] == _SCH, obj.spec_payload["metadata"]
+        assert obj.spec_payload["metadata"]["database"] == _DB, obj.spec_payload["metadata"]
+
+
 if __name__ == "__main__":
     pytest_driver.main()

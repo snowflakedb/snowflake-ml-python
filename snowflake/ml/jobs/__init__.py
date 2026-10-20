@@ -1,6 +1,12 @@
 from snowflake.ml.jobs._interop.exception_utils import install_exception_display_hooks
 from snowflake.ml.jobs._interop.results import DistributedJobError, DistributedResult
 from snowflake.ml.jobs._utils.type_utils import JOB_STATUS
+from snowflake.ml.jobs.code_bundle import (
+    MLCodeBundle,
+    delete_code_bundle,
+    register_code_bundle,
+    register_job_from_code_bundle,
+)
 from snowflake.ml.jobs.decorators import remote
 from snowflake.ml.jobs.job import MLJob
 from snowflake.ml.jobs.job_definition import MLJobDefinition
@@ -29,4 +35,8 @@ __all__ = [
     "MLJobDefinition",
     "DistributedResult",
     "DistributedJobError",
+    "register_code_bundle",
+    "MLCodeBundle",
+    "register_job_from_code_bundle",
+    "delete_code_bundle",
 ]

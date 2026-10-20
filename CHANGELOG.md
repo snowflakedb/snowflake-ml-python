@@ -1,8 +1,31 @@
 # Release History
 
-## 2.5.0
+## 2.6.0
 
 ### New Features
+
+* ML Jobs: Added `register_code_bundle` and `register_job_from_code_bundle` (Public Preview) to
+  create a Snowflake code bundle and run ML Jobs from it. `delete_code_bundle` drops a registered bundle.
+* Feature Store: The Postgres-backed Online Feature Store is now generally available, including tiled aggregations,
+  streaming and realtime feature views and feature groups.
+
+### Bug Fixes
+
+* ML Jobs: `submit_from_stage` accepts stage paths with double-quoted segments, such as a Git repository branch whose
+  name contains `/` (`@repo/branches/"feature/x"/src`). These paths used to fail with "does not exist".
+* ML Jobs: `MLJob.result()` no longer returns another job's result when results are fetched concurrently on one
+  machine.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.5.0 (2026-10-14)
+
+### New Features
+
+* Registry: `huggingface.TransformersPipeline` can omit `task`; when omitted, the task is inferred
+  automatically from the model's Hugging Face Hub `pipeline_tag` (requires `huggingface_hub`).
 
 ### Bug Fixes
 
@@ -15,6 +38,17 @@
   2026.6.0, which fixes CVE-2026-104851, can be installed.
 
 ### Behavior Changes
+
+* Registry: `huggingface.TransformersPipeline` now takes required `model` as the first argument;
+  `task` is optional and inferred when not provided. Prefer
+  `TransformersPipeline(model="org/model")` over passing `task` explicitly.
+* Registry: Removed deprecated `huggingface_pipeline.HuggingFacePipelineModel` and its
+  `log_model_and_create_service` API. Use `huggingface.TransformersPipeline` with
+  `registry.log_model` / `ModelVersion.create_service` instead. A pickle-compat alias remains
+  for loading models logged with the old class.
+* Feature Store: Batch feature views with a Postgres online store now default `OnlineConfig.target_lag` to
+  `"1 minute"` instead of `"10 seconds"`. Setting a Postgres `target_lag` below 1 minute emits a `UserWarning`.
+  Hybrid table online stores are unchanged.
 
 ### Deprecations
 

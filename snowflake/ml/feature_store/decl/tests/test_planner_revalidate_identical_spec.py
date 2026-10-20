@@ -36,8 +36,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
     _check_destructive,
@@ -916,10 +914,6 @@ _GOLDEN_DIR = Path(__file__).parent / "golden_specs"
 _BUG_BASH_GOLDEN = _GOLDEN_DIR / "USER_CLICK_STATS_DECL.json"
 
 
-@pytest.mark.skipif(
-    not _BUG_BASH_GOLDEN.exists(),
-    reason="Golden spec USER_CLICK_STATS_DECL.json not yet captured.",
-)
 class TestBugBashGoldenSpecRoundTrip:
     """Pin the BUG_BASH §5 FV against a captured DESCRIBE-time payload.
 

@@ -11,6 +11,7 @@ from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env as packager_model_env
 from snowflake.ml.model.custom_model import CustomModel
+from snowflake.ml.model.models import huggingface
 from snowflake.ml.model.volatility import Volatility
 from snowflake.ml.registry._manager import model_parameter_reconciler
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -368,6 +369,47 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             reconciler = self._create_reconciler(target_platforms=None, options=None)
             result = reconciler.reconcile()
             self.assertIsNone(result.target_platforms)
+
+    @parameterized.parameters(True, False)  # type: ignore[misc]
+    def test_reconcile_target_platforms_peft_adapter_defaults_to_spcs(self, in_ml_runtime: bool) -> None:
+        """PEFT adapters default to SPCS-only, ahead of the Container Runtime default."""
+        with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", in_ml_runtime), mock.patch.object(
+            env_utils,
+            "get_matched_package_versions_in_information_schema",
+            return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+        ) as mock_get_versions:
+            reconciler = self._create_reconciler(
+                model=self._create_mock_model(huggingface.PeftAdapter), target_platforms=None, options=None
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                result = reconciler.reconcile()
+            mock_get_versions.assert_not_called()
+        self.assertEqual(result.target_platforms, [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+        assert result.options is not None
+        self.assertNotIn("embed_local_ml_library", result.options)
+        self.assertFalse(result.options["relax_version"])
+
+    def test_reconcile_target_platforms_peft_adapter_keeps_explicit_spcs_only(self) -> None:
+        """Explicit SPCS-only target platforms on a PEFT adapter are kept as given."""
+        reconciler = self._create_reconciler(
+            model=self._create_mock_model(huggingface.PeftAdapter),
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+        )
+        result = reconciler.reconcile()
+        self.assertEqual(result.target_platforms, [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"target_platforms": ["WAREHOUSE"]},
+        {"target_platforms": ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]},
+    )
+    def test_reconcile_target_platforms_peft_adapter_rejects_non_spcs(self, target_platforms: list[str]) -> None:
+        """Explicit target platforms on a PEFT adapter that are not SPCS-only raise an exception."""
+        reconciler = self._create_reconciler(
+            model=self._create_mock_model(huggingface.PeftAdapter), target_platforms=target_platforms
+        )
+        with self.assertRaises(exceptions.SnowflakeMLException):
+            reconciler.reconcile()
 
     def test_explainability_validation(self) -> None:
         """Explainability is no longer forced off by the reconciler; explicit values are preserved."""

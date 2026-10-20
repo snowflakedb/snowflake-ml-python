@@ -754,7 +754,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             if isinstance(val, str):
                 cfg = _json.loads(val)
                 assert "enable" in cfg and cfg["enable"] is False
-                assert "target_lag" in cfg and isinstance(cfg["target_lag"], str)
+                assert "target_lag" in cfg and cfg["target_lag"] is None
 
         # generate data on multiple feature views
         spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
@@ -6002,8 +6002,13 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         finally:
             self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
 
-    def test_schema_evolution_register_backfill_rejects_varchar_width_change(self) -> None:
-        """Registration rejects a backfill table whose VARCHAR width differs from the DT."""
+    def test_schema_evolution_register_backfill_allows_varchar_width_change(self) -> None:
+        """Registration accepts a backfill table whose VARCHAR width differs from the DT.
+
+        VARCHAR length is not pre-allocated in Snowflake, so a width delta between the
+        backfill table and the DT is not a type change: the extend-only reconcile treats
+        it as a no-op and registration succeeds.
+        """
         fs = self._create_feature_store()
 
         source_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.WIDEN_SRC_{uuid4().hex.upper()}"
@@ -6036,9 +6041,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
 
         try:
-            with self.assertRaises(Exception) as ctx:
-                fs.register_feature_view(feature_view=fv, version="v1")
-            self.assertIn("type changed", str(ctx.exception).lower())
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+            snapshot_cols = {
+                r["name"]
+                for r in self._session.sql(
+                    f"DESCRIBE TABLE {registered_fv.fully_qualified_snapshot_table_name()}"
+                ).collect()
+            }
+            self.assertIn("NAME", snapshot_cols)
         finally:
             self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
             self._session.sql(f"DROP TABLE IF EXISTS {source_table}").collect()

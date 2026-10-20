@@ -19,7 +19,7 @@ _SNOWURL_PATH_RE = re.compile(
 
 # Break long regex into two main parts
 _STAGE_PATTERN = rf"~|%?(?:(?:{identifier._SF_IDENTIFIER}\.?){{,2}}{identifier._SF_IDENTIFIER})"
-_RELPATH_PATTERN = r"[\w\-./]*"
+_RELPATH_PATTERN = r'(?:[\w\-./]|"[^"]*")*'
 _STAGEF_PATH_RE = re.compile(rf"^@(?P<stage>{_STAGE_PATTERN})(?:/(?P<relpath>{_RELPATH_PATTERN}))?$")
 
 
@@ -178,5 +178,29 @@ def try_resolve_stage_path(path: str) -> str | None:
     """Return the canonical stage path if ``path`` is a well-formed stage path, else ``None``."""
     try:
         return StagePath(path).as_posix()
+    except (ValueError, TypeError):
+        return None
+
+
+def build_versioned_stage_path(*, namespace: str, stage_fqn: str, version: str) -> str:
+    """Build a versioned stage URL from its published parts.
+
+    Args:
+        namespace: The stage domain, e.g. ``notebook_project``.
+        stage_fqn: The fully qualified stage or object name.
+        version: The version identifier, e.g. ``VERSION$3``.
+
+    Returns:
+        The canonical snow URL for the versioned stage.
+    """
+    return StagePath(f"{PROTOCOL_NAME}://{namespace}/{stage_fqn}/versions/{version}").as_posix()
+
+
+def try_build_versioned_stage_path(*, namespace: str | None, stage_fqn: str | None, version: str | None) -> str | None:
+    """Build a versioned stage URL, or ``None`` if any part is missing or invalid."""
+    if not namespace or not stage_fqn or not version:
+        return None
+    try:
+        return build_versioned_stage_path(namespace=namespace, stage_fqn=stage_fqn, version=version)
     except (ValueError, TypeError):
         return None

@@ -68,7 +68,10 @@ import pytest
 
 from snowflake.ml.feature_store.decl.invariants import (
     _full_spec_hash,
+    _is_synthesised_sk_array_feature,
     _normalise_fv_sources_for_hash,
+    _secondary_key_set,
+    _strip_sk_from_entities,
     compute_local_spec_hash,
     fg_content_hash,
     model_to_dict,
@@ -1265,6 +1268,64 @@ class TestEntityFingerprintJoinKeyProvenance:
         assert structural_fingerprint_hash(local) == structural_fingerprint_hash(applied), (
             f"Exporter-authored {authored_name!r} must hash equal to deployed "
             f"{applied_name!r} so a re-export re-plans NO_CHANGE instead of looping UPDATE_ENTITY."
+        )
+
+
+class TestSecondaryKeyComparisonFold:
+    """The SK-stripping helpers compare identifiers via the canonical
+    ``to_comparison_identifier`` fold, not raw ``.upper()``.
+
+    ``_secondary_key_set`` / ``_strip_sk_from_entities`` /
+    ``_is_synthesised_sk_array_feature`` are *comparison* sites (the hash-path
+    mirror of the exporter's SK filters), so matching a server-derived field to
+    its secondary key is deliberately case-insensitive and provenance-agnostic:
+    a mixed-case key resolves the same whether it arrives bare (``offerKey``) or
+    quoted (``"offerKey"``).  This is distinct from the case-preserving *identity*
+    sites the stored-form canonicalization protects — the SK identity itself is
+    kept in stored form via ``aggregation_secondary_keys`` so a genuine rename
+    still bumps the full-spec hash (pinned by
+    ``test_streaming_fv_python_form_drift``).
+    """
+
+    def test_secondary_key_set_folds_mixed_case_and_quoted(self) -> None:
+        """A mixed-case SK folds to one comparison key from either provenance."""
+        bare = _secondary_key_set({"aggregation_secondary_keys": ["offerKey"]})
+        quoted = _secondary_key_set({"ordered_secondary_key_column_names": ['"offerKey"']})
+        assert bare == {"OFFERKEY"} == quoted, (
+            "A mixed-case secondary key must fold to the same comparison key "
+            "whether it arrives bare or quoted (case-insensitive comparison fold)."
+        )
+
+    def test_strip_sk_from_entities_matches_mixed_case(self) -> None:
+        """The SK is stripped from entity columns even when mixed-case."""
+        inner = {"ordered_entity_column_names": ["USER_ID", "offerKey"]}
+        _strip_sk_from_entities(inner, {"OFFERKEY"})
+        assert inner["ordered_entity_column_names"] == ["USER_ID"], (
+            "A server-appended mixed-case secondary key must be stripped from the "
+            "entity-column list so the authored (SK-free) and applied halves converge."
+        )
+
+    def test_is_synthesised_sk_array_feature_matches_mixed_case(self) -> None:
+        """The synthesised SK-array feature is detected for a mixed-case SK."""
+        feat = {
+            "source_column": {"name": "offerKey", "type": "StringType"},
+            "output_column": {"name": "OFFERKEY_KEYS_3600S", "type": "ArrayType", "element_type": "StringType"},
+        }
+        assert _is_synthesised_sk_array_feature(feat, {"OFFERKEY"}) is True, (
+            "A synthesised SK-array feature sourced from a mixed-case secondary "
+            "key must be identified so it is stripped before hashing."
+        )
+
+    def test_real_aggregation_feature_not_misidentified(self) -> None:
+        """A genuine aggregation (has ``function``) is never treated as SK-derived."""
+        feat = {
+            "source_column": {"name": "AMOUNT", "type": "FloatType"},
+            "output_column": {"name": "AMOUNT_SUM_1H", "type": "DoubleType"},
+            "function": "sum",
+        }
+        assert _is_synthesised_sk_array_feature(feat, {"OFFERKEY"}) is False, (
+            "A real aggregation must not be mistaken for the synthesised SK-array "
+            "feature — detection keys off the SK source column, no function, ArrayType."
         )
 
 

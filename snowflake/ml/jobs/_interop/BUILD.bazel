@@ -38,6 +38,7 @@ py_library(
     name = "legacy",
     srcs = ["legacy.py"],
     deps = [
+        ":data_utils",
         ":exception_utils",
         ":results",
     ],
@@ -53,6 +54,18 @@ py_library(
         ":legacy",
         ":protocols",
         ":results",
+    ],
+)
+
+py_test(
+    name = "data_utils_test",
+    srcs = ["data_utils_test.py"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
+    deps = [
+        ":data_utils",
     ],
 )
 

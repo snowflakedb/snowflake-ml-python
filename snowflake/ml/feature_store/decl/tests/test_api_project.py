@@ -307,7 +307,7 @@ class TestMergeTemplateVars:
         )
         target = decl_api.resolve_target(manifest)
         merged = decl_api._merge_template_vars(manifest, target, None)
-        assert merged == {"env_suffix": "_BASE"}
+        assert merged == {"database": "D", "schema": "S", "env_suffix": "_BASE"}
 
     def test_configuration_overrides_default(self) -> None:
         manifest = _build_manifest_two_targets()

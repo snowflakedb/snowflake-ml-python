@@ -332,9 +332,8 @@ class TestResolveOnlineTargetLagNoBatchScheduleFallback:
     OFT staleness.
 
     The caller (``_build_feature_view``) is responsible for picking a
-    sensible OFT default — ``"10 seconds"`` for batch online FVs (the
-    imperative ``_BATCH_OFT_TARGET_LAG``) and ``"0 seconds"`` for
-    streaming / realtime / FG.
+    sensible OFT default — ``_POSTGRES_BATCH_OFT_TARGET_LAG`` for batch
+    online FVs and ``"0 seconds"`` for streaming / realtime / FG.
     """
 
     def _resolve(self, payload: dict[str, Any]) -> Any:
@@ -368,7 +367,7 @@ class TestResolveOnlineTargetLagNoBatchScheduleFallback:
 
 class TestExecutorBatchOnlineDefaultTargetLag:
     """Online ``BatchFeatureView`` without an authored ``target_lag``
-    falls back to the imperative ``_BATCH_OFT_TARGET_LAG = "10 seconds"``
+    falls back to the Postgres ``_POSTGRES_BATCH_OFT_TARGET_LAG``
     default — not ``"0 seconds"`` (which Snowflake rejects for batch
     OFTs).
 
@@ -401,12 +400,12 @@ class TestExecutorBatchOnlineDefaultTargetLag:
                 pass
         return captured
 
-    def test_online_bfv_without_target_lag_uses_imperative_default_10s(self) -> None:
+    def test_online_bfv_without_target_lag_uses_postgres_default(self) -> None:
         payload = _minimal_bfv_payload(online=True, refresh_freq="5 minutes")
         captured = self._online_config_kwargs(payload)
-        assert captured.get("target_lag") == "10 seconds", (
+        assert captured.get("target_lag") == "1 minute", (
             "Online BFV without an authored target_lag must default to "
-            "_BATCH_OFT_TARGET_LAG (10 seconds); the pre-fix refresh_freq "
+            "_POSTGRES_BATCH_OFT_TARGET_LAG; the pre-fix refresh_freq "
             "fallback is gone."
         )
 

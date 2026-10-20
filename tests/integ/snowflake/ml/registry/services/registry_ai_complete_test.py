@@ -15,22 +15,31 @@ from absl.testing import absltest
 from retrying import retry
 
 import snowflake.snowpark.exceptions
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.inference_engine import InferenceEngine
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import registry_aisql_byom_test_base
 
 logger = logging.getLogger(__name__)
 
 
+def _unescaped_object_name_parts(name: str) -> list[str] | None:
+    """Return the unescaped database, schema, and object names, or None if name is not fully qualified.
+
+    show_details may report the service as quoted identifiers ("DB"."SCHEMA"."NAME"); comparing the
+    unescaped parts treats that as the same service as the unquoted name the test deployed.
+    """
+    try:
+        database_name, schema_name, object_name = identifier.parse_schema_level_object_identifier(name)
+    except ValueError:
+        return None
+    return identifier.get_unescaped_names([database_name, schema_name, object_name])
+
+
 class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
     """Integration tests for the /ai_complete endpoint."""
-
-    _SESSION_PARAMS = {
-        "SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE": "true",
-        "ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL": "true",
-    }
 
     # AI_COMPLETE-specific class-level state
     _endpoint: str | None = None
@@ -60,10 +69,10 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
 
     def _do_deploy(self) -> None:
         """Deploy a vLLM-backed text-generation model for all AI_COMPLETE tests."""
-        model = huggingface_pipeline.HuggingFacePipelineModel(
+        model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",
-            download_snapshot=False,
+            compute_pool_for_log=None,
         )
 
         # Minimal input to satisfy model logging validation
@@ -528,9 +537,6 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
             ).collect()
 
             def _call() -> None:
-                # Re-apply session params — some parameters are not preserved across USE ROLE.
-                self.session.sql("ALTER SESSION SET SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE=true").collect()
-                self.session.sql("ALTER SESSION SET ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL=true").collect()
                 result = self.session.sql(f"SELECT AI_COMPLETE('{service_name}', 'hello') AS r").collect()
                 self.assertLen(result, 1)
                 self.assertIsNotNone(result[0]["R"])
@@ -613,7 +619,13 @@ class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBas
 
         self.assertIn("choices", parsed)
         self.assertIn("model", parsed)
-        self.assertEqual(parsed["model"], service_name)
+        expected_name_parts = _unescaped_object_name_parts(service_name)
+        self.assertIsNotNone(expected_name_parts, f"Service name {service_name!r} is not fully qualified")
+        self.assertEqual(
+            _unescaped_object_name_parts(parsed["model"]),
+            expected_name_parts,
+            f"show_details model {parsed['model']!r} does not name service {service_name!r}",
+        )
         self.assertIn("usage", parsed)
 
         self.assertIn("completion_tokens", parsed["usage"])

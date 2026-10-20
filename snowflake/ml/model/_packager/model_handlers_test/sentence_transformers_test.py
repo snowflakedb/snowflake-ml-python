@@ -39,9 +39,11 @@ SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 
 
 class SentenceTransformerHandlerTest(parameterized.TestCase):
+    _original_hf_hub_disable_xet_env: str | None = None
+    _original_hf_hub_disable_xet: bool = False
+
     @classmethod
     def setUpClass(cls) -> None:
-
         cls.cache_dir = tempfile.TemporaryDirectory()
         cls._original_cache = os.getenv(SENTENCE_TRANSFORMERS_CACHE_DIR, None)
         cls._original_hf_home = os.getenv("HF_HOME", None)
@@ -49,6 +51,15 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = cls.cache_dir.name
         os.environ["HF_HOME"] = cls.cache_dir.name
         os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+        os.environ["HF_HUB_CACHE"] = os.path.join(cls.cache_dir.name, "hub")
+        # CI points HF_ENDPOINT at the Artifactory HF proxy, which has no xet-read-token
+        # endpoint. huggingface_hub will probe that path once the repo is on Xet storage.
+        import huggingface_hub.constants
+
+        cls._original_hf_hub_disable_xet_env = os.environ.get("HF_HUB_DISABLE_XET")
+        cls._original_hf_hub_disable_xet = huggingface_hub.constants.HF_HUB_DISABLE_XET
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        huggingface_hub.constants.HF_HUB_DISABLE_XET = True
 
         import sentence_transformers
 
@@ -62,6 +73,13 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        import huggingface_hub.constants
+
+        huggingface_hub.constants.HF_HUB_DISABLE_XET = cls._original_hf_hub_disable_xet
+        if cls._original_hf_hub_disable_xet_env is not None:
+            os.environ["HF_HUB_DISABLE_XET"] = cls._original_hf_hub_disable_xet_env
+        else:
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
         if cls._original_cache:
             os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = cls._original_cache
         else:

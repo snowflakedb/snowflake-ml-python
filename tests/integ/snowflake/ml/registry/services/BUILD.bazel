@@ -18,7 +18,6 @@ py_library(
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/models:huggingface",
-        "//snowflake/ml/model/models:huggingface_pipeline",
         "//snowflake/ml/utils:authentication",
         "//tests/integ/snowflake/ml/registry:registry_spcs_test_base",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
@@ -96,7 +95,6 @@ py_test(
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model/models:huggingface",
-        "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 
@@ -111,7 +109,6 @@ py_test(
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model/models:huggingface",
-        "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 
@@ -169,11 +166,9 @@ py_library(
         "//snowflake/ml/model:inference_engine",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/models:huggingface_pipeline",
         "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:lora_adapter_account_gate",
-        "//tests/integ/snowflake/ml/test_utils:lora_adapters_enabled_patch",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
@@ -395,7 +390,7 @@ py_test(
         ":registry_model_deployment_test_base",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:jwt_generator",
-        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/utils:authentication",
     ],
 )
@@ -411,7 +406,8 @@ py_test(
     ],
     deps = [
         ":registry_aisql_byom_test_base",
-        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 
@@ -441,7 +437,7 @@ py_test(
     ],
     deps = [
         ":registry_model_deployment_test_base",
-        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 

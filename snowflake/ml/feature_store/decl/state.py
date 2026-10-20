@@ -351,18 +351,10 @@ def _inject_batch_fv_fields_from_list_row(
         inner["refresh_mode"] = refresh_cell.strip().upper()
 
     # ``warehouse`` (the DT refresh warehouse) rides on the dedicated
-    # ``warehouse`` column of the list-FV row.  The deployed
-    # ``DESCRIBE … TYPE = SPECIFICATION`` payload never carries it (it is a
-    # Dynamic Table property, not an OFT/spec property), so for online-only
-    # BFVs — recovered via the OFT DESCRIBE path — ``spec.warehouse`` is
-    # otherwise absent and ``planner._warehouse_drifted`` reports a permanent
-    # authored-vs-absent drift (spurious ``UPDATE_FV`` every replan, root
-    # cause B).  This mirrors the offline-only injection in
-    # ``imperative_executor._serialize_batch_fv_spec`` and is additive (skipped
-    # when the offline path already populated it).
-    warehouse_cell = row.get("warehouse") if isinstance(row, dict) else None
-    if isinstance(warehouse_cell, str) and warehouse_cell.strip() and "warehouse" not in inner:
-        inner["warehouse"] = warehouse_cell.strip()
+    # ``warehouse`` column of the list-FV row.  Shared with the streaming
+    # recovery path via :func:`_inject_fv_warehouse_from_list_row` (see that
+    # helper for the root-cause-B rationale).
+    _inject_fv_warehouse_from_list_row(spec_payload, row)
 
     # ``append_only`` rides on the dedicated ``append_only`` column of the
     # list-FV row (``list_feature_views().append_only``, a BooleanType) with a
@@ -384,6 +376,40 @@ def _inject_batch_fv_fields_from_list_row(
         initialize = getattr(fv_obj, "initialize", None)
         if initialize:
             inner["initialize"] = str(initialize).strip().upper() or None
+
+
+def _inject_fv_warehouse_from_list_row(spec_payload: dict[str, Any], row: dict[str, Any]) -> None:
+    """Inject the deployed refresh ``warehouse`` onto an applied-state payload.
+
+    The DT refresh ``warehouse`` rides on the dedicated ``warehouse`` column of
+    the list-FV row.  The deployed ``DESCRIBE … TYPE = SPECIFICATION`` payload
+    never carries it (it is a Dynamic Table property, not an OFT/spec property),
+    so ``spec.warehouse`` is otherwise absent and ``planner._warehouse_drifted``
+    reports a permanent authored-vs-absent drift — a spurious ``UPDATE_FV`` on
+    every clean re-plan (root cause B).  This mirrors the offline-only injection
+    in ``imperative_executor._serialize_batch_fv_spec`` and is additive (skipped
+    when an earlier path already populated ``spec.warehouse``).
+
+    Kind-agnostic: it injects for any FV kind that carries an inner ``spec``
+    (BatchFeatureView and tiled StreamingFeatureView — both schedule an offline
+    Dynamic Table whose refresh warehouse is operational).  ``warehouse`` is not
+    in the RealtimeFeatureView operational set, and ``fetch_applied_state`` does
+    not call this helper on that kind, so realtime recovery stays untouched.
+
+    Args:
+        spec_payload: The ``AppliedObject.spec_payload`` dict, mutated in place.
+            No-op when it carries no inner ``spec`` dict.
+        row: The list-FV row dict (the
+            :func:`decl.imperative_executor.fetch_feature_view_rows` contract).
+            Must carry a non-empty ``warehouse`` string for the injection to
+            fire; an absent / empty cell is tolerated as a no-op.
+    """
+    inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
+    if inner is None:
+        return
+    warehouse_cell = row.get("warehouse") if isinstance(row, dict) else None
+    if isinstance(warehouse_cell, str) and warehouse_cell.strip() and "warehouse" not in inner:
+        inner["warehouse"] = warehouse_cell.strip()
 
 
 def _spec_has_aggregation_windows(inner: dict[str, Any]) -> bool:
@@ -424,8 +450,9 @@ def _inject_fv_refresh_freq_from_list_row(
 
     Without this plumbing the planner falls back to
     ``spec.target_lag_sec``, which for OFT-backed FVs carries the OFT
-    staleness (``0`` for streaming, ``_BATCH_OFT_TARGET_LAG`` for
-    online BFV without authored ``target_lag``) — the original BACKFILL
+    staleness (``0`` for streaming, ``_POSTGRES_BATCH_OFT_TARGET_LAG``
+    for a Postgres online BFV without authored
+    ``target_lag``) — the original BACKFILL
     re-plan invariant break.
 
     Kind-aware, mirroring the spec-validator
@@ -848,6 +875,27 @@ def _build_offline_fv_object(
             ],
             "spec": inner_spec,
         }
+
+    # Deployed identity wins over the enriched ``spec_text`` metadata: the
+    # ``spec_text`` branch above adopts core's serialized payload verbatim, and
+    # ``_serialize_batch_fv_spec`` stamps ``metadata.database`` / ``metadata.schema``
+    # from the FeatureStore session config (``self._config.*.resolved()``), which
+    # can be a stale session schema rather than where the Dynamic Table physically
+    # lives (the list-FV row's ``database_name`` / ``schema_name``, already captured
+    # as ``db`` / ``schema_val``).  Stamp the deployed location so the applied key
+    # (``_build_spec_key`` reads ``metadata``), the full-spec content hash
+    # (``_normalize_for_full_spec_hash`` retains ``metadata.database`` / ``schema``),
+    # and the exporter's synth-row ``fallback_*`` all agree with the deployed
+    # identity — mirrors the SHOW-row precedence in ``fetch_applied_state``.  The
+    # ``else`` branch above already stamps these values, so the overwrite is a
+    # no-op there.
+    _md = spec_payload.get("metadata")
+    _md = dict(_md) if isinstance(_md, dict) else {}
+    _md["database"] = db
+    _md["schema"] = schema_val
+    _md.setdefault("name", name)
+    _md.setdefault("version", version)
+    spec_payload["metadata"] = _md
 
     if kind == "BatchFeatureView":
         # B3 — authoritative source-binding recovery from FV_SOURCE_REFS
@@ -1615,19 +1663,35 @@ def fetch_applied_state(
         if spec is not None:
             kind = spec.get("kind", "StreamingFeatureView")
             metadata = spec.get("metadata", {}) if isinstance(spec.get("metadata"), dict) else {}
-            db = metadata.get("database", "") or row.get("database_name", "") or default_database
-            schema_val = metadata.get("schema", "") or row.get("schema_name", "") or default_schema
+            # Deployed identity wins over the SPECIFICATION ``metadata``: a
+            # deployed spec can carry a stale session schema/database stamped at
+            # creation time, while the SHOW row (``database_name`` /
+            # ``schema_name``) names where the OFT actually lives.  The exporter
+            # emits that same deployed identity, so keying the applied state on
+            # it keeps the round-trip idempotent — otherwise the FV re-plans as
+            # ``CREATE_FV`` on the key mismatch (and ``DROP_FV`` of the "orphan"
+            # in full-directory mode), or ``RECREATE_FV`` once the retained
+            # ``metadata`` diverges the full-spec hash.  The connection default
+            # stays the final fallback.
+            db = row.get("database_name", "") or metadata.get("database", "") or default_database
+            schema_val = row.get("schema_name", "") or metadata.get("schema", "") or default_schema
 
             spec_payload: dict[str, Any]
             if from_spec:
                 spec_payload = dict(spec)
-                if "metadata" not in spec_payload:
-                    spec_payload["metadata"] = {
-                        "database": db,
-                        "schema": schema_val,
-                        "name": base_name,
-                        "version": version,
-                    }
+                # Stamp the resolved deployed identity onto ``metadata`` so the
+                # full-spec content hash — which retains ``metadata.database`` /
+                # ``metadata.schema`` (see invariants._normalize_for_full_spec_hash)
+                # — also keys on the deployed location, not the possibly-stale
+                # values the SPECIFICATION carried.  Overwrites unconditionally
+                # (the pre-existing metadata may be stale) and backfills name /
+                # version when the payload omitted ``metadata`` entirely.
+                stamped_metadata = dict(spec_payload.get("metadata") or {})
+                stamped_metadata["database"] = db
+                stamped_metadata["schema"] = schema_val
+                stamped_metadata.setdefault("name", base_name)
+                stamped_metadata.setdefault("version", version)
+                spec_payload["metadata"] = stamped_metadata
                 matched_row = fv_row_by_name_version.get((str(base_name).upper(), str(version).upper()))
                 # Recover the deployed ``desc`` for every kind (Batch /
                 # Streaming / Realtime) before the kind dispatch.  Streaming
@@ -1665,8 +1729,17 @@ def fetch_applied_state(
                     # streaming, refuses to read the OFT ``target_lag_sec=0``
                     # sentinel).  The helper self-guards: it is a no-op for
                     # a non-tiled streaming FV (zero-lag VIEW, no DT).
+                    #
+                    # The offline tile Dynamic Table also carries a refresh
+                    # ``warehouse``, which ``warehouse`` is operational for
+                    # StreamingFeatureView (``_FV_OPERATIONAL_FIELDS_BY_KIND``)
+                    # and authorable on the model.  It is never in the DESCRIBE
+                    # payload, so — exactly as for BatchFVs — recover it from the
+                    # list row or the streaming FV loops on a spurious
+                    # ``UPDATE_FV`` every replan (root cause B, streaming half).
                     if matched_row is not None:
                         _inject_fv_refresh_freq_from_list_row(spec_payload, matched_row)
+                        _inject_fv_warehouse_from_list_row(spec_payload, matched_row)
                 content_hash = _full_spec_hash(spec_payload)
                 spec_payloads_for_datasources.append(spec_payload)
             else:

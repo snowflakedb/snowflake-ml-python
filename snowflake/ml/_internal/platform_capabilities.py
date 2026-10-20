@@ -93,7 +93,7 @@ class PlatformCapabilities:
         return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)
 
     def is_lora_adapters_enabled(self) -> bool:
-        return False
+        return self._get_bool_feature(ENABLE_LORA_ADAPTERS, False)
 
     def is_single_output_native_type_enabled(self) -> bool:
         """Whether a single, non-OBJECT model FUNCTION output is registered with its native SQL type.
