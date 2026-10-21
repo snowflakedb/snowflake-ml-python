@@ -175,6 +175,8 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
+            if model == _MIDSTREAM_ERROR_MODEL_NAME:
+                self.send_header("X-Snowflake-Request-ID", "rest-midstream-error-id")
             self.end_headers()
 
             if model == _UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME:
@@ -586,6 +588,7 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
         error_message = str(context.exception)
         self.assertIn("Something went wrong during generation", error_message)
+        self.assertIn("(Request ID: rest-midstream-error-id)", error_message)
 
     def test_streaming_error(self) -> None:
         try:
@@ -686,6 +689,7 @@ class CompleteRESTBackendTest(unittest.TestCase):
 
         error_message = str(context.exception)
         self.assertIn("XP midstream error occurred", error_message)
+        self.assertIn("(Request ID: test-midstream-error-id)", error_message)
 
     def test_xp_unknown_model(self) -> None:
         with self.assertRaises(ValueError) as ar:
