@@ -7,7 +7,7 @@
 # from alphabetizing these entries and reintroducing that bug.
 OPTIONAL_DEPENDENCY_GROUPS = {
     # @unsorted-dict-items
-    "ml": ["lightgbm", "catboost", "mlflow", "altair", "streamlit", "prophet", "shap", "scikit-learn", "xgboost"],
+    "ml": ["lightgbm", "catboost", "mlflow", "altair", "streamlit", "prophet", "shap", "scikit-learn", "xgboost", "category-encoders"],
     "keras": ["torch", "tensorflow", "keras", "scikit-learn"],
     "llm": ["llm", "scikit-learn"],
     "torch": ["torch", "transformers", "mlflow", "scikit-learn", "xgboost"],

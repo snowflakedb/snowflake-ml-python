@@ -698,6 +698,17 @@ def fetch_feature_view_rows(
             # then leaves ``spec.sources`` empty and warns that the FV will
             # be recreated on the next apply to stamp the metadata.
             "source_refs": _decode_json_cell(_row_get(data, "source_refs")),
+            # ``stream_config`` is a JSON-encoded ``{"stream_source",
+            # "transformation_fn"}`` cell populated by
+            # ``_LIST_FEATURE_VIEW_BASE_FIELDS`` for streaming FVs.  It is the
+            # only source-recovery input for OFT-less (legacy view-backed
+            # ``EXTERNAL_FEATURE_VIEW``) streaming FVs, which never reach the
+            # DESCRIBE … TYPE = SPECIFICATION path;
+            # ``state._inject_stream_fv_source_from_stream_config`` rehydrates
+            # ``spec.sources`` from it.  Core emits
+            # ``{"stream_source": "unknown"}`` when no streaming metadata
+            # exists — that sentinel is treated as unrecovered downstream.
+            "stream_config": _decode_json_cell(_row_get(data, "stream_config")),
         }
 
         # Enrich BatchFV rows with the full ``FeatureViewSpec`` dict so the

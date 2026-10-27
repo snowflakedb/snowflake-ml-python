@@ -41,6 +41,7 @@ import copy
 import keyword
 import logging
 import re
+import string
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -719,6 +720,101 @@ def _safe_sidecar_path(base_dir: Path, file_stem: str, suffix: str) -> Path:
     return candidate
 
 
+# Characters a datasource file stem may carry literally: the full
+# ``[A-Za-z0-9_]`` set.  Keeping ``_`` literal means a legacy all-safe name
+# (``FV_QUERY__SOURCE``, ``MY_FV_V1__SOURCE``) encodes to *itself*, so existing
+# on-disk filenames and ``query_file`` references are unchanged.
+_SOURCE_STEM_SAFE_CHARS: frozenset[str] = frozenset(string.ascii_letters + string.digits + "_")
+# A ``_HH`` escape: ``_`` followed by exactly two hex digits.
+_SOURCE_STEM_ESCAPE_RE = re.compile(r"_([0-9A-Fa-f]{2})")
+
+
+def _encode_source_stem(name: str) -> str:
+    """Encode a datasource *name* into a total, filesystem-safe file stem.
+
+    Unlike an FV python stem — which doubles as an ``exec``'d module variable
+    and therefore stays on the strict :data:`_SAFE_FILE_STEM_RE` allowlist
+    (``_safe_sidecar_path``) — a datasource's logical identity lives in its
+    ``name`` field, read back from the file contents on load.  The on-disk stem
+    and the python module-variable are pure transport, so they may encode *any*
+    legal source name as long as the mapping never rejects a name.
+
+    Encoding: every character in ``[A-Za-z0-9_]`` is kept verbatim; every other
+    character is replaced by ``_HH`` runs — one ``_``-prefixed two-digit
+    uppercase hex code per UTF-8 byte.  The result is drawn solely from
+    ``[A-Za-z0-9_]`` — filesystem-safe (no ``.`` / ``-`` / ``$``) and a valid
+    Python-identifier tail.  So a version like ``1.0`` or the ``$`` in a
+    physical-name source (``MY_FV$V1__SOURCE`` -> ``MY_FV_24V1__SOURCE``)
+    becomes a writable file instead of raising, while an already-safe legacy
+    name is returned unchanged (keeping existing filenames stable).
+
+    The mapping is injective for the names this module produces (synthetic
+    ``…__SOURCE`` stems and operator-authored identifiers): a literal ``_``
+    stays literal and distinct characters stay distinct.  The only theoretical
+    pre-image clash is a hand-authored name that literally contains an ``_HH``
+    hex pattern colliding with another name's escape; the caller's
+    ``seen_ds_stems`` guard turns any such residual collision into a loud error
+    rather than a silent overwrite.
+
+    Args:
+        name: The datasource logical name (any string).
+
+    Returns:
+        A stem containing only ``[A-Za-z0-9_]``.
+    """
+    out: list[str] = []
+    for ch in name:
+        if ch in _SOURCE_STEM_SAFE_CHARS:
+            out.append(ch)
+        else:
+            out.extend(f"_{byte:02X}" for byte in ch.encode("utf-8"))
+    return "".join(out)
+
+
+def _decode_source_stem(stem: str) -> str:
+    """Best-effort inverse of :func:`_encode_source_stem`.
+
+    Greedy rule: ``_`` followed by exactly two hex digits decodes to that byte;
+    any other ``_`` is literal.  Provided for round-trip verification; production
+    recovery reads identity from the file's ``name`` field, not the filename.
+
+    Args:
+        stem: A stem produced by :func:`_encode_source_stem`.
+
+    Returns:
+        The decoded original name.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        return chr(int(match.group(1), 16))
+
+    # UTF-8 multi-byte escapes decode per byte; rebuild via latin-1 round-trip
+    # so multibyte sequences reassemble correctly.
+    byte_str = _SOURCE_STEM_ESCAPE_RE.sub(_sub, stem)
+    try:
+        return byte_str.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return byte_str
+
+
+def _safe_py_var_from_source_name(name: str) -> str:
+    """Return a deterministic, valid Python identifier for a datasource name.
+
+    The datasource python-form module-variable is cosmetic — identity is the
+    rendered ``name=`` field — so it is derived independently of the logical
+    name.  Prefixing the encoded stem with ``ds_`` guarantees a leading letter
+    (so a digit-leading name like ``1_0...`` still yields a valid identifier)
+    and cannot collide across distinct names because the encoding is injective.
+
+    Args:
+        name: The datasource logical name.
+
+    Returns:
+        A valid Python identifier usable as a module-level variable name.
+    """
+    return f"ds_{_encode_source_stem(name)}"
+
+
 def _extract_udf_to_py_file(
     fv_doc: dict[str, Any],
     fv_dir: Path,
@@ -789,13 +885,23 @@ def _extract_query_to_sql_file(
     YAML round-trips through ``snow feature apply`` without manual
     edits.
 
+    *file_stem* is the raw datasource name; it is run through
+    :func:`_encode_source_stem` so a name carrying ``.`` / ``-`` / ``$``
+    (e.g. a ``1.0``-version or physical-name source) yields a writable,
+    collision-free ``.sql`` filename instead of being rejected by the
+    strict allowlist.  The caller derives the sibling datasource file's
+    stem from the *same* encoder, so the ``query_file`` reference stays
+    consistent.  :func:`_safe_sidecar_path` still runs as the final
+    CWE-22 escape guard (the encoded stem is allowlist-clean by
+    construction).
+
     Args:
         ds_doc: BatchSource datasource dict being assembled for YAML
             serialization.
         ds_dir: Directory in which the datasource YAML will be written
             (the ``.sql`` sidecar lands beside it).
-        file_stem: Base filename (typically the source name) used for
-            the ``.sql`` sidecar.
+        file_stem: Raw datasource name; encoded to a safe stem for the
+            ``.sql`` sidecar.
 
     Returns:
         Absolute path to the written ``.sql`` file as a string, or
@@ -805,7 +911,7 @@ def _extract_query_to_sql_file(
     if not isinstance(query, str) or not query:
         return None
 
-    sql_path = _safe_sidecar_path(ds_dir, file_stem, ".sql")
+    sql_path = _safe_sidecar_path(ds_dir, _encode_source_stem(file_stem), ".sql")
     sql_path.write_text(query)
     ds_doc.pop("query", None)
     ds_doc["query_file"] = sql_path.name
@@ -2079,6 +2185,25 @@ def _export(
             )
             continue
 
+        # Symptom 2b: a legacy view-backed StreamingFeatureView
+        # (EXTERNAL_FEATURE_VIEW) recovered without a stream source (its
+        # ``stream_config`` was the ``"unknown"`` sentinel, so
+        # ``state._inject_stream_fv_source_from_stream_config`` left
+        # ``spec.sources`` empty) cannot round-trip: the register flow needs a
+        # stream source.  Warn and skip rather than write an unappliable shell.
+        # The guard is source-only — a sourced-but-UDF-less SFV is caught at
+        # plan time (``STREAM_FV_UDF_REQUIRED``), so skipping on a missing UDF
+        # here would only risk a spurious ``DROP_FV`` for a healthy FV.
+        if kind == "StreamingFeatureView" and not _fv_doc_sources_recovered(fv_doc, full_spec):
+            warnings.append(
+                f"StreamingFeatureView '{base_stem}' has no recoverable stream "
+                f"source (the SPECIFICATION carries no sources); skipping export. "
+                f"This feature view was likely a legacy view-backed "
+                f"EXTERNAL_FEATURE_VIEW; re-register it so its stream source is "
+                f"stamped before the next apply."
+            )
+            continue
+
         # Version-qualify the on-disk stem now that the row is confirmed
         # exportable, reject an unsafe stem (Python form only), and hard-fail
         # on a residual collision.
@@ -2181,19 +2306,40 @@ def _export(
     if datasources:
         datasources_dir = base / "datasources"
         datasources_dir.mkdir(parents=True, exist_ok=True)
+        seen_ds_stems: set[str] = set()
         for emit_name, ds_spec in datasources.items():
-            if not renderer.check_stem(emit_name, warnings):
-                continue
+            # A datasource's logical identity lives in its ``name`` field (read
+            # back from the file on load), so the on-disk stem and the Python
+            # module-variable are pure transport and are derived from the name
+            # via a total, injective, filesystem-safe encoder.  Unlike the FV
+            # python stem (which doubles as an ``exec``'d variable and stays on
+            # the strict ``check_stem`` allowlist), a datasource name carrying
+            # ``.`` / ``-`` / ``$`` (a ``1.0``-version or physical-name source)
+            # must not be rejected — it would drop the file while the FV still
+            # references it — so the ``check_stem`` gate does not apply here.
+            file_stem = _encode_source_stem(emit_name)
+            if file_stem in seen_ds_stems:
+                raise ValueError(
+                    f"Datasource export stem collision on '{file_stem}{renderer.suffix}': two "
+                    f"datasources resolve to the same encoded stem. Refusing to overwrite — "
+                    f"resolve the duplicate source name before export."
+                )
+            seen_ds_stems.add(file_stem)
+            # The Python module-variable name is decoupled from identity (a
+            # valid identifier derived from the same name); YAML ignores it.
+            var_name = _safe_py_var_from_source_name(emit_name)
             ds_kind = str(ds_spec.get("kind") or "BatchSource")
             # Externalise any inline ``query:`` body into a sibling ``.sql``
             # sidecar before rendering (YAML form only; the Python form inlines
             # it and returns ``None``).  For YAML this mirrors the UDF emission
             # path above so the YAML stays thin and the on-disk shape matches
             # what ``snow feature init`` scaffolds; ``compiler.inline_query_source``
-            # reverses the move on load.
+            # reverses the move on load.  The sidecar re-encodes the raw name
+            # with the same encoder, so its base matches ``file_stem`` and the
+            # ``query_file`` reference stays consistent.
             sql_sidecar_path = renderer.ds_sidecar(ds_spec, datasources_dir, emit_name)
-            ds_path = datasources_dir / f"{emit_name}{renderer.suffix}"
-            if renderer.write(ds_path, renderer.render(ds_kind, emit_name, ds_spec), warnings):
+            ds_path = datasources_dir / f"{file_stem}{renderer.suffix}"
+            if renderer.write(ds_path, renderer.render(ds_kind, var_name, ds_spec), warnings):
                 created.append(str(ds_path))
                 if sql_sidecar_path is not None:
                     created.append(sql_sidecar_path)

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec
 
 if TYPE_CHECKING:
@@ -27,6 +28,22 @@ _METADATA_TABLE_NAME = "_FEATURE_STORE_METADATA"
 _METADATA_TABLE_COMMENT = (
     "Internal metadata table for Feature Store. " "DO NOT modify directly - used for Feature Store internal operations."
 )
+
+
+def _sanitize_json_for_dollar_quoting(payload: str) -> str:
+    """Escape ``$$`` as ``$\\u0024`` so JSON is safe inside SQL ``$$...$$``.
+
+    ``json.dumps`` leaves ``$`` untouched, so a payload containing ``$$`` would
+    close the untagged dollar quote early. ``\\u0024`` is the JSON unicode escape
+    for ``$``; ``PARSE_JSON`` decodes it back to ``$``.
+
+    Args:
+        payload: A ``json.dumps`` result about to be embedded in ``$$...$$``.
+
+    Returns:
+        The payload with every ``$$`` replaced by ``$\\u0024``.
+    """
+    return payload.replace("$$", "$\\u0024")
 
 
 class MetadataObjectType(str, Enum):
@@ -466,7 +483,8 @@ class FeatureStoreMetadataManager:
     def __init__(
         self,
         session: Session,
-        schema_path: str,
+        database: SqlIdentifier,
+        schema: SqlIdentifier,
         fs_object_tag_path: str,
         telemetry_stmp: dict[str, Any],
     ) -> None:
@@ -474,12 +492,15 @@ class FeatureStoreMetadataManager:
 
         Args:
             session: Snowpark session.
-            schema_path: Fully qualified schema path (e.g., "DB.SCHEMA").
+            database: Database containing the feature store.
+            schema: Feature store schema.
             fs_object_tag_path: Fully qualified path to the feature store object tag.
             telemetry_stmp: Telemetry statement parameters.
         """
         self._session = session
-        self._schema_path = schema_path
+        self._database = database
+        self._schema = schema
+        schema_path = f"{database}.{schema}"
         self._fs_object_tag_path = fs_object_tag_path
         self._table_path = f"{schema_path}.{_METADATA_TABLE_NAME}"
         self._telemetry_stmp = telemetry_stmp
@@ -632,7 +653,7 @@ class FeatureStoreMetadataManager:
         self.ensure_table_exists()
 
         normalized_name = fv_name.strip('"')
-        specs_json = json.dumps(specs.to_dict())
+        specs_json = _sanitize_json_for_dollar_quoting(json.dumps(specs.to_dict()))
 
         # Build SELECT statements for atomic insert (PARSE_JSON can't be used in VALUES)
         selects = [
@@ -641,14 +662,14 @@ class FeatureStoreMetadataManager:
         ]
 
         if descs:
-            descs_json = json.dumps(descs)
+            descs_json = _sanitize_json_for_dollar_quoting(json.dumps(descs))
             selects.append(
                 f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
                 f"'{version}', '{MetadataType.FEATURE_DESCS.value}', PARSE_JSON($${descs_json}$$)"
             )
 
         if fv_metadata_config is not None:
-            config_json = json.dumps(fv_metadata_config.to_dict())
+            config_json = _sanitize_json_for_dollar_quoting(json.dumps(fv_metadata_config.to_dict()))
             selects.append(
                 f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
                 f"'{version}', '{MetadataType.FEATURE_VIEW_METADATA.value}', PARSE_JSON($${config_json}$$)"
@@ -1321,21 +1342,32 @@ class FeatureStoreMetadataManager:
     # =========================================================================
 
     def _check_table_exists(self) -> bool:
-        """Check if the metadata table exists."""
-        if self._table_exists is not None:
-            return self._table_exists
+        """Check if the metadata table exists in the feature store schema.
 
+        Only a positive result is cached (``_table_exists`` stays ``None`` until the table is
+        seen): another client may create the table after this check, and a cached negative
+        would hide its metadata for the life of this manager.
+
+        Returns:
+            True if the metadata table exists, False otherwise.
+        """
+        if self._table_exists:
+            return True
+
+        schema_name = self._schema.resolved().replace("'", "''")
         result = self._session.sql(
             f"""
-            SELECT COUNT(*) as cnt
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = '{self._schema_path.split('.')[1]}'
+            SELECT COUNT(*) AS CNT
+            FROM {self._database}.INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = '{schema_name}'
             AND TABLE_NAME = '{_METADATA_TABLE_NAME}'
             """
         ).collect(statement_params=self._telemetry_stmp)
 
-        self._table_exists = result[0]["CNT"] > 0
-        return self._table_exists
+        if result[0]["CNT"] == 0:
+            return False
+        self._table_exists = True
+        return True
 
     def _upsert_metadata(
         self,
@@ -1346,7 +1378,7 @@ class FeatureStoreMetadataManager:
         metadata: dict[str, Any],
     ) -> None:
         """Insert or update a metadata entry."""
-        metadata_json = json.dumps(metadata)
+        metadata_json = _sanitize_json_for_dollar_quoting(json.dumps(metadata))
         # Strip surrounding quotes if present; callers pass resolved() which handles casing.
         normalized_name = object_name.strip('"')
 

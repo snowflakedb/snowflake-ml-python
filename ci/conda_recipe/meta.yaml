@@ -20,7 +20,7 @@ build:
     - BAZEL_REPOSITORY_CACHE
 package:
   name: snowflake-ml-python
-  version: 2.6.0
+  version: 2.7.0
 requirements:
   build:
     - python
@@ -54,6 +54,7 @@ requirements:
   run_constrained:
     - altair>=5,<7
     - catboost>=1.2.0, <2
+    - category_encoders>=2.6.0, <3
     - h2>=4.3.0,<5
     - httpx>=0.28.1,<1
     - keras>=2.0.0,<4
@@ -72,6 +73,7 @@ requirements:
     - torchdata>=0.4,<1
     - transformers>=4.39.3,!=4.51.3,<6
     - transformers>=4.39.3,!=4.51.3,<6
+    - websocket-client>=1.7,<2
     - xgboost<4
 source:
   path: ../../

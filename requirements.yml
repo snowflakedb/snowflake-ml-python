@@ -94,6 +94,11 @@
   version_requirements: '>=1.2.0, <2'
   requirements_extra_tags:
     - catboost
+- name: category_encoders
+  dev_version: 2.11.1
+  version_requirements: '>=2.6.0, <3'
+  requirements_extra_tags:
+    - category-encoders
 - name: cloudpickle
   dev_version: 3.1.1
   version_requirements: '>=2.0.0'
@@ -116,6 +121,10 @@
   dev_version_conda: 2026.6.0
   dev_version_pypi: 2026.6.0
   version_requirements: '>=2024.6.1,<2027'
+- name: gitpython
+  dev_version: 3.1.59
+  tags:
+    - build_test_env
 - name: h2
   # Required by httpx for HTTP/2 negotiation. httpx pulls h2 only via the ``httpx[http2]`` extra,
   # which our requirements pipeline does not model; declare it explicitly so
@@ -148,6 +157,24 @@
 - name: httpx
   dev_version: 0.28.1
   version_requirements: '>=0.28.1,<1'
+  requirements_extra_tags:
+    - feature_store
+# Sync WebSocket client for the Online Service query transport. Chosen over ``websockets``
+# (asyncio-only) so the online read path stays synchronous, matching the httpx client above.
+# Grouped with httpx/h2 because it belongs to the same feature and follows the same two-entry
+# idiom: the plain entry keeps it importable in dev/test environments, the release entry
+# exposes it as the optional ``feature_store`` extra rather than a base install.
+- name: websocket-client
+  # build_test_env for the same reason as h2 and httpx above: the release entry below puts
+  # websocket-client under run_constrained, so without this the conda integ test env would not
+  # install it and every WebSocket integ test would fail on ``import websocket``.
+  dev_version: 1.8.0
+  tags:
+    - build_test_env
+# Release-only entry: optional ``feature_store`` extra (and conda run_constrained).
+- name: websocket-client
+  dev_version: 1.8.0
+  version_requirements: '>=1.7,<2'
   requirements_extra_tags:
     - feature_store
 - name: importlib_resources

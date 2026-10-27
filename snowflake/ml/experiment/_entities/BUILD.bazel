@@ -8,13 +8,19 @@ py_library(
 )
 
 py_library(
+    name = "experiment_entity",
+    srcs = ["experiment.py"],
+    deps = ["//snowflake/ml/_internal/utils:sql_identifier"],
+)
+
+py_library(
     name = "entities",
     srcs = [
         "__init__.py",
-        "experiment.py",
         "run.py",
     ],
     deps = [
+        ":experiment_entity",
         ":run_metadata",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",

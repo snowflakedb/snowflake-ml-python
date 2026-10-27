@@ -33,6 +33,51 @@ FS_INTEG_TEST_WINE_QUALITY_DATA = "wine_quality_data"
 DB_OBJECT_EXPIRE_HOURS = 24
 
 
+# Online Service query URLs already probed for the WebSocket route, mapped to whether they serve it.
+# One handshake per service per process rather than per test.
+_WS_ROUTE_SERVED: dict[str, bool] = {}
+
+
+def skip_unless_ws_route_served(test: Any, fs: Any) -> None:
+    """Skip ``test`` unless ``fs``'s Online Service actually serves the WebSocket query route.
+
+    Asked of the service, not inferred from an image version: nothing maps image tags to the
+    release that first carried the route. The answer is unambiguous on both kinds of image that
+    lack it. One built before the route registers only ``POST /api/v1/query``, and its mux answers
+    ``GET /api/v1/query/ws`` with 404; one with the route but ``WS_ENABLED`` off answers it with
+    404 from the handler. The client reads exactly that status as ``transport_unavailable``. Any
+    other refusal (401, 503, ...) is not "no WebSocket here", so it is raised rather than skipped.
+
+    Args:
+        test: The running test case.
+        fs: Its feature store, whose Online Service is probed.
+
+    Raises:
+        OnlineServiceWsDialError: When the handshake fails for a reason other than a missing route.
+
+    # noqa: DAR401
+    # noqa: DAR402
+    """
+    from snowflake.ml.feature_store import online_service_ws_client
+
+    query_url = fs._resolve_postgres_online_query_url(log_label="ws_route_probe")  # noqa: SLF001
+    if not query_url:
+        test.skipTest("no running Online Service query endpoint to probe for the WebSocket route")
+    if query_url not in _WS_ROUTE_SERVED:
+        client = online_service_ws_client.OnlineServiceWsClient(session=fs._session)  # noqa: SLF001
+        try:
+            client.connect(online_service_ws_client.ws_query_url(query_url))
+            _WS_ROUTE_SERVED[query_url] = True
+        except online_service_ws_client.OnlineServiceWsDialError as error:
+            if not error.transport_unavailable:
+                raise
+            _WS_ROUTE_SERVED[query_url] = False
+        finally:
+            client.close()
+    if not _WS_ROUTE_SERVED[query_url]:
+        test.skipTest("this Online Service does not serve the WebSocket query route (handshake 404)")
+
+
 def parse_semver_prefix(value: str) -> tuple[int, int, int] | None:
     """Parse a leading ``X.Y`` or ``X.Y.Z`` from a version or image tag.
 

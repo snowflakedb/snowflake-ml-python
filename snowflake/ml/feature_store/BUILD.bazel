@@ -37,6 +37,11 @@ py_library(
         "metadata_manager.py",
         "online_service.py",
         "online_service_http_client.py",
+        "online_service_transport.py",
+        "online_service_ws_client.py",
+        "online_service_ws_pipeline.py",
+        "online_service_ws_pool.py",
+        "online_service_ws_transport.py",
         "realtime_config.py",
         "realtime_dataset.py",
         "realtime_dataset_udf.py",
@@ -446,6 +451,91 @@ py_test(
 py_test(
     name = "feature_store_drift_test",
     srcs = ["feature_store_drift_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_client_test",
+    srcs = ["online_service_ws_client_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_pipeline_test",
+    srcs = ["online_service_ws_pipeline_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_pool_test",
+    srcs = ["online_service_ws_pool_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+        "//snowflake/ml/_internal/exceptions",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_transport_test",
+    srcs = ["online_service_ws_transport_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_adversarial_test",
+    srcs = ["online_service_ws_adversarial_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_ws_scale_test",
+    srcs = ["online_service_ws_scale_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_compose_reconstruction_test",
+    srcs = ["feature_store_compose_reconstruction_test.py"],
     tags = [
         "feature:feature_store",
         "short_regress",

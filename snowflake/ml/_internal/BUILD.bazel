@@ -23,6 +23,8 @@ py_library(
     name = "file_utils",
     srcs = ["file_utils.py"],
     deps = [
+        ":env_utils",
+        "//snowflake/ml:version",
         "//snowflake/ml/_internal/exceptions",
     ],
 )
@@ -36,6 +38,7 @@ py_test(
     ],
     deps = [
         ":file_utils",
+        "//snowflake/ml:version",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

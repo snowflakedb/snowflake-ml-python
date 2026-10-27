@@ -9,7 +9,7 @@ from absl.testing import absltest, parameterized
 import snowflake.snowpark as snowpark
 from snowflake.ml import jobs
 from snowflake.ml.jobs import job
-from snowflake.ml.jobs._utils import constants, stage_utils
+from snowflake.ml.jobs._utils import constants, stage_utils, type_utils
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.row import Row
 
@@ -19,6 +19,16 @@ spec:
     - name: main
       image: test-image
 """
+
+
+def _make_service_info(*, target_instances: int) -> type_utils.ServiceInfo:
+    return type_utils.ServiceInfo(
+        database_name="jobs_DB",
+        schema_name="jobs_schema",
+        status="RUNNING",
+        compute_pool="jobs_pool",
+        target_instances=target_instances,
+    )
 
 
 class JobTest(parameterized.TestCase):
@@ -71,6 +81,48 @@ class JobTest(parameterized.TestCase):
         with patch("snowflake.ml.jobs._utils.query_helper.run_query", return_value=sql_result):
             target_instances = job._get_target_instances(mock_session, "jobs_DB.jobs_schema.test_id")
             self.assertEqual(target_instances, expected_result)
+
+    def test_target_instances_prefers_submitted_count_over_reported_instances(self) -> None:
+        multi_node_job = jobs.MLJob[None]("jobs_DB.jobs_schema.test_id", session=MagicMock())
+        container_spec = {"env": {constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: "2"}}
+        with patch.object(
+            job.MLJob, "_container_spec", new_callable=PropertyMock, return_value=container_spec
+        ), patch.object(
+            job.MLJob,
+            "_service_info",
+            new_callable=PropertyMock,
+            return_value=_make_service_info(target_instances=1),
+        ):
+            self.assertEqual(multi_node_job.target_instances, 2)
+
+    def test_target_instances_falls_back_to_reported_instances_when_submitted_count_unreadable(self) -> None:
+        fallback_job = jobs.MLJob[None]("jobs_DB.jobs_schema.test_id", session=MagicMock())
+        with patch.object(
+            job, "_get_submitted_instance_count", side_effect=RuntimeError("no submitted count")
+        ), patch.object(
+            job.MLJob, "_container_spec", new_callable=PropertyMock, return_value={"env": {}}
+        ), patch.object(
+            job.MLJob,
+            "_service_info",
+            new_callable=PropertyMock,
+            return_value=_make_service_info(target_instances=2),
+        ), self.assertLogs(
+            "snowflake.ml.jobs.job", level="WARNING"
+        ) as logs:
+            self.assertEqual(fallback_job.target_instances, 2)
+
+        self.assertIn("jobs_DB.jobs_schema.test_id", "\n".join(logs.output))
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("null spec", None),
+        ("spec without containers", {}),
+    )
+    def test_target_instances_falls_back_when_spec_is_unreadable(self, service_spec: Any) -> None:
+        unreadable_spec_job = jobs.MLJob[None]("jobs_DB.jobs_schema.test_id", session=MagicMock())
+        with patch.object(job, "_get_service_spec", return_value=service_spec), patch.object(
+            job, "_resolve_service_info", return_value=_make_service_info(target_instances=2)
+        ), self.assertLogs("snowflake.ml.jobs.job", level="WARNING"):
+            self.assertEqual(unreadable_spec_job.target_instances, 2)
 
     def test_get_submitted_instance_count_reads_immutable_spec_value(self) -> None:
         container_spec = {"env": {constants.SUBMITTED_TARGET_INSTANCES_ENV_VAR: "3"}}
@@ -296,6 +348,56 @@ class JobTest(parameterized.TestCase):
             job = jobs.MLJob[None]("test_db.test_schema.test_id", session=mock_session)
             test_logs = ["test_log_0", "test_log_1", "test_log_2"]
             self.assertEqual(job.get_logs(), "\n".join(test_logs))
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("no_limit", -1, ""),
+        ("limit", 2, "QUALIFY ROW_NUMBER() OVER (ORDER BY TIMESTAMP DESC) <= 2\n"),
+    )
+    def test_get_logs_spcs_query_selects_most_recent_lines(self, limit: int, most_recent_filter: str) -> None:
+        session = absltest.mock.create_autospec(snowpark.Session, instance=True)
+        session.sql.return_value.collect.return_value = [Row(LOG="test_log_0"), Row(LOG="test_log_1")]
+
+        logs = job._get_logs_spcs(
+            session, "test_db.test_schema.test_id", limit=limit, instance_id=0, container_name="main"
+        )
+
+        self.assertEqual(logs, [Row(LOG="test_log_0"), Row(LOG="test_log_1")])
+        session.sql.assert_called_once_with(
+            "SELECT LOG FROM table(test_db.test_schema.test_id!spcs_get_logs(\n))\n"
+            "WHERE INSTANCE_ID = 0 AND CONTAINER_NAME = 'main'\n"
+            f"{most_recent_filter}"
+            "ORDER BY TIMESTAMP ASC"
+        )
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("no_limit", -1, "", []),
+        ("limit", 2, "QUALIFY ROW_NUMBER() OVER (ORDER BY TIMESTAMP DESC) <= ?\n", [2]),
+    )
+    @patch("snowflake.ml.jobs._utils.query_helper.run_query", autospec=True)
+    def test_get_service_log_from_event_table_query_selects_most_recent_lines(
+        self, limit: int, most_recent_filter: str, limit_params: list[int], mock_run_query: MagicMock
+    ) -> None:
+        session = absltest.mock.create_autospec(snowpark.Session, instance=True)
+        session.sql.return_value.collect.return_value = [Row(value="test_db.test_schema.events")]
+        mock_run_query.return_value = [Row(VALUE=json.dumps("test_log_0")), Row(VALUE=json.dumps("test_log_1"))]
+
+        logs = job._get_service_log_from_event_table(
+            session, "test_id", database="test_db", schema="test_schema", instance_id=1, limit=limit
+        )
+
+        self.assertEqual(logs, [Row(VALUE=json.dumps("test_log_0")), Row(VALUE=json.dumps("test_log_1"))])
+        mock_run_query.assert_called_once_with(
+            session,
+            "SELECT VALUE FROM IDENTIFIER(?)\n"
+            'WHERE RESOURCE_ATTRIBUTES:"snow.service.name" = ?\n'
+            'AND RESOURCE_ATTRIBUTES:"snow.database.name" = ?\n'
+            'AND RESOURCE_ATTRIBUTES:"snow.schema.name" = ?\n'
+            'AND RESOURCE_ATTRIBUTES:"snow.service.container.instance" = ?\n'
+            "AND RECORD_TYPE = 'LOG'\n"
+            f"{most_recent_filter}"
+            "ORDER BY TIMESTAMP",
+            params=["test_db.test_schema.events", "test_id", "test_db", "test_schema", 1, *limit_params],
+        )
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("posix_absolute_path", "/mnt/job_result/mljob_extra.pkl"),

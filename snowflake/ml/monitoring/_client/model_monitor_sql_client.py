@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from enum import Enum, auto
-from typing import Any, Mapping
+from typing import Any
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -40,6 +41,17 @@ def _build_sql_list_from_columns(columns: list[sql_identifier.SqlIdentifier]) ->
     return f"({sql_list})"
 
 
+def _build_optional_column_list_sql(
+    clause_name: str,
+    columns: list[sql_identifier.SqlIdentifier],
+    *,
+    include_empty: bool,
+) -> str:
+    if include_empty or columns:
+        return f"{clause_name}={_build_sql_list_from_columns(columns)}"
+    return ""
+
+
 class ModelMonitorSQLClient:
     def __init__(
         self,
@@ -72,14 +84,14 @@ class ModelMonitorSQLClient:
         monitor_name: sql_identifier.SqlIdentifier,
         source_database: sql_identifier.SqlIdentifier | None,
         source_schema: sql_identifier.SqlIdentifier | None,
-        source: sql_identifier.SqlIdentifier,
+        source: sql_identifier.SqlIdentifier | None,
         model_database: sql_identifier.SqlIdentifier | None,
         model_schema: sql_identifier.SqlIdentifier | None,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         function_name: str,
         warehouse_name: sql_identifier.SqlIdentifier,
-        timestamp_column: sql_identifier.SqlIdentifier,
+        timestamp_column: sql_identifier.SqlIdentifier | None,
         id_columns: list[sql_identifier.SqlIdentifier],
         prediction_score_columns: list[sql_identifier.SqlIdentifier],
         prediction_class_columns: list[sql_identifier.SqlIdentifier],
@@ -95,8 +107,39 @@ class ModelMonitorSQLClient:
         timestamp_custom_metric_database: sql_identifier.SqlIdentifier | None = None,
         timestamp_custom_metric_schema: sql_identifier.SqlIdentifier | None = None,
         timestamp_custom_metric_table: sql_identifier.SqlIdentifier | None = None,
+        ground_truth_database: sql_identifier.SqlIdentifier | None = None,
+        ground_truth_schema: sql_identifier.SqlIdentifier | None = None,
+        ground_truth: sql_identifier.SqlIdentifier | None = None,
         statement_params: dict[str, Any] | None = None,
     ) -> None:
+        # A user-table monitor always sends column lists, including empty ones. An inference-table monitor omits
+        # empty lists so the server can infer those columns.
+        include_empty_column_lists = source is not None
+
+        source_sql = ""
+        if source is not None:
+            source_sql = f"SOURCE={self._infer_qualified_schema(source_database, source_schema)}.{source}"
+
+        id_columns_sql = _build_optional_column_list_sql(
+            "ID_COLUMNS", id_columns, include_empty=include_empty_column_lists
+        )
+        prediction_score_columns_sql = _build_optional_column_list_sql(
+            "PREDICTION_SCORE_COLUMNS", prediction_score_columns, include_empty=include_empty_column_lists
+        )
+        prediction_class_columns_sql = _build_optional_column_list_sql(
+            "PREDICTION_CLASS_COLUMNS", prediction_class_columns, include_empty=include_empty_column_lists
+        )
+        actual_score_columns_sql = _build_optional_column_list_sql(
+            "ACTUAL_SCORE_COLUMNS", actual_score_columns, include_empty=include_empty_column_lists
+        )
+        actual_class_columns_sql = _build_optional_column_list_sql(
+            "ACTUAL_CLASS_COLUMNS", actual_class_columns, include_empty=include_empty_column_lists
+        )
+
+        timestamp_column_sql = ""
+        if timestamp_column is not None:
+            timestamp_column_sql = f"TIMESTAMP_COLUMN='{timestamp_column}'"
+
         baseline_sql = ""
         if baseline:
             baseline_sql = f"""BASELINE={self._infer_qualified_schema(baseline_database, baseline_schema)}.{baseline}"""
@@ -117,6 +160,13 @@ class ModelMonitorSQLClient:
                 f"{timestamp_custom_metric_table}"
             )
 
+        ground_truth_sql = ""
+        if ground_truth is not None:
+            ground_truth_sql = (
+                f"GROUND_TRUTH={self._infer_qualified_schema(ground_truth_database, ground_truth_schema)}."
+                f"{ground_truth}"
+            )
+
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
             f"""
@@ -126,13 +176,14 @@ class ModelMonitorSQLClient:
                     VERSION='{version_name}'
                     FUNCTION='{function_name}'
                     WAREHOUSE='{warehouse_name}'
-                    SOURCE={self._infer_qualified_schema(source_database, source_schema)}.{source}
-                    ID_COLUMNS={_build_sql_list_from_columns(id_columns)}
-                    PREDICTION_SCORE_COLUMNS={_build_sql_list_from_columns(prediction_score_columns)}
-                    PREDICTION_CLASS_COLUMNS={_build_sql_list_from_columns(prediction_class_columns)}
-                    ACTUAL_SCORE_COLUMNS={_build_sql_list_from_columns(actual_score_columns)}
-                    ACTUAL_CLASS_COLUMNS={_build_sql_list_from_columns(actual_class_columns)}
-                    TIMESTAMP_COLUMN='{timestamp_column}'
+                    {source_sql}
+                    {id_columns_sql}
+                    {ground_truth_sql}
+                    {prediction_score_columns_sql}
+                    {prediction_class_columns_sql}
+                    {actual_score_columns_sql}
+                    {actual_class_columns_sql}
+                    {timestamp_column_sql}
                     REFRESH_INTERVAL='{refresh_interval}'
                     AGGREGATION_WINDOW='{aggregation_window}'
                     {segment_columns_sql}
@@ -287,7 +338,6 @@ class ModelMonitorSQLClient:
         segment_columns: list[sql_identifier.SqlIdentifier] | None = None,
         custom_metric_columns: list[sql_identifier.SqlIdentifier] | None = None,
     ) -> None:
-
         source_database = source_database or self._database_name
         source_schema = source_schema or self._schema_name
         # Get Schema of the source. Implicitly validates that the source exists.
@@ -422,3 +472,17 @@ class ModelMonitorSQLClient:
             target_value=custom_metric_column,
             statement_params=statement_params,
         )
+
+    def describe_monitor(
+        self,
+        monitor_name: sql_identifier.SqlIdentifier,
+        statement_params: dict[str, Any] | None = None,
+    ) -> snowpark.Row:
+        rows = query_result_checker.SqlResultValidator(
+            self._sql_client._session,
+            f"DESCRIBE MODEL MONITOR {self._database_name}.{self._schema_name}.{monitor_name}",
+            statement_params=statement_params,
+        ).validate()
+        if len(rows) != 1:
+            raise ValueError(f"Unable to describe model monitor '{monitor_name}'.")
+        return rows[0]

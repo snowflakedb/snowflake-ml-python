@@ -11,6 +11,21 @@ package_group(
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "candidate",
+    srcs = ["_candidate.py"],
+)
+
+py_test(
+    name = "candidate_test",
+    srcs = ["candidate_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [":candidate"],
+)
+
+py_library(
     name = "util",
     srcs = ["_util.py"],
     deps = [
@@ -203,6 +218,230 @@ py_library(
     ],
 )
 
+py_library(
+    name = "evaluation_spec",
+    srcs = ["_evaluation_spec.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:sql_literal",
+        "//snowflake/ml/dataset",
+    ],
+)
+
+py_library(
+    name = "evaluation_result",
+    srcs = ["_evaluation_result.py"],
+)
+
+py_library(
+    name = "experiment_job",
+    srcs = ["_experiment_job.py"],
+    deps = [
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:mixins",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
+        "//snowflake/ml/experiment/_entities:run_metadata",
+        "//snowflake/ml/utils:sql_client",
+    ],
+)
+
+py_library(
+    name = "evaluation_job",
+    srcs = ["_evaluation_job.py"],
+    deps = [
+        ":evaluation_result",
+        ":experiment_job",
+    ],
+)
+
+py_library(
+    name = "constants",
+    srcs = ["_constants.py"],
+)
+
+py_library(
+    name = "evaluate",
+    srcs = ["_evaluate.py"],
+    deps = [
+        ":constants",
+        ":evaluation_job",
+        ":evaluation_spec",
+        ":experiment_job",
+        ":util",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
+    ],
+)
+
+py_test(
+    name = "evaluate_test",
+    srcs = ["evaluate_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":evaluate",
+        ":evaluation_job",
+        ":evaluation_spec",
+        ":experiment_job",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
+        "//snowflake/ml/utils:sql_client",
+    ],
+)
+
+py_test(
+    name = "evaluation_job_test",
+    srcs = ["evaluation_job_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":evaluation_job",
+        ":evaluation_result",
+        ":experiment_job",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+    ],
+)
+
+py_test(
+    name = "evaluation_result_test",
+    srcs = ["evaluation_result_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [":evaluation_result"],
+)
+
+py_test(
+    name = "evaluation_spec_test",
+    srcs = ["evaluation_spec_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":evaluation_spec",
+        "//snowflake/ml/dataset",
+    ],
+)
+
+py_library(
+    name = "optimization_spec",
+    srcs = ["_optimization_spec.py"],
+    deps = [
+        ":evaluation_spec",
+        "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/dataset",
+    ],
+)
+
+py_test(
+    name = "optimization_spec_test",
+    srcs = ["optimization_spec_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":evaluation_spec",
+        ":optimization_spec",
+        "//snowflake/ml/dataset",
+    ],
+)
+
+py_library(
+    name = "optimization_result",
+    srcs = ["_optimization_result.py"],
+    deps = [":candidate"],
+)
+
+py_test(
+    name = "optimization_result_test",
+    srcs = ["optimization_result_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":candidate",
+        ":optimization_result",
+    ],
+)
+
+py_library(
+    name = "optimization_job",
+    srcs = ["_optimization_job.py"],
+    deps = [
+        ":candidate",
+        ":experiment_job",
+        ":optimization_result",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+    ],
+)
+
+py_test(
+    name = "optimization_job_test",
+    srcs = ["optimization_job_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":candidate",
+        ":experiment_job",
+        ":optimization_job",
+        ":optimization_result",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+    ],
+)
+
+py_library(
+    name = "optimize_prompt",
+    srcs = ["_optimize_prompt.py"],
+    deps = [
+        ":constants",
+        ":evaluation_spec",
+        ":experiment_job",
+        ":optimization_job",
+        ":optimization_spec",
+        ":util",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
+    ],
+)
+
+py_test(
+    name = "optimize_prompt_test",
+    srcs = ["optimize_prompt_test.py"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
+    deps = [
+        ":evaluation_spec",
+        ":experiment_job",
+        ":optimization_job",
+        ":optimize_prompt",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
+        "//snowflake/ml/utils:sql_client",
+    ],
+)
+
 py_test(
     name = "embed_text_768_test",
     srcs = ["embed_text_768_test.py"],
@@ -273,12 +512,20 @@ py_library(
         "__init__.py",
     ],
     deps = [
+        ":candidate",
         ":classify_text",
         ":complete",
         ":embed_text_1024",
         ":embed_text_768",
+        ":evaluate",
+        ":evaluation_job",
+        ":evaluation_result",
+        ":evaluation_spec",
         ":extract_answer",
         ":finetune",
+        ":optimization_job",
+        ":optimization_result",
+        ":optimize_prompt",
         ":sentiment",
         ":summarize",
         ":translate",

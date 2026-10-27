@@ -6097,6 +6097,54 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertIn("NAME", post_cols)
         self.assertIn("ID", post_cols)
 
+    def test_schema_evolution_update_restamps_source_refs_with_new_query(self) -> None:
+        """A bare imperative evolve must re-stamp FV_SOURCE_REFS from the new query.
+
+        Without the re-stamp the metadata keeps the registration-time query, so a
+        declarative replan never converges (it re-emits EVOLVE_FV every time).
+        """
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_srcref_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_srcref_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Registration stamps the original query (no AGE yet).
+        pre = fs._metadata_manager.get_feature_view_source_refs("EVO_SRCREF_FV", "v1")
+        self.assertIsNotNone(pre)
+        assert pre is not None
+        self.assertTrue(pre.sources[0]["query"], "registration must stamp a query binding")
+        self.assertNotIn("age", pre.sources[0]["query"].lower())
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_SRCREF_FV", "v1")
+        execute_snapshot_refresh(fs, fv_physical_name, registered_fv.fully_qualified_name())
+
+        updated_sql = f"SELECT id, name, ts, age FROM {mock_table}"
+        fs.update_feature_view(
+            "evo_srcref_fv",
+            "v1",
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+
+        post = fs._metadata_manager.get_feature_view_source_refs("EVO_SRCREF_FV", "v1")
+        self.assertIsNotNone(post)
+        assert post is not None
+        self.assertIn("age", post.sources[0]["query"].lower(), "evolve must re-stamp the new query")
+        post_cols = {c["name"] for c in post.sources[0]["columns"]}
+        self.assertIn("AGE", post_cols, "re-stamped columns must include the evolved column")
+
     def test_schema_evolution_update_preserves_existing_feature_descriptions(self) -> None:
         """updated_feature_df preserves stored descriptions and honors caller-updated ones."""
         fs = self._create_feature_store()

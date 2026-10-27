@@ -39,6 +39,7 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import ws_parity
 from absl.testing import absltest
 from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
@@ -729,6 +730,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         2500.0) ride along on the same row keyed by ``USER_ID``.
         """
         bfv_name, _src, user_id = self._register_postgres_fv(suffix="MFR")
+        self._poll_online_read(self.fs, bfv_name, "v1", keys=[[user_id]], desc="FG upstream BFV (MFR)")
         bfv = self.fs.get_feature_view(bfv_name, "v1")
         rtfv_name, _ = self._register_rtfv_with_upstream(suffix="MFR", upstream=bfv)
         rtfv = self.fs.get_feature_view(rtfv_name, "v1")
@@ -845,8 +847,10 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         ``BALANCE`` ride along on the same row keyed by ``USER_ID``.
         """
         bfv_name, _src, user_id = self._register_postgres_fv(suffix="NRS")
+        self._poll_online_read(self.fs, bfv_name, "v1", keys=[[user_id]], desc="FG upstream BFV (NRS)")
         bfv = self.fs.get_feature_view(bfv_name, "v1")
         rtfv_name, _ = self._register_no_rs_rtfv_with_upstream(suffix="NRS", upstream=bfv)
+        self._poll_online_read(self.fs, rtfv_name, "v1", keys=[[user_id]], desc="FG upstream RTFV (NRS)")
         rtfv = self.fs.get_feature_view(rtfv_name, "v1")
 
         fg_name = f"FG_INTEG_NRS_{uuid.uuid4().hex[:8].upper()}"
@@ -1293,6 +1297,33 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             ts.limit(1).collect()
         finally:
             self.fs.delete_feature_group(fg_name, "v1")
+
+
+class FeatureGroupWsParityIntegTest(FeatureGroupIntegTest):
+    """The feature-group online-read tests above, with every read also served over WebSocket.
+
+    Each ``read_feature_group`` is made over HTTP and over WebSocket and must return an identical
+    frame, be served over WebSocket, and not fall back; the inherited assertions then run
+    unchanged. See ``ws_parity``.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        ws_parity.install(self)
+
+
+ws_parity.restrict_to(
+    FeatureGroupWsParityIntegTest,
+    [
+        "test_read_feature_group_round_trip",
+        "test_register_and_read_mixed_fg_round_trip",
+        "test_register_and_read_fg_with_no_request_source_rtfv_round_trip",
+        "test_read_fg_request_context_extras_dropped",
+        "test_feature_group_with_tiled_bfv_online_read",
+        "test_feature_group_with_tiled_sfv_online_read",
+        "test_feature_group_with_secondary_key_bfv_online_read",
+    ],
+)
 
 
 if __name__ == "__main__":

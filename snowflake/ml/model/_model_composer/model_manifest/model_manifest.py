@@ -1,14 +1,18 @@
 import collections
 import logging
 import pathlib
-from typing import TYPE_CHECKING, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
 from snowflake.ml._internal import env_utils
 from snowflake.ml.data import data_source
 from snowflake.ml.model import type_hints
-from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._model_composer.model_manifest import (
+    model_manifest_schema,
+    model_manifest_v2_schema,
+)
 from snowflake.ml.model._model_composer.model_method import (
     constants,
     function_generator,
@@ -164,19 +168,107 @@ class ModelManifest:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(manifest_dict, f)
 
-    def load(self) -> model_manifest_schema.ModelManifestDict:
+    def _read_raw_manifest(self) -> dict[str, Any]:
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("r", encoding="utf-8") as f:
             raw_input = yaml.safe_load(f)
         if not isinstance(raw_input, dict):
             raise ValueError(f"Read ill-formatted model MANIFEST, should be a dict, received {type(raw_input)}")
+        return raw_input
 
-        original_loaded_manifest_version = raw_input.get("manifest_version", None)
-        if not original_loaded_manifest_version:
-            raise ValueError("Unable to get the version of the MANIFEST file.")
+    def get_manifest_version(self, raw_input: Mapping[str, Any] | None = None) -> str:
+        """Return ``manifest_version`` without validating the full document.
 
-        res = cast(model_manifest_schema.ModelManifestDict, raw_input)
+        Dual-read callers should peek the version first, then call :meth:`load`
+        for version 1.0 (``methods`` / ``runtimes``) or :meth:`load_v2` for
+        version 2.0 (``model_extension_spec`` path into the extension spec).
 
-        return res
+        Args:
+            raw_input: Optional already-parsed MANIFEST mapping. When omitted,
+                the MANIFEST file is read from disk. :meth:`load` and
+                :meth:`load_v2` pass their parsed mapping to avoid a second read.
+
+        Returns:
+            The manifest version as a string.
+
+        Raises:
+            ValueError: If the MANIFEST is missing, malformed, has no version, or
+                ``manifest_version`` is not a string (the server requires a string).
+        """
+        if raw_input is None:
+            raw_input = self._read_raw_manifest()
+        version = raw_input.get("manifest_version")
+        if isinstance(version, str) and version:
+            return version
+        if version is not None and not isinstance(version, str):
+            raise ValueError(
+                "manifest_version must be a string "
+                f"(for example '{model_manifest_schema.MODEL_MANIFEST_VERSION}' or "
+                f"'{model_manifest_v2_schema.MODEL_MANIFEST_VERSION_V2}'), "
+                f"got {type(version).__name__}."
+            )
+        # Missing key, None, or empty string.
+        raise ValueError("Unable to get the version of the MANIFEST file.")
+
+    def load(self) -> model_manifest_schema.ModelManifestDict:
+        """Load a version 1.0 MANIFEST.yml (``methods`` / ``runtimes``).
+
+        Dual-read callers should use :meth:`get_manifest_version` first. For
+        version 2.0 envelopes, call :meth:`load_v2` to obtain
+        ``model_extension_spec``, then read the extension spec.
+
+        Returns:
+            The parsed version 1.0 manifest dictionary.
+
+        Raises:
+            ValueError: If the MANIFEST is missing, malformed, or is not version 1.0.
+        """
+        raw_input = self._read_raw_manifest()
+        manifest_version = self.get_manifest_version(raw_input)
+        if manifest_version != model_manifest_schema.MODEL_MANIFEST_VERSION:
+            raise ValueError(
+                f"MANIFEST version is {manifest_version}; ModelManifest.load() reads version "
+                f"{model_manifest_schema.MODEL_MANIFEST_VERSION} manifests. "
+                "Use ModelManifest.load_v2() for a version 2.0 envelope."
+            )
+
+        return cast(model_manifest_schema.ModelManifestDict, raw_input)
+
+    def load_v2(self) -> model_manifest_v2_schema.ModelManifestV2Dict:
+        """Load a version 2.0 thin MANIFEST.yml.
+
+        Returns the envelope including ``model_extension_spec``, the relative
+        path to the extension spec that carries methods and runtimes.
+
+        Always checks ``manifest_version`` via :meth:`get_manifest_version`; do
+        not rely on a prior peek alone.
+
+        Returns:
+            The validated version 2.0 manifest dictionary.
+
+        Raises:
+            ValueError: If the MANIFEST is missing, malformed, or is not version 2.0.
+        """
+        raw_input = self._read_raw_manifest()
+        manifest_version = self.get_manifest_version(raw_input)
+        if manifest_version != model_manifest_v2_schema.MODEL_MANIFEST_VERSION_V2:
+            raise ValueError(
+                f"MANIFEST version is {manifest_version}; use ModelManifest.load() for version 1.0 manifests."
+            )
+
+        return self._validate_v2(raw_input)
+
+    @staticmethod
+    def _validate_v2(raw_manifest: Mapping[str, Any]) -> model_manifest_v2_schema.ModelManifestV2Dict:
+        """Validate thin v2 MANIFEST fields after the version has been checked."""
+        model_extension_spec = raw_manifest.get("model_extension_spec")
+        if not isinstance(model_extension_spec, str) or not model_extension_spec.strip():
+            raise ValueError("manifest: model_extension_spec must be a non-empty string.")
+
+        lineage_sources = raw_manifest.get("lineage_sources")
+        if lineage_sources is not None and not isinstance(lineage_sources, list):
+            raise ValueError("manifest: lineage_sources must be a list.")
+
+        return cast(model_manifest_v2_schema.ModelManifestV2Dict, raw_manifest)
 
     def _extract_lineage_info(
         self,

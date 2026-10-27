@@ -214,6 +214,24 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         self.monitor_sql_client.resume_monitor(self.test_monitor_name)
         self.m_session.finalize()
 
+    def test_describe_monitor(self) -> None:
+        described = Row(name="TEST", monitor_start_time="2026-01-01")
+        self.m_session.add_mock_sql(
+            f"DESCRIBE MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}",
+            result=mock_data_frame.MockDataFrame([described]),
+        )
+        self.assertEqual(self.monitor_sql_client.describe_monitor(self.test_monitor_name), described)
+        self.m_session.finalize()
+
+    def test_describe_monitor_rejects_unexpected_result(self) -> None:
+        self.m_session.add_mock_sql(
+            f"DESCRIBE MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}",
+            result=mock_data_frame.MockDataFrame([]),
+        )
+        with self.assertRaisesRegex(ValueError, "Unable to describe model monitor 'TEST'."):
+            self.monitor_sql_client.describe_monitor(self.test_monitor_name)
+        self.m_session.finalize()
+
     def test_drop_model_monitor(self) -> None:
         self.m_session.add_mock_sql(
             f"""DROP MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}""",

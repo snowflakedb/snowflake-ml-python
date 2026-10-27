@@ -129,6 +129,23 @@ py_library(
     srcs = ["formatting.py"],
 )
 
+py_library(
+    name = "sql_literal",
+    srcs = ["sql_literal.py"],
+)
+
+py_test(
+    name = "sql_literal_test",
+    srcs = ["sql_literal_test.py"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
+    deps = [
+        ":sql_literal",
+    ],
+)
+
 py_test(
     name = "formatting_test",
     srcs = ["formatting_test.py"],

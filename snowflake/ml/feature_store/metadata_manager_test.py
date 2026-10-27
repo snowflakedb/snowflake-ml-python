@@ -1,5 +1,6 @@
 """Unit tests for FeatureStoreMetadataManager."""
 
+import json
 from unittest.mock import MagicMock
 
 from absl.testing import absltest
@@ -13,6 +14,7 @@ from snowflake.ml.feature_store.metadata_manager import (
     MetadataObjectType,
     MetadataType,
     StreamingMetadata,
+    _sanitize_json_for_dollar_quoting,
 )
 
 
@@ -22,7 +24,8 @@ def _make_manager() -> tuple[FeatureStoreMetadataManager, MagicMock]:
     session.sql.return_value.collect.return_value = []
     manager = FeatureStoreMetadataManager(
         session=session,
-        schema_path="DB.SCHEMA",
+        database=SqlIdentifier("DB"),
+        schema=SqlIdentifier("SCHEMA"),
         fs_object_tag_path="DB.SCHEMA.FS_TAG",
         telemetry_stmp={},
     )
@@ -382,6 +385,77 @@ class TestAggregationMetadataAggregationSecondaryKeys(absltest.TestCase):
         self.assertEqual(d["features"][0]["output_column"], "TOTAL_AMOUNT_24H")
 
 
+class CheckTableExistsTest(absltest.TestCase):
+    """The metadata table probe must not depend on the session's current database or schema."""
+
+    def _make_unprobed_manager(
+        self, database: str = "DB", schema: str = "SCHEMA"
+    ) -> tuple[FeatureStoreMetadataManager, MagicMock]:
+        session = MagicMock()
+        session.sql.return_value.collect.return_value = [{"CNT": 0}]
+        manager = FeatureStoreMetadataManager(
+            session=session,
+            database=SqlIdentifier(database),
+            schema=SqlIdentifier(schema),
+            fs_object_tag_path=f"{database}.{schema}.FS_TAG",
+            telemetry_stmp={},
+        )
+        return manager, session
+
+    def _assert_probe(self, session: MagicMock, *, database: str, resolved_schema: str) -> None:
+        sql = " ".join(session.sql.call_args.args[0].split())
+        self.assertEqual(
+            sql,
+            f"SELECT COUNT(*) AS CNT FROM {database}.INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_SCHEMA = '{resolved_schema}' AND TABLE_NAME = '_FEATURE_STORE_METADATA'",
+        )
+        self.assertNotIn("params", session.sql.call_args.kwargs)
+
+    def test_probe_is_scoped_to_feature_store_database(self) -> None:
+        manager, session = self._make_unprobed_manager()
+
+        manager.table_exists()
+
+        self._assert_probe(session, database="DB", resolved_schema="SCHEMA")
+
+    def test_probe_resolves_case_sensitive_identifiers(self) -> None:
+        manager, session = self._make_unprobed_manager(database='"my.db"', schema='"my_schema"')
+
+        manager.table_exists()
+
+        self._assert_probe(session, database='"my.db"', resolved_schema="my_schema")
+
+    def test_absent_table_is_not_cached(self) -> None:
+        manager, session = self._make_unprobed_manager()
+        self.assertFalse(manager.table_exists())
+        self.assertIsNone(manager._table_exists)
+
+        session.sql.return_value.collect.return_value = [{"CNT": 1}]
+        self.assertTrue(manager.table_exists())
+
+    def test_present_table_is_cached(self) -> None:
+        manager, session = self._make_unprobed_manager()
+        session.sql.return_value.collect.return_value = [{"CNT": 1}]
+        self.assertTrue(manager.table_exists())
+
+        session.sql.reset_mock()
+        self.assertTrue(manager.table_exists())
+        session.sql.assert_not_called()
+
+    def test_metadata_read_when_table_found(self) -> None:
+        manager, session = self._make_unprobed_manager()
+        specs = AggregationMetadata(feature_granularity="1h", features=[])
+        session.sql.return_value.collect.side_effect = [
+            [{"CNT": 1}],
+            [{"METADATA": specs.to_dict()}],
+        ]
+
+        result = manager.get_feature_specs("MY_FV", "v1")
+
+        assert result is not None
+        self.assertEqual(result.feature_granularity, "1h")
+
+
 class TestStreamingMetadataBackfillTable(absltest.TestCase):
     def test_backfill_table_round_trip(self) -> None:
         meta = StreamingMetadata(
@@ -407,6 +481,67 @@ class TestStreamingMetadataBackfillTable(absltest.TestCase):
         }
         meta = StreamingMetadata.from_dict(legacy)
         self.assertIsNone(meta.backfill_table)
+
+
+class TestDollarQuoteEscaping(absltest.TestCase):
+    """JSON embedded in SQL ``$$...$$`` must escape any ``$$`` in the payload.
+
+    ``json.dumps`` leaves ``$`` untouched, so a payload containing ``$$`` (e.g.
+    a user's verbatim source query stamped into ``FV_SOURCE_REFS``) would close
+    the untagged dollar quote early and corrupt the emitted SQL.
+    """
+
+    @staticmethod
+    def _payload_between_dollar_quotes(sql: str) -> str:
+        """Return the text inside the first ``PARSE_JSON($$...$$)`` in *sql*."""
+        marker = "PARSE_JSON($$"
+        start = sql.index(marker) + len(marker)
+        end = sql.index("$$)", start)
+        return sql[start:end]
+
+    def test_sanitize_escapes_double_dollar(self) -> None:
+        result = _sanitize_json_for_dollar_quoting('{"q": "a $$b$$ c"}')
+        self.assertNotIn("$$", result)
+        self.assertIn("$\\u0024", result)
+        # The escape is a standard JSON unicode escape: parsing restores ``$$``.
+        self.assertEqual(json.loads(result)["q"], "a $$b$$ c")
+
+    def test_sanitize_single_dollar_unchanged(self) -> None:
+        payload = '{"q": "$5.00"}'
+        self.assertEqual(_sanitize_json_for_dollar_quoting(payload), payload)
+
+    def test_sanitize_empty_and_no_dollar_unchanged(self) -> None:
+        self.assertEqual(_sanitize_json_for_dollar_quoting(""), "")
+        self.assertEqual(_sanitize_json_for_dollar_quoting('{"k": "v"}'), '{"k": "v"}')
+
+    def test_upsert_metadata_escapes_double_dollar_in_query(self) -> None:
+        """A source-ref ``query`` containing ``$$`` is escaped so only the two
+        ``$$`` delimiters remain, and the payload round-trips back to the SQL."""
+        manager, session = _make_manager()
+        query = "SELECT * FROM T WHERE NOTE = $$it's$$"
+        sources = [{"name": "FV__SOURCE", "source_type": "Batch", "query": query}]
+
+        manager.save_feature_view_source_refs("FV", "v1", FvSourceRefsMetadata(sources=sources))
+
+        sql = session.sql.call_args[0][0]
+        # Only the opening and closing ``$$`` delimiters survive; the payload has none.
+        self.assertEqual(sql.count("$$"), 2)
+        self.assertIn("$\\u0024", sql)
+        payload = self._payload_between_dollar_quotes(sql)
+        restored = json.loads(payload)
+        self.assertEqual(restored["sources"][0]["query"], query)
+
+    def test_save_feature_view_metadata_escapes_double_dollar_in_descs(self) -> None:
+        """A feature description containing ``$$`` is escaped in the atomic insert."""
+        manager, session = _make_manager()
+        specs = AggregationMetadata(feature_granularity="1h", features=[])
+        descs = {"AMOUNT": "price in $$ (thousands)"}
+
+        manager.save_feature_view_metadata("FV", "v1", specs, descs=descs)
+
+        sql = session.sql.call_args[0][0]
+        self.assertNotIn("price in $$", sql)
+        self.assertIn("$\\u0024", sql)
 
 
 if __name__ == "__main__":

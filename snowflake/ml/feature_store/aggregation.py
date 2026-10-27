@@ -326,7 +326,7 @@ class AggregationSpec:
         Returns:
             Column name used in the tile table (prefixed with _PARTIAL_).
         """
-        resolved = SqlIdentifier(self.source_column).resolved()
+        resolved = SqlIdentifier(self.source_column).resolved().upper()
         return f"{_PARTIAL_COL_PREFIX}{partial_type}_{resolved}"
 
     def get_sql_column_name(self) -> str:

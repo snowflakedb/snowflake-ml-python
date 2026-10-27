@@ -1,11 +1,16 @@
-"""Tests — exporter sidecar writes reject path traversal (CWE-22).
+"""Tests — exporter sidecar writes are path-traversal-safe (CWE-22).
 
-``_extract_udf_to_py_file`` and ``_extract_query_to_sql_file`` derive the
-sidecar filename from ``file_stem``, which originates from
-attacker-influenceable recovered metadata (``metadata.name`` / SHOW output).
-A crafted stem such as ``../../etc/crontab`` must be rejected with
-``ValueError`` rather than writing content outside the export directory.
-Legitimate identifier-shaped stems must still round-trip unchanged.
+``_extract_udf_to_py_file`` (FV UDF body) stays on the strict
+``_safe_sidecar_path`` allowlist and *rejects* a crafted ``file_stem`` such as
+``../../etc/crontab`` with ``ValueError`` — its stem doubles as an exported FV
+identity and must not be silently rewritten.
+
+``_extract_query_to_sql_file`` (datasource query body) instead *encodes* the
+stem via ``_encode_source_stem`` (output alphabet ``[A-Za-z0-9_]``), so a name
+carrying ``.`` / ``-`` / ``/`` / ``$`` becomes a writable, traversal-proof
+filename rather than raising — a datasource's identity lives in its ``name``
+field, so the filename is pure transport.  The encoded output contains no path
+separators or ``..`` sequences, so content can never escape the export dir.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from typing import Any
 import pytest
 
 from snowflake.ml.feature_store.decl.exporter import (
+    _encode_source_stem,
     _extract_query_to_sql_file,
     _extract_udf_to_py_file,
     export_specs,
@@ -77,16 +83,35 @@ class TestExtractUdfValidStem:
 
 
 class TestExtractQueryPathTraversal:
-    @pytest.mark.parametrize("stem", _TRAVERSAL_STEMS)
-    def test_rejects_traversal_stem(self, tmp_path: Path, stem: str) -> None:
+    # The datasource query sidecar ENCODES rather than rejects: a crafted stem
+    # becomes a safe, in-directory filename.  ``""`` is the one degenerate case
+    # that still raises (an empty stem has no valid encoding).
+    @pytest.mark.parametrize("stem", [s for s in _TRAVERSAL_STEMS if s != ""])
+    def test_encodes_unsafe_stem_without_escaping(self, tmp_path: Path, stem: str) -> None:
+        ds_dir = tmp_path / "datasources"
+        ds_dir.mkdir()
+        ds_doc: dict[str, Any] = {"query": _QUERY_SOURCE}
+
+        result = _extract_query_to_sql_file(ds_doc, ds_dir, stem)
+
+        # Written, encoded, and strictly inside ds_dir (no traversal).
+        assert result is not None
+        written = Path(result)
+        assert written.parent == ds_dir, f"sidecar escaped export dir: {written}"
+        expected_name = f"{_encode_source_stem(stem)}.sql"
+        assert written.name == expected_name
+        assert written.read_text() == _QUERY_SOURCE
+        assert ds_doc["query_file"] == expected_name
+        # No file landed outside the datasources dir.
+        assert [p for p in tmp_path.rglob("*.sql") if p.parent != ds_dir] == []
+
+    def test_empty_stem_still_raises(self, tmp_path: Path) -> None:
         ds_dir = tmp_path / "datasources"
         ds_dir.mkdir()
         ds_doc: dict[str, Any] = {"query": _QUERY_SOURCE}
 
         with pytest.raises(ValueError):
-            _extract_query_to_sql_file(ds_doc, ds_dir, stem)
-
-        assert list(tmp_path.rglob("*.sql")) == []
+            _extract_query_to_sql_file(ds_doc, ds_dir, "")
         assert ds_doc.get("query") == _QUERY_SOURCE
         assert "query_file" not in ds_doc
 
@@ -100,12 +125,15 @@ class TestExtractQueryValidStem:
 
         result = _extract_query_to_sql_file(ds_doc, ds_dir, stem)
 
-        sql_path = ds_dir / f"{stem}.sql"
+        # ``-`` is encoded (``my-fv_1`` -> ``my_2Dfv_1``); all-``[A-Za-z0-9_]``
+        # stems pass through unchanged.
+        expected_name = f"{_encode_source_stem(stem)}.sql"
+        sql_path = ds_dir / expected_name
         assert sql_path.exists()
         assert sql_path.read_text() == _QUERY_SOURCE
-        assert result is not None and Path(result).name == f"{stem}.sql"
+        assert result is not None and Path(result).name == expected_name
         assert "query" not in ds_doc
-        assert ds_doc["query_file"] == f"{stem}.sql"
+        assert ds_doc["query_file"] == expected_name
 
 
 class TestExportSpecsRejectsTraversalName:
@@ -120,6 +148,10 @@ class TestExportSpecsRejectsTraversalName:
             },
             "spec": {
                 "ordered_entity_column_names": ["USER_ID"],
+                # A stream source is required or the source-less export guard
+                # would warn-and-skip this FV before the malicious stem reaches
+                # the sidecar-write path that must reject it.
+                "sources": [{"name": "USER_EVENTS", "source_type": "Stream"}],
                 "udf": {"engine": "pandas", "function_definition": _UDF_SOURCE},
             },
         }

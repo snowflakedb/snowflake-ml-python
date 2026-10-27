@@ -26,6 +26,20 @@ def get_build_rules_for_native_impl():
     )
 
     py_library(
+        name = "frequency_encoder",
+        srcs = [
+            "frequency_encoder.py",
+        ],
+        deps = [
+            ":init",
+            "//snowflake/ml/_internal:telemetry",
+            "//snowflake/ml/_internal/exceptions:exceptions",
+            "//snowflake/ml/_internal/utils:identifier",
+            "//snowflake/ml/modeling/framework",
+        ],
+    )
+
+    py_library(
         name = "k_bins_discretizer",
         srcs = [
             "k_bins_discretizer.py",
@@ -153,6 +167,7 @@ def get_build_rules_for_native_impl():
         packages = ["snowflake.ml"],
         deps = [
             ":binarizer",
+            ":frequency_encoder",
             ":k_bins_discretizer",
             ":label_encoder",
             ":max_abs_scaler",

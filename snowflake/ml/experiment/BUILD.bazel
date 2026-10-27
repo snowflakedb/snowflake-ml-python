@@ -94,6 +94,7 @@ py_library(
     srcs = ["__init__.py"],
     deps = [
         ":experiment_tracking",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
         "//snowflake/ml/experiment/callback",
     ],
 )

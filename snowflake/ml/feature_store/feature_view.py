@@ -26,7 +26,10 @@ from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationT
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
-from snowflake.ml.feature_store.tile_sql_generator import _TILE_START_COL
+from snowflake.ml.feature_store.tile_sql_generator import (
+    _TILE_START_COL,
+    _folded_source_column,
+)
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -329,6 +332,16 @@ class RollupConfig:
         # Source must be registered
         if self.source.status == FeatureViewStatus.DRAFT:
             raise ValueError("RollupConfig source must be registered")
+
+        # Source must have materialized tiles. A tiled FV registered without refresh_freq is a
+        # plain VIEW with no tile columns, so a rollup DT built over it would reference columns
+        # that do not exist.
+        if self.source.is_stranded_tiled:
+            raise ValueError(
+                f"feature store: feature view {self.source.name}/{self.source.version} is tiled but "
+                "has no refresh cadence, so no tiles were materialized; delete and re-register it with "
+                "refresh_freq."
+            )
 
         # Get column names from mapping as resolved SqlIdentifier strings for case-correct comparison
         mapping_col_ids = {SqlIdentifier(f.name).resolved() for f in self.mapping_df.schema.fields}
@@ -1158,6 +1171,12 @@ class FeatureView(lineage_node.LineageNode):
         self._realtime_config = realtime_config
         self._is_realtime_marker: bool = _kwargs.pop("_is_realtime_marker", False)
         self._compute_fn_source: str | None = None  # Populated from metadata for reconstructed FVs
+        # Set only by ``_construct_feature_view``, i.e. when this object is being
+        # rebuilt from applied state rather than authored. Applied state is
+        # descriptive: it reports what exists in Snowflake, so invariants that
+        # exist to gate *creation* must not be re-litigated against it. See
+        # ``_validate``. In-memory only — ``_to_dict`` drops it.
+        self._reconstructed: bool = _kwargs.pop("_reconstructed", False)
         if self._realtime_config is not None:
             if online_config is None:
                 self._online_config = OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES)
@@ -1540,6 +1559,20 @@ class FeatureView(lineage_node.LineageNode):
             or if this is a rollup feature view.
         """
         return self._feature_granularity is not None and self._aggregation_specs is not None
+
+    @property
+    def is_stranded_tiled(self) -> bool:
+        """Tiled FV materialized as a cadence-less VIEW: no tiles exist, so tile-table reads fail.
+
+        A tiled FV registered without ``refresh_freq`` is a plain VIEW over the raw source query
+        (no ``TILE_START`` / partial-aggregate columns). Reconstruction still reports
+        ``is_tiled=True`` with ``STATIC`` status, so every consumer that branches on ``is_tiled``
+        would treat the VIEW as a tile table. ``describe`` / ``delete`` stay safe; tile reads do not.
+
+        Returns:
+            True if this feature view is tiled but has no materialized tiles.
+        """
+        return self.is_tiled and self._refresh_freq is None and self._status == FeatureViewStatus.STATIC
 
     @property
     def is_streaming(self) -> bool:
@@ -2213,7 +2246,15 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             # lands via the ingest path (stream source -> UDF transform ->
             # spec-backed OFT) as soon as it is available.  A zero OFT lag
             # is not a reason to skip the offline tile Dynamic Table.
-            if self._refresh_freq is None:
+            #
+            # Authoring-time only.  A tiled FV deployed without a cadence is a
+            # real object in Snowflake (a VIEW, tagged EXTERNAL_FEATURE_VIEW),
+            # and reconstruction has to be able to describe it — otherwise
+            # get / describe / update / delete all raise and the object can
+            # only be removed with DROP SCHEMA ... CASCADE.  Rejecting it here
+            # on the read path strands it; rejecting it on the write path is
+            # what actually prevents another one being created.
+            if self._refresh_freq is None and not self._reconstructed:
                 raise ValueError(
                     "refresh_freq is required for tile-based aggregations. "
                     "Tiled feature views must be managed (Dynamic Tables)."
@@ -2227,6 +2268,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             self._validate_window_offset_alignment()
             # Validate feature aliases are unique
             self._validate_unique_feature_aliases()
+            self._validate_distinct_aggregation_source_columns()
             self._validate_secondary_key_features()
 
         # Definition-time Iceberg rules. ``_validate`` does not run for rollup /
@@ -2520,6 +2562,31 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 )
             seen_aliases[alias] = 1
 
+    def _validate_distinct_aggregation_source_columns(self) -> None:
+        """Validate that source columns stay distinct once folded into tile column names.
+
+        Tile columns are declared with unquoted aliases, so Snowflake folds them
+        to upper case and their generated names must fold the source column the
+        same way. Two source columns differing only in case therefore name one
+        tile column, and the aggregations over them would silently share it.
+
+        Raises:
+            ValueError: If two source columns fold to the same tile column name.
+        """
+        if self._aggregation_specs is None:
+            return
+
+        source_by_folded_name: dict[str, str] = {}
+        for spec in self._aggregation_specs:
+            if spec.function.is_secondary_key_array():
+                continue
+            previous = source_by_folded_name.setdefault(_folded_source_column(spec), spec.source_column)
+            if previous != spec.source_column:
+                raise ValueError(
+                    f"Source columns {previous} and {spec.source_column} differ only in case, so the "
+                    f"aggregations over them would share one column. Rename one of them to aggregate both."
+                )
+
     def _validate_secondary_key_features(self) -> None:
         """Validate the FV-level ``aggregation_secondary_keys`` configuration.
 
@@ -2663,6 +2730,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict["_backup_source"] = self._backup_source
         # Remove non-serializable live objects
         fv_dict.pop("_rollup_config", None)
+        # In-memory provenance, not state. ``_to_dict`` backs ``to_df()``'s
+        # schema and ``to_json``; ``from_json`` re-derives the marker by going
+        # through ``_construct_feature_view``.
+        fv_dict.pop("_reconstructed", None)
         # Serialize rollup metadata if present
         fv_dict["_rollup_metadata"] = self._rollup_metadata.to_dict() if self._rollup_metadata is not None else None
 
@@ -2897,6 +2968,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 online_config=online_config,
                 realtime_config=realtime_config,
                 _is_realtime_marker=True,
+                _reconstructed=True,
                 append_only=append_only,
                 backup_source=backup_source,
             )
@@ -2920,6 +2992,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 _feature_aggregation_method=feature_aggregation_method,
                 storage_config=storage_config,
                 _is_streaming_marker=is_streaming,
+                _reconstructed=True,
                 _source_refs=source_refs,
                 append_only=append_only,
                 backup_source=backup_source,

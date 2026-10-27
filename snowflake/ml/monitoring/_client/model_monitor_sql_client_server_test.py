@@ -210,6 +210,52 @@ class ModelMonitorSqlClientServerTest(absltest.TestCase):
             baseline=sql_identifier.SqlIdentifier("BASELINE"),
         )
 
+    def test_create_inference_table_monitor(self) -> None:
+        fq_schema = f"{self.test_db}.{self.test_schema}"
+        self.m_session.add_mock_sql(
+            f"""
+            CREATE MODEL MONITOR {fq_schema}.M
+            WITH
+                MODEL={fq_schema}.{self.model_name}
+                VERSION='{self.model_version}'
+                FUNCTION='{self.model_function}'
+                WAREHOUSE='{self.warehouse_name}'
+                ID_COLUMNS=('ID')
+                GROUND_TRUTH={fq_schema}.GT
+                PREDICTION_SCORE_COLUMNS=('PRED_SCORE')
+                REFRESH_INTERVAL='{self.refresh_interval}'
+                AGGREGATION_WINDOW='{self.aggregation_window}'
+                SEGMENT_COLUMNS=('SEGMENT')
+                BASELINE={fq_schema}.BASELINE
+            """,
+            result=mock_data_frame.MockDataFrame([Row(status="success")]),
+        )
+        self.monitor_sql_client.create_model_monitor(
+            monitor_database=None,
+            monitor_schema=None,
+            monitor_name=sql_identifier.SqlIdentifier("m"),
+            source_database=None,
+            source_schema=None,
+            source=None,
+            model_database=None,
+            model_schema=None,
+            model_name=self.model_name,
+            version_name=self.model_version,
+            function_name=self.model_function,
+            warehouse_name=self.warehouse_name,
+            timestamp_column=None,
+            id_columns=self.id_columns,
+            prediction_score_columns=self.prediction_score_columns,
+            prediction_class_columns=[],
+            actual_score_columns=[],
+            actual_class_columns=[],
+            refresh_interval=self.refresh_interval,
+            aggregation_window=self.aggregation_window,
+            baseline=sql_identifier.SqlIdentifier("BASELINE"),
+            segment_columns=[sql_identifier.SqlIdentifier("SEGMENT")],
+            ground_truth=sql_identifier.SqlIdentifier("GT"),
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

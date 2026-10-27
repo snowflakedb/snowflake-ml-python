@@ -215,6 +215,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 timestamp_custom_metric_database=None,
                 timestamp_custom_metric_schema=None,
                 timestamp_custom_metric_table=None,
+                ground_truth_database=None,
+                ground_truth_schema=None,
+                ground_truth=None,
                 statement_params=None,
             )
 
@@ -264,6 +267,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 timestamp_custom_metric_database=None,
                 timestamp_custom_metric_schema=None,
                 timestamp_custom_metric_table=None,
+                ground_truth_database=None,
+                ground_truth_schema=None,
+                ground_truth=None,
                 statement_params=None,
             )
 
@@ -331,6 +337,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 timestamp_custom_metric_database=None,
                 timestamp_custom_metric_schema=None,
                 timestamp_custom_metric_table=None,
+                ground_truth_database=None,
+                ground_truth_schema=None,
+                ground_truth=None,
                 statement_params=None,
             )
 
@@ -399,6 +408,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 timestamp_custom_metric_database=None,
                 timestamp_custom_metric_schema=None,
                 timestamp_custom_metric_table=None,
+                ground_truth_database=None,
+                ground_truth_schema=None,
+                ground_truth=None,
                 statement_params=None,
             )
 
@@ -467,6 +479,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 timestamp_custom_metric_database=None,
                 timestamp_custom_metric_schema=None,
                 timestamp_custom_metric_table=None,
+                ground_truth_database=None,
+                ground_truth_schema=None,
+                ground_truth=None,
                 statement_params=None,
             )
 
@@ -543,6 +558,90 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 segment_columns=[],
                 custom_metric_columns=["NONEXISTENT_COLUMN"],
             )
+
+    def test_add_inference_table_monitor(self) -> None:
+        source_config = model_monitor_config.ModelMonitorSourceConfig._from_inference_table(
+            baseline="mydb.myschema.baseline",
+            ground_truth="mydb.myschema.gt",
+            id_columns=["ID"],
+        )
+        with mock.patch.object(
+            self.mm._model_monitor_client, "validate_source"
+        ) as mock_validate_source, mock.patch.object(
+            self.mm._model_monitor_client, "create_model_monitor", return_value=None
+        ) as mock_create_model_monitor:
+            self.mm.add_monitor("TEST", source_config, self.test_monitor_config)
+            mock_validate_source.assert_not_called()
+            mock_create_model_monitor.assert_called_once_with(
+                monitor_database=None,
+                monitor_schema=None,
+                monitor_name=sql_identifier.SqlIdentifier("TEST"),
+                source_database=None,
+                source_schema=None,
+                source=None,
+                model_database=sql_identifier.SqlIdentifier("MODEL_DB"),
+                model_schema=sql_identifier.SqlIdentifier("MODEL_SCHEMA"),
+                model_name=self.test_model,
+                version_name=sql_identifier.SqlIdentifier(self.test_model_version),
+                function_name="predict",
+                warehouse_name=sql_identifier.SqlIdentifier(self.test_warehouse),
+                timestamp_column=None,
+                id_columns=["ID"],
+                prediction_score_columns=[],
+                prediction_class_columns=[],
+                actual_score_columns=[],
+                actual_class_columns=[],
+                segment_columns=[],
+                custom_metric_columns=[],
+                refresh_interval="1 hour",
+                aggregation_window="1 day",
+                baseline_database=sql_identifier.SqlIdentifier("mydb"),
+                baseline_schema=sql_identifier.SqlIdentifier("myschema"),
+                baseline=sql_identifier.SqlIdentifier("baseline"),
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
+                ground_truth_database=sql_identifier.SqlIdentifier("mydb"),
+                ground_truth_schema=sql_identifier.SqlIdentifier("myschema"),
+                ground_truth=sql_identifier.SqlIdentifier("gt"),
+                statement_params=None,
+            )
+
+    def test_add_inference_table_monitor_rejects_hourly_aggregation(self) -> None:
+        monitor_config = model_monitor_config.ModelMonitorConfig(
+            model_version=self.mv,
+            model_function_name="predict",
+            background_compute_warehouse_name=self.test_warehouse,
+            aggregation_window="1 hour",
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "Aggregation window for a model version monitor must be a number of days.",
+        ):
+            self.mm.add_monitor(
+                "TEST", model_monitor_config.ModelMonitorSourceConfig._from_inference_table(), monitor_config
+            )
+
+    def test_add_monitor_rejects_hourly_aggregation(self) -> None:
+        monitor_config = model_monitor_config.ModelMonitorConfig(
+            model_version=self.mv,
+            model_function_name="predict",
+            background_compute_warehouse_name=self.test_warehouse,
+            aggregation_window="1 hour",
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "Aggregation window for a model version monitor must be a number of days.",
+        ):
+            self.mm.add_monitor("TEST", self.test_table_config, monitor_config)
+
+
+class ModelMonitorSourceConfigTest(absltest.TestCase):
+    def test_inference_table_config_requires_ground_truth_and_id_columns_together(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Pass ground_truth and id_columns together."):
+            model_monitor_config.ModelMonitorSourceConfig._from_inference_table(ground_truth="mydb.myschema.gt")
+        with self.assertRaisesRegex(ValueError, "Pass ground_truth and id_columns together."):
+            model_monitor_config.ModelMonitorSourceConfig._from_inference_table(id_columns=["ID"])
 
 
 if __name__ == "__main__":

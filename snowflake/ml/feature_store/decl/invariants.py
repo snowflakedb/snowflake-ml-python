@@ -698,6 +698,38 @@ def _normalize_applied_bfv_for_hash(
     return payload
 
 
+def _applied_compare_hash(
+    kind: str,
+    applied: AppliedObject,
+    local_compiled: dict[str, Any] | None,
+) -> str:
+    """Applied-side hash to compare against the local hash.
+
+    Single owner of the planner's BatchFeatureView ``refresh_mode``
+    normalisation so :func:`_check_idempotency` and
+    :func:`planner.generate_plan` agree on hash equality.  Snowflake stamps a
+    ``refresh_mode`` (INCREMENTAL / FULL) on the Dynamic Table the operator
+    never authored, which survives in the stored ``content_hash``; recomputing
+    the applied hash from a normalised copy drops it.  Every other kind (and the
+    fallback when no compiled local spec is available) returns the stored
+    ``content_hash`` unchanged.
+
+    Args:
+        kind: The spec kind string.
+        applied: The deployed object carrying the stored hash and payload.
+        local_compiled: The compiled local spec, or ``None`` when unavailable.
+
+    Returns:
+        The 64-character hex digest to compare against the local hash.
+    """
+    if kind == "BatchFeatureView" and isinstance(local_compiled, dict) and isinstance(applied.spec_payload, dict):
+        try:
+            return _full_spec_hash(_normalize_applied_bfv_for_hash(applied.spec_payload, local_compiled))
+        except Exception:  # noqa: BLE001 — defensive fallback (mirrors planner)
+            return applied.content_hash
+    return applied.content_hash
+
+
 def _strip_default_cluster_by(inner: dict[str, Any]) -> None:
     """Drop ``cluster_by`` from a BatchFV inner spec when it matches the default.
 
@@ -1033,23 +1065,27 @@ _OPERATIONAL_FV_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# Default ``length`` values Snowflake stamps onto STRING-family columns
-# in the SPECIFICATION payload that the local-compile path leaves out.
-# Stripped from each ``columns[]`` / ``output_columns[]`` entry before
-# hashing.  ``16777216`` is the VARCHAR maximum (2^24) and is the value
-# the runtime defaults to for un-sized StringType columns, so its
-# presence on the deployed side is not a semantic difference.
-_RUNTIME_STAMPED_COLUMN_DEFAULTS: dict[str, object] = {
-    "length": 16777216,
-}
+# ``length`` values Snowflake stamps onto un-sized ``StringType`` (VARCHAR)
+# columns in the SPECIFICATION payload that the local-compile path leaves
+# out.  Both are the VARCHAR maximum for a runtime generation and so mean
+# "un-sized" rather than an authored width:
+#   * ``16777216``  — 16 MB (2^24), the older maximum.
+#   * ``134217728`` — 128 MB (2^27), the current maximum.
+# The deployed side reads an un-sized VARCHAR back as one of these, so its
+# presence is not a semantic difference.  An authored length (e.g. ``255``)
+# is NOT in this set and still contributes to the hash.
+_RUNTIME_STAMPED_VARCHAR_MAX_LENGTHS: frozenset[int] = frozenset({16777216, 134217728})
 
 
 def _strip_runtime_stamped_columns(columns: object) -> None:
-    """Remove runtime-default keys from a columns or output_columns list.
+    """Remove the runtime-stamped VARCHAR ``length`` from a columns list.
 
-    Walks the list in place, leaving non-dict entries alone.  A key is dropped
-    only when its value matches the documented runtime default, so an
-    explicitly authored value still contributes to the hash.
+    Walks the list in place, leaving non-dict entries alone.  ``length`` is
+    dropped only from a ``StringType`` column whose value is one of the
+    runtime-stamped VARCHAR maxima (:data:`_RUNTIME_STAMPED_VARCHAR_MAX_LENGTHS`),
+    so an authored width still contributes to the hash and non-string
+    parameterized metadata (``DecimalType`` precision/scale, ``ArrayType``
+    element type) is never touched.
 
     Args:
         columns: The list value of a ``columns`` or ``output_columns`` key.
@@ -1060,9 +1096,8 @@ def _strip_runtime_stamped_columns(columns: object) -> None:
     for entry in columns:
         if not isinstance(entry, dict):
             continue
-        for key, default in _RUNTIME_STAMPED_COLUMN_DEFAULTS.items():
-            if entry.get(key) == default:
-                entry.pop(key, None)
+        if entry.get("type") == "StringType" and entry.get("length") in _RUNTIME_STAMPED_VARCHAR_MAX_LENGTHS:
+            entry.pop("length", None)
 
 
 def _is_auto_derived_feature(feature: Any) -> bool:
@@ -1429,8 +1464,8 @@ def _normalize_for_full_spec_hash(spec: dict[str, Any], *, authored: bool = Fals
                 if isinstance(src, dict):
                     for key in _OPERATIONAL_FV_KEYS:
                         src.pop(key, None)
-        # Strip runtime-default ``length`` (and any future
-        # ``_RUNTIME_STAMPED_COLUMN_DEFAULTS`` keys) from every
+        # Strip the runtime-stamped VARCHAR ``length`` (see
+        # ``_RUNTIME_STAMPED_VARCHAR_MAX_LENGTHS``) from every
         # ``columns`` / ``output_columns`` list reachable from
         # ``spec``.  Walk one level deep — sources[].columns and
         # udf.output_columns are the two known carriers; the
@@ -2345,11 +2380,12 @@ def _check_idempotency(
     name = spec.get("name", "")
 
     kind = spec.get("kind", "")
+    local_compiled: dict[str, Any] | None = None
     if applied.from_specification and kind in _FV_RECREATE_KINDS:
         db_for_compile = target_database or spec.get("database", "") or ""
         sch_for_compile = target_schema or spec.get("schema", "") or spec.get("schema_", "") or ""
         try:
-            current_hash = compute_local_spec_hash(
+            local_compiled, current_hash = compute_local_spec_and_hash(
                 spec, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
             )
         except Exception:  # noqa: BLE001 — defensive fallback (mirrors planner)
@@ -2361,7 +2397,9 @@ def _check_idempotency(
         current_hash = fg_content_hash(spec)
     else:
         current_hash = structural_fingerprint_hash(spec)
-    if current_hash == applied.content_hash:
+    # Compare against the same applied-side hash the planner uses (see
+    # _applied_compare_hash) so the validator and planner agree on hash equality.
+    if current_hash == _applied_compare_hash(kind, applied, local_compiled):
         return True, [
             _result("WARNING", "NO_CHANGE", f"{name}: spec is identical to deployed version; skipping.", name)
         ]
@@ -2410,10 +2448,23 @@ def _check_fv_column_evolution(
         name: The feature view's name, used in result messages.
         results: Mutable list accumulating any results.
     """
-    if applied.from_specification:
-        applied_features = applied.spec_payload.get("spec", {}).get("features", [])
+    applied_inner = applied.spec_payload.get("spec", {}) if applied.from_specification else applied.spec_payload
+    # Reconcile snowml-core's secondary-key derivations before diffing — the
+    # synthesised ``<SK>_KEYS_<window>`` arrays exist only on the deployed side,
+    # so without this strip they look like removed output columns.  Mirrors the
+    # same canonicalisation the full-spec hash applies in
+    # ``_normalize_for_full_spec_hash``; SK-gated no-op otherwise.  The strip also
+    # drops the server-derived output type on real SK aggregations, so
+    # COLUMN_TYPE_CHANGED is intentionally not reported for them (the deployed
+    # ArrayType wrapping is not operator-authored).
+    if isinstance(applied_inner, dict):
+        applied_inner = copy.deepcopy(applied_inner)
+        _strip_secondary_key_derivations(applied_inner)
+        applied_features = applied_inner.get("features", [])
     else:
-        applied_features = applied.spec_payload.get("features", [])
+        applied_features = []
+
+    local_features = spec.get("features") or []
 
     prev_features: dict[str, dict[str, Any]] = {
         f.get("output_column", {}).get("name"): f.get("output_column", {})
@@ -2422,7 +2473,7 @@ def _check_fv_column_evolution(
     }
     curr_features: dict[str, dict[str, Any]] = {
         f.get("output_column", {}).get("name"): f.get("output_column", {})
-        for f in spec.get("features", [])
+        for f in local_features
         if f.get("output_column", {}).get("name")
     }
 
@@ -2441,8 +2492,22 @@ def _check_fv_column_evolution(
             )
         )
 
+    # When the local spec authors no features, its output columns are
+    # query-derived and unknown at plan time, so a deployed query-derived column
+    # (no aggregation ``function``) is not a removal the operator can act on.
+    # A deployed aggregation still counts: dropping the authored list genuinely
+    # removes it.
+    if local_features:
+        removable_prev = prev_names
+    else:
+        removable_prev = {
+            f.get("output_column", {}).get("name")
+            for f in applied_features
+            if f.get("function") and f.get("output_column", {}).get("name")
+        }
+
     # Removed columns: warning for downstream consumers
-    removed = prev_names - curr_names
+    removed = removable_prev - curr_names
     for col in sorted(removed):
         results.append(
             _result(
@@ -2453,7 +2518,7 @@ def _check_fv_column_evolution(
             )
         )
 
-    # Type changes: warning
+    # Type changes: a no-op without a local authored list (curr is empty).
     for col in sorted(prev_names & curr_names):
         old_type = prev_features[col].get("type")
         new_type = curr_features[col].get("type")

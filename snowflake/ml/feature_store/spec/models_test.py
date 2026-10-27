@@ -48,8 +48,8 @@ class MakeFSColumnTest(parameterized.TestCase):
     """Tests for _make_fs_column helper."""
 
     def test_string_type(self) -> None:
-        col = _make_fs_column("name", StringType())
-        self.assertEqual(col.name, "name")
+        col = _make_fs_column("NAME", StringType())
+        self.assertEqual(col.name, "NAME")
         self.assertEqual(col.type, "StringType")
         self.assertIsNone(col.length)
 
@@ -91,6 +91,22 @@ class MakeFSColumnTest(parameterized.TestCase):
     def test_unsupported_type_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported type.*ArrayType"):
             _make_fs_column("arr", ArrayType(StringType()))
+
+
+class ColumnNameResolutionTest(parameterized.TestCase):
+    """Spec columns must carry the stored name, matching every other spec identifier."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("quoted_mixed_case", '"myCol"', "myCol"),
+        ("quoted_escaped_interior_quote", '"my""Col"', 'my"Col'),
+    )
+    def test_make_fs_column(self, snowpark_name: str, expected: str) -> None:
+        self.assertEqual(_make_fs_column(snowpark_name, DoubleType()).name, expected)
+
+    def test_make_tiled_fs_column_array_branch(self) -> None:
+        col = _make_tiled_fs_column('"_PARTIAL_LAST_myCol"', ArrayType(StringType()))
+        self.assertEqual(col.name, "_PARTIAL_LAST_myCol")
+        self.assertEqual(col.type, "ArrayType")
 
 
 class ColumnsFromStructTypeTest(absltest.TestCase):

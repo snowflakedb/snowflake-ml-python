@@ -30,6 +30,24 @@ py_library(
     ],
 )
 
+# Live-only: proves the client retires every WebSocket connection inside the window before the
+# service's advertised per-connection deadline. Skips unless QUERY_URL / SNOWFLAKE_PAT / WS_LIVE_* are
+# set; see the module docstring.
+py_test(
+    name = "feature_store_ws_retirement_live_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_ws_retirement_live_test.py",
+    ],
+    tags = [
+        "feature:feature_store",
+        "manual",
+    ],
+    deps = [
+        "//snowflake/ml/feature_store:feature_store_lib",
+    ],
+)
+
 py_library(
     name = "fs_dataset_provisioner",
     testonly = True,
@@ -348,11 +366,23 @@ py_test(
 # To run a subset:
 #   bazel test :feature_store_spec_oft_bundle_test \
 #       --test_filter=<ClassName>.<test_method>
+py_library(
+    name = "decl_cli_driver",
+    testonly = True,
+    srcs = ["decl_cli_driver.py"],
+    imports = ["."],
+    deps = [
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/feature_store/decl:decl_lib",
+    ],
+)
+
 py_test(
     name = "feature_store_spec_oft_bundle_test",
     timeout = "eternal",
     srcs = [
         "feature_store_batch_online_read_bundled.py",
+        "feature_store_decl_project_bundled.py",
         "feature_store_distinct_n_online_bundled.py",
         "feature_store_feature_group_bundled.py",
         "feature_store_last_first_n_online_bundled.py",
@@ -362,7 +392,12 @@ py_test(
         "feature_store_spec_oft_bundle_test.py",
         "feature_store_stream_ingest_bundled.py",
         "feature_store_streaming_fv_bundled.py",
+        "ws_parity.py",
     ],
+    data = glob(
+        ["decl_integ_project/**"],
+        exclude = ["decl_integ_project/**/__pycache__/**"],
+    ),
     imports = ["."],
     shard_count = 2,
     tags = [
@@ -370,6 +405,7 @@ py_test(
     ],
     deps = [
         ":common_utils",
+        ":decl_cli_driver",
         ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
         "//snowflake/ml/_internal/utils:connection_params",
@@ -393,6 +429,33 @@ py_test(
         ":fs_integ_test_base",
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/feature_store:feature_store_lib",
+    ],
+)
+
+# Needs a PAT and a live Online Service, so it is "manual" rather than part of the regression
+# suite -- the same reason the other Online-Service-backed targets omit "short_regress". Point it
+# at an already-provisioned schema to skip the ~15 minute SPCS bring-up:
+#   --test_env=SPEC_OFT_BUNDLE_REUSE_SCHEMA=DB.SCHEMA
+py_test(
+    name = "feature_store_ws_transport_integ_test",
+    timeout = "eternal",
+    srcs = [
+        "feature_store_ws_transport_integ_test.py",
+    ],
+    imports = ["."],
+    tags = [
+        "feature:feature_store",
+        "manual",
+    ],
+    deps = [
+        ":common_utils",
+        ":feature_store_streaming_fv_integ_base",
+        ":fs_integ_test_base",
+        "//snowflake/ml/_internal/utils:connection_params",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 

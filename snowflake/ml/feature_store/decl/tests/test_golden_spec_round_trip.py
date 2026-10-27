@@ -208,18 +208,22 @@ def test_golden_spec_export_then_plan_no_change(golden_path: Any, tmp_path: Path
     batch = load_specs([f"{export_root}/..."])
 
     decl_api.resolve_datasource_columns(batch)
-    errors = [
-        r
-        for r in decl_api.validate_specs(
-            batch,
-            applied_state,
-            target_database=db,
-            target_schema=schema,
-        )
-        if r.severity == "ERROR"
-    ]
+    validation_results = decl_api.validate_specs(
+        batch,
+        applied_state,
+        target_database=db,
+        target_schema=schema,
+    )
+    errors = [r for r in validation_results if r.severity == "ERROR"]
     assert errors == [], (
         f"Golden {_golden_id(golden_path)!r}: round-trip plan reports " f"validation_failed; errors={errors!r}"
+    )
+    # Validator/planner parity: an object the plan reports NO_CHANGE for must
+    # not surface COLUMN_* evolution warnings (asserted against the plan below).
+    column_warnings = [r for r in validation_results if r.code.startswith("COLUMN_")]
+    assert column_warnings == [], (
+        f"Golden {_golden_id(golden_path)!r}: clean round-trip emitted "
+        f"COLUMN_* warnings: {[(r.code, r.message) for r in column_warnings]!r}"
     )
 
     plan = decl_api.generate_plan(
@@ -231,6 +235,62 @@ def test_golden_spec_export_then_plan_no_change(golden_path: Any, tmp_path: Path
     )
     bad_ops = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
     assert not bad_ops, f"Golden {_golden_id(golden_path)!r}: non-NO_CHANGE ops emitted: {bad_ops!r}"
+
+
+def test_sk_golden_incremental_round_trip_no_change_no_column_warnings(tmp_path: Path) -> None:
+    """Secondary-key BFV with a Snowflake-stamped ``refresh_mode``.
+
+    Stamps ``refresh_mode: INCREMENTAL`` on the deployed spec the operator never
+    authored, then runs the full export -> load -> validate + plan round-trip.
+    The validator and planner must agree on NO_CHANGE: the plan emits no
+    non-NO_CHANGE op and the validator emits no COLUMN_* warning (the
+    secondary-key arrays are server-derived, not operator removals).
+
+    Args:
+        tmp_path: pytest tmp dir used for the export staging.
+    """
+    spec_payload = json.loads((GOLDEN_DIR / "CONTENT_AGG_BATCH_SK.json").read_text())
+    spec_payload["spec"]["refresh_mode"] = "INCREMENTAL"
+    md = spec_payload["metadata"]
+    db = md["database"]
+    schema = md["schema"]
+
+    show_rows = [_show_row_from_golden(spec_payload)]
+    spec_map = {show_rows[0]["name"]: spec_payload}
+    entity_rows = _entity_rows_from_golden(spec_payload)
+
+    applied_state = fetch_applied_state(
+        show_rows,
+        None,
+        specification_map=spec_map,
+        entity_rows=entity_rows,
+        default_database=db,
+        default_schema=schema,
+    )
+
+    export_specs(
+        show_rows=show_rows,
+        describe_rows_by_oft={},
+        output_dir=str(tmp_path),
+        database=db,
+        schema=schema,
+        specification_map=spec_map,
+    )
+
+    export_root = tmp_path / f"{db}.{schema}"
+    batch = load_specs([f"{export_root}/..."])
+    decl_api.resolve_datasource_columns(batch)
+
+    results = decl_api.validate_specs(batch, applied_state, target_database=db, target_schema=schema)
+    column_warnings = [r for r in results if r.code.startswith("COLUMN_")]
+    assert column_warnings == [], (
+        "a refresh_mode-stamped secondary-key round-trip must not emit COLUMN_* warnings; "
+        f"got {[(r.code, r.message) for r in column_warnings]!r}"
+    )
+
+    plan = decl_api.generate_plan(batch, applied_state, PlanOptions(), database=db, schema=schema)
+    bad_ops = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
+    assert not bad_ops, f"refresh_mode-stamped SK round-trip emitted non-NO_CHANGE ops: {bad_ops!r}"
 
 
 if __name__ == "__main__":

@@ -78,6 +78,7 @@ from snowflake.ml.feature_store.spec.models import (
     _make_tiled_fs_column,
 )
 from snowflake.ml.feature_store.stream_source import StreamSource
+from snowflake.ml.feature_store.tile_sql_generator import _folded_source_column
 from snowflake.ml.version import VERSION
 from snowflake.snowpark.types import DataType, StructType
 
@@ -228,7 +229,7 @@ def _resolve_tiled_fv_output_column(
     predetermined = _AGG_PREDETERMINED_OUTPUT.get(spec.function)
     if predetermined is not None:
         return FSColumn(
-            name=spec.output_column,
+            name=SqlIdentifier(spec.output_column).resolved(),
             type=predetermined.type,
             precision=predetermined.precision,
             scale=predetermined.scale,
@@ -259,7 +260,7 @@ def _resolve_tiled_fv_output_column(
             f"not found in the feature view's schema."
         )
     return FSColumn(
-        name=spec.output_column,
+        name=SqlIdentifier(spec.output_column).resolved(),
         type=partial.type,
         precision=partial.precision,
         scale=partial.scale,
@@ -747,7 +748,11 @@ class FeatureViewSpecBuilder:
             ordered_entity_column_names = self._entity_columns
         spec = Spec(
             ordered_entity_column_names=ordered_entity_column_names,
-            ordered_secondary_key_column_names=self._secondary_key_columns,
+            ordered_secondary_key_column_names=(
+                [SqlIdentifier(c).resolved() for c in self._secondary_key_columns]
+                if self._secondary_key_columns
+                else None
+            ),
             sources=external_sources,
             features=spec_features,
             timestamp_field=self._timestamp_field,
@@ -839,7 +844,7 @@ class FeatureViewSpecBuilder:
             return [
                 _make_fs_column(f.name, f.datatype)
                 for f in fv.realtime_config.output_schema.fields
-                if f.name not in entity_names
+                if SqlIdentifier(f.name).resolved() not in entity_names
             ]
         if fv.is_tiled and fv.aggregation_specs is not None:
             partials_by_name = {f.name: _make_tiled_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
@@ -857,7 +862,9 @@ class FeatureViewSpecBuilder:
                             f"'{fv.name.resolved()}'; its keys array cannot be built."
                         )
                     columns.append(
-                        _as_secondary_key_array_column(sk_column.model_copy(update={"name": spec.output_column}))
+                        _as_secondary_key_array_column(
+                            sk_column.model_copy(update={"name": SqlIdentifier(spec.output_column).resolved()})
+                        )
                     )
                     continue
                 resolved = _resolve_tiled_fv_output_column(spec, partials_by_name)
@@ -867,7 +874,11 @@ class FeatureViewSpecBuilder:
             return columns
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
         schema = materialized_schema if materialized_schema is not None else fv.output_schema
-        return [_make_fs_column(f.name, f.datatype) for f in schema.fields if f.name in feature_name_set]
+        return [
+            _make_fs_column(f.name, f.datatype)
+            for f in schema.fields
+            if SqlIdentifier(f.name).resolved() in feature_name_set
+        ]
 
     @staticmethod
     def _convert_feature_view(fv: FeatureView, materialized_schema: StructType | None = None) -> Source:
@@ -984,10 +995,11 @@ class FeatureViewSpecBuilder:
 
         spec_features = []
         for agg_spec in self._agg_specs:
-            source_col = column_map.get(agg_spec.source_column)
+            resolved_source = SqlIdentifier(agg_spec.source_column).resolved()
+            source_col = column_map.get(resolved_source)
             if source_col is None:
                 raise ValueError(
-                    f"Column '{agg_spec.source_column}' not found in "
+                    f"Column '{resolved_source}' not found in "
                     f"resolution pool. Available columns: "
                     f"{list(column_map.keys())}"
                 )
@@ -1000,7 +1012,7 @@ class FeatureViewSpecBuilder:
             type_template: FSColumn = _AGG_PREDETERMINED_OUTPUT.get(agg_spec.function) or source_col
             output_is_array = bool(self._secondary_key_columns) or agg_spec.function.is_list()
             output_col = FSColumn(
-                name=agg_spec.output_column,
+                name=SqlIdentifier(agg_spec.output_column).resolved(),
                 type="ArrayType" if output_is_array else type_template.type,
                 element_type=type_template.type if output_is_array else None,
                 precision=type_template.precision,
@@ -1373,7 +1385,7 @@ class FeatureViewSpecBuilder:
             A ``(value_column, timestamp_column)`` tuple, or ``None`` if the spec
             is not a LAST/FIRST ordered-N aggregation.
         """
-        resolved_src = SqlIdentifier(agg_spec.source_column).resolved()
+        resolved_src = _folded_source_column(agg_spec)
         if agg_spec.function == AggregationType.LAST_DISTINCT_N:
             n = agg_spec.params["n"]
             return (

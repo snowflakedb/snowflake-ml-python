@@ -1,14 +1,127 @@
 import json
 
+import yaml
 from absl.testing import absltest
 
-from snowflake.ml.experiment import ExperimentTracking
+from snowflake import cortex
+from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.dataset import dataset
+from snowflake.ml.experiment import ExperimentTracking, ExperimentType
+from snowflake.ml.utils import sql_client
+from snowflake.snowpark import exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.experiment._integ_test_base import (
     ExperimentTrackingIntegTestBase,
 )
 
 
 class ExperimentCrudIntegTest(ExperimentTrackingIntegTestBase):
+    def _create_evaluation_spec(self) -> str:
+        dataset_name = "EVALUATION_DATASET"
+        dataset_fqn = f"{self._db_name}.{self._schema_name}.{dataset_name}"
+        self._session.sql(f"CREATE OR REPLACE DATASET {dataset_fqn}").collect()
+        self._session.sql(
+            f"ALTER DATASET {dataset_fqn} ADD VERSION 'v1' FROM "
+            "(SELECT 'What is the capital of France?' AS question, 'Paris' AS label_col)"
+        ).collect()
+        return (
+            "query_text: AI_COMPLETE('llama3.1-8b', question)\n"
+            "metrics:\n"
+            "  - name: exact_match\n"
+            "dataset:\n"
+            f"  name: {dataset_fqn}\n"
+            "  version: v1\n"
+            "  ground_truth: label_col\n"
+            "evaluation:\n"
+            "  num_eval_runs: 10\n"
+            "# SQL literal escaping check: C:\\path\\"
+        )
+
+    def test_typed_experiment_creation_and_invalid_execution(self) -> None:
+        typed_experiment_name = sql_identifier.SqlIdentifier("TYPED_EXPERIMENT")
+        self.exp._sql_client.create_experiment(
+            typed_experiment_name,
+            creation_mode=sql_client.CreationMode(),
+            experiment_type=ExperimentType.AI_FUNCTION_EVALUATION,
+        )
+        typed_experiments = self._session.sql(
+            f"SHOW EXPERIMENTS LIKE 'TYPED_EXPERIMENT' IN SCHEMA {self._db_name}.{self._schema_name}"
+        ).collect()
+        self.assertLen(typed_experiments, 1)
+        self.assertEqual(typed_experiments[0]["type"], "AI_FUNCTION_EVALUATION")
+
+        self.exp.set_experiment(experiment_name="REGULAR_EXPERIMENT")
+        with self.assertRaises(snowpark_exceptions.SnowparkSQLException):
+            self.exp._sql_client.execute_experiment(sql_identifier.SqlIdentifier("REGULAR_EXPERIMENT"))
+
+    def test_create_or_replace_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("OR_REPLACE_EXPERIMENT")
+        self.exp._sql_client.create_experiment(experiment_name, creation_mode=sql_client.CreationMode())
+
+        self.exp._sql_client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client.CreationMode(or_replace=True),
+        )
+
+        experiments = self._session.sql(
+            f"SHOW EXPERIMENTS LIKE 'OR_REPLACE_EXPERIMENT' IN SCHEMA {self._db_name}.{self._schema_name}"
+        ).collect()
+        self.assertLen(experiments, 1)
+
+    def test_typed_experiment_specification_round_trip(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("SPECIFICATION_ROUND_TRIP")
+        specification = self._create_evaluation_spec()
+        self.exp._sql_client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client.CreationMode(),
+            experiment_type=ExperimentType.AI_FUNCTION_EVALUATION,
+            specification=specification,
+        )
+
+        result = self._session.sql(f"DESC EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}").collect()
+
+        self.assertLen(result, 1)
+        self.assertEqual(yaml.safe_load(result[0]["spec"]), yaml.safe_load(specification))
+
+    def test_public_evaluate_api(self) -> None:
+        self._create_evaluation_spec()
+        input_dataset = dataset.Dataset(
+            self._session,
+            self._db_name,
+            self._schema_name,
+            "EVALUATION_DATASET",
+            selected_version="v1",
+        )
+        experiment_fqn = f"{self._db_name}.{self._schema_name}.PUBLIC_EVALUATE_API"
+
+        job = cortex.evaluate(
+            data=input_dataset,
+            scorers=["exact_match"],
+            model="llama3.1-8b",
+            prompt="Answer {0}",
+            inputs=["question"],
+            label_col="label_col",
+            session=self._session,
+            experiment=experiment_fqn,
+        )
+
+        result = self._session.sql(f"DESC EXPERIMENT {experiment_fqn}").collect()
+
+        self.assertEqual(job.experiment, experiment_fqn)
+        self.assertLen(result, 1)
+        self.assertEqual(result[0]["type"], "AI_FUNCTION_EVALUATION")
+        self.assertEqual(
+            yaml.safe_load(result[0]["spec"]),
+            {
+                "query_text": "AI_COMPLETE('llama3.1-8b', PROMPT('Answer {0}', QUESTION))::VARCHAR",
+                "metrics": [{"name": "exact_match"}],
+                "dataset": {
+                    "name": f"{self._db_name}.{self._schema_name}.EVALUATION_DATASET",
+                    "version": "v1",
+                    "ground_truth": "LABEL_COL",
+                },
+            },
+        )
+
     def test_experiment_creation_and_deletion(self) -> None:
         # set_experiment with a new experiment name creates an experiment
         self.exp.set_experiment(experiment_name="test_experiment")

@@ -3774,9 +3774,11 @@ class ModelOpsTest(parameterized.TestCase):
             "serving": {
                 "functions": {
                     "predict": {
+                        "type": "FUNCTION",
                         "signature": _DUMMY_SIG["predict"].to_dict(),
                     },
                     "predict_table": {
+                        "type": "TABLE_FUNCTION",
                         "signature": _DUMMY_SIG["predict_table"].to_dict(),
                         "properties": {"is_partition": False},
                     },
@@ -3826,6 +3828,152 @@ class ModelOpsTest(parameterized.TestCase):
         function_info_by_method = {function["target_method"]: function for function in result}
         self.assertEqual(function_info_by_method["predict"]["signature"], _DUMMY_SIG["predict"])
         self.assertFalse(function_info_by_method["predict_table"]["is_partitioned"])
+
+    def test_get_functions_v2_without_warehouse_functions_uses_extension_spec(self) -> None:
+        raw_model_spec = {
+            "version": "2.0",
+            "model": {
+                "type": "USER_MODEL",
+                "framework": "CUSTOM_RUNTIME",
+                "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
+            },
+            "serving": {
+                "functions": {
+                    "predict": {
+                        "type": "TABLE_FUNCTION",
+                        "signature": _DUMMY_SIG["predict"].to_dict(),
+                    },
+                }
+            },
+        }
+        with (
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                return_value=[Row(model_spec=yaml.safe_dump(raw_model_spec))],
+            ),
+            mock.patch.object(self.m_ops._model_version_client, "show_functions", return_value=[]),
+            mock.patch.object(self.m_ops, "get_model_version_manifest", autospec=True) as get_model_version_manifest,
+        ):
+            result = self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+        get_model_version_manifest.assert_not_called()
+        self.assertEqual(result[0]["target_method"], "predict")
+        self.assertEqual(
+            result[0]["target_method_function_type"],
+            model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+        )
+        self.assertFalse(result[0]["is_object_output"])
+
+    def test_get_functions_v2_without_warehouse_functions_reads_outputs_and_partition(self) -> None:
+        predict_signature = _DUMMY_SIG["predict"].to_dict()
+        predict_signature["outputs"] = [{"name": "output", "type": "OBJECT"}]
+        table_signature = _DUMMY_SIG["predict_table"].to_dict()
+        table_signature["outputs"] = [
+            {"name": "output", "type": "FLOAT"},
+            {"name": "score", "type": "FLOAT"},
+        ]
+        raw_model_spec = {
+            "version": "2.0",
+            "model": {
+                "type": "USER_MODEL",
+                "framework": "CUSTOM_RUNTIME",
+                "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
+            },
+            "serving": {
+                "functions": {
+                    "predict": {"type": "FUNCTION", "signature": predict_signature},
+                    "predict_table": {
+                        "type": "TABLE_FUNCTION",
+                        "signature": table_signature,
+                        "properties": {"is_partition": True},
+                    },
+                }
+            },
+        }
+        with (
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                return_value=[Row(model_spec=yaml.safe_dump(raw_model_spec))],
+            ),
+            mock.patch.object(self.m_ops._model_version_client, "show_functions", return_value=[]),
+            mock.patch.object(self.m_ops, "get_model_version_manifest", autospec=True) as get_model_version_manifest,
+        ):
+            result = self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+        get_model_version_manifest.assert_not_called()
+        function_info_by_method = {function["target_method"]: function for function in result}
+        self.assertEqual(function_info_by_method["predict"]["target_method_function_type"], "FUNCTION")
+        self.assertTrue(function_info_by_method["predict"]["is_object_output"])
+        self.assertFalse(function_info_by_method["predict"]["is_partitioned"])
+        self.assertEqual(function_info_by_method["predict_table"]["target_method_function_type"], "TABLE_FUNCTION")
+        self.assertTrue(function_info_by_method["predict_table"]["is_object_output"])
+        self.assertTrue(function_info_by_method["predict_table"]["is_partitioned"])
+
+    def test_get_functions_v1_without_warehouse_functions_uses_manifest(self) -> None:
+        model_spec = {
+            "signatures": {
+                "predict": _DUMMY_SIG["predict"].to_dict(),
+                "predict_table": _DUMMY_SIG["predict_table"].to_dict(),
+            }
+        }
+        manifest = {
+            "methods": [
+                {"name": "predict", "type": "FUNCTION", "outputs": [{"name": "output", "type": "FLOAT"}]},
+                {
+                    "name": "predict_table",
+                    "type": "TABLE_FUNCTION",
+                    "outputs": [
+                        {"name": "output", "type": "FLOAT"},
+                        {"name": "score", "type": "FLOAT"},
+                    ],
+                },
+            ]
+        }
+        with (
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                return_value=[Row(model_spec=yaml.safe_dump(model_spec))],
+            ),
+            mock.patch.object(self.m_ops._model_version_client, "show_functions", return_value=[]),
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                return_value=cast(model_meta_schema.ModelMetadataDict, model_spec),
+            ),
+            mock.patch.object(
+                self.m_ops, "get_model_version_manifest", autospec=True, return_value=manifest
+            ) as get_model_version_manifest,
+        ):
+            result = self.m_ops.get_functions(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+
+        get_model_version_manifest.assert_called_once()
+        function_info_by_method = {function["target_method"]: function for function in result}
+        self.assertEqual(function_info_by_method["predict"]["target_method_function_type"], "FUNCTION")
+        self.assertFalse(function_info_by_method["predict"]["is_object_output"])
+        self.assertEqual(function_info_by_method["predict_table"]["target_method_function_type"], "TABLE_FUNCTION")
+        self.assertTrue(function_info_by_method["predict_table"]["is_object_output"])
+        self.assertTrue(function_info_by_method["predict_table"]["is_partitioned"])
 
     @parameterized.parameters(  # type: ignore[misc]
         ("NUMBER(38,0)", False),
@@ -3925,6 +4073,7 @@ class ModelOpsTest(parameterized.TestCase):
             "serving": {
                 "functions": {
                     "predict": {
+                        "type": "FUNCTION",
                         "signature": _DUMMY_SIG["predict"].to_dict(),
                     }
                 }

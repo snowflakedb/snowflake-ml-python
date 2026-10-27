@@ -199,6 +199,54 @@ def _inject_batch_fv_source_from_metadata(
     return True
 
 
+def _inject_stream_fv_source_from_stream_config(
+    spec_payload: dict[str, Any],
+    stream_config: Any,
+) -> bool:
+    """Rehydrate an OFT-less StreamingFeatureView's ``spec.sources`` from the
+    ``stream_config`` cell of a ``list_feature_views`` row.
+
+    A legacy view-backed ``EXTERNAL_FEATURE_VIEW`` streaming FV has no
+    Online Feature Table, so it never reaches the
+    ``DESCRIBE … TYPE = SPECIFICATION`` recovery path — this list-driven
+    path is the only place its ``spec.sources`` can be recovered.  Core
+    surfaces the deployed streaming metadata as a ``{"stream_source",
+    "transformation_fn"}`` dict on the row's ``stream_config`` cell (mirrors
+    ``_inject_batch_fv_source_from_metadata`` for the batch case).
+
+    Only the stream *source* is injected.  ``stream_config`` carries the
+    transformation function *name* but not its body, and a ``udf`` block
+    without a body is unappliable (``STREAM_FV_UDF_REQUIRED``) and crashes the
+    Python exporter — so the UDF is deliberately left for re-registration.
+
+    Core emits ``{"stream_source": "unknown"}`` when ``get_streaming_metadata``
+    returns ``None`` — exactly the legacy blind-spot case.  That sentinel is
+    treated as **unrecovered**: injecting it would fabricate a bogus source,
+    so ``spec.sources`` is left empty.
+
+    Args:
+        spec_payload: A StreamingFV spec dict (a ``_build_offline_fv_object``
+            output), mutated in place.
+        stream_config: The decoded ``stream_config`` cell from the list-FV
+            row.  ``None`` / non-dict / the ``"unknown"`` sentinel all mean
+            no metadata, so ``spec.sources`` is left empty.
+
+    Returns:
+        ``True`` when ``spec.sources[]`` was populated from ``stream_config``,
+        ``False`` when no usable stream source was available.
+    """
+    inner = spec_payload.get("spec") if isinstance(spec_payload.get("spec"), dict) else None
+    if inner is None or not isinstance(stream_config, dict):
+        return False
+    stream_source = str(stream_config.get("stream_source") or "").strip()
+    if not stream_source or stream_source.lower() == "unknown":
+        return False
+    if inner.get("sources"):
+        return False
+    inner["sources"] = [{"name": stream_source, "source_type": "Stream"}]
+    return True
+
+
 def _warn_if_sources_unrecovered(spec_payload: dict[str, Any], name: str, version: str) -> None:
     """Warn when a BatchFV's ``spec.sources`` is still empty after recovery.
 
@@ -918,6 +966,19 @@ def _build_offline_fv_object(
         # stripped from the structural hash on both sides.
         _inject_fv_refresh_freq_from_list_row(spec_payload, fv_row)
         _warn_if_sources_unrecovered(spec_payload, name, version)
+    elif kind == "StreamingFeatureView":
+        # OFT-less StreamingFeatureView (legacy view-backed
+        # EXTERNAL_FEATURE_VIEW): this list-driven path is the only place its
+        # source can be recovered, since it never reaches the
+        # DESCRIBE … TYPE = SPECIFICATION path.  Rehydrate spec.sources from
+        # the stream_config cell (the UDF body is unrecoverable, so it is left
+        # out); the "unknown" sentinel is treated as unrecovered
+        # (see _inject_stream_fv_source_from_stream_config).
+        # The healthy OFT/SPECIFICATION path is untouched — a normal streaming
+        # FV is recovered there first and this offline object is dropped on the
+        # key collision — so healthy streaming hashes cannot shift.
+        stream_config = fv_row.get("stream_config") if isinstance(fv_row, dict) else None
+        _inject_stream_fv_source_from_stream_config(spec_payload, stream_config)
 
     content_hash = _full_spec_hash(spec_payload)
     # Pass the authoritative row version as a top-level fallback so the

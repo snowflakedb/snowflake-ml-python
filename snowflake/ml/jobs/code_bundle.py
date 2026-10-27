@@ -9,7 +9,7 @@ from typing import Any, cast
 import yaml
 
 from snowflake import snowpark
-from snowflake.connector import converter, errors as connector_errors
+from snowflake.connector import errors as connector_errors
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
@@ -293,7 +293,7 @@ def register_code_bundle(
     # passed as an escaped string literal while the bundle name stays bound.
     query_helper.run_query(
         session,
-        f"CREATE OR REPLACE CODE BUNDLE IDENTIFIER(?) FROM '{converter.SnowflakeConverter.escape(safe_stage_path)}'",
+        f"CREATE OR REPLACE CODE BUNDLE IDENTIFIER(?) FROM '{_escape_string_literal(safe_stage_path)}'",
         params=[bundle_fqn],
     )
 
@@ -351,6 +351,23 @@ def _get_code_bundle_stage_subpath(name: str, bundle_fqn: str) -> str:
     return f"code_bundle_{name_digest}"
 
 
+def _escape_string_literal(value: str) -> str:
+    """Escape a value for embedding in a single-quoted SQL string literal.
+
+    Mirrors the escaping the Snowflake connector applies to bound string values. It is kept local
+    because snowflake.connector.converter, which exposed this, was removed in connector 5, where
+    the replacement lives under a private path.
+
+    Args:
+        value: The raw string to embed between single quotes.
+
+    Returns:
+        The escaped string, without the surrounding quotes.
+    """
+    # Backslash first: the replacements below introduce backslashes that must not be doubled.
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("'", "\\'")
+
+
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
 def register_job_from_code_bundle(
     code_bundle: str | MLCodeBundle,
@@ -389,7 +406,7 @@ def register_job_from_code_bundle(
     bundle_fqn, session, _ = _resolve_code_bundle(code_bundle, session)
 
     # ENTRYPOINT only accepts a string literal, not a bind parameter.
-    query = f"EXECUTE CODE BUNDLE IDENTIFIER(?) ENTRYPOINT = '{converter.SnowflakeConverter.escape(entrypoint)}'"
+    query = f"EXECUTE CODE BUNDLE IDENTIFIER(?) ENTRYPOINT = '{_escape_string_literal(entrypoint)}'"
     params: list[Any] = [bundle_fqn]
     if args:
         placeholders = ", ".join(["?"] * len(args))

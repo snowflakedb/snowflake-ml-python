@@ -11,12 +11,15 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from importlib import metadata as importlib_metadata
 from typing import Any, Callable, Generator, Literal
 from urllib import parse
 
 import cloudpickle
 
 from snowflake import snowpark
+from snowflake.ml import version as snowml_version
+from snowflake.ml._internal import env_utils
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.snowpark import exceptions as snowpark_exceptions
 
@@ -129,6 +132,8 @@ def zip_python_package(
 ) -> None:
     """Zip an imported Python package.
 
+    If snowflake.ml is imported from an installed snowflake-ml-python, only files in its RECORD are zipped.
+
     Args:
         zipfile_path: Destination zip path.
         package_name: Dotted package name to zip.
@@ -137,6 +142,11 @@ def zip_python_package(
     """
     import importlib_resources
     from importlib_resources import abc as importlib_resources_abc
+
+    record_files = _snowml_record_files(package_name)
+    if record_files is not None:
+        _zip_record_files(zipfile_path, record_files, ignore_generated_py_file, exclude_dir_names)
+        return
 
     _, pkg_start_path = get_package_path(package_name)
     if os.path.isfile(pkg_start_path):
@@ -173,6 +183,57 @@ def zip_python_package(
 
         for sub_path_info in importlib_resources.files(package_name).iterdir():
             _add_to_zip(zf, sub_path_info, base_arcname)
+
+
+def _snowml_record_files(package_name: str) -> list[importlib_metadata.PackagePath] | None:
+    """Return snowflake-ml-python RECORD entries under ``package_name``.
+
+    Other distributions (e.g. Container Runtime) install modules into the ``snowflake.ml`` namespace, so walking the
+    imported package would pick them up. Returns None unless snowflake.ml is imported from that installed distribution.
+
+    Args:
+        package_name: Dotted package name to zip.
+
+    Returns:
+        The RECORD entries under ``package_name``, or None if they should not be used.
+    """
+    try:
+        dist = importlib_metadata.distribution(env_utils.SNOWPARK_ML_PKG_NAME)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    dist_version_file = pathlib.Path(str(dist.locate_file("snowflake/ml/version.py"))).resolve()
+    if dist_version_file != pathlib.Path(snowml_version.__file__).resolve():
+        return None
+    prefix = tuple(package_name.split("."))
+    files = [file for file in dist.files or [] if file.parts[: len(prefix)] == prefix]
+    return files or None
+
+
+def _zip_record_files(
+    zipfile_path: str,
+    files: list[importlib_metadata.PackagePath],
+    ignore_generated_py_file: bool,
+    exclude_dir_names: tuple[str, ...],
+) -> None:
+    excluded_dirs = set(exclude_dir_names)
+    entries: dict[pathlib.PurePosixPath, pathlib.Path] = {}
+    for file in files:
+        if "__pycache__" in file.parts or excluded_dirs.intersection(file.parts[:-1]):
+            continue
+        if ignore_generated_py_file and file.name.endswith(GENERATED_PY_FILE_EXT):
+            continue
+        arcname = pathlib.PurePosixPath(*file.parts)
+        if not _able_ascii_encode(str(arcname)):
+            raise ValueError(f"File name {arcname} cannot be encoded using ASCII. Please rename.")
+        entries[arcname] = pathlib.Path(str(file.locate()))
+
+    # Namespace packages need explicit directory entries to be importable from a zip.
+    dir_names = {parent for arcname in entries for parent in arcname.parents if parent.parts}
+    with zipfile.ZipFile(zipfile_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for dir_name in sorted(dir_names):
+            zf.writestr(str(dir_name) + "/", "")
+        for arcname, path in entries.items():
+            zf.writestr(str(arcname), path.read_bytes())
 
 
 def hash_directory(

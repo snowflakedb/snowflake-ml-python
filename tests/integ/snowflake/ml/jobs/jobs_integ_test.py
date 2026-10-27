@@ -1108,6 +1108,23 @@ class JobManagerTest(JobTestBase):
         else:
             self.skipTest("Event table ingest did not complete in 300 seconds")
 
+        def assert_limit_keeps_most_recent_lines(read_logs: Callable[[int], list[Any]]) -> None:
+            # Lines can still be landing in the event table, so compare against two identical unlimited reads.
+            limit = 3
+            for _ in range(3):
+                before = [row[0] for row in read_logs(-1)]
+                limited = [row[0] for row in read_logs(limit)]
+                after = [row[0] for row in read_logs(-1)]
+                if before == after:
+                    self.assertEqual(limited, after[-limit:])
+                    return
+                time.sleep(interval)
+            self.skipTest("Event table logs were still changing after 3 reads")
+
+        database, schema, name = identifier.parse_schema_level_object_identifier(job.id)
+        database = database or self.session.get_current_database()
+        schema = schema or self.session.get_current_schema()
+
         with mock.patch("snowflake.ml.jobs._utils.query_helper.run_query", side_effect=sql_side_effect):
             with (
                 mock.patch(
@@ -1119,6 +1136,11 @@ class JobManagerTest(JobTestBase):
                 # check the SPCS logs
                 self.assertIn("hello world", job.get_logs(verbose=True))
                 self.assertFalse(any("falling back to event table" in line for line in cm.output))
+                assert_limit_keeps_most_recent_lines(
+                    lambda limit: jd._get_logs_spcs(
+                        self.session, job.id, limit=limit, instance_id=0, container_name="main"
+                    )
+                )
             with (
                 mock.patch(
                     "snowflake.ml.jobs.job._get_logs_spcs",
@@ -1131,6 +1153,11 @@ class JobManagerTest(JobTestBase):
                     # fallback to event table if SPCS logs are not available
                     self.assertIn("hello world", job.get_logs(verbose=True))
                     self.assertTrue(any("falling back to event table" in line for line in cm.output))
+                    assert_limit_keeps_most_recent_lines(
+                        lambda limit: jd._get_service_log_from_event_table(
+                            self.session, name, database=database, schema=schema, instance_id=0, limit=limit
+                        )
+                    )
                 except sp_exceptions.SnowparkSQLException as e:
                     if not (
                         e.sql_error_code == 2003

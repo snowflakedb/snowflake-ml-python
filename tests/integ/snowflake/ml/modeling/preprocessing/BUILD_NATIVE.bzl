@@ -17,6 +17,20 @@ def get_build_rules_for_native_impl():
     )
 
     py_test(
+        name = "frequency_encoder_test",
+        srcs = ["frequency_encoder_test.py"],
+        timeout = TIMEOUT,
+        deps = [
+            "//snowflake/ml/_internal/exceptions:exceptions",
+            "//snowflake/ml/_internal/utils:connection_params",
+            "//snowflake/ml/modeling/preprocessing:frequency_encoder",
+            "//tests/integ/snowflake/ml/modeling/framework:utils",
+        ],
+        optional_dependencies = ["category-encoders"],
+        tags = ["feature:modeling", "short_regress"],
+    )
+
+    py_test(
         name = "k_bins_discretizer_test",
         srcs = ["k_bins_discretizer_test.py"],
         shard_count = SHARD_COUNT,

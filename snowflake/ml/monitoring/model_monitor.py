@@ -1,3 +1,4 @@
+from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.monitoring._client import model_monitor_sql_client
@@ -102,3 +103,21 @@ class ModelMonitor:
         self._model_monitor_client.drop_custom_metric_column(
             self.name, custom_metric_column_identifier, statement_params=statement_params
         )
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    def _describe(self) -> snowpark.Row:
+        """Return the DESC MODEL MONITOR row for this Model Monitor.
+
+        This method is in development.
+
+        Returns:
+            The describe row, including columns and MONITOR_START_TIME.
+        """
+        statement_params = telemetry.get_statement_params(
+            telemetry.TelemetryProject.MLOPS.value,
+            telemetry.TelemetrySubProject.MONITORING.value,
+        )
+        return self._model_monitor_client.describe_monitor(self.name, statement_params=statement_params)

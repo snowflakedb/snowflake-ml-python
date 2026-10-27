@@ -111,6 +111,20 @@ class RunTest(absltest.TestCase):
         # Verify end_run was called with FAILED status
         self.mock_experiment_tracking.end_run.assert_called_once_with(status=run_metadata.RunStatus.FAILED.value)
 
+    def test_context_manager_skips_end_when_run_is_no_longer_active(self) -> None:
+        """A run that was deactivated before the context exits, such as by pausing it, is left unchanged."""
+        run = entities.Run(
+            experiment_tracking=self.mock_experiment_tracking,
+            experiment_name=self.experiment_name,
+            run_name=self.run_name,
+        )
+        self.mock_experiment_tracking._run = run
+
+        with run:
+            self.mock_experiment_tracking._run = None
+
+        self.mock_experiment_tracking.end_run.assert_not_called()
+
 
 if __name__ == "__main__":
     absltest.main()

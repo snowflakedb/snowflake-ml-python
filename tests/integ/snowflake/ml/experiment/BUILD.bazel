@@ -12,9 +12,43 @@ py_library(
 )
 
 py_test(
+    name = "experiment_tracking_commit_status_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_commit_status_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":experiment_tracking_integ_test_base",
+        "//snowflake/ml/experiment",
+    ],
+)
+
+py_test(
     name = "experiment_tracking_crud_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_crud_integ_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":experiment_tracking_integ_test_base",
+        "//snowflake/cortex:init",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/dataset",
+        "//snowflake/ml/experiment",
+        "//snowflake/ml/utils:sql_client",
+    ],
+)
+
+py_test(
+    name = "experiment_tracking_run_status_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_run_status_integ_test.py"],
     optional_dependencies = ["scikit-learn"],
     tags = [
         "feature:experiment_tracking",

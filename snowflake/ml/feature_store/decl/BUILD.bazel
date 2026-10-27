@@ -503,6 +503,28 @@ py_test(
 )
 
 py_test(
+    name = "column_evolution_parity_test",
+    srcs = [
+        "tests/__init__.py",
+        "tests/test_column_evolution_parity.py",
+        "tests/test_refresh_mode_normalization.py",
+    ],
+    data = [
+        ":decl_golden_specs",
+        ":decl_loader_test_fixtures",
+    ],
+    main = "tests/test_column_evolution_parity.py",
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":decl_lib_planner",
+        "//snowflake/ml/test_utils:pytest_driver",
+    ],
+)
+
+py_test(
     name = "dependencies_test",
     srcs = [
         "tests/__init__.py",

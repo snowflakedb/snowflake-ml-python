@@ -1,6 +1,79 @@
 # Release History
 
-## 2.6.0
+## 2.7.0
+
+### New Features
+
+* Modeling: Added `preprocessing.FrequencyEncoder`, which encodes each category by its observed frequency
+  (`normalize=True`, the default) or raw count (`normalize=False`) from `fit` — a compact encoding for
+  high-cardinality categorical features. Encoding runs entirely in Snowflake for Snowpark DataFrames; local
+  pandas encoding uses the optional `category_encoders` package.
+* Feature Store: Online feature reads on the Postgres-backed Online Feature Store can now use a WebSocket
+  transport, which authenticates once per connection instead of once per request. Opt in by setting
+  `SNOWFLAKE_ML_ONLINE_WS_ENABLED=true`; `SNOWFLAKE_ML_ONLINE_WS_POOL_SIZE` sets how many connections are held
+  open, `SNOWFLAKE_ML_ONLINE_WS_PIPELINE_DEPTH` how many requests may be in flight per connection, and
+  `SNOWFLAKE_ML_ONLINE_WS_MAX_CONN_AGE_SECONDS` the longest a connection is held before it is replaced (connections
+  are otherwise replaced just before the lifetime the service advertises for each). Leaving
+  the flag unset or unrecognised keeps every read on HTTP, and reads fall back to HTTP automatically whenever
+  the WebSocket endpoint cannot serve, so behaviour is unchanged unless the flag is set. Requires the
+  `websocket-client` package.
+* Experiment Tracking: Runs can be paused and cancelled. `pause_run` moves a running run to `PAUSED`,
+  and `start_run` resumes a paused run back to `RUNNING`. `end_run` accepts `"CANCELLED"` in addition
+  to `"FINISHED"` and `"FAILED"`. Metrics, parameters, and artifacts can only be logged while a run is
+  running.
+
+### Bug Fixes
+
+* Feature Store: Feature column names are now written to the online feature table specification as the
+  name the column is actually stored under. A case-sensitive column was previously registered with its
+  quote delimiters attached (`"myCol"` instead of `myCol`), so the online columns did not match the
+  offline table the feature view was built from, and registration reported no error. A case-sensitive
+  secondary aggregation key is corrected the same way. A tiled feature view aggregating a case-sensitive
+  source column now resolves its partial columns instead of failing to build, and a case-sensitive feature
+  column is no longer dropped from an upstream source's column list, nor does a case-sensitive entity
+  column appear among a realtime feature view's features. Aggregation output
+  names derived from a case-sensitive source column are well-formed as well; they previously produced an
+  invalid identifier such as `"MYCOL"_SUM_24H`. `Feature.alias` now escapes an interior quote instead of
+  emitting it verbatim.
+* Feature Store: Postgres-backed online reads now return a column whose name is not plain upper case, such as
+  `feeSum2d` or `fee sum`, under its stored name with its values. The pandas result previously filled such a
+  column with NaN, and the Snowpark result renamed a mixed-case column to upper case (`FEESUM2D`).
+* Feature Store: Declarative `plan` no longer emits spurious `COLUMN_REMOVED` warnings for a batch feature view it
+  already reports as unchanged. The up-to-date check now applies the same `refresh_mode` normalization as the
+  planner, and the output-column diff ignores server-derived secondary-key columns. A genuine column removal still
+  warns.
+* Feature Store: `get_feature_view` no longer fails with "timestamp_col ... is not found in input dataframe" for tiled
+  feature views when the session's current database differs from the feature store's, or when the feature store
+  schema name is case-sensitive.
+* Feature Store: Imperatively registered batch feature views now stamp the source `query` in `FV_SOURCE_REFS`, so a
+  declarative export/init over them builds a valid `BatchSource`, and a bare
+  `update_feature_view(updated_feature_df=...)` evolve re-stamps the new binding.
+* Feature Store: The synthetic `FV_SOURCE_REFS` source name is now version-qualified (`<FV>_<VERSION>__SOURCE`), so two
+  versions of one batch feature view no longer collapse to one source and replan as `RECREATE_SOURCE`.
+* Registry: Models packaged with pip dependencies no longer embed a copy of the local `snowflake-ml-python` just
+  because its version is missing from the Snowflake Anaconda channel. Such models now install `snowflake-ml-python`
+  from PyPI.
+* ML Jobs: `MLJob.target_instances` now reports the instance count the job was submitted with instead of reading
+  `1` when the service's live instance count is not yet available.
+* ML Jobs: `MLJob.get_logs(limit=n)` and `MLJob.show_logs(limit=n)` now return the most recent `n` lines when the
+  logs are read from the event table, as they already do for local container logs, instead of the first `n`.
+
+### Behavior Changes
+
+* Feature Store: `Feature.alias` now keeps the case of a name that is already written with double
+  quotes, so `alias('"myCol"')` produces the column `myCol` rather than `MYCOL`. It also rejects a
+  name that cannot form a valid identifier, such as `alias("total amount")`, instead of emitting a
+  broken one; pass `case_sensitive=True` to use such a name verbatim as a quoted column.
+* Feature Store: Defining a batch feature view whose aggregations read source columns that differ only in case,
+  such as `"feeAmount"` and `"FeeAmount"`, now raises a `ValueError`. Both columns map to the same internal tile
+  column, so their aggregations would otherwise share one column's data.
+* Registry: ``ModelVersion.create_service(block=True)`` waits for the Snowflake
+  deploy statement to finish instead of failing locally after 30 minutes per
+  model-build status poll.
+
+### Deprecations
+
+## 2.6.0 (2026-10-20)
 
 ### New Features
 
@@ -8,6 +81,8 @@
   create a Snowflake code bundle and run ML Jobs from it. `delete_code_bundle` drops a registered bundle.
 * Feature Store: The Postgres-backed Online Feature Store is now generally available, including tiled aggregations,
   streaming and realtime feature views and feature groups.
+* Registry: `huggingface.TransformersPipeline` can omit `task`; when omitted, the task is inferred
+  automatically from the model's Hugging Face Hub `pipeline_tag` (requires `huggingface_hub`).
 
 ### Bug Fixes
 
@@ -15,27 +90,6 @@
   name contains `/` (`@repo/branches/"feature/x"/src`). These paths used to fail with "does not exist".
 * ML Jobs: `MLJob.result()` no longer returns another job's result when results are fetched concurrently on one
   machine.
-
-### Behavior Changes
-
-### Deprecations
-
-## 2.5.0 (2026-10-14)
-
-### New Features
-
-* Registry: `huggingface.TransformersPipeline` can omit `task`; when omitted, the task is inferred
-  automatically from the model's Hugging Face Hub `pipeline_tag` (requires `huggingface_hub`).
-
-### Bug Fixes
-
-* Modeling: The `snowflake.ml.modeling` estimators and preprocessing transformers are not deprecated.
-  The `DeprecationWarning` emitted when importing a `snowflake.ml.modeling` subpackage, announced in
-  2.0.0, has been removed.
-* ML Jobs: `MLJob.get_logs(verbose=False)` no longer returns container startup and shutdown logs when other log
-  lines land between the lines of the job start or end banner.
-* Dependencies: Raised the `fsspec` requirement ceiling from `<2026` to `<2027` so `fsspec`
-  2026.6.0, which fixes CVE-2026-104851, can be installed.
 
 ### Behavior Changes
 
@@ -52,15 +106,38 @@
 
 ### Deprecations
 
+## 2.5.0 (2026-10-14)
+
+### New Features
+
+* Registry: `create_service` now accepts `FeatureGroup` objects in `feature_sources_per_function`
+  alongside `FeatureView`s. Snowflake resolves the `FeatureGroup`'s online feature tables at
+  deploy time, so callers no longer need to enumerate the underlying feature views manually.
+
+* Experiment Tracking: Experiment runs now appear as first-class objects in lineage. Calling
+  `model_version.lineage(direction="upstream", domain_filter={"experiment"})` returns `Run` instances
+  with `database_name`, `schema_name`, `experiment_name`, and `name` properties that can be passed straight back
+  into experiment tracking.
+
+### Bug Fixes
+
+* Modeling: The `snowflake.ml.modeling` estimators and preprocessing transformers are not deprecated.
+  The `DeprecationWarning` emitted when importing a `snowflake.ml.modeling` subpackage, announced in
+  2.0.0, has been removed.
+* ML Jobs: `MLJob.get_logs(verbose=False)` no longer returns container startup and shutdown logs when other log
+  lines land between the lines of the job start or end banner.
+* Dependencies: Raised the `fsspec` requirement ceiling from `<2026` to `<2027` so `fsspec`
+  2026.6.0, which fixes CVE-2026-104851, can be installed.
+
+### Behavior Changes
+
+### Deprecations
+
 ## 2.4.0 (2026-10-06)
 
 ### New Features
 
 * Generic: Support Python 3.14.
-
-* Registry: `create_service` now accepts `FeatureGroup` objects in `feature_sources_per_function`
-  alongside `FeatureView`s. Snowflake resolves the `FeatureGroup`'s online feature tables at
-  deploy time, so callers no longer need to enumerate the underlying feature views manually.
 
 * Registry: `FeatureSpec(dtype=DataType.OBJECT)` now accepts schema-free Python dictionaries as a
   model input or output (SQL `OBJECT`). Callers can pass a dict to `ModelVersion.run`, an object
@@ -76,11 +153,6 @@
 * Experiment Tracking: `ExperimentTracking` accepts an optional `warnings_as_errors` parameter. When True,
   conditions that are normally reported as warnings are raised instead.
 
-* Experiment Tracking: Experiment runs now appear as first-class objects in lineage. Calling
-  `model_version.lineage(direction="upstream", domain_filter={"experiment"})` returns `Run` instances
-  with `database_name`, `schema_name`, `experiment_name`, and `name` properties that can be passed straight back
-  into experiment tracking.
-
 ### Bug Fixes
 
 ### Behavior Changes
@@ -91,6 +163,11 @@
 * Registry: `log_model` no longer raises when `options={'relax_version': True}` is used with pip
   requirements or Snowpark Container Services-only targets. The option is ignored, a warning is
   emitted, and exact pip version specifications are kept.
+
+* Feature Store: `update_feature_view()` now rejects a `target_lag` change on a feature view whose online store
+  is `POSTGRES`, instead of reporting success for a change that is not applied. Set `target_lag` when online
+  storage is first enabled, or delete and re-register the feature view to change it. Enabling or disabling
+  online storage, and `target_lag` changes on hybrid-table online stores, are unaffected.
 
 ### Deprecations
 
@@ -109,11 +186,6 @@
   and the existing feature views pick up the fix on their next read, with no re-registration or backfill required.
 
 ### Behavior Changes
-
-* Feature Store: `update_feature_view()` now rejects a `target_lag` change on a feature view whose online store
-  is `POSTGRES`, instead of reporting success for a change that is not applied. Set `target_lag` when online
-  storage is first enabled, or delete and re-register the feature view to change it. Enabling or disabling
-  online storage, and `target_lag` changes on hybrid-table online stores, are unaffected.
 
 ### Deprecations
 
@@ -2967,7 +3039,7 @@ not readable by new SDK.
 * Model Development: Changed Metrics APIs to imitate sklearn metrics modules:
   * `accuracy_score()`, `confusion_matrix()`, `precision_recall_fscore_support()`, `precision_score()` methods move from
     respective modules to `metrics.classification`.
-* Model Registry: The default table/stage created by the Registry now uses "_SYSTEM_" as a prefix.
+* Model Registry: The default table/stage created by the Registry now uses "*SYSTEM*" as a prefix.
 * Model Registry: `get_model_history()` method as been enhanced to include the history of model deployment.
 
 ### New Features

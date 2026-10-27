@@ -162,6 +162,28 @@ class FeatureViewValidationTest(parameterized.TestCase):
 
         self.assertIn("Duplicate feature alias", str(cm.exception))
 
+    def test_source_columns_differing_only_in_case_raise_error(self) -> None:
+        """Two source columns that fold to one tile column are rejected rather than shared."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column='"feeAmount"',
+                window="2h",
+                output_column="FEE_SUM",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column='"FeeAmount"',
+                window="2h",
+                output_column="OTHER_FEE_SUM",
+            ),
+        ]
+
+        with self.assertRaises(ValueError) as cm:
+            self._create_mock_feature_view_with_specs(specs)
+
+        self.assertIn("differ only in case", str(cm.exception))
+
     def test_iceberg_rejects_hybrid_table_online(self) -> None:
         """Hybrid-table online storage is unsupported for Iceberg-backed feature views."""
         mock_df = MagicMock()
@@ -2461,6 +2483,15 @@ class PostgresOnlinePandasBuilderTest(absltest.TestCase):
         self.assertEqual(pdf["PAYLOAD"].dtype, object)
         self.assertEqual(pdf["ATTRS"].dtype, object)
 
+    def test_empty_rows_label_quoted_fields_by_stored_name(self) -> None:
+        """An empty result labels quoted schema field names by their stored names, keeping dtypes."""
+        schema = StructType([StructField("USER_ID", StringType()), StructField('"feeSum2d"', DoubleType())])
+
+        pdf = self._build([], schema)
+
+        self.assertEqual(list(pdf.columns), ["USER_ID", "feeSum2d"])
+        self.assertEqual(pdf["feeSum2d"].dtype, "float64")
+
     def test_column_order_follows_schema_not_row_keys(self) -> None:
         """Output columns must follow schema.fields regardless of row-dict key order."""
         schema = StructType(
@@ -3188,6 +3219,214 @@ class TiledStreamingFeatureViewRequiresRefreshFreqTest(parameterized.TestCase):
                 feature_granularity="1d",
                 features=[Feature.sum("AMOUNT", "2d")],
             )
+
+
+class ReconstructedTiledFeatureViewToleratesMissingRefreshFreqTest(absltest.TestCase):
+    """The tiled ``refresh_freq`` requirement gates *authoring*, not reconstruction.
+
+    A tiled FV registered without ``refresh_freq`` is materialized as a plain
+    VIEW (``EXTERNAL_FEATURE_VIEW``).  Reading it back routes through
+    ``_compose_feature_view``'s external branch, which hardcodes
+    ``refresh_freq=None`` while still forwarding the persisted tiling metadata,
+    so ``_construct_feature_view`` -> ``__init__`` -> ``_validate()`` used to
+    raise unconditionally.  That stranded the object: it could be neither read,
+    updated, nor dropped.
+
+    Applied state is descriptive.  Reconstruction therefore skips the
+    construction-time cadence check via the ``_reconstructed`` marker, while the
+    authoring path keeps rejecting a tiled FV with no cadence.
+    """
+
+    def _tiled_mock_df(self) -> MagicMock:
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT USER_ID, AMOUNT, EVENT_TIME FROM SRC"]}
+        mock_df.columns = ["USER_ID", "AMOUNT", "EVENT_TIME"]
+        # A real schema: the non-tiled branch of _validate inspects the
+        # timestamp_col's datatype, which a bare MagicMock cannot satisfy.
+        mock_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        return mock_df
+
+    def _reconstruct(self, *, refresh_freq: str | None, tiled: bool = True) -> FeatureView:
+        """Rebuild an FV the way ``get_feature_view`` / ``from_json`` do."""
+        return FeatureView._construct_feature_view(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=self._tiled_mock_df(),
+            timestamp_col="EVENT_TIME",
+            desc="",
+            version="V1",
+            status=FeatureViewStatus.STATIC,
+            feature_descs={},
+            refresh_freq=refresh_freq,
+            database="DB",
+            schema="SCH",
+            warehouse=None,
+            refresh_mode=None,
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            feature_granularity="1d" if tiled else None,
+            aggregation_specs=[Feature.sum("AMOUNT", "2d").to_spec()] if tiled else None,
+            feature_aggregation_method=FeatureAggregationMethod.TILES if tiled else None,
+            is_streaming=True,
+        )
+
+    def test_reconstructing_tiled_fv_without_refresh_freq_does_not_raise(self) -> None:
+        """The bug: a VIEW-backed tiled FV must be readable so it can be dropped."""
+        fv = self._reconstruct(refresh_freq=None)
+
+        self.assertTrue(fv.is_tiled)
+        self.assertIsNone(fv.refresh_freq)
+        self.assertEqual(fv.status, FeatureViewStatus.STATIC)
+
+    def test_reconstructing_tiled_fv_with_refresh_freq_is_unchanged(self) -> None:
+        """Leniency is scoped to the missing-cadence case; a managed tiled FV
+        still reconstructs with its cadence intact."""
+        fv = self._reconstruct(refresh_freq="1 day")
+
+        self.assertTrue(fv.is_tiled)
+        self.assertEqual(fv.refresh_freq, "1 day")
+
+    def test_reconstructing_non_tiled_view_backed_fv_still_works(self) -> None:
+        """Guard pin — a VIEW-backed FV over a non-Dynamic-Table source is a
+        first-class kind and must keep reconstructing exactly as before.  It is
+        non-tiled, so it never reaches the gated check at all."""
+        fv = self._reconstruct(refresh_freq=None, tiled=False)
+
+        self.assertFalse(fv.is_tiled)
+        self.assertIsNone(fv.refresh_freq)
+        self.assertEqual(fv.status, FeatureViewStatus.STATIC)
+
+    def test_authoring_tiled_fv_without_refresh_freq_still_raises(self) -> None:
+        """Counter-pin — the authoring contract is untouched.  Reconstruction
+        leniency must not become a way to create a tile-less tiled FV."""
+        with self.assertRaisesRegex(
+            ValueError,
+            "refresh_freq is required for tile-based aggregations",
+        ):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                feature_df=self._tiled_mock_df(),
+                timestamp_col="EVENT_TIME",
+                feature_granularity="1d",
+                features=[Feature.sum("AMOUNT", "2d")],
+            )
+
+    def test_authoring_non_tiled_fv_without_refresh_freq_is_allowed(self) -> None:
+        """Counter-pin — authoring a VIEW-backed (external) FV with no cadence
+        stays valid; that is how an FV sits over a non-Dynamic-Table source."""
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=self._tiled_mock_df(),
+            timestamp_col="EVENT_TIME",
+        )
+
+        self.assertFalse(fv.is_tiled)
+        self.assertIsNone(fv.refresh_freq)
+
+    def test_reconstruction_marker_is_not_serialized(self) -> None:
+        """The marker is in-memory provenance only.  ``_to_dict`` feeds
+        ``to_df()``'s schema and ``to_json()``, so leaking it there would drift
+        the serialized shape."""
+        fv = self._reconstruct(refresh_freq=None)
+
+        self.assertNotIn("_reconstructed", fv._to_dict())
+
+    def test_stranded_tiled_fv_survives_json_round_trip(self) -> None:
+        """The marker is in-memory provenance, re-derived on load — not persisted.
+
+        ``to_json`` drops ``_reconstructed``; ``from_json`` restamps it by going
+        back through ``_construct_feature_view``.  If ``from_json`` ever stopped
+        routing through that factory, the marker would default to ``False`` and
+        the deserialize below would raise the tiled-cadence ``ValueError`` again,
+        re-stranding exactly the object this guards.
+        """
+        fv = self._reconstruct(refresh_freq=None)
+
+        json_str = fv.to_json()
+        self.assertNotIn("_reconstructed", json_str)
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._tiled_mock_df()
+        restored = FeatureView.from_json(json_str, session=mock_session)
+
+        self.assertTrue(restored.is_tiled)
+        self.assertIsNone(restored.refresh_freq)
+        # ``from_json`` passes the serialized ``str(status)`` straight through,
+        # so compare stringwise as ``FeatureView.__eq__`` does.
+        self.assertEqual(str(restored.status), str(FeatureViewStatus.STATIC))
+        self.assertTrue(restored._reconstructed)
+
+    def test_managed_tiled_fv_survives_json_round_trip(self) -> None:
+        """Leniency stays scoped through serialization: a managed tiled FV
+        round-trips with its cadence intact, mirroring the non-round-trip
+        ``test_reconstructing_tiled_fv_with_refresh_freq_is_unchanged``."""
+        fv = self._reconstruct(refresh_freq="1 day")
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._tiled_mock_df()
+        restored = FeatureView.from_json(fv.to_json(), session=mock_session)
+
+        self.assertTrue(restored.is_tiled)
+        self.assertEqual(restored.refresh_freq, "1 day")
+
+    def test_is_stranded_tiled_truth_table(self) -> None:
+        """``is_stranded_tiled`` is True only for the reconstructed tile-less tiled VIEW.
+
+        A managed tiled FV (has cadence), a non-tiled external view, and a fresh DRAFT tiled FV
+        (status is not STATIC) must all be False so ordinary reads are never blocked.
+        """
+        # Stranded: tiled, no cadence, reconstructed as STATIC.
+        self.assertTrue(self._reconstruct(refresh_freq=None).is_stranded_tiled)
+        # Managed tiled FV carries a cadence.
+        self.assertFalse(self._reconstruct(refresh_freq="1 day").is_stranded_tiled)
+        # Non-tiled view-backed FV never qualifies.
+        self.assertFalse(self._reconstruct(refresh_freq=None, tiled=False).is_stranded_tiled)
+        # A fresh DRAFT tiled FV (authored with a cadence) is not STATIC.
+        draft = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=self._tiled_mock_df(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=[Feature.sum("AMOUNT", "2d")],
+            refresh_freq="1 day",
+        )
+        self.assertEqual(draft.status, FeatureViewStatus.DRAFT)
+        self.assertFalse(draft.is_stranded_tiled)
+
+    def test_rollup_config_rejects_stranded_source(self) -> None:
+        """``RollupConfig.validate`` stops a rollup built over a tile-less source."""
+        from snowflake.ml.feature_store.feature_view import RollupConfig
+
+        stranded_source = MagicMock()
+        stranded_source.is_tiled = True
+        stranded_source.status = FeatureViewStatus.STATIC
+        stranded_source.is_stranded_tiled = True
+        stranded_source.name = "X"
+        stranded_source.version = "V1"
+
+        config = RollupConfig(source=stranded_source, mapping_df=MagicMock())
+        with self.assertRaisesRegex(ValueError, "no tiles were materialized"):
+            config.validate(target_entity_keys=[])
+
+    def test_describe_path_not_blocked_on_stranded(self) -> None:
+        """The stranded object must still serialize (describe / drop load through this)."""
+        fv = self._reconstruct(refresh_freq=None)
+
+        # ``_to_dict`` feeds describe/to_df; ``to_json`` feeds delete/round-trip. Neither raises.
+        self.assertNotIn("_reconstructed", fv._to_dict())
+        self.assertIn("test_fv", fv.to_json())
 
 
 class UnicodeColumnSqlGenerationTest(absltest.TestCase):

@@ -440,6 +440,36 @@ class TilingSqlGeneratorTest(parameterized.TestCase):
         # ASC ordering for FIRST
         self.assertIn("ORDER BY EVENT_TS ASC", sql)
 
+    def test_new_version_distinct_n_dedup_partitions_by_case_sensitive_source_column(self) -> None:
+        """The dedup window reads a case-sensitive source column by its quoted name.
+
+        Tile column names fold the source column to upper case, but the
+        PARTITION BY references the source column itself, so it must keep the
+        quotes or Snowflake resolves it to a different, nonexistent column.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column='"pageId"',
+                window="24h",
+                output_column="LAST_DISTINCT_PAGES",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version="1.42.0",
+        )
+        sql = generator.generate()
+
+        self.assertIn('PARTITION BY USER_ID, TILE_START, "pageId"', sql)
+        self.assertIn('CASE WHEN _DUP_RN_LAST_PAGEID = 1 THEN "pageId" END', sql)
+        self.assertIn("AS _PARTIAL_LAST_DISTINCT_5_PAGEID", sql)
+
     # TODO: drop this test when the legacy distinct-N implementation is removed.
     @parameterized.named_parameters(  # type: ignore[misc]
         ("explicit_1_41_0", "1.41.0"),
@@ -1791,6 +1821,7 @@ class TemporalRollupSqlGeneratorTest(absltest.TestCase):
 
         mock_fv = MagicMock()
         mock_fv.is_tiled = True
+        mock_fv.is_stranded_tiled = False
         mock_fv.status = MagicMock()
         mock_fv.status.name = "ACTIVE"
         mock_fv.entities = []
@@ -1814,6 +1845,7 @@ class TemporalRollupSqlGeneratorTest(absltest.TestCase):
 
         mock_fv = MagicMock()
         mock_fv.is_tiled = True
+        mock_fv.is_stranded_tiled = False
         mock_fv.status = MagicMock()
         mock_fv.status.name = "ACTIVE"
         mock_fv.entities = []

@@ -13,7 +13,11 @@ from typing_extensions import NotRequired
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier, url
 from snowflake.ml.model import model_signature, type_hints
-from snowflake.ml.model._client.model_spec import model_spec, model_spec_parser
+from snowflake.ml.model._client.model_spec import (
+    model_extension_spec,
+    model_spec,
+    model_spec_parser,
+)
 from snowflake.ml.model._client.ops import deployment_step, metadata_ops, param_utils
 from snowflake.ml.model._client.sql import (
     model as model_sql,
@@ -869,6 +873,7 @@ class ModelOperator:
         # WARNING: This method uses GET to fetch files from the model's internal stage,
         # which requires READ privilege on the model. Do NOT call this from code paths
         # where only USAGE privilege is expected (e.g., model_version.run()).
+        # Version 2.0 function metadata comes from the catalog model spec, not this file.
         with tempfile.TemporaryDirectory() as tmpdir:
             self._model_version_client.get_file(
                 database_name=database_name,
@@ -1201,6 +1206,21 @@ class ModelOperator:
             ),
         )
 
+    @staticmethod
+    def _is_packed_object_output(outputs: Any) -> bool:
+        """Return whether outputs are packed into one OBJECT return value.
+
+        Args:
+            outputs: Signature or method output fields.
+
+        Returns:
+            False when a single non-OBJECT output is returned directly.
+        """
+        returns_single_native_value = len(outputs) == 1 and not str(
+            outputs[0].get("type", "")
+        ).strip().upper().startswith("OBJECT")
+        return not returns_single_native_value
+
     def get_functions(
         self,
         *,
@@ -1249,26 +1269,34 @@ class ModelOperator:
             function_names_and_types.append((function_name, function_type, is_object_output))
 
         if not function_names_and_types:
-            # If function_names_and_types is not populated, there are currently
-            # no warehouse functions for the model version. In order to do inference
-            # we must populate the functions so the mapping can be constructed.
-            model_manifest = self.get_model_version_manifest(
-                database_name=database_name,
-                schema_name=schema_name,
-                model_name=model_name,
-                version_name=version_name,
-                statement_params=statement_params,
-            )
-            for method in model_manifest["methods"]:
-                method_outputs = method.get("outputs", [])
-                # A single, non-OBJECT output means the function returns its value directly (not packed in an OBJECT).
-                returns_single_native_value = len(method_outputs) == 1 and not str(
-                    method_outputs[0].get("type", "")
-                ).strip().upper().startswith("OBJECT")
-                is_object_output = not returns_single_native_value
-                function_names_and_types.append(
-                    (sql_identifier.SqlIdentifier(method["name"]), method["type"], is_object_output)
+            # SHOW FUNCTIONS returned no warehouse functions.
+            if isinstance(parsed_model_spec, model_extension_spec.ModelExtensionSpecV2):
+                serving_functions = parsed_model_spec.raw_spec["serving"]["functions"]
+                for name, function in serving_functions.items():
+                    signature = function["signature"]
+                    function_names_and_types.append(
+                        (
+                            sql_identifier.SqlIdentifier(str(name)),
+                            function["type"],
+                            ModelOperator._is_packed_object_output(signature.get("outputs", [])),
+                        )
+                    )
+            else:
+                loaded_manifest = self.get_model_version_manifest(
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    model_name=model_name,
+                    version_name=version_name,
+                    statement_params=statement_params,
                 )
+                for method in loaded_manifest["methods"]:
+                    function_names_and_types.append(
+                        (
+                            sql_identifier.SqlIdentifier(method["name"]),
+                            method["type"],
+                            ModelOperator._is_packed_object_output(method.get("outputs", [])),
+                        )
+                    )
 
         signatures = parsed_model_spec.signatures
         signature_spec = parsed_model_spec

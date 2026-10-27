@@ -23,6 +23,7 @@ py_library(
     srcs = ["model_manifest.py"],
     deps = [
         ":model_manifest_schema",
+        ":model_manifest_v2_schema",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model/_model_composer/model_method",
         "//snowflake/ml/model/_model_composer/model_method:constants",
@@ -38,6 +39,39 @@ py_library(
     srcs = ["model_manifest_schema.py"],
     deps = [
         "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "model_manifest_v2_schema",
+    srcs = ["model_manifest_v2_schema.py"],
+    deps = [
+        ":model_manifest_schema",
+    ],
+)
+
+py_test(
+    name = "model_manifest_v2_schema_test",
+    srcs = ["model_manifest_v2_schema_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":model_manifest_v2_schema",
+    ],
+)
+
+py_test(
+    name = "model_manifest_load_v2_test",
+    srcs = ["model_manifest_load_v2_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":model_manifest",
+        ":model_manifest_v2_schema",
     ],
 )
 

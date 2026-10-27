@@ -33,6 +33,7 @@ import time
 import uuid
 
 import pandas as pd
+import ws_parity
 from absl.testing import absltest, parameterized
 from feature_store_streaming_fv_integ_base import (
     ALL_TYPES_CATEGORY,
@@ -2084,6 +2085,31 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             f"SHOW TABLES LIKE '{udf_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
         ).collect()
         self.assertEmpty(udf_tables_after, "$UDF_TRANSFORMED table must be dropped by orphan cleanup")
+
+
+class StreamingFeatureViewWsParityIntegTest(StreamingFeatureViewIntegTest):
+    """The online-read tests above, with every online read also served over WebSocket.
+
+    Each read is made over HTTP and over WebSocket and must return an identical frame, be served
+    over WebSocket, and not fall back; the inherited assertions then run unchanged. See
+    ``ws_parity``.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        ws_parity.install(self)
+
+
+ws_parity.restrict_to(
+    StreamingFeatureViewWsParityIntegTest,
+    [
+        "test_streaming_fv_spec_oft_online_read_e2e",
+        "test_streaming_tiled_fv_spec_oft_secondary_key_online_read_by_key",
+        "test_streaming_fv_spec_oft_all_supported_types",
+        "test_streaming_fv_view_spec_oft_all_supported_types",
+        "test_streaming_non_aggregated_iceberg_view",
+    ],
+)
 
 
 if __name__ == "__main__":

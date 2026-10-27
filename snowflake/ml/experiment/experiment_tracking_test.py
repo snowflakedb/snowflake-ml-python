@@ -280,8 +280,9 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertEqual(show_kwargs["experiment_name"], experiment.name)
         self.assertEqual(show_kwargs["like"], "RESUME_ME")
 
-        # No new run should be added on resume
+        # No new run should be added on resume, and a running run is not rewritten.
         self.mock_sql_client.add_run.assert_not_called()
+        self.mock_sql_client.modify_run_set_status.assert_not_called()
 
         # Active run reflects resumed name
         self.assertIsInstance(run, entities.Run)
@@ -298,10 +299,11 @@ class ExperimentTrackingTest(absltest.TestCase):
 
         with self.assertRaises(RuntimeError) as ctx:
             exp.start_run("TEST_RUN")
-        self.assertIn(
-            "Run TEST_RUN exists but cannot be resumed as it is no longer running.",
+        self.assertEqual(
+            "Run TEST_RUN exists but cannot be resumed because its status is FINISHED.",
             str(ctx.exception),
         )
+        self.mock_sql_client.modify_run_set_status.assert_not_called()
 
         # Ensure we checked existing runs and did not add a new one
         self.mock_sql_client.show_runs_in_experiment.assert_called_once()
@@ -362,17 +364,130 @@ class ExperimentTrackingTest(absltest.TestCase):
         call_args = self.mock_sql_client.commit_run.call_args[1]
         self.assertIsNone(call_args["status"])
 
+        # CANCELLED status
+        self.mock_sql_client.commit_run.reset_mock()
+        exp.start_run("RUN_4")
+        exp.end_run(status="CANCELLED")
+        call_args = self.mock_sql_client.commit_run.call_args[1]
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.CANCELLED)
+        self.assertIsNone(exp._run)
+
     def test_end_run_with_invalid_status(self) -> None:
-        """Test that an invalid status string raises ValueError with a helpful message"""
+        """A non-terminal status raises ValueError and does not commit the run."""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
         exp.set_experiment("TEST_EXPERIMENT")
         exp.start_run("TEST_RUN")
 
-        with self.assertRaises(ValueError) as ctx:
-            exp.end_run(status="INVALID")
-        self.assertIn("Unsupported status value: 'INVALID'", str(ctx.exception))
-        self.assertIn("FINISHED", str(ctx.exception))
-        self.assertIn("FAILED", str(ctx.exception))
+        for status in ("INVALID", "not_a_valid_status", "RUNNING", "PAUSED"):
+            with self.assertRaises(ValueError) as ctx:
+                exp.end_run(status=status)
+            self.assertEqual(
+                f"Unsupported status value: '{status}'. Supported values are: ['FAILED', 'FINISHED', 'CANCELLED'].",
+                str(ctx.exception),
+            )
+        self.mock_sql_client.commit_run.assert_not_called()
+        self.assertIsNotNone(exp._run)
+
+    def test_start_run_resumes_paused_run(self) -> None:
+        """A paused run is set back to RUNNING and becomes the active run."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        experiment = exp.set_experiment("TEST_EXPERIMENT")
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "PAUSED"})}]
+
+        run = exp.start_run("RESUME_ME")
+
+        self.mock_sql_client.add_run.assert_not_called()
+        self.mock_sql_client.modify_run_set_status.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_set_status.call_args[1]
+        self.assertEqual(call_args["experiment_name"], experiment.name)
+        self.assertEqual(call_args["run_name"].identifier(), "RESUME_ME")
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.RUNNING)
+        self.assertEqual(run.name.identifier(), "RESUME_ME")
+        self.assertIs(exp._run, run)
+
+    def test_pause_run(self) -> None:
+        """Pausing the active run sets PAUSED and deactivates it."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        experiment = exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "RUNNING"})}]
+
+        exp.pause_run()
+
+        self.assertIsNone(exp._run)
+        self.mock_sql_client.modify_run_set_status.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_set_status.call_args[1]
+        self.assertEqual(call_args["experiment_name"], experiment.name)
+        self.assertEqual(call_args["run_name"].identifier(), "TEST_RUN")
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.PAUSED)
+
+    def test_pause_named_run_leaves_other_active_run(self) -> None:
+        """Pausing a different run does not deactivate the run currently in context."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        active_run = exp.start_run("ACTIVE_RUN")
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "RUNNING"})}]
+
+        exp.pause_run("OTHER_RUN")
+
+        self.assertIs(exp._run, active_run)
+        call_args = self.mock_sql_client.modify_run_set_status.call_args[1]
+        self.assertEqual(call_args["run_name"].identifier(), "OTHER_RUN")
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.PAUSED)
+
+    def test_pause_run_already_paused_is_noop(self) -> None:
+        """Pausing a paused run does not issue another status change."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "PAUSED"})}]
+
+        exp.pause_run()
+
+        self.mock_sql_client.modify_run_set_status.assert_not_called()
+        self.assertIsNone(exp._run)
+
+    def test_pause_run_rejects_terminal_status(self) -> None:
+        """A finished, failed, or cancelled run cannot be paused."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        for status in ("FINISHED", "FAILED", "CANCELLED"):
+            self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": status})}]
+            with self.assertRaises(RuntimeError) as ctx:
+                exp.pause_run()
+            self.assertEqual(f"Run TEST_RUN cannot be paused because its status is {status}.", str(ctx.exception))
+        self.mock_sql_client.modify_run_set_status.assert_not_called()
+        self.assertIsNotNone(exp._run)
+
+    def test_pause_run_missing_run_raises(self) -> None:
+        """Pausing a run that does not exist raises."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        self.mock_sql_client.show_runs_in_experiment.return_value = []
+
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.pause_run("MISSING_RUN")
+        self.assertEqual("Run MISSING_RUN does not exist.", str(ctx.exception))
+        self.mock_sql_client.modify_run_set_status.assert_not_called()
+
+    def test_pause_run_without_active_run_raises(self) -> None:
+        """Pausing with no run name and no active run raises."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.pause_run()
+        self.assertEqual("No run is active. Please start a run before pausing it.", str(ctx.exception))
+
+    def test_pause_run_without_experiment_raises(self) -> None:
+        """Pausing before an experiment is set raises."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.pause_run("TEST_RUN")
+        self.assertEqual("No experiment set. Please set an experiment before pausing a run.", str(ctx.exception))
 
     def test_delete_run(self) -> None:
         """Test deleting a run"""

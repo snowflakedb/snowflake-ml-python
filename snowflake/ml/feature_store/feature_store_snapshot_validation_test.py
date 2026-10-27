@@ -808,6 +808,70 @@ class UpdateFeatureViewSnapshotValidationTest(absltest.TestCase):
         self.assertEqual(recreate_fv._feature_desc[SqlIdentifier("N_RSRVS_30_DAY")], "updated description")
         self.assertEqual(recreate_fv._feature_desc[SqlIdentifier("NEW_COL")], "")
 
+    def test_updated_feature_df_restamps_derived_source_refs(self) -> None:
+        """A bare imperative evolve (no ``_source_refs``) must re-stamp ``FV_SOURCE_REFS``
+        from the new DataFrame, otherwise the stale query keeps re-emitting ``EVOLVE_FV``."""
+        from snowflake.ml.feature_store.feature_store import (
+            _derive_source_refs_from_feature_df,
+        )
+        from snowflake.snowpark.types import (
+            StringType,
+            StructField,
+            StructType,
+            TimestampType,
+        )
+
+        fs = _create_feature_store_with_mocks()
+        fv = _make_valid_snapshot_fv()
+
+        new_df = MagicMock()
+        new_df.session = fs._session
+        new_df.queries = {"queries": ["SELECT GUEST_ID, SNAPSHOT_TS, NEW_COL FROM updated_source"]}
+        new_df.columns = ["GUEST_ID", "SNAPSHOT_TS", "NEW_COL"]
+        new_df.schema = StructType(
+            [
+                StructField("GUEST_ID", StringType()),
+                StructField("SNAPSHOT_TS", TimestampType()),
+                StructField("NEW_COL", StringType()),
+            ]
+        )
+
+        snapshot_table_mock = MagicMock()
+        snapshot_table_mock.schema = new_df.schema
+        fs._session.table = MagicMock(return_value=snapshot_table_mock)
+
+        fs._validate_feature_view_name_and_version_input = MagicMock(return_value=fv)
+        fs._create_dynamic_table = MagicMock()
+        fs._create_online_feature_table = MagicMock()
+        fs._create_scheduled_refresh_task = MagicMock()
+        fs.get_feature_view = MagicMock(return_value=copy.copy(fv))
+
+        # No _source_refs: the imperative evolve must derive the binding itself.
+        fs.update_feature_view(name=fv, updated_feature_df=new_df)
+
+        recreate_fv = fs._create_dynamic_table.call_args[0][1]
+        expected = _derive_source_refs_from_feature_df(recreate_fv)
+        self.assertIsNotNone(expected)
+        assert expected is not None
+        self.assertTrue(expected[0]["query"], "derived ref must carry the new query binding")
+
+        fs._metadata_manager.save_feature_view_source_refs.assert_called_once()
+        _, _, stamped = fs._metadata_manager.save_feature_view_source_refs.call_args[0]
+        self.assertEqual(stamped.sources, expected)
+
+        # Pin the version-qualified name directly: the evolve call site derives
+        # the binding WITHOUT passing ``version`` explicitly (unlike register),
+        # relying on ``new_feature_view.version`` being populated. The
+        # helper-equality check above would still pass if the version silently
+        # degraded to ``None`` (both sides fall back to the bare name), so assert
+        # the stamped name carries ``$<VERSION>`` and is not the collapsed form.
+        self.assertEqual(stamped.sources[0]["name"], "SNAP_FV$V1__SOURCE")
+        self.assertNotEqual(
+            stamped.sources[0]["name"],
+            "SNAP_FV__SOURCE",
+            "evolve-path stamp must stay version-qualified, not collapse to the bare name",
+        )
+
 
 class BuildOfflineUpdateQueriesRollbackTest(parameterized.TestCase):
     """Tests for the rollback SQL produced by _build_offline_update_queries.

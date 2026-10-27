@@ -6,9 +6,11 @@ import sys
 import tempfile
 import zipfile
 from datetime import datetime
+from unittest import mock
 
 from absl.testing import absltest
 
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import file_utils
 
 PY_SRC = """\
@@ -121,6 +123,63 @@ class FileUtilsTest(absltest.TestCase):
                 names = zf.namelist()
             self.assertIn("snowflake/fake/fake_module/p.py", names)
             self.assertFalse(any("experimental" in name for name in names))
+
+    def _make_site_with_snowml_dist(self, site: str) -> None:
+        pkg_dir = os.path.join(site, "snowflake", "fake", "dist_module")
+        for relpath in ["p.py", "experimental/note.py", "overlay/o.py"]:
+            os.makedirs(os.path.dirname(os.path.join(pkg_dir, relpath)), exist_ok=True)
+            with open(os.path.join(pkg_dir, relpath), "w", encoding="utf-8") as f:
+                f.write(PY_SRC)
+        dist_info = os.path.join(site, "snowflake_ml_python-1.0.0.dist-info")
+        os.makedirs(dist_info)
+        with open(os.path.join(dist_info, "METADATA"), "w", encoding="utf-8") as f:
+            f.write("Metadata-Version: 2.1\nName: snowflake-ml-python\nVersion: 1.0.0\n")
+        with open(os.path.join(dist_info, "RECORD"), "w", encoding="utf-8") as f:
+            f.write(
+                "snowflake/fake/dist_module/p.py,,\n"
+                "snowflake/fake/dist_module/experimental/note.py,,\n"
+                "snowflake_ml_python-1.0.0.dist-info/RECORD,,\n"
+            )
+
+    def test_zip_python_package_uses_snowml_record(self) -> None:
+        with tempfile.TemporaryDirectory() as site, tempfile.TemporaryDirectory() as workspace:
+            self._make_site_with_snowml_dist(site)
+            zip_module_filename = os.path.join(workspace, "dist_module.zip")
+            sys.path.insert(0, site)
+            try:
+                with mock.patch.object(snowml_version, "__file__", os.path.join(site, "snowflake", "ml", "version.py")):
+                    file_utils.zip_python_package(
+                        zip_module_filename, "snowflake.fake.dist_module", exclude_dir_names=("experimental",)
+                    )
+            finally:
+                sys.path.remove(site)
+
+            with zipfile.ZipFile(zip_module_filename) as zf:
+                names = zf.namelist()
+            self.assertCountEqual(
+                names,
+                [
+                    "snowflake/",
+                    "snowflake/fake/",
+                    "snowflake/fake/dist_module/",
+                    "snowflake/fake/dist_module/p.py",
+                ],
+            )
+
+    def test_zip_python_package_ignores_record_of_other_snowml_install(self) -> None:
+        with tempfile.TemporaryDirectory() as site, tempfile.TemporaryDirectory() as workspace:
+            self._make_site_with_snowml_dist(site)
+            zip_module_filename = os.path.join(workspace, "dist_module.zip")
+            sys.path.insert(0, site)
+            try:
+                importlib.import_module("snowflake.fake.dist_module.p")
+                file_utils.zip_python_package(zip_module_filename, "snowflake.fake.dist_module")
+            finally:
+                sys.path.remove(site)
+
+            with zipfile.ZipFile(zip_module_filename) as zf:
+                names = zf.namelist()
+            self.assertIn("snowflake/fake/dist_module/overlay/o.py", names)
 
     def test_hash_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
