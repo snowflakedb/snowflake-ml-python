@@ -90,6 +90,7 @@ def _model_spec_v2(
     function_signature = signature or _DUMMY_SIG["predict"].to_dict()
     functions: dict[str, dict[str, Any]] = {
         "__call__": {
+            "type": "FUNCTION",
             "signature": function_signature,
             "properties": {"case_sensitive": case_sensitive} if case_sensitive else {},
         }
@@ -106,6 +107,7 @@ def _model_spec_v2(
                 }
             else:
                 functions[function_name] = {
+                    "type": "FUNCTION",
                     "signature": function_signature,
                     "properties": properties,
                 }

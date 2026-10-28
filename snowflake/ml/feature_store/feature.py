@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import (
     AggregationSpec,
     AggregationType,
@@ -68,14 +69,26 @@ class Feature:
 
         Args:
             name: The output column name.
-            case_sensitive: If True, preserve the exact case of the name (will be quoted in SQL).
-                If False (default), the name will be converted to uppercase (Snowflake default).
+            case_sensitive: If True, ``name`` is the exact column name: it is quoted as needed and
+                any double quote in it becomes part of the name. If False (default), ``name`` is
+                read as SQL identifier text: an unquoted name folds to upper case, and double
+                quotes delimit a case-sensitive name.
 
         Returns:
             Self for method chaining.
+
+        Raises:
+            ValueError: If the name cannot form a valid Snowflake identifier.
         """
-        # Store with quotes if case-sensitive, uppercase if case-insensitive
-        self._alias = f'"{name}"' if case_sensitive else name.upper()
+        try:
+            self._alias = SqlIdentifier(name, case_sensitive=case_sensitive).identifier()
+        except ValueError as exc:
+            raise ValueError(
+                f"feature aggregation: alias '{name}' is not a valid Snowflake identifier. "
+                "Pass case_sensitive=True to use it verbatim as a quoted column name, or choose a "
+                "name that starts with a letter or underscore and contains only letters, digits, "
+                "underscores, and dollar signs."
+            ) from exc
         return self
 
     def to_spec(self) -> AggregationSpec:
@@ -101,13 +114,16 @@ class Feature:
         else:
             window_suffix = self._window.replace(" ", "").lower()
         function_value = _KEYS if self._function.is_secondary_key_array() else self._function.value
-        base_name = f"{self._column}_{function_value}_{window_suffix}"
+        suffix = f"_{function_value}_{window_suffix}"
 
         offset_seconds = interval_to_seconds(self._offset) if self._offset != _NO_OFFSET else 0
         if offset_seconds > 0:
             offset_suffix = self._offset.replace(" ", "").lower()
-            base_name = f"{base_name}_offset_{offset_suffix}"
-        return base_name.upper()
+            suffix = f"{suffix}_offset_{offset_suffix}"
+        # Only the generated suffix is uppercased; the source column contributes its
+        # stored name so a case-sensitive column yields a well-formed name that keeps its case.
+        source_name = SqlIdentifier(self._column).resolved()
+        return SqlIdentifier(f"{source_name}{suffix.upper()}", case_sensitive=True).identifier()
 
     # Factory methods for creating features
 

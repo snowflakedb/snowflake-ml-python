@@ -4,15 +4,21 @@ from unittest.mock import MagicMock
 
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import sql_identifier, string_matcher
 from snowflake.ml.experiment._client import (
     artifact,
     experiment_tracking_sql_client as sql_client,
 )
-from snowflake.ml.experiment._entities import run_metadata
+from snowflake.ml.experiment._entities import experiment, run_metadata
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.utils import sql_client as sql_client_utils
-from snowflake.snowpark import file_operation, row, session, types
+from snowflake.snowpark import (
+    exceptions as snowpark_exceptions,
+    file_operation,
+    row,
+    session,
+    types,
+)
 
 
 class PivotRunAttributesTest(absltest.TestCase):
@@ -27,6 +33,20 @@ class PivotRunAttributesTest(absltest.TestCase):
         """Extract (data, schema) from the mock create_dataframe call."""
         args, kwargs = self.mock_session.create_dataframe.call_args
         return args[0], kwargs.get("schema") or args[1]
+
+    def test_group_run_attributes(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "accuracy", "0.95"),
+            self._make_row("RUN_A", "loss", "0.05"),
+            self._make_row("RUN_B", "accuracy", "0.80"),
+            self._make_row("RUN_A", "accuracy", "0.97"),
+        ]
+
+        self.assertEqual(
+            sql_client.group_run_attributes(rows),
+            {"RUN_A": {"accuracy": "0.97", "loss": "0.05"}, "RUN_B": {"accuracy": "0.80"}},
+        )
+        self.assertEqual(sql_client.group_run_attributes([]), {})
 
     def test_basic_pivot(self) -> None:
         rows = [
@@ -158,7 +178,7 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
     def tearDown(self) -> None:
         self.m_session.finalize()  # Check that all expected operations were executed
 
-    def _create_mock_df(self, result: list[row.Row] | None = None) -> mock_data_frame.MockDataFrame:
+    def _create_mock_df(self, result: list[row.Row] | Exception | None = None) -> mock_data_frame.MockDataFrame:
         if result is None:
             result = [row.Row("")]
         return mock_data_frame.MockDataFrame(collect_result=result)
@@ -168,7 +188,7 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
 
         # Test without if_not_exists flag
-        self.m_session.add_mock_sql("CREATE EXPERIMENT  TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", self._create_mock_df())
+        self.m_session.add_mock_sql("CREATE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", self._create_mock_df())
 
         self.client.create_experiment(experiment_name, creation_mode=sql_client_utils.CreationMode(if_not_exists=False))
 
@@ -178,6 +198,183 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         )
 
         self.client.create_experiment(experiment_name, creation_mode=sql_client_utils.CreationMode(if_not_exists=True))
+
+        # Test with or_replace flag
+        self.m_session.add_mock_sql(
+            "CREATE OR REPLACE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", self._create_mock_df()
+        )
+
+        self.client.create_experiment(experiment_name, creation_mode=sql_client_utils.CreationMode(or_replace=True))
+
+    def test_create_experiment_rejects_conflicting_creation_modes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "if_not_exists and or_replace cannot both be enabled"):
+            self.client.create_experiment(
+                sql_identifier.SqlIdentifier("TEST_EXPERIMENT"),
+                creation_mode=sql_client_utils.CreationMode(if_not_exists=True, or_replace=True),
+            )
+
+    def test_create_evaluation_experiment_from_specification(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        specification = "evaluation: {}\nquery_text: AI_COMPLETE('model', 'prompt')"
+
+        self.m_session.add_mock_sql(
+            "CREATE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT "
+            "TYPE = 'AI_FUNCTION_EVALUATION' "
+            "FROM SPECIFICATION 'evaluation: {}\nquery_text: AI_COMPLETE(''model'', ''prompt'')'",
+            self._create_mock_df(),
+        )
+
+        self.client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+            experiment_type=experiment.ExperimentType.AI_FUNCTION_EVALUATION,
+            specification=specification,
+        )
+
+    def test_create_optimization_experiment_from_specification(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        specification = "optimization:\n  budget: light"
+
+        self.m_session.add_mock_sql(
+            "CREATE EXPERIMENT IF NOT EXISTS TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT "
+            "TYPE = 'AI_FUNCTION_OPTIMIZATION' "
+            "FROM SPECIFICATION 'optimization:\n  budget: light'",
+            self._create_mock_df(),
+        )
+
+        self.client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client_utils.CreationMode(if_not_exists=True),
+            experiment_type=experiment.ExperimentType.AI_FUNCTION_OPTIMIZATION,
+            specification=specification,
+        )
+
+    def test_create_typed_experiment_without_specification(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "CREATE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT TYPE = 'AI_FUNCTION_EVALUATION'",
+            self._create_mock_df(),
+        )
+
+        self.client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+            experiment_type=experiment.ExperimentType.AI_FUNCTION_EVALUATION,
+        )
+
+    def test_create_specification_experiment_requires_type(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        with self.assertRaises(ValueError) as context:
+            self.client.create_experiment(
+                experiment_name,
+                creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+                specification="evaluation: {}",
+            )
+        self.assertEqual(str(context.exception), "experiment_type is required when specification is provided")
+
+    def test_create_experiment_rejects_unsupported_type(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        with self.assertRaises(ValueError) as context:
+            self.client.create_experiment(
+                experiment_name,
+                creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+                experiment_type=cast(experiment.ExperimentType, "RANDOM_TYPE"),
+            )
+        self.assertEqual(str(context.exception), "Unsupported experiment type: 'RANDOM_TYPE'")
+
+    def test_create_experiment_serializes_specification_as_sql_literal(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        specification = "prompt: C:\\path\\new\nlabel: 'Classify this 🐍'"
+        self.m_session.add_mock_sql(
+            "CREATE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT "
+            "TYPE = 'AI_FUNCTION_EVALUATION' "
+            "FROM SPECIFICATION 'prompt: C:\\\\path\\\\new\nlabel: ''Classify this 🐍'''",
+            self._create_mock_df(),
+        )
+
+        self.client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+            experiment_type=experiment.ExperimentType.AI_FUNCTION_EVALUATION,
+            specification=specification,
+        )
+
+    def test_create_experiment_keeps_backslash_quote_inside_specification_literal(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        specification = "prompt: X\\'; DROP EXPERIMENT VICTIM; --"
+        self.m_session.add_mock_sql(
+            "CREATE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT "
+            "TYPE = 'AI_FUNCTION_EVALUATION' "
+            "FROM SPECIFICATION 'prompt: X\\\\''; DROP EXPERIMENT VICTIM; --'",
+            self._create_mock_df(),
+            matcher=string_matcher.StringMatcherIgnoreWhitespace,
+        )
+
+        self.client.create_experiment(
+            experiment_name,
+            creation_mode=sql_client_utils.CreationMode(if_not_exists=False),
+            experiment_type=experiment.ExperimentType.AI_FUNCTION_EVALUATION,
+            specification=specification,
+        )
+
+    def test_create_experiment_rejects_blank_specification(self) -> None:
+        for specification in ("", " \t\r\n"):
+            with self.subTest(specification=specification):
+                with self.assertRaisesRegex(ValueError, "specification must not be blank"):
+                    self.client.create_experiment(
+                        sql_identifier.SqlIdentifier("TEST_EXPERIMENT"),
+                        creation_mode=sql_client_utils.CreationMode(),
+                        experiment_type=experiment.ExperimentType.AI_FUNCTION_EVALUATION,
+                        specification=specification,
+                    )
+
+    def test_execute_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "EXECUTE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT",
+            self._create_mock_df([row.Row("Experiment execution started")]),
+        )
+
+        self.client.execute_experiment(experiment_name)
+
+    def test_execute_experiment_propagates_already_executed(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        already_executed = snowpark_exceptions.SnowparkSQLException(
+            "Experiment has already executed", sql_error_code=400024
+        )
+        self.m_session.add_mock_sql(
+            "EXECUTE EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT",
+            self._create_mock_df(already_executed),
+        )
+
+        with self.assertRaises(snowpark_exceptions.SnowparkSQLException) as context:
+            self.client.execute_experiment(experiment_name)
+        self.assertIs(context.exception, already_executed)
+
+    def test_describe_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        self.m_session.add_mock_sql(
+            "DESC EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT",
+            self._create_mock_df([row.Row(execution_status="COMPLETED", summary='{"error_message": null}')]),
+        )
+
+        self.assertEqual(
+            self.client.describe_experiment(experiment_name),
+            {"execution_status": "COMPLETED", "summary": '{"error_message": null}'},
+        )
+
+    def test_abort_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ABORT", self._create_mock_df()
+        )
+
+        self.client.abort_experiment(experiment_name)
 
     def test_get_experiment_id(self) -> None:
         # Test getting experiment ID
@@ -279,6 +476,39 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
 
         self.client.commit_run(
             experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.FINISHED
+        )
+
+    def test_commit_run_with_status_cancelled(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT COMMIT RUN TEST_RUN WITH STATUS='CANCELLED'",
+            self._create_mock_df(),
+        )
+
+        self.client.commit_run(
+            experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.CANCELLED
+        )
+
+    def test_modify_run_set_status(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT MODIFY RUN TEST_RUN SET STATUS='PAUSED'",
+            self._create_mock_df(),
+        )
+        self.client.modify_run_set_status(
+            experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.PAUSED
+        )
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT MODIFY RUN TEST_RUN SET STATUS='RUNNING'",
+            self._create_mock_df(),
+        )
+        self.client.modify_run_set_status(
+            experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.RUNNING
         )
 
     def test_get_run_id(self) -> None:

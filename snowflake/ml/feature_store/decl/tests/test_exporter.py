@@ -270,6 +270,7 @@ class TestExportSpecsFullFidelity:
             },
             "spec": {
                 "ordered_entity_column_names": ["user_id"],
+                "sources": [{"name": "user_events", "source_type": "Stream"}],
                 "udf": {
                     "name": "transform",
                     "engine": "python",
@@ -307,6 +308,7 @@ class TestExportSpecsFullFidelity:
                 "version": "v1",
             },
             "spec": {
+                "sources": [{"name": "user_events", "source_type": "Stream"}],
                 "udf": {
                     "name": "transform",
                     "function_definition": "",
@@ -4384,6 +4386,71 @@ class TestExporterLegacyBatchFvMissingSources:
         assert (fv_dir / "passthru_orders_v1.py").exists(), "passthrough BatchFV with offline BatchSource must export"
         assert not any("passthru_orders" in w for w in result.get("warnings", []))
 
+    def _sourceless_streaming_spec(self, name: str, version: str = "v1") -> dict[str, Any]:
+        # A legacy view-backed StreamingFeatureView (EXTERNAL_FEATURE_VIEW)
+        # recovered as an empty shell: no ``spec.sources``. It cannot
+        # round-trip through ``snow feature apply`` (the register flow needs a
+        # stream source), so it must be warned + skipped, not written.
+        return {
+            "kind": "StreamingFeatureView",
+            "metadata": {
+                "database": "MYDB",
+                "schema": "PUBLIC",
+                "name": name,
+                "version": version,
+            },
+            "spec": {
+                "ordered_entity_column_names": ["user_id"],
+                "sources": [],
+                "features": [],
+            },
+        }
+
+    def test_yaml_sourceless_streaming_fv_warns_and_skips_control_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[self._oft_row("LEGACY_STREAM"), _SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "LEGACY_STREAM$V1$ONLINE": self._sourceless_streaming_spec("legacy_stream"),
+                _SHOW_ROW_1["name"]: _FULL_SPEC,
+            },
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "legacy_stream.yaml").exists(), "source-less StreamingFV must not be written"
+        assert (fv_dir / "user_clicks_v1.yaml").exists(), "sourced StreamingFV must write normally"
+        warnings = result.get("warnings", [])
+        assert any(
+            "legacy_stream" in w and "source" in w.lower() for w in warnings
+        ), f"expected source-less StreamingFV warning; got {warnings!r}"
+        assert not any("user_clicks" in w for w in warnings), f"sourced StreamingFV must not warn; got {warnings!r}"
+
+    def test_py_sourceless_streaming_fv_warns_and_skips_control_writes(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        result = export_specs_as_python(
+            show_rows=[self._oft_row("LEGACY_STREAM"), _SHOW_ROW_1],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={
+                "LEGACY_STREAM$V1$ONLINE": self._sourceless_streaming_spec("legacy_stream"),
+                _SHOW_ROW_1["name"]: _FULL_SPEC,
+            },
+        )
+        fv_dir = tmp_path / "MYDB.PUBLIC" / "feature_views"
+        assert not (fv_dir / "legacy_stream.py").exists(), "source-less StreamingFV must not be written"
+        assert (fv_dir / "user_clicks_v1.py").exists(), "sourced StreamingFV must write normally"
+        warnings = result.get("warnings", [])
+        assert any(
+            "legacy_stream" in w and "source" in w.lower() for w in warnings
+        ), f"expected source-less StreamingFV warning; got {warnings!r}"
+
     def test_yaml_sourceless_batchfv_warns_and_skips_control_writes(self, tmp_path: Path) -> None:
         from snowflake.ml.feature_store.decl.exporter import export_specs
 
@@ -4446,6 +4513,7 @@ class TestExportSpecsAsPythonVersionedStems:
             "spec": {
                 "ordered_entity_column_names": ["USER_ID"],
                 "timestamp_field": "TS",
+                "sources": [{"name": "MY_DS", "source_type": "Stream"}],
                 "features": [
                     {
                         "source_column": {"name": "C", "type": "IntType"},
@@ -4589,8 +4657,12 @@ class TestExportSpecsAsPythonStemSafety:
     """
 
     @staticmethod
-    def _fv_spec(name: str, version: str) -> dict[str, Any]:
-        return {
+    def _fv_spec(name: str, version: str, *, with_source: bool = False) -> dict[str, Any]:
+        # Source-less by default so the traversal / non-identifier rejection
+        # tests assert ``files == []`` (a stream source would additionally emit
+        # a datasource file). ``with_source=True`` yields an exportable FV for
+        # the "bad stem must not block good siblings" control.
+        spec: dict[str, Any] = {
             "kind": "StreamingFeatureView",
             "metadata": {"database": "DB", "schema": "SCH", "name": name, "version": version},
             "spec": {
@@ -4604,6 +4676,9 @@ class TestExportSpecsAsPythonStemSafety:
                 ],
             },
         }
+        if with_source:
+            spec["spec"]["sources"] = [{"name": f"{name}_DS", "source_type": "Stream"}]
+        return spec
 
     def test_py_export_refuses_traversal_stem(self, tmp_path: Path) -> None:
         from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
@@ -4653,8 +4728,8 @@ class TestExportSpecsAsPythonStemSafety:
             "DB",
             "SCH",
             specification_map={
-                "my-clicks$V1$ONLINE": self._fv_spec("my-clicks", "V1"),
-                "GOOD_FV$V1$ONLINE": self._fv_spec("GOOD_FV", "V1"),
+                "my-clicks$V1$ONLINE": self._fv_spec("my-clicks", "V1", with_source=True),
+                "GOOD_FV$V1$ONLINE": self._fv_spec("GOOD_FV", "V1", with_source=True),
             },
         )
         written = sorted(p.name for p in (tmp_path / "DB.SCH" / "feature_views").glob("*.py"))
@@ -4762,6 +4837,269 @@ class TestExportCaseSensitiveSecondaryKey:
 
         # The SK identity is emitted verbatim — no extra quote layer.
         assert data["aggregation_secondary_keys"] == ['"sessionId"'], data.get("aggregation_secondary_keys")
+
+
+class TestOftLessStreamingExport:
+    """An OFT-less StreamingFeatureView is surfaced only via the list-FV row.
+    Recovery injects its ``spec.sources`` from ``stream_config`` but never a
+    ``udf`` (the body is unrecoverable).  The export must therefore succeed —
+    the Python form must NOT crash on an injected bodyless ``udf`` (the
+    regression this fix prevents) — and must emit the recovered source.
+    """
+
+    @staticmethod
+    def _oft_less_streaming_applied_state() -> Any:
+        from snowflake.ml.feature_store.decl.state import fetch_applied_state
+
+        # No OFT: surfaced only via the list-FV row, with a recoverable stream
+        # source name but no UDF body (never in stream_config).
+        streaming_row = {
+            "name": "USER_CLICK_STATS_CONTINUOUS_DECL",
+            "version": "V1",
+            "database_name": "MYDB",
+            "schema_name": "PUBLIC",
+            "kind": "STREAMING",
+            "entities": ["USER_ID"],
+            "stream_config": {
+                "stream_source": "CLICKSTREAM_EVENTS",
+                "transformation_fn": "compute_engagement_metrics",
+            },
+        }
+        return fetch_applied_state(
+            [],
+            None,
+            feature_view_rows=[streaming_row],
+            default_database="MYDB",
+            default_schema="PUBLIC",
+        )
+
+    def test_python_export_does_not_crash_and_omits_udf(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+
+        # Before the fix an injected bodyless ``udf`` raised in the Python
+        # renderer and aborted the whole export.  Now no ``udf`` is injected,
+        # so the FV exports cleanly.
+        result = export_specs_as_python(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            applied_state=self._oft_less_streaming_applied_state(),
+        )
+
+        fv_files = [f for f in result["files"] if "feature_views" in f and f.endswith(".py")]
+        assert fv_files, result["files"]
+        content = Path(fv_files[0]).read_text()
+        assert "UDF(" not in content, content
+
+    def test_yaml_export_emits_source_without_udf(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            applied_state=self._oft_less_streaming_applied_state(),
+        )
+
+        fv_files = [f for f in result["files"] if "feature_views" in f and f.endswith(".yaml")]
+        assert fv_files, result["files"]
+        data = yaml.safe_load(Path(fv_files[0]).read_text())
+        sources = data.get("sources") or []
+        assert any(s.get("name") == "CLICKSTREAM_EVENTS" for s in sources), data
+        assert "udf" not in data, data
+
+
+class TestEncodeSourceStem:
+    """``_encode_source_stem`` is total, filesystem-safe, and leaves legacy
+    all-safe names unchanged; distinct names never collapse to one stem."""
+
+    def test_legacy_safe_name_unchanged(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _encode_source_stem
+
+        # An ``[A-Za-z0-9_]`` name encodes to itself, so existing filenames /
+        # ``query_file`` references are stable across the change.
+        assert _encode_source_stem("MY_FV_V1__SOURCE") == "MY_FV_V1__SOURCE"
+        assert _encode_source_stem("FV_QUERY__SOURCE") == "FV_QUERY__SOURCE"
+
+    def test_unsafe_chars_escaped_to_safe_alphabet(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _encode_source_stem
+
+        # ``$`` -> ``_24``, ``.`` -> ``_2E``, ``-`` -> ``_2D``; result is
+        # drawn solely from [A-Za-z0-9_] (filesystem- and identifier-safe).
+        assert _encode_source_stem("MY_FV$V1__SOURCE") == "MY_FV_24V1__SOURCE"
+        assert _encode_source_stem("MY_FV$1.0__SOURCE") == "MY_FV_241_2E0__SOURCE"
+        assert _encode_source_stem("MY_FV$1-0__SOURCE") == "MY_FV_241_2D0__SOURCE"
+        import re as _re
+
+        for name in ("MY_FV$1.0__SOURCE", "a.b-c$d", "weird name!"):
+            assert _re.fullmatch(r"[A-Za-z0-9_]+", _encode_source_stem(name)), name
+
+    def test_round_trip(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import (
+            _decode_source_stem,
+            _encode_source_stem,
+        )
+
+        for name in ("MY_FV$V1__SOURCE", "MY_FV$1.0__SOURCE", "A_B$C__SOURCE", "a.b-c$d"):
+            assert _decode_source_stem(_encode_source_stem(name)) == name
+
+    def test_distinct_names_distinct_stems(self) -> None:
+        from snowflake.ml.feature_store.decl.exporter import _encode_source_stem
+
+        # The old sanitise-to-underscore approach collapsed these three; the
+        # encoder keeps them distinct.
+        stems = {
+            _encode_source_stem("MY_FV$1.0__SOURCE"),
+            _encode_source_stem("MY_FV$1-0__SOURCE"),
+            _encode_source_stem("MY_FV$1_0__SOURCE"),
+        }
+        assert len(stems) == 3, stems
+
+
+class TestDatasourceStemSafety:
+    """A datasource whose name carries ``$`` / ``.`` (the version-qualified
+    physical-name form) must export in both forms without raising and without
+    being skipped, writing one deterministic file per name."""
+
+    @staticmethod
+    def _query_spec(source_name: str, fv_name: str = "FV_Q", version: str = "1.0") -> dict[str, Any]:
+        return {
+            "kind": "BatchFeatureView",
+            "metadata": {"name": fv_name, "version": version, "database": "DB1", "schema": "SCH1"},
+            "spec": {
+                "ordered_entity_column_names": ["USER_ID"],
+                "timestamp_field": "EVENT_TS",
+                "feature_granularity_sec": 3600,
+                "target_lag_sec": 3600,
+                "sources": [
+                    {
+                        "name": source_name,
+                        "source_type": "Batch",
+                        "query": "SELECT user_id, event_ts FROM raw.events",
+                        "columns": [
+                            {"name": "user_id", "type": "StringType"},
+                            {"name": "event_ts", "type": "TimestampType"},
+                        ],
+                    }
+                ],
+                "features": [],
+            },
+        }
+
+    @staticmethod
+    def _entity_row() -> dict[str, Any]:
+        return {
+            "name": "SNOWML_FEATURE_STORE_ENTITY_USER_ID",
+            "database_name": "DB1",
+            "schema_name": "SCH1",
+            "allowed_values": '["USER_ID"]',
+            "comment": "",
+        }
+
+    def test_yaml_export_dotted_dollar_source_writes_encoded_files(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        source_name = "FV_Q$1.0__SOURCE"
+        result = export_specs(
+            show_rows=[{"name": "FV_Q$1.0$ONLINE", "database_name": "DB1", "schema_name": "SCH1"}],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="DB1",
+            schema="SCH1",
+            specification_map={"FV_Q$1.0$ONLINE": self._query_spec(source_name)},
+            entity_rows=[self._entity_row()],
+            layout="sources",
+        )
+
+        assert result["status"] == "exported"
+        ds_dir = Path(result["directory"]) / "datasources"
+        ds_yaml = ds_dir / "FV_Q_241_2E0__SOURCE.yaml"
+        ds_sql = ds_dir / "FV_Q_241_2E0__SOURCE.sql"
+        assert ds_yaml.is_file(), f"encoded datasource YAML not written; files: {result['files']}"
+        assert ds_sql.is_file(), f"encoded .sql sidecar not written; files: {result['files']}"
+
+        ds_doc = yaml.safe_load(ds_yaml.read_text())
+        # The on-disk name field keeps the TRUE identity; only the filename is encoded.
+        assert ds_doc["name"] == source_name
+        assert ds_doc.get("query_file") == "FV_Q_241_2E0__SOURCE.sql"
+
+    def test_python_export_dotted_dollar_source_not_skipped(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs_as_python
+        from snowflake.ml.feature_store.decl.loader import load_python_file
+
+        source_name = "FV_Q$1.0__SOURCE"
+        result = export_specs_as_python(
+            show_rows=[{"name": "FV_Q$1.0$ONLINE", "database_name": "DB1", "schema_name": "SCH1"}],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="DB1",
+            schema="SCH1",
+            specification_map={"FV_Q$1.0$ONLINE": self._query_spec(source_name)},
+            entity_rows=[self._entity_row()],
+            layout="sources",
+        )
+
+        ds_py = [Path(p) for p in result["files"] if Path(p).parent.name == "datasources"]
+        assert ds_py, f"python datasource file was skipped; files: {result['files']}"
+        # The generated module loads and the recovered BatchSource carries the
+        # true identity in ``name`` (variable name is cosmetic / decoupled).
+        loaded = load_python_file(str(ds_py[0]))
+        names = [obj.name for _var, obj in loaded]
+        assert source_name in names, names
+
+    def test_two_versions_write_distinct_datasource_files(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        result = export_specs(
+            show_rows=[
+                {"name": "FV_Q$1.0$ONLINE", "database_name": "DB1", "schema_name": "SCH1"},
+                {"name": "FV_Q$2.0$ONLINE", "database_name": "DB1", "schema_name": "SCH1"},
+            ],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="DB1",
+            schema="SCH1",
+            specification_map={
+                "FV_Q$1.0$ONLINE": self._query_spec("FV_Q$1.0__SOURCE", version="1.0"),
+                "FV_Q$2.0$ONLINE": self._query_spec("FV_Q$2.0__SOURCE", version="2.0"),
+            },
+            entity_rows=[self._entity_row()],
+            layout="sources",
+        )
+
+        ds_dir = Path(result["directory"]) / "datasources"
+        written = sorted(p.name for p in ds_dir.glob("*.yaml"))
+        assert written == ["FV_Q_241_2E0__SOURCE.yaml", "FV_Q_242_2E0__SOURCE.yaml"], written
+
+    def test_encoded_stem_collision_raises(self, tmp_path: Path) -> None:
+        # Two distinct source names that encode to the same stem ("A." -> "A_2E"
+        # and the literal "A_2E" -> "A_2E") must raise rather than silently
+        # overwrite — the no-silent-overwrite guarantee.
+        from snowflake.ml.feature_store.decl.exporter import export_specs
+
+        with pytest.raises(ValueError, match="stem collision"):
+            export_specs(
+                show_rows=[
+                    {"name": "FA$V1$ONLINE", "database_name": "DB1", "schema_name": "SCH1"},
+                    {"name": "FB$V1$ONLINE", "database_name": "DB1", "schema_name": "SCH1"},
+                ],
+                describe_rows_by_oft={},
+                output_dir=str(tmp_path),
+                database="DB1",
+                schema="SCH1",
+                specification_map={
+                    "FA$V1$ONLINE": self._query_spec("A.", fv_name="FA", version="V1"),
+                    "FB$V1$ONLINE": self._query_spec("A_2E", fv_name="FB", version="V1"),
+                },
+                entity_rows=[self._entity_row()],
+                layout="sources",
+            )
 
 
 if __name__ == "__main__":

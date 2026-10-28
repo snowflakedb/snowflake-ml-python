@@ -403,17 +403,21 @@ class AggregationSpecTest(absltest.TestCase):
         self.assertEqual(spec2.source_column, '"myAmount"')
 
         # Tile column names resolve correctly
-        self.assertEqual(spec2.get_tile_column_name("SUM"), "_PARTIAL_SUM_myAmount")
+        self.assertEqual(spec2.get_tile_column_name("SUM"), "_PARTIAL_SUM_MYAMOUNT")
 
     def test_tile_column_name_case_sensitive(self) -> None:
-        """Test tile column names with case-sensitive (quoted) source columns."""
+        """A case-sensitive source column yields an upper-case tile column name.
+
+        The tile DDL emits the name unquoted, so the tile table stores it
+        folded; the generated name has to match to stay findable in that schema.
+        """
         spec = AggregationSpec(
             function=AggregationType.SUM,
             source_column='"myAmount"',
             window="24h",
             output_column="my_amount_sum",
         )
-        self.assertEqual(spec.get_tile_column_name("SUM"), "_PARTIAL_SUM_myAmount")
+        self.assertEqual(spec.get_tile_column_name("SUM"), "_PARTIAL_SUM_MYAMOUNT")
         self.assertEqual(spec.get_cumulative_column_name("SUM"), "_CUM_SUM_myAmount")
 
 
@@ -526,6 +530,26 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.sum("amount", "24h").alias("Total_Amount", case_sensitive=True)
         spec = feature.to_spec()
         self.assertEqual(spec.output_column, '"Total_Amount"')
+
+    def test_alias_already_quoted_keeps_its_delimiters(self) -> None:
+        """A quoted alias keeps its case instead of being folded into a different column."""
+        spec = Feature.sum("amount", "24h").alias('"myCol"').to_spec()
+        self.assertEqual(spec.output_column, '"myCol"')
+
+    def test_alias_already_quoted_case_sensitive_keeps_quotes_as_characters(self) -> None:
+        """With ``case_sensitive`` the name is taken verbatim, so its quotes become part of it."""
+        spec = Feature.sum("amount", "24h").alias('"myCol"', case_sensitive=True).to_spec()
+        self.assertEqual(spec.output_column, '"""myCol"""')
+
+    def test_alias_invalid_name_raises_actionable_error(self) -> None:
+        """A name that cannot form an identifier is rejected with guidance toward case_sensitive."""
+        with self.assertRaisesRegex(ValueError, r"alias 'total amount'.*case_sensitive=True"):
+            Feature.sum("amount", "24h").alias("total amount")
+
+    def test_default_output_name_case_sensitive_source_column(self) -> None:
+        """A case-sensitive source column yields a case-preserving, well-formed default name."""
+        spec = Feature.sum('"myCol"', "24h").to_spec()
+        self.assertEqual(spec.output_column, '"myCol_SUM_24H"')
 
     def test_repr(self) -> None:
         """Test __repr__ method."""

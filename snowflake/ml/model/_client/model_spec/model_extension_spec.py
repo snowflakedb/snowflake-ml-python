@@ -9,9 +9,11 @@ from snowflake.ml.model._client.model_spec import (
     model_extension_spec_schema,
     model_spec,
 )
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 
 _SPEC_VERSION = "2.0"
 _IS_PARTITION_PROPERTY = "is_partition"
+_FUNCTION_TYPES = frozenset(function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes)
 
 
 class ModelExtensionSpecV2(model_spec.ModelSpec):
@@ -74,8 +76,18 @@ class ModelExtensionSpecV2(model_spec.ModelSpec):
         for function_name, function_spec in functions.items():
             if not isinstance(function_spec, Mapping):
                 raise ValueError(f"model specification: function '{function_name}' must be a mapping.")
-            if not isinstance(function_spec.get("signature"), Mapping):
+            signature = function_spec.get("signature")
+            if not isinstance(signature, Mapping):
                 raise ValueError(f"model specification: function '{function_name}' signature must be a mapping.")
+            if function_spec.get("type") not in _FUNCTION_TYPES:
+                raise ValueError(
+                    f"model specification: function '{function_name}' type must be FUNCTION or TABLE_FUNCTION."
+                )
+            for field_name in ("inputs", "outputs"):
+                if not isinstance(signature.get(field_name), list):
+                    raise ValueError(
+                        f"model specification: function '{function_name}' signature {field_name} must be a list."
+                    )
             function_properties = function_spec.get("properties")
             if function_properties is not None and not isinstance(function_properties, Mapping):
                 raise ValueError(f"model specification: function '{function_name}' properties must be a mapping.")

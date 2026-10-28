@@ -1,0 +1,7 @@
+---
+kind: Entity
+name: USER_ID
+join_keys:
+  - name: USER_ID
+    type: StringType
+description: Shared user identifier for the declarative integ feature views.

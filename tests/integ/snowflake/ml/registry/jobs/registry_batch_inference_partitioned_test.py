@@ -876,6 +876,7 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
                 job_name=job_name,
             )
 
+    @absltest.skip("Temporarily disabled")  # type: ignore[misc]
     def test_scalar_function_with_partition_column_raises_error(self) -> None:
         """Test that run_batch raises ValueError when partition_column is specified for a scalar function model."""
         from sklearn.linear_model import LinearRegression

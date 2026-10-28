@@ -115,16 +115,26 @@ snowpark SDK.
   `spec_format_version`, `internal_data_version`) before hashing so
   they don't trigger spurious `RECREATE`s. `_check_idempotency`
   uses the **same hash strategy as the planner** so the validator
-  and planner cannot disagree: when `applied.from_specification` is
+  and planner agree on hash equality: when `applied.from_specification` is
   true and `kind` is in `_FV_RECREATE_KINDS`
   (`StreamingFeatureView`, `RealtimeFeatureView`,
   `BatchFeatureView`) it computes
-  `compute_local_spec_hash(spec, target_database, target_schema,
+  `compute_local_spec_and_hash(spec, target_database, target_schema,
   entity_join_keys=...)` (the same `build_entity_join_key_map` the
   planner threads, so a FeatureView whose entity **name** differs
   from its join-key **column** still hashes to `NO_CHANGE`)
-  and compares against `applied.content_hash`; otherwise it falls
-  back to `structural_fingerprint_hash`.  For `kind: FeatureGroup`,
+  and compares against `_applied_compare_hash(kind, applied,
+  local_compiled)` — the **single owner** of the planner's
+  `BatchFeatureView` `refresh_mode` normalization (a Snowflake-stamped
+  `INCREMENTAL`/`FULL` that survives in `applied.content_hash` is
+  dropped here, exactly as `planner.generate_plan` does); for every
+  other kind the helper returns `applied.content_hash` unchanged.
+  Without this shared compare the validator would fall through to
+  column evolution on a spec the planner treats as `NO_CHANGE` and emit
+  spurious `COLUMN_REMOVED` warnings with zero plan ops. When the spec
+  is not a specification-backed FV kind, `_check_idempotency` computes
+  `structural_fingerprint_hash` for the local side instead.  For
+  `kind: FeatureGroup`,
   `_check_idempotency` instead routes to `fg_content_hash(spec)`
   — a SHA-256 over the FG's authored surface (`name`, `version`,
   `desc`, `auto_prefix`, and a sorted tuple of source

@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 from snowflake.ml.feature_store.decl.invariants import structural_fingerprint_hash
 from snowflake.ml.feature_store.decl.state import (
+    _build_offline_fv_object,
     _build_stream_source_object,
     fetch_applied_state,
 )
@@ -48,6 +49,69 @@ def _row(
         "desc": desc,
         "owner": owner,
     }
+
+
+def _streaming_fv_row(
+    *,
+    name: str = "USER_CLICK_STATS_CONTINUOUS_DECL",
+    version: str = "V1",
+    stream_config: Any = None,
+) -> dict[str, Any]:
+    """List-FV row for an OFT-less (legacy view-backed) StreamingFeatureView."""
+    return {
+        "name": name,
+        "version": version,
+        "database_name": "JKEW_DB",
+        "schema_name": "JKEW_SCHEMA",
+        "kind": "STREAMING",
+        "entities": ["USER_ID"],
+        "stream_config": stream_config,
+    }
+
+
+class TestStreamingSourceRehydration:
+    """OFT-less StreamingFeatureViews (legacy view-backed
+    ``EXTERNAL_FEATURE_VIEW``) never reach the OFT/SPECIFICATION recovery
+    path, so ``_build_offline_fv_object`` is the only place their source can
+    be recovered.  It rehydrates ``spec.sources`` from the ``stream_config``
+    cell (``{"stream_source", "transformation_fn"}``) that
+    ``list_feature_views`` surfaces — but never fabricates a source from the
+    ``{"stream_source": "unknown"}`` sentinel core emits when no streaming
+    metadata exists (the exact legacy blind-spot case).  The UDF body is not
+    in ``stream_config``, so no ``udf`` block is injected (a bodyless ``udf``
+    is unappliable and crashes the Python exporter).
+    """
+
+    def test_source_rehydrated_udf_not_injected_from_stream_config(self) -> None:
+        row = _streaming_fv_row(
+            stream_config={
+                "stream_source": "CLICKSTREAM_EVENTS",
+                "transformation_fn": "compute_engagement_metrics",
+            }
+        )
+        obj = _build_offline_fv_object(row, default_database="JKEW_DB", default_schema="JKEW_SCHEMA")
+        assert obj is not None
+        inner = obj.spec_payload["spec"]
+        assert inner["sources"] == [{"name": "CLICKSTREAM_EVENTS", "source_type": "Stream"}]
+        # The UDF body is unrecoverable from stream_config, so no ``udf`` is
+        # injected (a bodyless udf fails STREAM_FV_UDF_REQUIRED / crashes the
+        # Python exporter); the transformation is left for re-registration.
+        assert "udf" not in inner or not inner["udf"]
+
+    def test_unknown_stream_source_is_not_rehydrated(self) -> None:
+        row = _streaming_fv_row(stream_config={"stream_source": "unknown"})
+        obj = _build_offline_fv_object(row, default_database="JKEW_DB", default_schema="JKEW_SCHEMA")
+        assert obj is not None
+        inner = obj.spec_payload["spec"]
+        assert inner["sources"] == []
+        assert "udf" not in inner or not inner["udf"]
+
+    def test_missing_stream_config_leaves_shell_empty(self) -> None:
+        row = _streaming_fv_row(stream_config=None)
+        obj = _build_offline_fv_object(row, default_database="JKEW_DB", default_schema="JKEW_SCHEMA")
+        assert obj is not None
+        inner = obj.spec_payload["spec"]
+        assert inner["sources"] == []
 
 
 class TestBuildStreamSourceObject:

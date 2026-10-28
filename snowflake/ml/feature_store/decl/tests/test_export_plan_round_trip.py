@@ -1114,6 +1114,146 @@ class TestExportSpecsQueryBackedDatasource:
         assert "query_file" not in ds_doc
 
 
+class TestVersionQualifiedSourceNameRoundTrip:
+    """A query-backed source whose name carries the version-qualified ``$`` /
+    ``.`` physical-name form (``FV_Q$1.0__SOURCE``) must export to a safe,
+    encoded filename AND re-plan to zero ``RECREATE_SOURCE`` — the encoder only
+    touches the filename, never the logical ``name`` the planner keys/hashes on.
+    """
+
+    @staticmethod
+    def _spec() -> dict[str, Any]:
+        payload = copy.deepcopy(_query_spec_payload())
+        payload["spec"]["sources"][0]["name"] = "FV_QUERY$1.0__SOURCE"
+        return payload
+
+    @staticmethod
+    def _spec_for_version(version: str, *, query: str, columns: list[dict[str, str]]) -> dict[str, Any]:
+        """Build an ``FV_QUERY`` payload at *version* with its own source name/query/schema."""
+        # Each version carries its OWN ``FV_QUERY$<version>__SOURCE`` name plus a
+        # distinct query/schema, so if the exporter ever collapsed the two back
+        # into a single shared file (the pre-fix bug), at least one version's
+        # source would carry the other's query and the re-plan would emit
+        # ``RECREATE_SOURCE``.
+        payload = copy.deepcopy(_query_spec_payload())
+        payload["metadata"]["version"] = version
+        src = payload["spec"]["sources"][0]
+        src["name"] = f"FV_QUERY${version}__SOURCE"
+        src["query"] = query
+        src["columns"] = columns
+        return payload
+
+    def test_export_then_plan_no_recreate_source(self, tmp_path: Path) -> None:
+        spec_payload = self._spec()
+        # Build applied state from the same DB1/SCH1 inputs the export uses
+        # (``_live_applied_state`` hardcodes MYDB/PUBLIC via ``_show_row``).
+        applied_state = fetch_applied_state(
+            [_query_show_row()],
+            None,
+            specification_map={"FV_QUERY$V1": spec_payload},
+            entity_rows=[_query_entity_row()],
+            default_database="DB1",
+            default_schema="SCH1",
+        )
+
+        export_specs(
+            show_rows=[_query_show_row()],
+            describe_rows_by_oft={"FV_QUERY$V1": []},
+            output_dir=str(tmp_path),
+            database="DB1",
+            schema="SCH1",
+            specification_map={"FV_QUERY$V1": spec_payload},
+            entity_rows=[_query_entity_row()],
+        )
+
+        # The datasource landed under an encoded, filesystem-safe stem.
+        ds_dir = tmp_path / "DB1.SCH1" / "datasources"
+        assert (ds_dir / "FV_QUERY_241_2E0__SOURCE.yaml").is_file(), sorted(p.name for p in ds_dir.glob("*"))
+
+        export_root = tmp_path / "DB1.SCH1"
+        batch = load_specs([f"{export_root}/..."])
+        errors, plan = _validate_and_plan(batch, applied_state, PlanOptions(), "DB1", "SCH1")
+
+        assert errors == [], f"round-trip validation failed: {errors!r}"
+        recreate = [op for op in plan.ops if op.kind.value == "RECREATE_SOURCE"]
+        assert recreate == [], (
+            "a freshly-exported version-qualified source must re-plan clean; "
+            f"got RECREATE_SOURCE: {[(o.name, o.reason) for o in recreate]!r}"
+        )
+        non_no_change = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
+        assert non_no_change == [], f"every op must be NO_CHANGE, got {[o.kind.value for o in plan.ops]!r}"
+
+    def test_two_versions_export_then_plan_no_recreate_source(self, tmp_path: Path) -> None:
+        """Two versions of one imperative FV re-plan to zero RECREATE_SOURCE (the original bug)."""
+        # Each version stamps its own ``FV_QUERY$<version>__SOURCE`` with a
+        # *distinct* query/schema; a freshly-exported two-version tree must
+        # re-plan to zero ``RECREATE_SOURCE`` (every op ``NO_CHANGE``), proving
+        # the versions neither collapse to one file nor cross-contaminate queries.
+        v1_spec = self._spec_for_version(
+            "V1",
+            query="SELECT user_id, event_ts, amount FROM raw.events WHERE amount > 0",
+            columns=[
+                {"name": "user_id", "type": "StringType"},
+                {"name": "event_ts", "type": "TimestampType"},
+                {"name": "amount", "type": "FloatType"},
+            ],
+        )
+        # V2 deliberately differs: a wider schema and a different predicate, so a
+        # collapsed single file could not satisfy BOTH versions at once.
+        v2_spec = self._spec_for_version(
+            "V2",
+            query="SELECT user_id, event_ts, amount, currency FROM raw.events WHERE amount >= 0",
+            columns=[
+                {"name": "user_id", "type": "StringType"},
+                {"name": "event_ts", "type": "TimestampType"},
+                {"name": "amount", "type": "FloatType"},
+                {"name": "currency", "type": "StringType"},
+            ],
+        )
+        spec_map = {"FV_QUERY$V1": v1_spec, "FV_QUERY$V2": v2_spec}
+        show_rows = [
+            {**_query_show_row(), "name": "FV_QUERY$V1"},
+            {**_query_show_row(), "name": "FV_QUERY$V2"},
+        ]
+
+        applied_state = fetch_applied_state(
+            show_rows,
+            None,
+            specification_map=spec_map,
+            entity_rows=[_query_entity_row()],
+            default_database="DB1",
+            default_schema="SCH1",
+        )
+
+        export_specs(
+            show_rows=show_rows,
+            describe_rows_by_oft={"FV_QUERY$V1": [], "FV_QUERY$V2": []},
+            output_dir=str(tmp_path),
+            database="DB1",
+            schema="SCH1",
+            specification_map=spec_map,
+            entity_rows=[_query_entity_row()],
+        )
+
+        # Each version landed in its OWN encoded datasource file ($ -> _24).
+        ds_dir = tmp_path / "DB1.SCH1" / "datasources"
+        written = sorted(p.name for p in ds_dir.glob("*.yaml"))
+        assert written == ["FV_QUERY_24V1__SOURCE.yaml", "FV_QUERY_24V2__SOURCE.yaml"], written
+
+        export_root = tmp_path / "DB1.SCH1"
+        batch = load_specs([f"{export_root}/..."])
+        errors, plan = _validate_and_plan(batch, applied_state, PlanOptions(), "DB1", "SCH1")
+
+        assert errors == [], f"two-version round-trip validation failed: {errors!r}"
+        recreate = [op for op in plan.ops if op.kind.value == "RECREATE_SOURCE"]
+        assert recreate == [], (
+            "two freshly-exported FV versions must re-plan clean; "
+            f"got RECREATE_SOURCE: {[(o.name, o.reason) for o in recreate]!r}"
+        )
+        non_no_change = [op for op in plan.ops if op.kind.value != "NO_CHANGE"]
+        assert non_no_change == [], f"every op must be NO_CHANGE, got {[o.kind.value for o in plan.ops]!r}"
+
+
 class TestExporterRoundTripThroughLoader:
     """Round-trip integration: exporter → loader → compiler.
 

@@ -85,6 +85,18 @@ _TILE_BOUNDARY_COL = "TILE_BOUNDARY"
 _ICEBERG_TILE_START_SQL_TYPE = "TIMESTAMP_NTZ(6)"
 
 
+def _folded_source_column(spec: AggregationSpec) -> str:
+    """Return the source column name as internal tile column names embed it.
+
+    Args:
+        spec: The aggregation whose source column contributes the name.
+
+    Returns:
+        The source column's stored name, folded to upper case.
+    """
+    return SqlIdentifier(spec.source_column).resolved().upper()
+
+
 class TilingSqlGenerator:
     """Generates SQL for creating tile Dynamic Tables.
 
@@ -249,11 +261,11 @@ FROM (
             if rn_col in seen_rn:
                 continue
             seen_rn.add(rn_col)
-            resolved_src = SqlIdentifier(spec.source_column).resolved()
+            src_col = spec.source_column
             order_dir = "DESC" if spec.function == AggregationType.LAST_DISTINCT_N else "ASC"
             dedup_cols.append(
                 f"""ROW_NUMBER() OVER (
-            PARTITION BY {join_keys_str}, {_TILE_START_COL}, {resolved_src}
+            PARTITION BY {join_keys_str}, {_TILE_START_COL}, {src_col}
             ORDER BY {ts_col} {order_dir}
         ) AS {rn_col}"""
             )
@@ -271,7 +283,7 @@ FROM (
     def _distinct_dup_rn_col(spec: AggregationSpec) -> str:
         """Return the per-spec ROW_NUMBER column name used for in-tile dedup."""
         direction = "LAST" if spec.function == AggregationType.LAST_DISTINCT_N else "FIRST"
-        resolved_src = SqlIdentifier(spec.source_column).resolved()
+        resolved_src = _folded_source_column(spec)
         return f"_DUP_RN_{direction}_{resolved_src}"
 
     def _generate_secondary_key_query(self) -> str:
@@ -420,7 +432,7 @@ GROUP BY {join_keys_str}, {secondary_key}, {_TILE_START_COL}
                     # keep only first occurrences (dup_rn = 1) when building the arrays.
                     # ARRAY_AGG omits NULLs, so non-first occurrences are dropped.
                     n = spec.params["n"]
-                    resolved_src = SqlIdentifier(spec.source_column).resolved()
+                    resolved_src = _folded_source_column(spec)
                     rn_col = self._distinct_dup_rn_col(spec)
                     final_col = f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}"
                     final_ts_col = f"_PARTIAL_LAST_DISTINCT_{n}_TS_{resolved_src}"
@@ -485,7 +497,7 @@ GROUP BY {join_keys_str}, {secondary_key}, {_TILE_START_COL}
                     # keep only first occurrences (dup_rn = 1) when building the arrays.
                     # ARRAY_AGG omits NULLs, so non-first occurrences are dropped.
                     n = spec.params["n"]
-                    resolved_src = SqlIdentifier(spec.source_column).resolved()
+                    resolved_src = _folded_source_column(spec)
                     rn_col = self._distinct_dup_rn_col(spec)
                     final_col = f"_PARTIAL_FIRST_DISTINCT_{n}_{resolved_src}"
                     final_ts_col = f"_PARTIAL_FIRST_DISTINCT_{n}_TS_{resolved_src}"
@@ -906,7 +918,7 @@ class MergingSqlGenerator:
             elif spec.function == AggregationType.LAST_DISTINCT_N:
                 if _is_new_distinct_version(self._authoring_pkg_version):
                     n = spec.params["n"]
-                    resolved_src = SqlIdentifier(spec.source_column).resolved()
+                    resolved_src = _folded_source_column(spec)
                     tile_columns_set.add(f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}")
                     tile_columns_set.add(f"_PARTIAL_LAST_DISTINCT_{n}_TS_{resolved_src}")
                 else:
@@ -916,7 +928,7 @@ class MergingSqlGenerator:
             elif spec.function == AggregationType.FIRST_DISTINCT_N:
                 if _is_new_distinct_version(self._authoring_pkg_version):
                     n = spec.params["n"]
-                    resolved_src = SqlIdentifier(spec.source_column).resolved()
+                    resolved_src = _folded_source_column(spec)
                     tile_columns_set.add(f"_PARTIAL_FIRST_DISTINCT_{n}_{resolved_src}")
                     tile_columns_set.add(f"_PARTIAL_FIRST_DISTINCT_{n}_TS_{resolved_src}")
                 else:
@@ -1490,7 +1502,7 @@ class MergingSqlGenerator:
 
             if is_distinct and _is_new_distinct_version(self._authoring_pkg_version):
                 n = spec.params["n"]
-                resolved_src = SqlIdentifier(spec.source_column).resolved()
+                resolved_src = _folded_source_column(spec)
                 if spec.function == AggregationType.LAST_DISTINCT_N:
                     col_name = f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}"
                     order_clause = f"t.{_TILE_START_COL} DESC, flat.INDEX ASC"
@@ -2005,7 +2017,7 @@ GROUP BY {', '.join(group_by_cols)}
             is_distinct = spec.function in (AggregationType.LAST_DISTINCT_N, AggregationType.FIRST_DISTINCT_N)
             if is_distinct and _is_new_distinct_version(self._authoring_pkg_version):
                 n = spec.params["n"]
-                resolved_src = SqlIdentifier(spec.source_column).resolved()
+                resolved_src = _folded_source_column(spec)
                 if spec.function == AggregationType.LAST_DISTINCT_N:
                     val_col = f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}"
                     ts_col = f"_PARTIAL_LAST_DISTINCT_{n}_TS_{resolved_src}"
@@ -2137,7 +2149,7 @@ FROM {from_clause}
         elif spec.function == AggregationType.LAST_DISTINCT_N:
             if _is_new_distinct_version(self._authoring_pkg_version):
                 n = spec.params["n"]
-                resolved_src = SqlIdentifier(spec.source_column).resolved()
+                resolved_src = _folded_source_column(spec)
                 return [
                     f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}",
                     f"_PARTIAL_LAST_DISTINCT_{n}_TS_{resolved_src}",
@@ -2148,7 +2160,7 @@ FROM {from_clause}
         elif spec.function == AggregationType.FIRST_DISTINCT_N:
             if _is_new_distinct_version(self._authoring_pkg_version):
                 n = spec.params["n"]
-                resolved_src = SqlIdentifier(spec.source_column).resolved()
+                resolved_src = _folded_source_column(spec)
                 return [
                     f"_PARTIAL_FIRST_DISTINCT_{n}_{resolved_src}",
                     f"_PARTIAL_FIRST_DISTINCT_{n}_TS_{resolved_src}",

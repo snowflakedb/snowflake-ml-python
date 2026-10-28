@@ -520,8 +520,8 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(
             rows,
             [
-                {"user_id": 1, "purchase_amount": 10.5, "score": 99},
-                {"user_id": 2, "purchase_amount": 20.0, "score": 100},
+                {'"user_id"': 1, '"purchase_amount"': 10.5, '"score"': 99},
+                {'"user_id"': 2, '"purchase_amount"': 20.0, '"score"': 100},
             ],
         )
 
@@ -568,7 +568,7 @@ class OnlineServiceTest(absltest.TestCase):
                 )
 
         self.assertEqual(len(captured), 1)
-        self.assertEqual(rows, [{"user_id": 1, "purchase_amount": 10.5, "score": 99}])
+        self.assertEqual(rows, [{'"user_id"': 1, '"purchase_amount"': 10.5, '"score"': 99}])
 
     def test_read_postgres_online_features_rejects_feature_names_for_feature_group(self) -> None:
         """``feature_names`` filtering is incompatible with ``object_type='feature_group'``."""
@@ -630,7 +630,7 @@ class OnlineServiceTest(absltest.TestCase):
                 )
 
         self.assertEqual(len(captured), 1)
-        self.assertEqual(rows, [{"user_id": 1, "score": 99}])
+        self.assertEqual(rows, [{'"user_id"': 1, '"score"': 99}])
 
     def test_read_postgres_online_features_values_follow_metadata_features_order(self) -> None:
         """``results[].features`` values align with ``metadata.features`` order (not client-side column order)."""
@@ -665,7 +665,7 @@ class OnlineServiceTest(absltest.TestCase):
                     join_key_field_types={"user_id": StringType()},
                 )
 
-        self.assertEqual(rows, [{"user_id": 1, "score": 10.5, "purchase_amount": 99}])
+        self.assertEqual(rows, [{'"user_id"': 1, '"score"': 10.5, '"purchase_amount"': 99}])
 
     def test_read_postgres_online_features_maps_values_by_metadata_order(self) -> None:
         """Values pair with ``metadata.features`` positions (no client-side permutation)."""
@@ -705,6 +705,52 @@ class OnlineServiceTest(absltest.TestCase):
             [{"USER_ID": "k1", "AMOUNT": 999.0, "EVENT_TIME": "2024-06-01T12:00:00Z"}],
         )
         self.assertEqual([f.name for f in schema.fields], ["USER_ID", "AMOUNT", "EVENT_TIME"])
+
+    def test_read_postgres_online_features_case_sensitive_names_keep_values_in_pandas(self) -> None:
+        """Names that are not plain uppercase key rows by their schema field names and come back by stored name."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+
+        response_payload = {
+            "request_id": "r1",
+            "status": "success",
+            "results": [{"features": [1.5, 2.5, 3.5, 4.5]}],
+            "metadata": {
+                "features": [
+                    {"name": "AMOUNT"},
+                    {"name": "feeSum2d"},
+                    {"name": "fee sum"},
+                    {"name": 'fee"Sum'},
+                ],
+            },
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
+
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with _patch_online_http_client_with_transport(handler):
+                rows, schema = online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "my_fv",
+                    "v1",
+                    ["userId"],
+                    [["u1"]],
+                    None,
+                    join_key_field_types={"userId": StringType()},
+                )
+
+        self.assertEqual(
+            [f.name for f in schema.fields],
+            ['"userId"', "AMOUNT", '"feeSum2d"', '"fee sum"', '"fee""Sum"'],
+        )
+        self.assertEqual(list(rows[0]), [f.name for f in schema.fields])
+        pdf = online_service.rows_to_pandas_for_postgres_online(rows, schema)
+        self.assertEqual(
+            pdf.to_dict("records"),
+            [{"userId": "u1", "AMOUNT": 1.5, "feeSum2d": 2.5, "fee sum": 3.5, 'fee"Sum': 4.5}],
+        )
 
     def test_read_postgres_online_features_uses_metadata_data_types_without_fv_types(self) -> None:
         """``include_data_types`` response fields can supply Snowpark mapping without ``feature_field_types``."""
@@ -1691,6 +1737,117 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(value, decimal.Decimal(high_precision))
         # Guard against regressing to float coercion, which would silently truncate the value.
         self.assertNotEqual(value, float(high_precision))
+
+
+class _CountingTransport:
+    """Answers every body with ``status``; counts how many single and batched sends it got."""
+
+    def __init__(self, status: int, *, window: int | None = None) -> None:
+        self.status = status
+        self.posts = 0
+        self.batched_bodies: list[int] = []
+        if window is not None:
+            self.send_ahead_window = window
+
+    def post_json(self, url: str, body: dict[str, Any], timeout: float) -> tuple[int, bytes]:
+        del url, body, timeout
+        self.posts += 1
+        return self.status, b'{"error": {"code": "INVALID_ARGUMENT", "message": "unknown feature"}}'
+
+    def close(self) -> None:
+        pass
+
+
+class _CountingBatchingTransport(_CountingTransport):
+    def post_json_many(self, url: str, bodies: list[dict[str, Any]], timeout: float) -> list[tuple[int, bytes]]:
+        self.batched_bodies.append(len(bodies))
+        return [self.post_json(url, body, timeout) for body in bodies]
+
+
+class ReadStopsAtTheFirstBadBatchTest(absltest.TestCase):
+    """A bad batch must stop the read, not wait on every batch after it.
+
+    Building every body up front made it tempting to send them all before checking any; with the
+    WebSocket flag off that turned a 400 on batch 1 of 50 into 50 requests, each waited on.
+    """
+
+    _KEYS = [[f"u{i}"] for i in range(50)]  # 5 batches of 10
+
+    def _read(self, transport: Any) -> None:
+        session = create_autospec(Session)
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException):
+            online_service.read_postgres_online_features(
+                session,
+                "https://q.example/",
+                "fv",
+                "v1",
+                ["USER_ID"],
+                self._KEYS,
+                None,
+                join_key_field_types={"USER_ID": StringType()},
+                http_client=transport,
+            )
+
+    def test_plain_http_sends_one_request_before_raising(self) -> None:
+        transport = _CountingTransport(400)
+        self._read(transport)
+        self.assertEqual(transport.posts, 1)
+
+    def test_a_batching_transport_that_is_not_sending_ahead_sends_one(self) -> None:
+        """WebSocket at depth 1, or resting on HTTP, reports a window of 1."""
+        transport = _CountingBatchingTransport(400, window=1)
+        self._read(transport)
+        self.assertEqual(transport.posts, 1)
+        self.assertEqual(transport.batched_bodies, [])
+
+    def test_a_batching_transport_without_a_window_is_not_trusted_to_send_ahead(self) -> None:
+        transport = _CountingBatchingTransport(400)
+        self._read(transport)
+        self.assertEqual(transport.posts, 1)
+
+    def test_a_pipelining_transport_stops_within_one_window(self) -> None:
+        transport = _CountingBatchingTransport(400, window=2)
+        self._read(transport)
+        self.assertEqual(transport.batched_bodies, [2], "sent past the window that held the bad batch")
+        self.assertEqual(transport.posts, 2)
+
+    def test_bodies_are_built_only_as_they_are_sent(self) -> None:
+        """Building every body first held the whole read's serialized rows in memory at once,
+        even on HTTP where they are sent one at a time; a 400 on batch 1 built all five."""
+        transport = _CountingTransport(400)
+        serialize = online_service._json_serialize_value
+        serialized: list[Any] = []
+
+        def counting(value: Any) -> Any:
+            serialized.append(value)
+            return serialize(value)
+
+        with patch.object(online_service, "_json_serialize_value", counting):
+            self._read(transport)
+
+        self.assertLen(serialized, 10, "rows past the first batch were serialized before it was checked")
+
+
+class ShortTransportAnswerTest(absltest.TestCase):
+    def test_a_transport_that_answers_fewer_batches_than_it_was_sent_fails_the_read(self) -> None:
+        """Without strict pairing the unanswered batches' rows were silently dropped."""
+
+        class _AnswersNothing(_CountingTransport):
+            def post_json_many(self, url: str, bodies: list[dict[str, Any]], timeout: float) -> list[tuple[int, bytes]]:
+                return []
+
+        with self.assertRaises(ValueError):
+            online_service.read_postgres_online_features(
+                create_autospec(Session),
+                "https://q.example/",
+                "fv",
+                "v1",
+                ["USER_ID"],
+                [[f"u{i}"] for i in range(20)],  # two batches, one window
+                None,
+                join_key_field_types={"USER_ID": StringType()},
+                http_client=_AnswersNothing(200, window=2),
+            )
 
 
 if __name__ == "__main__":

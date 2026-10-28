@@ -295,11 +295,17 @@ def tearDownModule() -> None:
 from feature_store_batch_online_read_bundled import (  # noqa: E402,F401
     FeatureStoreBatchOnlineReadIntegTest,
 )
+from feature_store_decl_project_bundled import (  # noqa: E402,F401
+    FeatureStoreDeclProjectIntegTest,
+)
 from feature_store_distinct_n_online_bundled import (  # noqa: E402,F401
     FeatureStoreDistinctNBatchIntegTest,
     FeatureStoreDistinctNStreamingIntegTest,
 )
-from feature_store_feature_group_bundled import FeatureGroupIntegTest  # noqa: E402,F401
+from feature_store_feature_group_bundled import (  # noqa: E402,F401
+    FeatureGroupIntegTest,
+    FeatureGroupWsParityIntegTest,
+)
 from feature_store_last_first_n_online_bundled import (  # noqa: E402,F401
     FeatureStoreLastFirstNBatchIntegTest,
     FeatureStoreLastFirstNStreamingIntegTest,
@@ -319,9 +325,11 @@ from feature_store_stream_ingest_bundled import (  # noqa: E402,F401
 )
 from feature_store_streaming_fv_bundled import (  # noqa: E402,F401
     StreamingFeatureViewIntegTest,
+    StreamingFeatureViewWsParityIntegTest,
 )
 
 FeatureStoreBatchOnlineReadIntegTest.__module__ = __name__
+FeatureStoreDeclProjectIntegTest.__module__ = __name__
 FeatureStoreDistinctNStreamingIntegTest.__module__ = __name__
 FeatureStoreDistinctNBatchIntegTest.__module__ = __name__
 FeatureStoreLastFirstNStreamingIntegTest.__module__ = __name__
@@ -333,6 +341,8 @@ RealtimeFeatureViewIntegTest.__module__ = __name__
 FeatureStoreStreamIngestIntegTest.__module__ = __name__
 FeatureStoreAppendOnlyOFTIntegTest.__module__ = __name__
 StreamingFeatureViewIntegTest.__module__ = __name__
+StreamingFeatureViewWsParityIntegTest.__module__ = __name__
+FeatureGroupWsParityIntegTest.__module__ = __name__
 
 if __name__ == "__main__":
     absltest.main()

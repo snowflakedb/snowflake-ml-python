@@ -83,6 +83,43 @@ class BuildCodeBundleManifestTest(parameterized.TestCase):
         self.assertEqual(manifest["bundle"]["env_vars"], [{"FOO": "bar"}])
 
 
+class EscapeStringLiteralTest(parameterized.TestCase):
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("no_special_characters", "payload/train.py", "payload/train.py"),
+        ("empty", "", ""),
+        ("single_quote", "it's", r"it\'s"),
+        ("backslash", r"a\b", r"a\\b"),
+        ("newline", "a\nb", r"a\nb"),
+        ("carriage_return", "a\rb", r"a\rb"),
+        # Only escaping backslashes first keeps this from collapsing into \\\\' .
+        ("backslash_then_quote", r"\'", r"\\\'"),
+    )
+    def test_escapes_sql_literal_characters(self, value: str, expected: str) -> None:
+        self.assertEqual(code_bundle._escape_string_literal(value), expected)
+
+    def test_matches_connector_escaping_while_both_exist(self) -> None:
+        """The local escaper must agree with the connector's own escaping of bound string values.
+
+        snowflake.connector.converter was removed in connector 5, which is why the escaping is no
+        longer taken from there; this pins the replacement to it on the 4.x line we still support.
+        """
+        try:
+            from snowflake.connector import converter
+        except ImportError:
+            self.skipTest("snowflake.connector.converter was removed in connector 5")
+
+        for value in ("payload/train.py", "", "it's", "a\\b", "a\nb", "a\rb", "\\'", "'\\"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    code_bundle._escape_string_literal(value),
+                    converter.SnowflakeConverter.escape(value),
+                )
+
+    def test_module_does_not_import_removed_converter_module(self) -> None:
+        """A module-level `from snowflake.connector import converter` breaks import under connector 5."""
+        self.assertFalse(hasattr(code_bundle, "converter"))
+
+
 class MLCodeBundleTest(parameterized.TestCase):
     def setUp(self) -> None:
         super().setUp()

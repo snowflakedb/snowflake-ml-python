@@ -13,6 +13,7 @@ datasets==5.0.1
 flask-cors==3.0.10
 flask==3.1.2
 fsspec[http]==2026.6.0
+gitpython==3.1.59
 h2==4.3.0
 httpx==0.28.1
 importlib_resources==6.5.2
@@ -62,4 +63,5 @@ types-protobuf==5.29.1.20241207
 types-requests==2.30.0.0
 types-toml==0.10.8.6
 typing-extensions==4.15.0
+websocket-client==1.8.0
 werkzeug==3.1.3

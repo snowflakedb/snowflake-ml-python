@@ -8,6 +8,7 @@ channels:
 dependencies:
   - altair>=5,<7
   - catboost>=1.2.0, <2
+  - category_encoders>=2.6.0, <3
   - lightgbm>=4.1.0, <5
   - mlflow>=2.16.0, <4
   - prophet>=1.1.0, <2

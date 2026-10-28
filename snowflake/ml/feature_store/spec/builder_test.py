@@ -390,6 +390,70 @@ class StreamingBuilderTilesTest(absltest.TestCase):
         self.assertEqual(result.spec.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
         self.assertEqual(len(result.offline_configs), 2)
 
+    def test_case_sensitive_columns_carry_stored_name(self) -> None:
+        """Aggregation columns reach the spec as the name the column is stored under."""
+        udf_config = SnowflakeTableInfo(
+            table_type=TableType.UDF_TRANSFORMED,
+            database="DB",
+            schema="SCH",
+            table="UDF_TBL",
+            columns=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField('"myAmount"', DoubleType()),
+                ]
+            ),
+        )
+        tiled_config = SnowflakeTableInfo(
+            table_type=TableType.TILED,
+            database="DB",
+            schema="SCH",
+            table="TILED_TBL",
+            columns=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField('"myAmount_SUM_24H"', DoubleType()),
+                ]
+            ),
+        )
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.StreamingFeatureView,
+                database="DB",
+                schema="SCH",
+                name="cs_fv",
+                version="v1",
+            )
+            .set_offline_configs([udf_config, tiled_config])
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([_make_stream_source()])
+            .set_udf(**_simple_udf_args())
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.SUM,
+                        source_column='"myAmount"',
+                        window="24h",
+                        output_column='"myAmount_SUM_24H"',
+                    )
+                ]
+            )
+            .build()
+        )
+
+        feat = result.spec.features[0]
+        self.assertEqual(feat.source_column.name, "myAmount")
+        self.assertEqual(feat.output_column.name, "myAmount_SUM_24H")
+
+        udf_columns = next(c for c in result.offline_configs if c.table_type == TableType.UDF_TRANSFORMED)
+        self.assertEqual([c.name for c in udf_columns.columns], ["USER_ID", "myAmount"])
+
 
 class StreamingBuilderNoAggTest(absltest.TestCase):
     """Streaming FV with no aggregation — 1 offline config (UDFTransformed only)."""
@@ -836,6 +900,42 @@ class FeatureViewConversionTest(absltest.TestCase):
         # USER_ID is not a feature → excluded
         self.assertEqual(col_names, ["SCORE", "RISK"])
 
+    def test_columns_from_feature_view_keeps_case_sensitive_feature(self) -> None:
+        """A case-sensitive feature column survives the feature-name filter."""
+        fv = self._make_typed_fv(
+            feature_names=['"myScore"'],
+            output_schema=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField('"myScore"', DoubleType()),
+                ]
+            ),
+        )
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        self.assertEqual([c.name for c in cols], ["myScore"])
+
+    def test_columns_from_realtime_feature_view_excludes_case_sensitive_entity(self) -> None:
+        """A case-sensitive entity column is not emitted as one of an RTFV's features."""
+        from snowflake.ml.feature_store.feature_view import FeatureView
+
+        fv = mock.MagicMock(spec=FeatureView)
+        fv.name = SqlIdentifier("rtfv")
+        fv.version = "v1"
+        fv.is_tiled = False
+        fv.aggregation_specs = None
+        fv.ordered_entity_columns = ["myId"]
+        fv.realtime_config = mock.MagicMock()
+        fv.realtime_config.output_schema = StructType(
+            [
+                StructField('"myId"', StringType()),
+                StructField("SCORE", DoubleType()),
+            ]
+        )
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["SCORE"])
+
     def test_columns_from_feature_view_preserves_types(self) -> None:
         """FSColumn type metadata (precision, scale) is preserved."""
         fv = self._make_typed_fv()
@@ -1106,6 +1206,30 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         self.assertIsNone(cols[0].precision)
         self.assertIsNone(cols[0].scale)
 
+    def test_case_sensitive_source_column_finds_its_tile_columns(self) -> None:
+        """A case-sensitive aggregation source column resolves against the folded tile schema.
+
+        The tile DDL emits partial columns unquoted, so the tile table stores
+        ``_PARTIAL_SUM_MYCOL`` for a source column of ``"myCol"``. Outputs typed
+        from a partial column and outputs with a fixed type both carry their stored names.
+        """
+        specs = [
+            AggregationSpec(AggregationType.SUM, '"myCol"', "1d", '"myCol_SUM_1D"'),
+            AggregationSpec(AggregationType.COUNT, '"myCol"', "1d", '"myCol_COUNT_1D"'),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_SUM_MYCOL", DecimalType(38, 4)),
+                StructField("_PARTIAL_COUNT_MYCOL", LongType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema)
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["myCol_SUM_1D", "myCol_COUNT_1D"])
+
     def test_predetermined_avg_std_var_output_type(self) -> None:
         """AVG/STD/VAR all produce DoubleType."""
         specs = [
@@ -1233,6 +1357,37 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         self.assertEqual(keys_col.element_type, "StringType")
         self.assertIn("AMOUNT_SUM_1D", by_name)
         self.assertEqual(by_name["AMOUNT_SUM_1D"].type, "ArrayType")
+
+    def test_secondary_key_array_with_case_sensitive_key_column(self) -> None:
+        """A case-sensitive secondary-key column resolves to a keys array carrying its stored name."""
+        specs = [
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+            AggregationSpec(
+                function=AggregationType._SECONDARY_KEY_ARRAY,
+                source_column='"myMerchant"',
+                window="1d",
+                output_column='"myMerchant_KEYS_1D"',
+            ),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField('"myMerchant"', StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
+        fv = self._make_tiled_fv(
+            aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=['"myMerchant"']
+        )
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        by_name = {c.name: c for c in cols}
+        self.assertIn("myMerchant_KEYS_1D", by_name)
+        keys_col = by_name["myMerchant_KEYS_1D"]
+        self.assertEqual(keys_col.type, "ArrayType")
+        self.assertEqual(keys_col.element_type, "StringType")
 
     def test_secondary_key_fv_value_outputs_wrapped_as_arrays(self) -> None:
         """A FeatureGroup source over a secondary-key FV must mirror the FV's stored ArrayType<scalar> shape."""
@@ -2990,6 +3145,79 @@ class BatchValidationTest(absltest.TestCase):
                     self.assertEqual(offline_cols[ts_col_name]["type"], "ArrayType")
                     self.assertEqual(offline_cols[ts_col_name]["element_type"], "TimestampType")
 
+    def test_case_sensitive_source_stamps_ordered_n_partial_element_types(self) -> None:
+        """Ordered-N partial columns over a case-sensitive source carry element types.
+
+        The tile DDL emits partial columns unquoted, so the tile table stores
+        ``_PARTIAL_LAST_DISTINCT_3_PAGEURL`` for a source column of ``"pageUrl"``.
+        """
+        functions = [
+            (AggregationType.LAST_DISTINCT_N, "LAST_DISTINCT_3"),
+            (AggregationType.FIRST_DISTINCT_N, "FIRST_DISTINCT_3"),
+            (AggregationType.LAST_N, "LAST"),
+            (AggregationType.FIRST_N, "FIRST"),
+        ]
+        for function, partial_prefix in functions:
+            with self.subTest(function=function.value):
+                value_col = f"_PARTIAL_{partial_prefix}_PAGEURL"
+                ts_col_name = f"_PARTIAL_{partial_prefix}_TS_PAGEURL"
+                batch_schema = StructType(
+                    [
+                        StructField("USER_ID", StringType()),
+                        StructField("EVENT_TIME", TimestampType()),
+                        StructField('"pageUrl"', StringType()),
+                    ]
+                )
+                tiled_schema = StructType(
+                    [
+                        StructField("USER_ID", StringType()),
+                        StructField("TILE_START", TimestampType()),
+                        StructField(value_col, ArrayType()),
+                        StructField(ts_col_name, ArrayType()),
+                    ]
+                )
+                builder = (
+                    self._base_builder()
+                    .set_offline_configs(
+                        [
+                            SnowflakeTableInfo(
+                                table_type=TableType.BATCH_SOURCE,
+                                database="DB",
+                                schema="SCH",
+                                table="TILED_TBL",
+                                columns=tiled_schema,
+                            )
+                        ]
+                    )
+                    .set_properties(
+                        entity_columns=["USER_ID"],
+                        timestamp_field="EVENT_TIME",
+                        granularity="1h",
+                        agg_method=FeatureAggregationMethod.TILES,
+                        target_lag="30s",
+                    )
+                    .set_sources([BatchSource(schema=batch_schema)])
+                    .set_features(
+                        [
+                            AggregationSpec(
+                                function=function,
+                                source_column='"pageUrl"',
+                                window="1h",
+                                output_column="RECENT_PAGES",
+                                params={"n": 3},
+                            )
+                        ]
+                    )
+                )
+
+                payload = builder.build().to_dict()
+
+                offline_cols = {c["name"]: c for c in payload["offline_configs"][0]["columns"]}
+                self.assertEqual(offline_cols[value_col]["type"], "ArrayType")
+                self.assertEqual(offline_cols[value_col]["element_type"], "StringType")
+                self.assertEqual(offline_cols[ts_col_name]["type"], "ArrayType")
+                self.assertEqual(offline_cols[ts_col_name]["element_type"], "TimestampType")
+
     def test_last_n_over_max_rejected(self) -> None:
         """last_n with n above the product limit (100) is rejected at authoring."""
         with self.assertRaisesRegex(ValueError, "must be between 1 and 100"):
@@ -3172,6 +3400,51 @@ class BatchValidationTest(absltest.TestCase):
         self.assertEqual(keys_feature.source_column.type, "StringType")
         self.assertEqual(keys_feature.output_column.type, "ArrayType")
         self.assertEqual(keys_feature.output_column.element_type, "StringType")
+
+    def test_case_sensitive_secondary_key_carries_stored_name(self) -> None:
+        """A case-sensitive secondary key reaches the spec as the name it is stored under."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField('"myAd"', StringType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                secondary_key_columns=['"myAd"'],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType._SECONDARY_KEY_ARRAY,
+                        source_column='"myAd"',
+                        window="24h",
+                        output_column='"myAd_KEYS_24H"',
+                    ),
+                ]
+            )
+        )
+        result = builder.build()
+        self.assertEqual(result.spec.ordered_secondary_key_column_names, ["myAd"])
 
     def test_secondary_key_fv_outputs_are_arrays(self) -> None:
         """User-declared aggregations on an SK FV serialize as ArrayType<scalar>

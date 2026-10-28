@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.spec.enums import (
     FeatureAggregationMethod,
     FeatureViewKind,
@@ -147,7 +148,7 @@ def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
             f"Timestamp column '{name}' must be TIMESTAMP_NTZ, got {dt.tz}. " f"Consider casting to TIMESTAMP_NTZ."
         )
     return FSColumn(
-        name=name,
+        name=SqlIdentifier(name).resolved(),
         type=type(dt).__name__,
         length=dt.length if isinstance(dt, StringType) and dt.length is not None else None,
         precision=dt.precision if isinstance(dt, DecimalType) else None,
@@ -175,7 +176,7 @@ def _make_tiled_fs_column(name: str, dt: DataType) -> "FSColumn":
     if isinstance(dt, ArrayType):
         element = getattr(dt, "element_type", None)
         element_name = type(element).__name__ if element is not None else None
-        return FSColumn(name=name, type="ArrayType", element_type=element_name)
+        return FSColumn(name=SqlIdentifier(name).resolved(), type="ArrayType", element_type=element_name)
     return _make_fs_column(name, dt)
 
 

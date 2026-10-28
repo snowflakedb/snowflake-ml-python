@@ -1,0 +1,23 @@
+---
+kind: BatchFeatureView
+name: USER_AMOUNT_BFV{{ suffix }}
+version: V1
+online: true
+entities:
+  - USER_ID
+timestamp_col: EVENT_TS
+feature_granularity: 1h
+feature_aggregation_method: tiles
+refresh_freq: 5 minutes
+sources:
+  - name: EVENTS_BATCH{{ suffix }}
+    source_type: Batch
+features:
+  - output_column:
+      name: AMOUNT_SUM_1H
+      type: DoubleType
+    window: 1h
+    function: sum
+    source_column:
+      name: AMOUNT
+      type: DoubleType

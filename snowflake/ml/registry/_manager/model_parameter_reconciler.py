@@ -79,7 +79,7 @@ class ModelParameterReconciler:
         )
 
         reconciled_options = self._handle_embed_local_ml_library(
-            self._options.copy() if self._options else {}, reconciled_target_platforms
+            self._options.copy() if self._options else {}, reconciled_target_platforms, force_conda_defaults
         )
         reconciled_options = self._reconcile_relax_version(
             reconciled_options, reconciled_target_platforms, force_conda_defaults
@@ -349,25 +349,44 @@ class ModelParameterReconciler:
         )
 
     def _handle_embed_local_ml_library(
-        self, options: model_types.ModelSaveOption, target_platforms: list[model_types.TargetPlatform] | None
+        self,
+        options: model_types.ModelSaveOption,
+        target_platforms: list[model_types.TargetPlatform] | None,
+        force_conda_defaults: bool,
     ) -> model_types.ModelSaveOption:
-        """Handle embed_local_ml_library logic."""
-        if not snowpark_utils.is_in_stored_procedure() and target_platforms != [  # type: ignore[no-untyped-call]
-            model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES  # no information schema check for SPCS-only models
-        ]:
-            snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
-                self._session,
-                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
-                python_version=self._python_version or snowml_env.PYTHON_VERSION,
-                statement_params=self._statement_params,
-            ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
+        """Auto-embed the local snowflake-ml-python when its version is not in the Snowflake Anaconda channel.
 
-            if len(snowml_matched_versions) < 1 and not options.get("embed_local_ml_library", False):
-                logger.info(
-                    f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
-                    " which is not available in the Snowflake server, embedding local ML library automatically."
-                )
-                options["embed_local_ml_library"] = True
+        The Anaconda channel check only applies to conda-packaged models. SPCS-only and pip-packaged models
+        install snowflake-ml-python from PyPI, so the channel's contents are irrelevant to them.
+
+        Args:
+            options: Model save options to update.
+            target_platforms: Target platforms after reconciliation, or None for defaults.
+            force_conda_defaults: True when pip-only packaging falls back to conda defaults.
+
+        Returns:
+            The updated model save options.
+        """
+        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+            return options
+        if target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
+            return options
+        if self._is_packaged_as_pip_model(target_platforms=target_platforms, force_conda_defaults=force_conda_defaults):
+            return options
+
+        snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
+            self._session,
+            reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
+            python_version=self._python_version or snowml_env.PYTHON_VERSION,
+            statement_params=self._statement_params,
+        ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
+
+        if len(snowml_matched_versions) < 1 and not options.get("embed_local_ml_library", False):
+            logger.info(
+                f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
+                " which is not available in the Snowflake server, embedding local ML library automatically."
+            )
+            options["embed_local_ml_library"] = True
 
         return options
 

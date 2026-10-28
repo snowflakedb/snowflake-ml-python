@@ -1,0 +1,56 @@
+---
+kind: StreamingFeatureView
+name: USER_CLICK_STATS{{ suffix }}
+version: V1
+entities:
+  - USER_ID
+timestamp_col: TIMESTAMP
+feature_granularity_sec: 300
+feature_aggregation_method: tiles
+refresh_freq: 5 minutes
+sources:
+  - name: CLICKSTREAM{{ suffix }}
+    columns:
+      - name: USER_ID
+        type: StringType
+      - name: SESSION_ID
+        type: StringType
+      - name: PAGE_URL
+        type: StringType
+      - name: EVENT_TYPE
+        type: StringType
+      - name: TIMESTAMP
+        type: TimestampType
+      - name: TIME_ON_PAGE_SECONDS
+        type: DoubleType
+    source_type: Stream
+features:
+  - output_column:
+      name: TOTAL_ENGAGEMENT_1H
+      type: DoubleType
+    window_sec: 3600
+    function: sum
+    source_column:
+      name: ENGAGEMENT_SCORE
+      type: DoubleType
+  - output_column:
+      name: HAS_CONVERSION_24H
+      type: BooleanType
+    window_sec: 86400
+    function: max
+    source_column:
+      name: IS_CONVERSION
+      type: BooleanType
+udf:
+  name: compute_engagement_metrics
+  engine: pandas
+  output_columns:
+    - name: USER_ID
+      type: StringType
+    - name: TIMESTAMP
+      type: TimestampType
+    - name: IS_CONVERSION
+      type: BooleanType
+    - name: ENGAGEMENT_SCORE
+      type: DoubleType
+  file: user_click_stats_udf.py

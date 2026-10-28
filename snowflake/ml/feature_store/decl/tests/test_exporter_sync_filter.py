@@ -586,12 +586,20 @@ class TestExportSpecsNameFilterSyncsAllMatches:
         v1_spec = {
             "kind": "StreamingFeatureView",
             "metadata": {"database": "DB", "schema": "SCH", "name": "MY_FV", "version": "V1"},
-            "spec": {"ordered_entity_column_names": [], "sources": [], "features": []},
+            "spec": {
+                "ordered_entity_column_names": [],
+                "sources": [{"name": "MY_DS", "source_type": "Stream"}],
+                "features": [],
+            },
         }
         v2_spec = {
             "kind": "StreamingFeatureView",
             "metadata": {"database": "DB", "schema": "SCH", "name": "MY_FV", "version": "V2"},
-            "spec": {"ordered_entity_column_names": [], "sources": [], "features": []},
+            "spec": {
+                "ordered_entity_column_names": [],
+                "sources": [{"name": "MY_DS", "source_type": "Stream"}],
+                "features": [],
+            },
         }
         result = export_specs(
             show_rows=[v1_show, v2_show],
@@ -618,7 +626,11 @@ class TestExportSpecsNameFilterSyncsAllMatches:
         collide_fv_spec = {
             "kind": "StreamingFeatureView",
             "metadata": {"database": "DB", "schema": "SCH", "name": "SHARED", "version": "V1"},
-            "spec": {"ordered_entity_column_names": [], "sources": [], "features": []},
+            "spec": {
+                "ordered_entity_column_names": [],
+                "sources": [{"name": "MY_DS", "source_type": "Stream"}],
+                "features": [],
+            },
         }
         collide_entity_row = {
             "name": "SNOWML_FEATURE_STORE_ENTITY_SHARED",
@@ -682,7 +694,11 @@ class TestExportSpecsNameFilterSyncsAllMatches:
         collide_fv_spec = {
             "kind": "StreamingFeatureView",
             "metadata": {"database": "DB", "schema": "SCH", "name": "SHARED", "version": "V1"},
-            "spec": {"ordered_entity_column_names": [], "sources": [], "features": []},
+            "spec": {
+                "ordered_entity_column_names": [],
+                "sources": [{"name": "MY_DS", "source_type": "Stream"}],
+                "features": [],
+            },
         }
         collide_entity_row = {
             "name": "SNOWML_FEATURE_STORE_ENTITY_SHARED",

@@ -67,6 +67,11 @@ class ModelMonitorManager:
     def _build_column_list_from_input(self, columns: list[str] | None) -> list[sql_identifier.SqlIdentifier]:
         return [sql_identifier.SqlIdentifier(column_name) for column_name in columns] if columns else []
 
+    def _validate_daily_aggregation_window(self, aggregation_window: str) -> None:
+        parts = aggregation_window.strip().lower().split()
+        if len(parts) != 2 or not parts[0].isdigit() or parts[1] not in {"day", "days"}:
+            raise ValueError("Aggregation window for a model version monitor must be a number of days.")
+
     def add_monitor(
         self,
         name: str,
@@ -77,11 +82,15 @@ class ModelMonitorManager:
 
         Args:
             name: Name of Model Monitor to create.
-            source_config: Configuration options for the source table used in ModelMonitor.
+            source_config: Source configuration for a user table or the model inference table.
             model_monitor_config: Configuration options of ModelMonitor.
 
         Returns:
             The newly added ModelMonitor object.
+
+        Raises:
+            ValueError: If the source configuration or aggregation window is invalid, or the model version cannot
+                be monitored.
         """
         warehouse_name_id = sql_identifier.SqlIdentifier(model_monitor_config.background_compute_warehouse_name)
         self._model_monitor_client.validate_monitor_warehouse(warehouse_name_id, statement_params=self.statement_params)
@@ -92,12 +101,28 @@ class ModelMonitorManager:
         monitor_database_name_id, monitor_schema_name_id, monitor_name_id = sql_identifier.parse_fully_qualified_name(
             name
         )
-        source_database_name_id, source_schema_name_id, source_name_id = sql_identifier.parse_fully_qualified_name(
-            source_config.source
-        )
+        uses_inference_table = source_config._uses_inference_table()
+        self._validate_daily_aggregation_window(model_monitor_config.aggregation_window)
+        source_database_name_id: sql_identifier.SqlIdentifier | None
+        source_schema_name_id: sql_identifier.SqlIdentifier | None
+        source_name_id: sql_identifier.SqlIdentifier | None
+        timestamp_column_id: sql_identifier.SqlIdentifier | None
+        if uses_inference_table:
+            source_database_name_id, source_schema_name_id, source_name_id = None, None, None
+            timestamp_column_id = None
+        else:
+            source_database_name_id, source_schema_name_id, source_name_id = sql_identifier.parse_fully_qualified_name(
+                source_config.source
+            )
+            timestamp_column_id = sql_identifier.SqlIdentifier(source_config.timestamp_column)
         baseline_database_name_id, baseline_schema_name_id, baseline_name_id = (
             sql_identifier.parse_fully_qualified_name(source_config.baseline)
             if source_config.baseline
+            else (None, None, None)
+        )
+        ground_truth_database_name_id, ground_truth_schema_name_id, ground_truth_name_id = (
+            sql_identifier.parse_fully_qualified_name(source_config._ground_truth)
+            if source_config._ground_truth
             else (None, None, None)
         )
         (
@@ -120,23 +145,24 @@ class ModelMonitorManager:
         segment_columns = self._build_column_list_from_input(source_config.segment_columns)
         custom_metric_columns = self._build_column_list_from_input(source_config.custom_metric_columns)
 
-        id_columns = [sql_identifier.SqlIdentifier(column_name) for column_name in source_config.id_columns]
-        ts_column = sql_identifier.SqlIdentifier(source_config.timestamp_column)
+        id_columns = self._build_column_list_from_input(source_config.id_columns)
 
-        # Validate source table
-        self._model_monitor_client.validate_source(
-            source_database=source_database_name_id,
-            source_schema=source_schema_name_id,
-            source=source_name_id,
-            timestamp_column=ts_column,
-            prediction_score_columns=prediction_score_columns,
-            prediction_class_columns=prediction_class_columns,
-            actual_score_columns=actual_score_columns,
-            actual_class_columns=actual_class_columns,
-            id_columns=id_columns,
-            segment_columns=segment_columns,
-            custom_metric_columns=custom_metric_columns,
-        )
+        if not uses_inference_table:
+            if source_name_id is None or timestamp_column_id is None:
+                raise ValueError("A user-table monitor requires a source table and a timestamp column.")
+            self._model_monitor_client.validate_source(
+                source_database=source_database_name_id,
+                source_schema=source_schema_name_id,
+                source=source_name_id,
+                timestamp_column=timestamp_column_id,
+                prediction_score_columns=prediction_score_columns,
+                prediction_class_columns=prediction_class_columns,
+                actual_score_columns=actual_score_columns,
+                actual_class_columns=actual_class_columns,
+                id_columns=id_columns,
+                segment_columns=segment_columns,
+                custom_metric_columns=custom_metric_columns,
+            )
 
         self._model_monitor_client.create_model_monitor(
             monitor_database=monitor_database_name_id,
@@ -151,7 +177,7 @@ class ModelMonitorManager:
             version_name=sql_identifier.SqlIdentifier(model_monitor_config.model_version.version_name),
             function_name=model_monitor_config.model_function_name,
             warehouse_name=warehouse_name_id,
-            timestamp_column=ts_column,
+            timestamp_column=timestamp_column_id,
             id_columns=id_columns,
             prediction_score_columns=prediction_score_columns,
             prediction_class_columns=prediction_class_columns,
@@ -167,6 +193,9 @@ class ModelMonitorManager:
             timestamp_custom_metric_database=timestamp_custom_metric_database_name_id,
             timestamp_custom_metric_schema=timestamp_custom_metric_schema_name_id,
             timestamp_custom_metric_table=timestamp_custom_metric_table_name_id,
+            ground_truth_database=ground_truth_database_name_id,
+            ground_truth_schema=ground_truth_schema_name_id,
+            ground_truth=ground_truth_name_id,
             statement_params=self.statement_params,
         )
         return model_monitor.ModelMonitor._ref(

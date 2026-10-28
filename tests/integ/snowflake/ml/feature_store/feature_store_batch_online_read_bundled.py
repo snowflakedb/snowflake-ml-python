@@ -213,33 +213,36 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
 
     def _create_batch_tiled_source_table(
         self, fs: FeatureStore, suffix: str, entity_key: str
-    ) -> tuple[str, float, int]:
+    ) -> tuple[str, float, int, float]:
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_TILED_SRC_{suffix}"
         self._test_tables.append(table_name)
+        # "feeAmount" is quoted so Snowflake stores the camel case verbatim, as an ELT-loaded column would be.
         self._session.sql(
             f"""
             CREATE OR REPLACE TABLE {table_name} (
                 USER_ID VARCHAR,
                 EVENT_TIME TIMESTAMP_NTZ,
-                AMOUNT FLOAT
+                AMOUNT FLOAT,
+                "feeAmount" FLOAT
             )
         """
         ).collect()
         amounts = (10.0, 20.0, 30.0)
+        fees = (0.25, 0.50, 0.75)
         # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
         utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
         utc_yesterday = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
         self._session.sql(
             f"""
             INSERT INTO {table_name}
-            SELECT column1, column2, column3
+            SELECT column1, column2, column3, column4
             FROM VALUES
-                ({entity_key!r}, DATEADD('hour', 1, {utc_yesterday}), {amounts[0]}),
-                ({entity_key!r}, DATEADD('hour', 2, {utc_yesterday}), {amounts[1]}),
-                ({entity_key!r}, DATEADD('hour', 3, {utc_yesterday}), {amounts[2]})
+                ({entity_key!r}, DATEADD('hour', 1, {utc_yesterday}), {amounts[0]}, {fees[0]}),
+                ({entity_key!r}, DATEADD('hour', 2, {utc_yesterday}), {amounts[1]}, {fees[1]}),
+                ({entity_key!r}, DATEADD('hour', 3, {utc_yesterday}), {amounts[2]}, {fees[2]})
         """
         ).collect()
-        return table_name, sum(amounts), len(amounts)
+        return table_name, sum(amounts), len(amounts), sum(fees)
 
     # =========================================================================
     # E2E: Batch non-tiled (timeseries) — registration -> online read
@@ -1011,11 +1014,14 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         fv_name = f"BATCH_TILED_ONLINE_FV_{label}_{s}"
         batch_key = f"U_BATCH_TILED_{s}"
 
-        src_table, expected_sum, expected_count = self._create_batch_tiled_source_table(fs, s, batch_key)
+        src_table, expected_sum, expected_count, expected_fee_sum = self._create_batch_tiled_source_table(
+            fs, s, batch_key
+        )
         feature_df = self._session.table(src_table)
         features = [
             Feature.sum("AMOUNT", "2d").alias("AMOUNT_SUM_2D"),
             Feature.count("AMOUNT", "2d").alias("TXN_COUNT_2D"),
+            Feature.sum('"feeAmount"', "2d").alias("feeSum2d", case_sensitive=True),
         ]
         fv = FeatureView(
             name=fv_name,
@@ -1068,13 +1074,18 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         def _validate_tiled(pdf):
             self.assertIn("AMOUNT_SUM_2D", pdf.columns)
             self.assertIn("TXN_COUNT_2D", pdf.columns)
+            self.assertIn("feeSum2d", pdf.columns)
             row = pdf.iloc[0]
             s_val = float(row["AMOUNT_SUM_2D"])
             c_val = float(row["TXN_COUNT_2D"])
+            fee_val = float(row["feeSum2d"])
             if math.isnan(s_val) or math.isnan(c_val):
                 raise AssertionError(f"nan aggregates (sum={s_val}, count={c_val})")
+            if math.isnan(fee_val):
+                raise AssertionError(f"nan case-sensitive aggregate (sum={fee_val})")
             self.assertAlmostEqual(s_val, expected_sum, places=2)
             self.assertAlmostEqual(c_val, float(expected_count), places=2)
+            self.assertAlmostEqual(fee_val, expected_fee_sum, places=2)
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
 
@@ -1094,7 +1105,7 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         fv_name = f"BATCH_TILED_ONLINE_FV_{label}_{s}"
         batch_key = f"U_BATCH_TILED_{s}"
 
-        src_table, expected_sum, expected_count = self._create_batch_tiled_source_table(fs, s, batch_key)
+        src_table, expected_sum, expected_count, _ = self._create_batch_tiled_source_table(fs, s, batch_key)
         feature_df = self._session.table(src_table)
         features = [
             Feature.sum("AMOUNT", "2d").alias("AMOUNT_SUM_2D"),

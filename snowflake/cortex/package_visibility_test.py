@@ -75,6 +75,9 @@ print(len(deprecations))
         self.assertTrue(callable(cortex.ClassifyText))
         self.assertTrue(callable(cortex.classify_text))
 
+    def test_candidate_visible(self) -> None:
+        self.assertTrue(callable(cortex.Candidate))
+
     def test_complete_visible(self) -> None:
         self.assertTrue(callable(cortex.Complete))
         self.assertTrue(callable(cortex.complete))
@@ -83,6 +86,12 @@ print(len(deprecations))
     def test_extract_answer_visible(self) -> None:
         self.assertTrue(callable(cortex.ExtractAnswer))
         self.assertTrue(callable(cortex.extract_answer))
+
+    def test_evaluate_visible(self) -> None:
+        self.assertTrue(callable(cortex.evaluate))
+        self.assertTrue(callable(cortex.EvaluationJob))
+        self.assertTrue(callable(cortex.EvaluationMetric))
+        self.assertTrue(callable(cortex.EvaluationResult))
 
     def test_embed_text_768_visible(self) -> None:
         self.assertTrue(callable(cortex.EmbedText768))
@@ -108,6 +117,13 @@ print(len(deprecations))
         self.assertTrue(callable(cortex.Finetune))
         self.assertTrue(callable(cortex.FinetuneJob))
         self.assertTrue(callable(cortex.FinetuneStatus))
+
+    def test_optimization_job_visible(self) -> None:
+        self.assertTrue(callable(cortex.OptimizationJob))
+        self.assertTrue(callable(cortex.OptimizationResult))
+
+    def test_optimize_prompt_visible(self) -> None:
+        self.assertTrue(callable(cortex.optimize_prompt))
 
 
 if __name__ == "__main__":

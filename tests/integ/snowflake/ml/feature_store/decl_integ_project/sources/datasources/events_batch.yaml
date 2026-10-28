@@ -1,0 +1,13 @@
+---
+kind: BatchSource
+name: EVENTS_BATCH{{ suffix }}
+table: RAW_EVENTS_DECL_INTEG{{ suffix }}
+columns:
+  - name: USER_ID
+    type: StringType
+  - name: EVENT_TS
+    type: TimestampType
+  - name: AMOUNT
+    type: FloatType
+  - name: CLICK_COUNT
+    type: IntegerType

@@ -1,0 +1,22 @@
+---
+# Declarative feature-store integration-test project manifest.
+#
+# This file is a PLACEHOLDER. The integ test
+# (feature_store_decl_project_bundled.py) copies this project to a temp
+# directory and rewrites this manifest with the live bundle target
+# (account / database / schema / role) plus the live warehouse and a
+# run-unique object-name suffix before every plan / apply. Do not point
+# it at a real account here.
+manifest_version: 1
+type: feature_store
+default_target: default
+targets:
+  default:
+    account_identifier: MY_ACCOUNT
+    database: MY_DB
+    schema: MY_SCHEMA
+    role: MY_ROLE
+templating:
+  defaults:
+    warehouse: MY_WAREHOUSE
+    suffix: ''

@@ -11,10 +11,17 @@ py_library(
         "artifact.py",
         "experiment_tracking_sql_client.py",
     ],
+    visibility = [
+        "//bazel:snowml_public_common",
+        "//snowflake/cortex",
+        "//snowflake/ml/experiment:__subpackages__",
+    ],
     deps = [
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:sql_literal",
+        "//snowflake/ml/experiment/_entities:experiment_entity",
         "//snowflake/ml/experiment/_entities:run_metadata",
         "//snowflake/ml/model/_client/sql:_base",
         "//snowflake/ml/utils:sql_client",
@@ -31,6 +38,7 @@ py_test(
     deps = [
         ":experiment_tracking_sql_client",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:string_matcher",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

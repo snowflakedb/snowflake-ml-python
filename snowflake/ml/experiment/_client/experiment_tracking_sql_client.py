@@ -1,15 +1,38 @@
 from typing import Any
 
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import query_result_checker, sql_identifier
+from snowflake.ml._internal.utils import (
+    query_result_checker,
+    sql_identifier,
+    sql_literal,
+)
 from snowflake.ml.experiment._client import artifact
-from snowflake.ml.experiment._entities import run_metadata
+from snowflake.ml.experiment._entities import experiment, run_metadata
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import dataframe, file_operation, functions, row, session, types
 
 RUN_NAME_COL_NAME = "name"
 RUN_METADATA_COL_NAME = "metadata"
+
+
+def group_run_attributes(rows: list[row.Row]) -> dict[str, dict[str, Any]]:
+    """Group SHOW RUN METRICS/PARAMETERS rows by run.
+
+    Each row is expected to have "run_name", "name", and "value" keys. When a run reports the same attribute more
+    than once, the last value wins.
+
+    Args:
+        rows: Collected rows from a SHOW RUN METRICS/PARAMETERS command.
+
+    Returns:
+        A mapping from run name to that run's attribute values keyed by attribute name.
+    """
+    attributes_by_run: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        d = r.as_dict()
+        attributes_by_run.setdefault(d["run_name"], {})[d["name"]] = d["value"]
+    return attributes_by_run
 
 
 def pivot_run_attributes(
@@ -37,16 +60,15 @@ def pivot_run_attributes(
     """
     pivoted: dict[str, dict[str, Any]] = {name: {} for name in run_names}
     attr_names: set[str] = set()
-    for r in rows:
-        d = r.as_dict()
-        value = d["value"]
-        if cast_value is not None:
-            try:
-                value = cast_value(value)
-            except (ValueError, TypeError):
-                value = None
-        pivoted.setdefault(d["run_name"], {})[d["name"]] = value
-        attr_names.add(d["name"])
+    for run_name, attributes in group_run_attributes(rows).items():
+        for name, value in attributes.items():
+            if cast_value is not None:
+                try:
+                    value = cast_value(value)
+                except (ValueError, TypeError):
+                    value = None
+            pivoted.setdefault(run_name, {})[name] = value
+            attr_names.add(name)
 
     col_order = sorted(attr_names)
     data = [[run_name] + [attrs.get(c) for c in col_order] for run_name, attrs in pivoted.items()]
@@ -80,11 +102,73 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         self,
         experiment_name: sql_identifier.SqlIdentifier,
         creation_mode: sql_client.CreationMode,
+        *,
+        experiment_type: experiment.ExperimentType | None = None,
+        specification: str | None = None,
     ) -> None:
+        """Create an experiment, optionally from an evaluation or optimization specification.
+
+        Args:
+            experiment_name: Name of the experiment to create.
+            creation_mode: Whether to add ``IF NOT EXISTS`` to the statement.
+            experiment_type: Type of a server-executed experiment.
+            specification: Evaluation or optimization specification.
+
+        Raises:
+            ValueError: If the experiment type is unsupported or a specification is provided without a type.
+        """
+        if experiment_type is not None and not isinstance(experiment_type, experiment.ExperimentType):
+            raise ValueError(f"Unsupported experiment type: {experiment_type!r}")
+        if specification is not None and experiment_type is None:
+            raise ValueError("experiment_type is required when specification is provided")
+        if specification is not None and not specification.strip():
+            raise ValueError("specification must not be blank")
+        if creation_mode.if_not_exists and creation_mode.or_replace:
+            raise ValueError("if_not_exists and or_replace cannot both be enabled")
+
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        or_replace_sql = "OR REPLACE" if creation_mode.or_replace else ""
         if_not_exists_sql = "IF NOT EXISTS" if creation_mode.if_not_exists else ""
+        experiment_type_sql = f"TYPE = '{experiment_type.value}'" if experiment_type is not None else ""
+        specification_sql = (
+            f"FROM SPECIFICATION {sql_literal.string_literal(specification)}" if specification is not None else ""
+        )
         query_result_checker.SqlResultValidator(
-            self._session, f"CREATE EXPERIMENT {if_not_exists_sql} {experiment_fqn}"
+            self._session,
+            f"CREATE {or_replace_sql} EXPERIMENT {if_not_exists_sql} {experiment_fqn} "
+            f"{experiment_type_sql} {specification_sql}",
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def execute_experiment(self, experiment_name: sql_identifier.SqlIdentifier) -> None:
+        """Start a server-executed experiment asynchronously.
+
+        Args:
+            experiment_name: Name of the experiment to execute.
+
+        """
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        query_result_checker.SqlResultValidator(self._session, f"EXECUTE EXPERIMENT {experiment_fqn}").has_dimensions(
+            expected_rows=1, expected_cols=1
+        ).validate()
+
+    def describe_experiment(self, experiment_name: sql_identifier.SqlIdentifier) -> dict[str, Any]:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        result = query_result_checker.SqlResultValidator(self._session, f"DESC EXPERIMENT {experiment_fqn}").validate()
+        if len(result) != 1:
+            raise RuntimeError(f"Experiment {experiment_fqn!r} returned an invalid description")
+        return result[0].as_dict()
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def abort_experiment(self, experiment_name: sql_identifier.SqlIdentifier) -> None:
+        """Abort a running server-executed experiment.
+
+        Args:
+            experiment_name: Name of the experiment to abort.
+        """
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        query_result_checker.SqlResultValidator(
+            self._session, f"ALTER EXPERIMENT {experiment_fqn} ABORT"
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
@@ -148,6 +232,27 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         query_result_checker.SqlResultValidator(self._session, query).has_dimensions(
             expected_rows=1, expected_cols=1
         ).validate()
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def modify_run_set_status(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: sql_identifier.SqlIdentifier,
+        status: run_metadata.RunStatus,
+    ) -> None:
+        """Move a run between uncommitted statuses.
+
+        Args:
+            experiment_name: Name of the experiment containing the run.
+            run_name: Name of the run to update.
+            status: Uncommitted status to set.
+        """
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"ALTER EXPERIMENT {experiment_fqn} MODIFY RUN {run_name} SET STATUS='{status.value}'",
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def get_run_id(
         self,

@@ -86,7 +86,7 @@ class ServingFunctionSpec(TypedDict, total=False):
     """A function exposed by the model specification."""
 
     env: list[str]
-    type: str
+    type: Required[str]
     handler: str
     volatility: str
     signature: Required[dict[str, Any]]

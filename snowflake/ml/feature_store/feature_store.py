@@ -5,6 +5,7 @@ import functools
 import json
 import logging
 import re
+import threading
 import warnings
 from dataclasses import dataclass
 from enum import Enum
@@ -51,6 +52,8 @@ from snowflake.ml.feature_store import (
     interval_utils,
     online_service,
     online_service_http_client,
+    online_service_transport,
+    online_service_ws_transport,
     realtime_dataset as rtfv_dataset,
 )
 from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
@@ -478,8 +481,10 @@ def _initialization_warehouse_clause(feature_view: FeatureView) -> str:
     return f"\n                INITIALIZATION_WAREHOUSE = {iw}" if iw is not None else ""
 
 
-def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> list[dict[str, Any]] | None:
-    """Record the batch FV's raw input columns so it can be recovered as code.
+def _derive_source_refs_from_feature_df(
+    feature_view: FeatureView, version: FeatureViewVersion | str | None = None
+) -> list[dict[str, Any]] | None:
+    """Record the batch FV's source binding and raw input columns so it can be recovered as code.
 
     Background: a feature view can be registered two ways. The declarative
     flow authors it as YAML/spec (which names its upstream *sources* and their
@@ -499,36 +504,39 @@ def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> list[dict[
 
     What gets stored, and why each field:
 
-    - ``columns``: the whole point — the raw input schema recovery can't
-      otherwise reconstruct.
+    - ``columns``: the raw input schema recovery can't otherwise reconstruct.
     - ``source_type``: hard-coded to ``Batch`` because this path only runs for
       managed batch FVs (streaming/realtime bail out above), so there is no
       other value it could take. It is a fixed label for the stored entry, not
       something derived from a real source object (we don't have one here).
-    - ``name``: a synthetic ``<FV>__SOURCE`` rather than the bare FV name.
-      Source names and FV names live in the same namespace during recovery, so
-      naming this after the FV would make the FV look like it depends on
-      itself.
-    - ``table``/``query`` are deliberately absent. When recovery diffs a
-      source it identifies it by its binding — ``table``, else ``query``, else
-      ``name`` — never by ``columns``. That binding is recovered independently
-      from the Dynamic Table's ``FROM`` clause. This entry therefore contributes
-      only columns and carries no binding of its own, so it can never disagree
-      with (or override) the recovered one. The row is immutable once written,
-      so getting this shape right at registration time is what matters.
+    - ``name``: a synthetic ``<FV>_<VERSION>__SOURCE`` rather than the bare FV
+      name. Source names and FV names share a namespace during recovery, so
+      naming it after the FV would make the FV look self-referential; the
+      version keeps two versions of one FV name as distinct sources.
+    - ``query``: the FV's source SQL, stamped as the source's binding. A
+      ``BatchSource`` requires exactly one of ``table``/``query``/``query_file``,
+      and this is now the *only* binding available on the read path — recovering
+      the binding from the Dynamic Table's ``FROM`` clause was removed, so
+      without stamping it here recovery would rebuild an invalid source.
+      (``table``/``query_file`` stay absent: a ``feature_df`` has no single
+      backing table name, and ``query`` is always resolvable.)
 
-    Best-effort: schema reads are wrapped so a failure only skips the stamp
-    (worst case, the old ``RECREATE_FV`` behavior) and never breaks
+    Best-effort: schema and query reads are wrapped so a failure only skips the
+    stamp (worst case, the old ``RECREATE_FV`` behavior) and never breaks
     registration.
 
     Args:
         feature_view: The feature view being registered.
+        version: The resolved feature view version, used to version-qualify the
+            synthetic source name. Falls back to ``feature_view.version`` when
+            not supplied (a draft FV's own version may still be ``None`` at
+            register time, so the caller passes the resolved value explicitly).
 
     Returns:
         A one-element source-ref list
-        ``[{"name": "<FV>__SOURCE", "source_type": "Batch", "columns": [...]}]``
-        derived from ``feature_view.feature_df.schema``, or ``None`` when the
-        FV is not a managed batch FV, has no feature DataFrame, exposes no
+        ``[{"name": "<FV>_<VERSION>__SOURCE", "source_type": "Batch", "query": ..., "columns": [...]}]``
+        derived from ``feature_view``, or ``None`` when the FV is not a managed
+        batch FV, has no feature DataFrame, exposes no resolvable query or
         columns, or its schema cannot be read.
     """
     if feature_view.is_streaming or feature_view.is_realtime_feature_view:
@@ -537,21 +545,42 @@ def _derive_source_refs_from_feature_df(feature_view: FeatureView) -> list[dict[
     if feature_df is None:
         return None
     try:
+        query = feature_view.query
         # ``_columns_from_tiled_struct_type`` (not the scalar converter) so
         # ArrayType/Binary tile columns serialize instead of raising.
         columns = [col.model_dump(exclude_none=True) for col in _columns_from_tiled_struct_type(feature_df.schema)]
     except Exception:
         # Never let best-effort source-ref capture break registration.
         return None
-    if not columns:
+    if not query or not columns:
         return None
-    # Columns only, no ``table``/``query`` binding — see the merge contract in
-    # the docstring. The ``<FV>__SOURCE`` name is synthetic so it can't be
-    # confused with the feature view itself.
+    # Version-qualify the synthetic ``<FV>$<VERSION>__SOURCE`` name so two
+    # versions of one FV name stay distinct sources. The FV *physical* name
+    # (``name$version``, the same encoding Snowflake uses for the OFT) is an
+    # injective function of (name, version): the version regex forbids ``$``, so
+    # the delimiter cannot be confused with name/version content, unlike the old
+    # ``_``-joined form where ``A_B``/``C`` and ``A``/``B_C`` both collapsed to
+    # ``A_B_C__SOURCE``. The ``$`` is inert for a *virtual* batch source (never
+    # issued as DDL; recovery/export/planner key on the name via ``.upper()`` /
+    # ``.lower()`` only) and is made filesystem-safe at export time by
+    # ``exporter._encode_source_stem``. Fall back to the bare ``<FV>__SOURCE``
+    # when no version is resolvable.
+    resolved_version = version if version is not None else feature_view.version
+    if resolved_version:
+        fv_version = (
+            resolved_version
+            if isinstance(resolved_version, FeatureViewVersion)
+            else FeatureViewVersion(resolved_version)
+        )
+        physical_name = FeatureView._get_physical_name(feature_view.name, fv_version).resolved()
+        source_name = f"{physical_name}__SOURCE"
+    else:
+        source_name = f"{feature_view.name.resolved()}__SOURCE"
     return [
         {
-            "name": f"{feature_view.name.resolved()}__SOURCE",
+            "name": source_name,
             "source_type": SourceType.BATCH.value,
+            "query": query,
             "columns": columns,
         }
     ]
@@ -857,6 +886,27 @@ def _predicate_read_feature_group_skip_telemetry(*args: Any, **kwargs: Any) -> b
     return True
 
 
+def _raise_if_stranded_tiled(feature_view: FeatureView) -> None:
+    """Reject a tiled FV that was registered without a refresh cadence.
+
+    Such an FV is a plain VIEW over the raw source query (no ``TILE_START`` / partial-aggregate
+    columns), so any consumer that treats it as a tile table fails with an opaque Snowflake
+    compile error. Raise a domain-language error at the entry points instead.
+
+    Args:
+        feature_view: The feature view to check.
+
+    Raises:
+        ValueError: If the feature view is tiled but has no materialized tiles.
+    """
+    if feature_view.is_stranded_tiled:
+        raise ValueError(
+            f"feature store: feature view {feature_view.name}/{feature_view.version} is tiled but "
+            "has no refresh cadence, so no tiles were materialized; delete and re-register it with "
+            "refresh_freq."
+        )
+
+
 class FeatureStore:
     """
     FeatureStore provides APIs to create, materialize, retrieve and manage feature pipelines.
@@ -950,7 +1000,8 @@ class FeatureStore:
         )
         self._metadata_manager = FeatureStoreMetadataManager(
             session=session,
-            schema_path=self._config.full_schema_path,
+            database=self._config.database,
+            schema=self._config.schema,
             fs_object_tag_path=self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG),
             telemetry_stmp=self._telemetry_stmp,
         )
@@ -1008,22 +1059,64 @@ class FeatureStore:
                     original_exception=RuntimeError(f"Failed to create feature store {name}: {e}."),
                 ) from e
         self._check_feature_store_object_versions()
-        self._online_http_client: online_service_http_client.OnlineServiceHttpClient | None = None
+        self._online_http_client: online_service_transport.OnlineServiceTransport | None = None
+        # Guards creation of the transport above. Without it, concurrent first reads each build
+        # their own: the last assignment wins and the rest are unreachable but never closed, so
+        # every orphaned WebSocket pool holds connections until the server ages them out, against
+        # a cap that is shared across all callers of the instance.
+        self._online_http_client_lock = threading.Lock()
         logger.info(f"Successfully connected to feature store: {self._config.full_schema_path}.")
 
     def _get_or_create_online_http_client(
         self,
-    ) -> online_service_http_client.OnlineServiceHttpClient:
-        """Return the FeatureStore-scoped HTTP client, creating it on first use."""
+    ) -> online_service_transport.OnlineServiceTransport:
+        """Return the FeatureStore-scoped online-read transport, creating it on first use.
+
+        Defaults to the HTTP client. When the WebSocket transport is switched on, the HTTP
+        client is wrapped rather than replaced: the query endpoint authenticates every HTTP
+        request, so a long-lived connection saves one authentication per request, while HTTP
+        stays available as the fallback.
+
+        Returns:
+            The transport to use for online reads and ingests.
+        """
+        # Double-checked: the unlocked read keeps the hot path lock-free once built, and the
+        # re-check inside the lock is what makes it correct when several threads arrive together.
         if self._online_http_client is None:
-            self._online_http_client = online_service_http_client.OnlineServiceHttpClient(session=self._session)
+            with self._online_http_client_lock:
+                if self._online_http_client is None:
+                    http_client = online_service_http_client.OnlineServiceHttpClient(session=self._session)
+                    # Typed as the Protocol: the two transports share no base class, so assigning
+                    # each branch straight to the attribute narrows it to their join, ``object``.
+                    transport: online_service_transport.OnlineServiceTransport
+                    if not online_service_ws_transport.ws_enabled():
+                        transport = http_client
+                    elif not online_service_ws_transport.websocket_client_installed():
+                        logger.warning(
+                            "%s is set but the websocket-client package is not installed; online "
+                            "feature reads will use HTTP. Install websocket-client to use WebSockets.",
+                            online_service_ws_transport.WS_ENABLED_ENV_VAR,
+                        )
+                        transport = http_client
+                    else:
+                        transport = online_service_ws_transport.OnlineServiceWsTransport(
+                            http_client,
+                            session=self._session,
+                            pool_size=online_service_ws_transport.pool_size(),
+                            pipeline_depth=online_service_ws_transport.pipeline_depth(),
+                        )
+                    self._online_http_client = transport
         return self._online_http_client
 
     def close(self) -> None:
         """Release per-FeatureStore resources (currently: the Online Service HTTP pool). Idempotent."""
-        if self._online_http_client is not None:
-            self._online_http_client.close()
-            self._online_http_client = None
+        # Detach under the lock, close outside it: close() can block on sockets, and holding the
+        # lock through it would stall an unrelated thread's first read. Swapping to None first also
+        # makes a concurrent close a no-op rather than a double close.
+        with self._online_http_client_lock:
+            client, self._online_http_client = self._online_http_client, None
+        if client is not None:
+            client.close()
 
     def __del__(self) -> None:
         try:
@@ -1473,7 +1566,7 @@ class FeatureStore:
             # ``snow feature init`` instead of triggering a one-time
             # RECREATE_FV. Streaming/realtime FVs and un-derivable schemas fall
             # through with no row, preserving prior behavior for them.
-            source_refs = feature_view.source_refs or _derive_source_refs_from_feature_df(feature_view)
+            source_refs = feature_view.source_refs or _derive_source_refs_from_feature_df(feature_view, version)
             if source_refs:
                 self._metadata_manager.save_feature_view_source_refs(
                     feature_view.name,
@@ -1643,7 +1736,9 @@ class FeatureStore:
                 is reinitialized from this dataframe (same session as the ``FeatureStore``). Not supported for
                 streaming, realtime, or rollup feature views.
             _source_refs: Internal. Authored source-ref list re-stamped as ``FV_SOURCE_REFS`` on the
-                ``updated_feature_df`` recreate so declarative replans recover the new binding. Ignored otherwise.
+                ``updated_feature_df`` recreate so declarative replans recover the new binding. When omitted,
+                the binding is derived from the new DataFrame so a bare imperative evolve also converges.
+                Ignored otherwise.
 
         Returns:
             Updated FeatureView.
@@ -1768,6 +1863,11 @@ class FeatureStore:
             probe_fv = feature_view.copy()
             probe_fv._online_config = online_config
             try:
+                # A tiled VIEW has no materialized tiles, so its OFT would be built over columns
+                # that do not exist; block enabling online before any OFT planning or the
+                # change-tracking side effect on the source view.
+                if online_config.enable:
+                    _raise_if_stranded_tiled(feature_view)
                 probe_fv._validate_online_store_supported()
                 probe_version = feature_view.version
                 if probe_version is not None:
@@ -1846,6 +1946,10 @@ class FeatureStore:
             # cron refresh_freq can change here, so the narrower update gate suffices.
             feature_view_append_only_validation.validate_snapshot_config_for_update(new_feature_view)
 
+            # Declarative callers pass authored sources; a bare imperative evolve
+            # passes none, so fall back to deriving the binding from the new
+            # DataFrame's query. Without this the metadata keeps the old query and
+            # every later plan re-emits ``EVOLVE_FV`` instead of ``NO_CHANGE``.
             self._materialize_feature_view_resources(
                 mode="update",
                 feature_view=new_feature_view,
@@ -1854,7 +1958,7 @@ class FeatureStore:
                 version=str(feature_view.version),
                 old_feature_view=feature_view,
                 new_schema=new_schema,
-                _source_refs=_source_refs,
+                _source_refs=_source_refs or _derive_source_refs_from_feature_df(new_feature_view),
             )
 
             # The CREATE OR REPLACE recreate above already applied refresh_freq / warehouse /
@@ -5389,6 +5493,7 @@ class FeatureStore:
 
         # For tiled FVs, compute features at current time
         if feature_view.is_tiled:
+            _raise_if_stranded_tiled(feature_view)
             return self._read_tiled_fv_at_current_time(feature_view, keys, feature_names)
 
         # Build SELECT and WHERE clauses using helper methods
@@ -7660,6 +7765,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         first_append_only_fv: FeatureView | None = None
         for feature in features:
             fv = fg_mod.unwrap_fv(feature)
+            # Fail with a domain-language error before the join_method / spine_timestamp_col
+            # checks below, which would otherwise misdirect the user for a tile-less tiled FV.
+            _raise_if_stranded_tiled(fv)
             if fv.is_tiled:
                 has_tiled_fv = True
             if fv.append_only and first_append_only_fv is None:

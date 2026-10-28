@@ -264,11 +264,72 @@ class ModelSpecParserTest(parameterized.TestCase):
             "function 'predict' signature must be a mapping",
         ),
         (
+            "missing_function_type",
+            {
+                "version": "2.0",
+                "model": {"details": {"models": {}}},
+                "serving": {"functions": {"predict": {"signature": {}}}},
+            },
+            "function 'predict' type must be FUNCTION or TABLE_FUNCTION",
+        ),
+        (
+            "invalid_function_type",
+            {
+                "version": "2.0",
+                "model": {"details": {"models": {}}},
+                "serving": {"functions": {"predict": {"type": "UDF", "signature": {}}}},
+            },
+            "function 'predict' type must be FUNCTION or TABLE_FUNCTION",
+        ),
+        (
+            "missing_signature_inputs",
+            {
+                "version": "2.0",
+                "model": {"details": {"models": {}}},
+                "serving": {
+                    "functions": {"predict": {"type": "FUNCTION", "signature": {"outputs": []}}},
+                },
+            },
+            "function 'predict' signature inputs must be a list",
+        ),
+        (
+            "missing_signature_outputs",
+            {
+                "version": "2.0",
+                "model": {"details": {"models": {}}},
+                "serving": {
+                    "functions": {"predict": {"type": "FUNCTION", "signature": {"inputs": []}}},
+                },
+            },
+            "function 'predict' signature outputs must be a list",
+        ),
+        (
+            "non_list_signature_inputs",
+            {
+                "version": "2.0",
+                "model": {"details": {"models": {}}},
+                "serving": {
+                    "functions": {
+                        "predict": {"type": "FUNCTION", "signature": {"inputs": {}, "outputs": []}},
+                    }
+                },
+            },
+            "function 'predict' signature inputs must be a list",
+        ),
+        (
             "non_dict_function_properties",
             {
                 "version": "2.0",
                 "model": {"details": {"models": {}}},
-                "serving": {"functions": {"predict": {"signature": {}, "properties": []}}},
+                "serving": {
+                    "functions": {
+                        "predict": {
+                            "type": "FUNCTION",
+                            "signature": {"inputs": [], "outputs": []},
+                            "properties": [],
+                        }
+                    }
+                },
             },
             "function 'predict' properties must be a mapping",
         ),

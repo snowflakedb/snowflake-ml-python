@@ -343,7 +343,10 @@ class ExperimentTracking:
         run_name: str | None = None,
     ) -> entities.Run:
         """
-        Start a new run. If a run name of an existing run is provided, resumes the run if it is running.
+        Start a new run, or resume an existing running or paused run.
+
+        If ``run_name`` names an existing run, a running run is resumed as-is and a paused run is set back to
+        running. A finished, failed, or cancelled run cannot be resumed.
 
         Args:
             run_name: The name of the run. If None, a default name will be generated.
@@ -352,7 +355,7 @@ class ExperimentTracking:
             Run: The run that was started or resumed.
 
         Raises:
-            RuntimeError: If a run is already active. If a run with the same name exists but is not running.
+            RuntimeError: If a run is already active, or if a run with the same name exists in a terminal status.
         """
         if self._run:
             raise RuntimeError("A run is already active. Please end the current run before starting a new one.")
@@ -360,19 +363,9 @@ class ExperimentTracking:
 
         if run_name is None:
             run_name = self._generate_run_name(experiment)
-        elif runs := self._sql_client.show_runs_in_experiment(experiment_name=experiment.name, like=run_name):
-            if "RUNNING" != json.loads(runs[0][sql_client.RUN_METADATA_COL_NAME])["status"]:
-                raise RuntimeError(f"Run {run_name} exists but cannot be resumed as it is no longer running.")
-            else:
-                self._set_run(
-                    entities.Run(
-                        experiment_tracking=self,
-                        experiment_name=experiment.name,
-                        run_name=sql_identifier.SqlIdentifier(run_name),
-                    )
-                )
-                assert self._run is not None  # for mypy
-                return self._run
+        elif self._resume_run(experiment, run_name):
+            assert self._run is not None  # for mypy
+            return self._run
 
         run_name = sql_identifier.SqlIdentifier(run_name)
         source_info_json: str | None = None
@@ -391,15 +384,16 @@ class ExperimentTracking:
 
     def end_run(self, run_name: str | None = None, status: str | None = None) -> None:
         """
-        End the current run if no run name is provided. Otherwise, the specified run is ended.
+        End a run. If no run name is provided, the current run is ended.
 
         Args:
             run_name: The name of the run to be ended. If None, the current run is ended.
-            status: The final status for the run, e.g. "FINISHED" or "FAILED".
+            status: The final status for the run: "FINISHED", "FAILED", or "CANCELLED". If None, the status is
+                omitted and the server finishes the run.
 
         Raises:
-            RuntimeError: If no run is active.
-            ValueError: If the status value is not supported.
+            RuntimeError: If no experiment is set, or if no run is active and ``run_name`` is None.
+            ValueError: If the status value is not a terminal status.
         """
         if not self._experiment:
             raise RuntimeError("No experiment set. Please set an experiment before ending a run.")
@@ -412,13 +406,16 @@ class ExperimentTracking:
         else:
             raise RuntimeError("No run is active. Please start a run before ending it.")
 
-        try:
-            run_status = run_metadata.RunStatus(status) if status is not None else None
-        except ValueError:
-            raise ValueError(
-                f"Unsupported status value: '{status}'. Supported values are:"
-                f" {[s.value for s in run_metadata.RunStatus]}."
-            )
+        run_status: run_metadata.RunStatus | None = None
+        if status is not None:
+            supported = [member.value for member in run_metadata.RunStatus if member.is_terminal()]
+            message = f"Unsupported status value: '{status}'. Supported values are: {supported}."
+            try:
+                run_status = run_metadata.RunStatus(status)
+            except ValueError as error:
+                raise ValueError(message) from error
+            if not run_status.is_terminal():
+                raise ValueError(message)
 
         self._sql_client.commit_run(
             experiment_name=experiment_name,
@@ -428,6 +425,51 @@ class ExperimentTracking:
         if self._run and run_name == self._run.name:
             self._unset_run()
         self._print_urls(experiment_name=experiment_name, run_name=run_name)
+
+    def pause_run(self, run_name: str | None = None) -> None:
+        """
+        Pause a running run.
+
+        A paused run is not mutable: metrics, parameters, and artifacts can only be logged while a run is
+        running. Pausing the active run deactivates it, so a surrounding ``start_run`` context does not end
+        the run on exit. Call ``start_run`` with the same name to resume it.
+
+        Pausing a run that is already paused leaves it paused.
+
+        Args:
+            run_name: The name of the run to pause. If None, the current run is paused.
+
+        Raises:
+            RuntimeError: If no experiment is set, no run is active and ``run_name`` is None, the run does
+                not exist, or the run is in a terminal status.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please set an experiment before pausing a run.")
+
+        if run_name:
+            resolved_run_name = sql_identifier.SqlIdentifier(run_name)
+        elif self._run:
+            resolved_run_name = self._run.name
+        else:
+            raise RuntimeError("No run is active. Please start a run before pausing it.")
+
+        status = self._lookup_run_status(self._experiment.name, resolved_run_name.identifier())
+        if status is None:
+            raise RuntimeError(f"Run {resolved_run_name} does not exist.")
+        if status == run_metadata.RunStatus.PAUSED.value:
+            if self._run and resolved_run_name == self._run.name:
+                self._unset_run()
+            return
+        if status != run_metadata.RunStatus.RUNNING.value:
+            raise RuntimeError(f"Run {resolved_run_name} cannot be paused because its status is {status}.")
+
+        self._sql_client.modify_run_set_status(
+            experiment_name=self._experiment.name,
+            run_name=resolved_run_name,
+            status=run_metadata.RunStatus.PAUSED,
+        )
+        if self._run and resolved_run_name == self._run.name:
+            self._unset_run()
 
     def delete_run(
         self,
@@ -783,6 +825,63 @@ class ExperimentTracking:
         if self._run:
             return self._run
         return self.start_run()
+
+    def _resume_run(self, experiment: entities.Experiment, run_name: str, *, set_active: bool = True) -> bool:
+        """Resume an existing running or paused run.
+
+        A running run is left running. A paused run is set back to running. When ``set_active`` is true, the
+        resumed run becomes the active run.
+
+        Args:
+            experiment: Experiment that contains the run.
+            run_name: Name of the run to resume.
+            set_active: If true, make the resumed run the active run.
+
+        Returns:
+            True when a run with this name was resumed. False when no such run exists.
+
+        Raises:
+            RuntimeError: When the run exists in a terminal status.
+        """
+        existing_status = self._lookup_run_status(experiment.name, run_name)
+        if existing_status is None:
+            return False
+
+        resolved_run_name = sql_identifier.SqlIdentifier(run_name)
+        if existing_status == run_metadata.RunStatus.PAUSED.value:
+            self._sql_client.modify_run_set_status(
+                experiment_name=experiment.name,
+                run_name=resolved_run_name,
+                status=run_metadata.RunStatus.RUNNING,
+            )
+        elif existing_status != run_metadata.RunStatus.RUNNING.value:
+            raise RuntimeError(f"Run {run_name} exists but cannot be resumed because its status is {existing_status}.")
+
+        if set_active:
+            self._set_run(
+                entities.Run(
+                    experiment_tracking=self,
+                    experiment_name=experiment.name,
+                    run_name=resolved_run_name,
+                )
+            )
+        return True
+
+    def _lookup_run_status(self, experiment_name: sql_identifier.SqlIdentifier, run_name: str) -> str | None:
+        """Return the status of a run, or None when no run matches ``run_name``.
+
+        Args:
+            experiment_name: Name of the experiment to search.
+            run_name: Run name or LIKE pattern passed to SHOW RUNS.
+
+        Returns:
+            The run status, or None when no run matches.
+        """
+        runs = self._sql_client.show_runs_in_experiment(experiment_name=experiment_name, like=run_name)
+        if not runs:
+            return None
+        metadata = json.loads(runs[0][sql_client.RUN_METADATA_COL_NAME])
+        return str(metadata["status"])
 
     def _generate_run_name(self, experiment: entities.Experiment) -> sql_identifier.SqlIdentifier:
         generator = hrid_generator.HRID16()

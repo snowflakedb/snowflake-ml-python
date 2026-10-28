@@ -463,7 +463,7 @@ def _hash_aligned_fixture() -> dict[str, Any]:
             "features": [],
             "udf": {
                 "name": "transform",
-                "output_columns": [{"name": "X", "type": "STRING"}],
+                "output_columns": [{"name": "X", "type": "StringType"}],
             },
         },
     }
@@ -486,18 +486,39 @@ class TestPayloadDiffMatchesHashContract:
         assert any("metadata.version" in line for line in diffs), diffs
 
     def test_runtime_stamped_keys_are_not_reported(self) -> None:
-        """``target_lag_sec`` and default ``length`` are stripped before hashing.
+        """``target_lag_sec`` and runtime VARCHAR ``length`` are stripped before hashing.
 
-        They must not appear in the diagnostic, or a healthy round-trip
-        looks like drift during an incident.
+        The deployed side reads an un-sized VARCHAR back as one of the
+        runtime maxima (16 MB ``16777216`` on older runtimes, 128 MB
+        ``134217728`` on current ones).  Either value on a ``StringType``
+        column must match the un-sized local spec and never appear in the
+        diagnostic, or a healthy round-trip looks like drift during an
+        incident.
+        """
+        for runtime_max in (16777216, 134217728):
+            local = _hash_aligned_fixture()
+            deployed = _hash_aligned_fixture()
+            deployed["metadata"]["client_version"] = "9.9.9"
+            deployed["spec"]["target_lag_sec"] = 0
+            deployed["spec"]["udf"]["output_columns"][0]["length"] = runtime_max
+            assert _full_spec_hash(local) == _full_spec_hash(deployed), runtime_max
+            assert _payload_diff(local, deployed) == [], runtime_max
+
+    def test_authored_varchar_length_still_drifts(self) -> None:
+        """An authored (non-runtime-max) VARCHAR ``length`` stays hash-significant.
+
+        The runtime-stamped strip is deliberately narrow: only the two
+        un-sized VARCHAR maxima collapse to "un-sized".  A real authored
+        width such as ``255`` must still bump the full-spec hash and surface
+        in the diagnostic, so a genuine schema edit is never silently
+        swallowed as a runtime stamp.
         """
         local = _hash_aligned_fixture()
         deployed = _hash_aligned_fixture()
-        deployed["metadata"]["client_version"] = "9.9.9"
-        deployed["spec"]["target_lag_sec"] = 0
-        deployed["spec"]["udf"]["output_columns"][0]["length"] = 16777216
-        assert _full_spec_hash(local) == _full_spec_hash(deployed)
-        assert _payload_diff(local, deployed) == []
+        deployed["spec"]["udf"]["output_columns"][0]["length"] = 255
+        assert _full_spec_hash(local) != _full_spec_hash(deployed)
+        diffs = _payload_diff(local, deployed)
+        assert any("spec.udf" in line for line in diffs), diffs
 
 
 if __name__ == "__main__":

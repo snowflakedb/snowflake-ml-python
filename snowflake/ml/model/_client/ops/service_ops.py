@@ -1042,9 +1042,12 @@ class ServiceOperator:
         service_schema_name: sql_identifier.SqlIdentifier | None,
         async_job: snowpark.AsyncJob,
         statement_params: dict[str, Any] | None = None,
-        timeout_minutes: int = 30,
     ) -> None:
         """Wait for service to reach the specified status while monitoring async job for failures.
+
+        The wait ends when the service reaches ``target_status``, the service
+        disappears after a DONE wait, the service enters a failure state, or
+        ``async_job`` completes (success or SQL error).
 
         Args:
             service_name: The service to monitor
@@ -1053,13 +1056,10 @@ class ServiceOperator:
             service_schema_name: Schema containing the service
             async_job: The async job to monitor for completion/failure
             statement_params: SQL statement parameters
-            timeout_minutes: Maximum time to wait before timing out
 
         Raises:
-            RuntimeError: If service fails, times out, or enters an error state
+            RuntimeError: If service fails or the async job fails
         """
-        start_time = time.time()
-        timeout_seconds = timeout_minutes * 60
         service_seen_before = False
 
         while True:
@@ -1116,14 +1116,6 @@ class ServiceOperator:
             except Exception as e:
                 # Re-raise unexpected exceptions instead of masking them
                 raise RuntimeError(f"Unexpected error while waiting for service status: {e}")
-
-            # Check timeout
-            elapsed_time = time.time() - start_time
-            if elapsed_time > timeout_seconds:
-                raise RuntimeError(
-                    f"Timeout waiting for service {service_name} to reach status {target_status.value} "
-                    f"after {timeout_minutes} minutes"
-                )
 
             time.sleep(2)  # Poll every 2 seconds
 

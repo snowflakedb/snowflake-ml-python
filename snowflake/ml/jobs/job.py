@@ -66,7 +66,18 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
     @cached_property
     def target_instances(self) -> int:
-        return self._service_info.target_instances
+        # The count a job was submitted with is recorded in its spec.
+        try:
+            return _get_submitted_instance_count(self._session, self.id, self._container_spec)
+        except (RuntimeError, SnowparkSQLException, TypeError, KeyError):
+            reported_instances = self._service_info.target_instances
+            logger.warning(
+                "Couldn't determine the instance count job %s was submitted with; "
+                "using the %d instance(s) currently reported for it.",
+                self.id,
+                reported_instances,
+            )
+            return reported_instances
 
     @cached_property
     def min_instances(self) -> int:
@@ -934,12 +945,12 @@ def _get_service_log_from_event_table(
         params.append(instance_id)
 
     query.append("AND RECORD_TYPE = 'LOG'")
+    if limit > 0:
+        query.append("QUALIFY ROW_NUMBER() OVER (ORDER BY TIMESTAMP DESC) <= ?")
+        params.append(limit)
     # sort by TIMESTAMP; although OBSERVED_TIMESTAMP is for log, it is NONE currently when record_type is log
     query.append("ORDER BY TIMESTAMP")
 
-    if limit > 0:
-        query.append("LIMIT ?")
-        params.append(limit)
     # the wrap used in query_helper does not have return type.
     # sticking a # type: ignore[no-any-return] is to pass type check
     rows = query_helper.run_query(
@@ -1073,9 +1084,9 @@ def _get_logs_spcs(
     if len(query_params) > 0:
         query.append("WHERE " + " AND ".join(query_params))
 
-    query.append("ORDER BY TIMESTAMP ASC")
     if limit > 0:
-        query.append(f" LIMIT {limit};")
+        query.append(f"QUALIFY ROW_NUMBER() OVER (ORDER BY TIMESTAMP DESC) <= {limit}")
+    query.append("ORDER BY TIMESTAMP ASC")
     rows = session.sql("\n".join(query)).collect()
     return rows
 

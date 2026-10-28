@@ -563,13 +563,13 @@ done
 trap - ERR
 
 rewrite_empty_bazel_timeout_reports() {
-    local testlogs_dir script_dir
+    local testlogs_dir
     testlogs_dir="$("${bazel}" info bazel-testlogs 2>/dev/null || true)"
     if [[ -z "${testlogs_dir}" || ! -d "${testlogs_dir}" ]]; then
         return 0
     fi
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if ! python3 "${script_dir}/test_compiler/normalize_empty_test_reports.py" "${testlogs_dir}"; then
+    # The Jenkins agent python3 is 3.6. Use the toolchain interpreter, same as the other CI tools.
+    if ! "${bazel}" run --config=core ${python_config} //ci/test_compiler:normalize_empty_test_reports -- "${testlogs_dir}"; then
         echo "WARNING: could not rewrite empty Bazel timeout reports"
     fi
 }

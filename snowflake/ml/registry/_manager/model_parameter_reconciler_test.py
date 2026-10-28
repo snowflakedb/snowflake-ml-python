@@ -476,6 +476,67 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             assert result.options is not None
             self.assertFalse(result.options["embed_local_ml_library"])
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        {"testcase_name": "implicit_pip", "pip_requirements": None},
+        {"testcase_name": "explicit_pip", "pip_requirements": ["pandas>=1.3.0"]},
+    )
+    @mock.patch.object(env_utils, "is_local_conda_environment", return_value=False)
+    @mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True)
+    @mock.patch.object(env_utils, "get_matched_package_versions_in_information_schema", autospec=True)
+    def test_embed_local_ml_library_skips_anaconda_check_for_pip_packaged_model(
+        self,
+        mock_get_versions: mock.Mock,
+        _mock_pip_only_packaging: mock.Mock,
+        _mock_local_conda: mock.Mock,
+        pip_requirements: list[str] | None,
+    ) -> None:
+        """Pip-packaged models install snowflake-ml-python from PyPI, so the Anaconda channel is not consulted."""
+        reconciler = self._create_reconciler(
+            pip_requirements=pip_requirements,
+            target_platforms=[
+                model_types.TargetPlatform.WAREHOUSE,
+                model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+            ],
+        )
+        result = reconciler.reconcile()
+
+        mock_get_versions.assert_not_called()
+        assert result.options is not None
+        self.assertNotIn("embed_local_ml_library", result.options)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        {"testcase_name": "shared_repository_unavailable", "pypi_accessible": False},
+        {"testcase_name": "user_conda_dependencies", "conda_dependencies": ["numpy>=1.20.0"]},
+        {"testcase_name": "local_conda_environment", "local_conda": True},
+    )
+    @mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True)
+    @mock.patch.object(env_utils, "get_matched_package_versions_in_information_schema", autospec=True)
+    def test_embed_local_ml_library_checks_anaconda_for_conda_packaged_model(
+        self,
+        mock_get_versions: mock.Mock,
+        _mock_pip_only_packaging: mock.Mock,
+        pypi_accessible: bool = True,
+        conda_dependencies: list[str] | None = None,
+        local_conda: bool = False,
+    ) -> None:
+        """Models that fall back to conda packaging still embed when the version is missing from Anaconda."""
+        mock_get_versions.return_value = {}
+        with mock.patch.object(
+            model_parameter_reconciler.ModelParameterReconciler,
+            "_pypi_shared_repository_accessible",
+            return_value=pypi_accessible,
+        ):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=local_conda):
+                reconciler = self._create_reconciler(
+                    conda_dependencies=conda_dependencies,
+                    target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                )
+                result = reconciler.reconcile()
+
+        mock_get_versions.assert_called_once()
+        assert result.options is not None
+        self.assertTrue(result.options["embed_local_ml_library"])
+
     @mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=False)
     def test_relax_version_logic(self, _mock_pip_only_packaging: mock.Mock) -> None:
         """Test relax_version auto-setting and validation logic."""

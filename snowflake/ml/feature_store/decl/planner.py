@@ -14,7 +14,7 @@ from snowflake.ml.feature_store.decl.dependencies import (
 )
 from snowflake.ml.feature_store.decl.enums import OpKind
 from snowflake.ml.feature_store.decl.invariants import (
-    _full_spec_hash,
+    _applied_compare_hash,
     _normalize_applied_bfv_for_hash,
     _normalize_for_full_spec_hash,
     append_only_schema_evolution_kind,
@@ -905,22 +905,12 @@ def generate_plan(
         # For BatchFeatureView, re-compute the applied hash against a
         # normalised copy of the applied payload so Snowflake-resolved
         # refresh_mode (INCREMENTAL / FULL) does not produce a spurious hash
-        # mismatch when the operator never authored the field.
+        # mismatch when the operator never authored the field.  The shared
+        # helper is the single owner of this normalisation so the validator's
+        # idempotency check (invariants._check_idempotency) compares the same hash.
         applied_compare_hash = applied.content_hash
-        if used_full_spec and kind == "BatchFeatureView" and isinstance(applied.spec_payload, dict):
-            try:
-                if local_compiled is None:
-                    from snowflake.ml.feature_store.decl.spec_compiler import (  # noqa: PLC0415
-                        compile_to_spec,
-                    )
-
-                    local_compiled = compile_to_spec(
-                        data, db_for_compile, sch_for_compile, entity_join_keys=entity_join_keys
-                    )
-                applied_normalized = _normalize_applied_bfv_for_hash(applied.spec_payload, local_compiled)
-                applied_compare_hash = _full_spec_hash(applied_normalized)
-            except Exception:  # noqa: BLE001 — defensive fallback
-                pass
+        if used_full_spec:
+            applied_compare_hash = _applied_compare_hash(kind, applied, local_compiled)
 
         if current_hash == applied_compare_hash:
             # Kind-agnostic operational-drift fast path (B6 + B7).  Structural

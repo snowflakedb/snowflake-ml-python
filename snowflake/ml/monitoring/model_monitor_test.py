@@ -81,6 +81,14 @@ class ModelMonitorInstanceTest(absltest.TestCase):
             self.assertEqual(call_args[0][1].identifier(), test_custom_metric_column)
             self.assertIsNotNone(call_args[1]["statement_params"])
 
+    def test_describe(self) -> None:
+        expected = mock.Mock()
+        self.monitor_sql_client.describe_monitor.return_value = expected
+        self.assertIs(self.model_monitor._describe(), expected)
+        self.monitor_sql_client.describe_monitor.assert_called_once_with(
+            self.test_monitor_name, statement_params=mock.ANY
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

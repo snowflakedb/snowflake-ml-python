@@ -13,14 +13,17 @@ import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, Sequence
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
-from snowflake.ml.feature_store import online_service_http_client
+from snowflake.ml.feature_store import (
+    online_service_http_client,
+    online_service_transport,
+)
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -757,7 +760,7 @@ def stream_ingest_records(
     records: list[dict[str, Any]],
     *,
     timeout_sec: float = 120.0,
-    http_client: online_service_http_client.OnlineServiceHttpClient | None = None,
+    http_client: online_service_transport.OnlineServiceTransport | None = None,
 ) -> int:
     """Send records to the Online Service for a given stream source.
 
@@ -788,7 +791,7 @@ def stream_ingest_records(
     resolved = online_service_http_client.ingest_api_url(ingest_base_url)
     serializable = [{k: _json_serialize_value(v) for k, v in row.items()} for row in records]
     body: dict[str, Any] = {"records": {stream_source_name: serializable}}
-    owned_client: online_service_http_client.OnlineServiceHttpClient | None = None
+    owned_client: online_service_transport.OnlineServiceTransport | None = None
     client = http_client
     if client is None:
         owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
@@ -1033,8 +1036,13 @@ def _postgres_online_query_result_schema(
     jfields = []
     for jk in join_key_names:
         dt = join_key_field_types.get(jk)
-        jfields.append(StructField(jk, dt if dt is not None else StringType()))
-    ffields = [StructField(fn, feature_types_by_name.get(fn, StringType())) for fn in output_feature_names]
+        jfields.append(
+            StructField(SqlIdentifier(jk, case_sensitive=True).identifier(), dt if dt is not None else StringType())
+        )
+    ffields = [
+        StructField(SqlIdentifier(fn, case_sensitive=True).identifier(), feature_types_by_name.get(fn, StringType()))
+        for fn in output_feature_names
+    ]
     return StructType(jfields + ffields)
 
 
@@ -1198,6 +1206,7 @@ def rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: Struc
     )
 
     columns = [f.name for f in schema.fields]
+    stored_names = {name: SqlIdentifier(name).resolved() for name in columns}
 
     if not rows:
         series_by_name: dict[str, pd.Series] = {}
@@ -1214,7 +1223,7 @@ def rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: Struc
                     series_by_name[f.name] = pd.Series([], dtype="datetime64[ns, UTC]")
             else:
                 series_by_name[f.name] = pd.Series([], dtype="object")
-        return pd.DataFrame(series_by_name, columns=columns)
+        return pd.DataFrame(series_by_name, columns=columns).rename(columns=stored_names)
 
     data: dict[str, list[Any]] = {name: [row.get(name) for row in rows] for name in columns}
     for f in schema.fields:
@@ -1252,7 +1261,7 @@ def rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: Struc
             else:
                 pdf[name] = pd.to_datetime(pdf[name], errors="coerce", utc=True)
 
-    return pdf
+    return pdf.rename(columns=stored_names)
 
 
 def _parse_query_batch_response(
@@ -1323,6 +1332,10 @@ def _extract_result_rows(
     batch: list[list[Any]],
 ) -> list[dict[str, Any]]:
     """Assemble row dicts from Query API results, combining join keys with feature values."""
+    join_key_columns = [SqlIdentifier(jk, case_sensitive=True).identifier() for jk in join_key_names]
+    feature_columns = [
+        (SqlIdentifier(fname, case_sensitive=True).identifier(), fname) for fname in output_feature_names
+    ]
     rows: list[dict[str, Any]] = []
     for i, res in enumerate(results):
         if not isinstance(res, dict):
@@ -1338,12 +1351,51 @@ def _extract_result_rows(
             )
         name_to_val = dict(zip(names_from_server, feats))
         row_out: dict[str, Any] = {}
-        for jk, jv in zip(join_key_names, batch[i]):
-            row_out[jk] = jv
-        for fname in output_feature_names:
-            row_out[fname] = name_to_val.get(fname)
+        for column, jv in zip(join_key_columns, batch[i]):
+            row_out[column] = jv
+        for column, fname in feature_columns:
+            row_out[column] = name_to_val.get(fname)
         rows.append(row_out)
     return rows
+
+
+def _send_query_bodies(
+    client: online_service_transport.OnlineServiceTransport,
+    url: str,
+    starts: Sequence[int],
+    body_for: Callable[[int], dict[str, Any]],
+    timeout_sec: float,
+) -> Iterator[tuple[int, bytes]]:
+    """Build and send the batch bodies lazily, yielding results in request order.
+
+    Lazily, so the caller's status check still stops the read at the first bad batch: a 400 on
+    batch 1 sends one request, as it did before batches could be sent ahead. A transport that
+    answers several bodies per round trip gets a window of them at a time, and the read stops
+    within one window of the bad batch; every other transport, including the default HTTP
+    client, is sent one body and checked before the next. Bodies are built a window at a time
+    too, so at most a window of serialized rows is held, whichever transport serves the read.
+
+    Args:
+        client: The transport to send through.
+        url: Query endpoint URL.
+        starts: Each batch's first row index, in the order results are needed.
+        body_for: Builds the request body for the batch starting at a given row.
+        timeout_sec: Per-request timeout in seconds.
+
+    Yields:
+        One ``(status_code, body_bytes)`` per batch, in the same order.
+    """
+    index = 0
+    while index < len(starts):
+        # Re-read every window: a transport that falls back mid-read stops sending ahead.
+        window = online_service_transport.send_ahead_window(client)
+        if window > 1 and len(starts) - index > 1:
+            chunk = [body_for(start) for start in starts[index : index + window]]
+            yield from client.post_json_many(url, chunk, timeout_sec)  # type: ignore[attr-defined]
+            index += len(chunk)
+        else:
+            yield client.post_json(url, body_for(starts[index]), timeout_sec)
+            index += 1
 
 
 def read_postgres_online_features(
@@ -1359,7 +1411,7 @@ def read_postgres_online_features(
     object_type: Literal["feature_view", "feature_group"] = "feature_view",
     request_context: list[dict[str, Any]] | None = None,
     timeout_sec: float = 120.0,
-    http_client: online_service_http_client.OnlineServiceHttpClient | None = None,
+    http_client: online_service_transport.OnlineServiceTransport | None = None,
 ) -> tuple[list[dict[str, Any]], Any]:
     """Query Postgres-backed online features via the Online Service ``POST /api/v1/query`` endpoint.
 
@@ -1400,9 +1452,9 @@ def read_postgres_online_features(
         http_client: Optional pooled client; when ``None``, each call opens a fresh connection.
 
     Returns:
-        ``(rows, schema)`` where each row has join keys plus selected feature columns,
-        and ``schema`` is the matching :class:`StructType`
-        for :func:`_coerce_row_values_for_snowpark_local_schema`.
+        ``(rows, schema)`` where ``schema`` is the matching :class:`StructType`
+        for :func:`_coerce_row_values_for_snowpark_local_schema` and each row holds join keys plus
+        selected feature columns, keyed by the field names of ``schema``.
 
     Raises:
         SnowflakeMLException: For invalid arguments, HTTP/API errors, unknown requested features,
@@ -1458,7 +1510,7 @@ def read_postgres_online_features(
 
     resolved_query_url = online_service_http_client.query_api_url(query_url)
     url = resolved_query_url
-    owned_client: online_service_http_client.OnlineServiceHttpClient | None = None
+    owned_client: online_service_transport.OnlineServiceTransport | None = None
     client = http_client
     if client is None:
         owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
@@ -1469,33 +1521,40 @@ def read_postgres_online_features(
     output_feature_names: list[str] | None = None
     schema: Any = None
 
-    try:
-        for start in range(0, len(keys), _MAX_QUERY_REQUEST_ROWS):
-            batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
-            if request_context is not None:
-                ctx_batch = request_context[start : start + _MAX_QUERY_REQUEST_ROWS]
-                request_rows = [
-                    {
-                        "entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)},
-                        "request_context": {k: _json_serialize_value(v) for k, v in ctx.items()},
-                    }
-                    for row, ctx in zip(batch, ctx_batch)
-                ]
-            else:
-                request_rows = [
-                    {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
-                ]
-            body: dict[str, Any] = {
-                "name": str(feature_view_name),
-                "version": str(feature_view_version),
-                "object_type": object_type,
-                "metadata_options": {"include_names": True, "include_data_types": True},
-                "request_rows": request_rows,
-            }
-            if feature_names:
-                body["features"] = _dedupe_feature_names_preserve_order(feature_names)
+    def body_for(start: int) -> dict[str, Any]:
+        batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
+        if request_context is not None:
+            ctx_batch = request_context[start : start + _MAX_QUERY_REQUEST_ROWS]
+            request_rows = [
+                {
+                    "entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)},
+                    "request_context": {k: _json_serialize_value(v) for k, v in ctx.items()},
+                }
+                for row, ctx in zip(batch, ctx_batch)
+            ]
+        else:
+            request_rows = [
+                {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
+            ]
+        body: dict[str, Any] = {
+            "name": str(feature_view_name),
+            "version": str(feature_view_version),
+            "object_type": object_type,
+            "metadata_options": {"include_names": True, "include_data_types": True},
+            "request_rows": request_rows,
+        }
+        if feature_names:
+            body["features"] = _dedupe_feature_names_preserve_order(feature_names)
+        return body
 
-            status, raw = client.post_json(url, body, timeout_sec)
+    starts = range(0, len(keys), _MAX_QUERY_REQUEST_ROWS)
+    try:
+        # Strict: a transport that answers fewer batches than it was sent must fail the read,
+        # not silently drop the rows of the batches it never answered.
+        for start, (status, raw) in zip(
+            starts, _send_query_bodies(client, url, starts, body_for, timeout_sec), strict=True
+        ):
+            batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
             if status not in (200, 207):
                 _raise_online_service_http_error(status, raw)
 
