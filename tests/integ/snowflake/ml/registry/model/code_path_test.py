@@ -344,6 +344,7 @@ class CodePathIntegTest(registry_model_test_base.RegistryModelTestBase):
                     version_name="v1",
                     signatures={"predict": sig},
                     code_paths=[CodePath(dir1), CodePath(dir2)],
+                    options={"embed_local_ml_library": True},
                 )
 
             self.assertIn("conflict", str(ctx.exception).lower())

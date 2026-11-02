@@ -38,6 +38,11 @@ ALLOWED_MODULES: frozenset[str] = frozenset({"numpy", "pandas", "re", "copy", "d
 # code runs identically at author time and at warehouse-side execution.
 ALLOWED_NAMESPACE_KEYS: frozenset[str] = frozenset({"pd", "pandas", "np", "numpy", "re", "copy"})
 
+# Prepended to the user's source in the SFV backfill UDTF so it binds exactly
+# ALLOWED_NAMESPACE_KEYS, as the online runtime does when it loads the UDF.
+# One line, so user line numbers in tracebacks shift by a fixed offset.
+RUNTIME_PRELUDE = "import copy, re, numpy, numpy as np, pandas, pandas as pd\n"
+
 # Builtins whose call is rejected by the AST layer. Union of the two
 # pre-existing per-subsystem sets — the strict / RTFV-superset policy.
 FORBIDDEN_BUILTINS: frozenset[str] = frozenset(

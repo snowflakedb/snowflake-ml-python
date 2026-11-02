@@ -56,6 +56,8 @@ class EvaluationSpecification:
         return {
             # AI_COMPLETE returns a VARIANT; without the cast, metrics compare JSON-quoted predictions to the label.
             "query_text": f"{build_ai_complete_query(self.model, self.prompt, self.inputs)}::VARCHAR",
+            # Executors before V14 require an evaluation section to route the spec; empty means one run.
+            "evaluation": {},
             "metrics": [self.metrics[0].to_spec_dict()],
             "dataset": {
                 "name": dataset_name,

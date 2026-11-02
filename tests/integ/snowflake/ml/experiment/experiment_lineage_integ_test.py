@@ -62,6 +62,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
                 model,
                 model_name=model_name,
                 sample_input_data=X,
+                options={"embed_local_ml_library": True},
             )
 
         # Test that the model version can be run and the output is correct
@@ -123,6 +124,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
                 model,
                 model_name=model_name,
                 sample_input_data=X,
+                options={"embed_local_ml_library": True},
             )
 
         # Retrieve logged model versions by explicit run name
@@ -167,6 +169,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
                 model,
                 model_name=model_name,
                 sample_input_data=X,
+                options={"embed_local_ml_library": True},
             )
 
         runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
@@ -208,6 +211,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
                 model,
                 model_name=model_name,
                 sample_input_data=X,
+                options={"embed_local_ml_library": True},
             )
 
         runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
@@ -227,7 +231,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
         reg = registry.Registry(self._session, database_name=self._db_name, schema_name=self._schema_name)
         model = LinearRegression()
         model.fit(X, y)
-        mv = reg.log_model(model, model_name=model_name, sample_input_data=X)
+        mv = reg.log_model(model, model_name=model_name, sample_input_data=X, options={"embed_local_ml_library": True})
 
         runs = mv.lineage(direction="upstream", domain_filter={"experiment"})
         self.assertEqual(len(runs), 0)

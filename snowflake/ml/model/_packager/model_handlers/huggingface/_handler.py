@@ -602,10 +602,7 @@ def _postprocess_result(
     else:
         res = pd.DataFrame(temp_res)
 
-    if hasattr(res, "map"):
-        res = res.map(_hf_utils.sanitize_output)
-    else:
-        res = res.applymap(_hf_utils.sanitize_output)
+    res = res.map(_hf_utils.sanitize_output)
 
     return model_signature_utils.rename_pandas_df(data=res, features=signature.outputs)
 

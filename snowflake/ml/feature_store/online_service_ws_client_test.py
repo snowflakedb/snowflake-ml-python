@@ -124,8 +124,10 @@ class StatusSynthesisTest(absltest.TestCase):
             ("UNAUTHENTICATED", 401),
             ("PERMISSION_DENIED", 403),
             ("NOT_FOUND", 404),
+            ("UDF_EXECUTION_FAILED", 422),
             ("RESOURCE_EXHAUSTED", 429),
             ("INTERNAL", 500),
+            ("UDF_INTERNAL_ERROR", 500),
             ("UNAVAILABLE", 503),
         ):
             self.assertEqual(online_service_ws_client.status_for_error_code(code), expected, code)

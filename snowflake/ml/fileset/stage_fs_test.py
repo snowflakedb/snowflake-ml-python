@@ -8,8 +8,10 @@ from moto import server
 
 from snowflake import snowpark
 from snowflake.connector import connection
+from snowflake.ml._internal.exceptions import fileset_errors
 from snowflake.ml.fileset import stage_fs
 from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 
 class SFStageFileSystemTest(absltest.TestCase):
@@ -297,6 +299,27 @@ class SFStageFileSystemTest(absltest.TestCase):
             with self.subTest(invalid_path):
                 with self.assertRaisesRegex(ValueError, "Invalid stage path"):
                     stagefs._stage_path_to_relative_path(invalid_path)
+
+    def test_match_file_not_exist_error_code(self) -> None:
+        """The FILE_NOT_EXISTS code is vendored locally (removed from the connector public API on 5.0)."""
+        self.assertEqual(fileset_errors.ERRNO_FILE_NOT_EXIST, 253006)
+        code = fileset_errors.ERRNO_FILE_NOT_EXIST
+
+        via_sql_error_code = absltest.mock.MagicMock(spec=snowpark_exceptions.SnowparkSQLException)
+        via_sql_error_code.sql_error_code = str(code)
+        via_sql_error_code.message = "stage file does not exist"
+        self.assertTrue(stage_fs._match_error_code(via_sql_error_code, code))
+
+        # Snowpark often leaves sql_error_code unset and embeds the code in the message instead.
+        via_message = absltest.mock.MagicMock(spec=snowpark_exceptions.SnowparkSQLException)
+        via_message.sql_error_code = None
+        via_message.message = f"000{code} (02000): file not found"
+        self.assertTrue(stage_fs._match_error_code(via_message, code))
+
+        unrelated = absltest.mock.MagicMock(spec=snowpark_exceptions.SnowparkSQLException)
+        unrelated.sql_error_code = "1"
+        unrelated.message = "some other error"
+        self.assertFalse(stage_fs._match_error_code(unrelated, code))
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ class TestModelVersionImplInteg(parameterized.TestCase):
             model_name=MODEL_NAME,
             version_name=VERSION_NAME,
             sample_input_data=self.test_features,
-            options={"enable_explainability": True},
+            options={"embed_local_ml_library": True, "enable_explainability": True},
         )
 
     @classmethod

@@ -129,6 +129,10 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             and (
                 not type_utils.LazyType("lightgbm.LGBMModel").isinstance(model)
             )  # LGBMModel is actually a BaseEstimator
+            # Tabular foundation models (TabICL) are BaseEstimator subclasses but need the
+            # dedicated tabular_foundation_model handler (unbound / in-context-learning serving).
+            and (not type_utils.LazyType("tabicl.TabICLClassifier").isinstance(model))
+            and (not type_utils.LazyType("tabicl.TabICLRegressor").isinstance(model))
         )
 
     @classmethod

@@ -369,3 +369,22 @@ py_test(
         "//snowflake/ml/test_utils:exception_utils",
     ],
 )
+
+py_test(
+    name = "tabular_foundation_model_test",
+    srcs = ["tabular_foundation_model_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_packager:model_handler",
+        "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/_packager/model_handlers:custom",
+        "//snowflake/ml/model/_packager/model_handlers:tabular_foundation_model",
+        "//snowflake/ml/model/_packager/model_meta",
+    ],
+)

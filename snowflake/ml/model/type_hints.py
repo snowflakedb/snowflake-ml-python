@@ -156,6 +156,7 @@ SupportedModelHandlerType = Literal[
     "xgboost",
     "keras",
     "peft_adapter",
+    "tabular_foundation_model",
 ]
 
 _ModelType = TypeVar("_ModelType", bound=SupportedModelType)
@@ -294,6 +295,16 @@ class PeftAdapterSaveOptions(BaseModelSaveOption):
     ...
 
 
+class TabularFoundationModelSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    target_column: NotRequired[str]
+    # Override the (otherwise sample-inferred) scored output type, e.g. `str` for string
+    # class labels or `float` for regression. Ignored when a full `signatures` is supplied.
+    prediction_type: NotRequired[type]
+    cuda_version: NotRequired[str]
+    use_gpu: NotRequired[bool]
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CatBoostModelSaveOptions,
@@ -311,6 +322,7 @@ ModelSaveOption = Union[
     SentenceTransformersSaveOptions,
     KerasSaveOptions,
     PeftAdapterSaveOptions,
+    TabularFoundationModelSaveOptions,
 ]
 
 
@@ -384,6 +396,11 @@ class PeftAdapterLoadOptions(BaseModelLoadOption):
     ...
 
 
+class TabularFoundationModelLoadOptions(BaseModelLoadOption):
+    use_gpu: NotRequired[bool]
+    device: NotRequired[str]
+
+
 ModelLoadOption = Union[
     BaseModelLoadOption,
     CatBoostModelLoadOptions,
@@ -401,6 +418,7 @@ ModelLoadOption = Union[
     SentenceTransformersLoadOptions,
     KerasLoadOptions,
     PeftAdapterLoadOptions,
+    TabularFoundationModelLoadOptions,
 ]
 
 

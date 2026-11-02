@@ -26,6 +26,7 @@ class ExperimentModelIntegTest(ExperimentTrackingIntegTestBase):
                 model_name=model_name,
                 sample_input_data=X,
                 target_platforms=["WAREHOUSE"],
+                options={"embed_local_ml_library": True},
             )
 
         # Test that model exists

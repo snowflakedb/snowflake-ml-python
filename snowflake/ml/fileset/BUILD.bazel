@@ -22,6 +22,7 @@ py_test(
     ],
     deps = [
         ":stage_fs",
+        "//snowflake/ml/_internal/exceptions:fileset_errors",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

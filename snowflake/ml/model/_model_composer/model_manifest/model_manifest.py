@@ -82,17 +82,18 @@ class ModelManifest:
         self.methods: list[model_method.ModelMethod] = []
 
         for target_method in model_meta.signatures.keys():
+            is_partitioned_function = model_meta.function_properties.get(target_method, {}).get(
+                model_meta_schema.FunctionProperties.PARTITIONED.value, False
+            )
             method = model_method.ModelMethod(
                 model_meta=model_meta,
                 target_method=target_method,
                 runtime_name=self._DEFAULT_RUNTIME_NAME,
                 function_generator=self.function_generator,
-                is_partitioned_function=model_meta.function_properties.get(target_method, {}).get(
-                    model_meta_schema.FunctionProperties.PARTITIONED.value, False
-                ),
+                is_partitioned_function=is_partitioned_function,
                 wide_input=len(model_meta.signatures[target_method].inputs) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT,
                 options=model_method.get_model_method_options_from_options(
-                    options, target_method, model_meta.model_type
+                    options, target_method, model_meta.model_type, is_partitioned_function
                 ),
             )
 

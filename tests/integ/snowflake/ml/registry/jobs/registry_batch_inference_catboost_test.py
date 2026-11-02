@@ -8,7 +8,6 @@ from snowflake.ml.model._client.model import batch_inference_job_specs
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
-@absltest.skip("AttributeError: module 'numpy._globals' has no attribute '_signature_descriptor'")
 class TestBatchInferenceCatboostInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     def test_catboost(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)

@@ -744,6 +744,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             model_name=name,
             version_name=version,
             sample_input_data=cal_X_df,
+            options={"embed_local_ml_library": True},
         )
 
         statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": "TRUE"}

@@ -69,6 +69,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         # Get the name of the caller as the model name
         name = f"model_{inspect.stack()[1].function}"
         version = f"ver_{version_suffix}"
+        options = {} if options is None else dict(options)
+        options.setdefault("embed_local_ml_library", True)
 
         mv = self.registry.log_model(
             model=model,
@@ -145,6 +147,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             if additional_dependencies:
                 resolved_conda_dependencies.extend(additional_dependencies)
 
+        options = {} if options is None else dict(options)
+        options.setdefault("embed_local_ml_library", True)
         version_suffix = self._run_id
 
         # Get the name of the caller as the model name
@@ -225,6 +229,8 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         name = f"model_{inspect.stack()[1].function}"
         source_version = f"source_ver_{version_suffix}"
         version = f"ver_{version_suffix}"
+        options = {} if options is None else dict(options)
+        options.setdefault("embed_local_ml_library", True)
         source_mv = self.registry.log_model(
             model=model,
             model_name=source_name,

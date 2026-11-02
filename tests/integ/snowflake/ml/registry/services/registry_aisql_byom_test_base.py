@@ -92,6 +92,14 @@ class AISQLBYOMTestBase(registry_model_deployment_test_base.RegistryModelDeploym
         # in tearDownClass after all test methods complete.
         pass
 
+    def test_000_service_deployed(self) -> None:
+        """Canary for the shared deployment; sorts first so its setUp runs _do_deploy.
+
+        A deploy failure or timeout is reported here and the remaining tests are skipped,
+        so the error is not attributed to an unrelated test. Its duration is the deploy time.
+        """
+        self.assertNotIn(type(self)._service_name, (None, "DEPLOYING", "DEPLOY_FAILED"))
+
     def _aisql_byom_make_limited_role(self, suffix: str, *, service_fqn: str | None = None) -> str:
         """Create a minimal role for AISQL BYOM permission tests.
 

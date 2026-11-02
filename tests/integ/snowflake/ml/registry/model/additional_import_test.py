@@ -83,6 +83,7 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
                 version_name=version,
                 signatures={"predict": sig},
                 ext_modules=[my_module],
+                options={"embed_local_ml_library": True},
             )
         else:
             src_path = importlib_resources.files("tests.integ.snowflake.ml.registry.model.my_module")
@@ -97,6 +98,7 @@ class ModelWithAdditionalImportTest(registry_model_test_base.RegistryModelTestBa
                     version_name=version,
                     signatures={"predict": sig},
                     code_paths=[code_path],
+                    options={"embed_local_ml_library": True},
                 )
 
         mv.run(X, function_name="predict")

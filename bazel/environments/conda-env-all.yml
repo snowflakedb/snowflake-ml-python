@@ -87,5 +87,6 @@ dependencies:
       - datasets==5.0.1
       - orjson==3.11.6
       - types-cachetools==4.2.2
+      - tabicl==2.2.0
       - accelerate==0.26.0
       - tf-keras==2.21.0

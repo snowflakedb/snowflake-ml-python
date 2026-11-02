@@ -8,6 +8,9 @@ from snowflake.ml.experiment import experiment_tracking
 from snowflake.ml.model import model_signature
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
+from tests.integ.snowflake.ml.test_utils.embed_local_ml_library import (
+    patch_registry_log_model,
+)
 
 AUTOLOGGING_MIN_VERSION = (9, 20, 0)
 
@@ -22,6 +25,11 @@ class AutologIntegrationTest:
         """Creates Snowpark and Snowflake environments for testing."""
         if snowflake_env.get_current_snowflake_version(self._session).release < AUTOLOGGING_MIN_VERSION:
             self.skipTest(f"Skipping test because current Snowflake version is less than {AUTOLOGGING_MIN_VERSION}.")
+
+        # Keras, XGBoost, and LightGBM callbacks call log_model with no save options.
+        embed_patch = patch_registry_log_model()
+        embed_patch.start()
+        self.addCleanup(embed_patch.stop)
 
         self.run_id = uuid.uuid4().hex
         self._db_manager = db_manager.DBManager(self._session)

@@ -97,7 +97,10 @@ class TestSnowflakeLineage(common_test_base.CommonTestBase):
 
         registry = Registry(session=self.session)
         model_ref = registry.log_model(
-            model_name=f"{self._test_schema}.{model_name}", version_name=model_version, model=regr
+            model_name=f"{self._test_schema}.{model_name}",
+            version_name=model_version,
+            model=regr,
+            options={"embed_local_ml_library": True},
         )
 
         # Case 1: Query lineage from feature view object

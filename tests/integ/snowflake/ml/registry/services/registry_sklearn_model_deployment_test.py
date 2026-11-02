@@ -166,7 +166,7 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             model_name=name,
             version_name=version,
             sample_input_data=iris_X,
-            options={"enable_explainability": False},
+            options={"embed_local_ml_library": True, "enable_explainability": False},
             # Note: NOT providing cuda_version in options
         )
 

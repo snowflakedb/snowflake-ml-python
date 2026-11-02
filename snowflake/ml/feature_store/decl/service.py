@@ -19,6 +19,13 @@ except ImportError:
     _HAS_ONLINE_SERVICE = False
 
 
+# Companion-table name suffixes. OFT is ``<BASE>$<VERSION>$ONLINE``; streaming
+# landing tables are ``<BASE>$<VERSION>$UDF_TRANSFORMED[$BACKFILL]``.
+_ONLINE_TABLE_SUFFIX = "$ONLINE"
+_UDF_TRANSFORMED_TABLE_SUFFIX = "$UDF_TRANSFORMED"
+_BACKFILL_TABLE_SUFFIX = "$BACKFILL"
+
+
 # Raw-payload top-level keys that the rich status display consumes but
 # that snowml-core's ``OnlineServiceStatus`` dataclass does not expose.
 # Both ``parse_service_status`` branches forward these verbatim from the
@@ -433,6 +440,18 @@ def format_describe_display(
     _kv("  Schema", schema)
     _kv("  REST API name", fv_name)
     _kv("  SQL (OFT)", f"{database}.{schema}.{oft_name}")
+    lines.append("")
+
+    # --- Associated Objects ---
+    # Only streaming FVs have the $UDF_TRANSFORMED / $BACKFILL landing tables.
+    # Derive their names from oft_name so quoted identifiers keep their stored
+    # casing (a blind .upper() would not).
+    lines.append("  Associated Objects:")
+    _kv("  Online Feature Table", f"{database}.{schema}.{oft_name}")
+    if isinstance(spec, dict) and spec.get("kind") == "StreamingFeatureView":
+        base = oft_name[: -len(_ONLINE_TABLE_SUFFIX)] if oft_name.endswith(_ONLINE_TABLE_SUFFIX) else oft_name
+        _kv("  Offline Table", f"{database}.{schema}.{base}{_UDF_TRANSFORMED_TABLE_SUFFIX}")
+        _kv("  Backfill Table", f"{database}.{schema}.{base}{_UDF_TRANSFORMED_TABLE_SUFFIX}{_BACKFILL_TABLE_SUFFIX}")
     lines.append("")
 
     # --- Entities ---

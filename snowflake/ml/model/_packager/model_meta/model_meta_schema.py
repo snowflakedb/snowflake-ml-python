@@ -107,6 +107,18 @@ class PeftAdapterModelBlobOptions(BaseModelBlobOptions):
     lora_extra_vocab_size: NotRequired[int]
 
 
+class TabularFoundationModelBlobOptions(BaseModelBlobOptions):
+    adapter: Required[str]
+    estimator_type: Required[str]
+    init_params_file: Required[str]
+    foundation_dir: Required[str]
+    device: Required[str]
+    model_type: Required[str]
+    serving_mode: NotRequired[str]
+    target_column: NotRequired[str]
+    context_file: NotRequired[str]
+
+
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
     CatBoostModelBlobOptions,
@@ -119,6 +131,7 @@ ModelBlobOptions = Union[
     SentenceTransformersModelBlobOptions,
     ProphetModelBlobOptions,
     PeftAdapterModelBlobOptions,
+    TabularFoundationModelBlobOptions,
 ]
 
 

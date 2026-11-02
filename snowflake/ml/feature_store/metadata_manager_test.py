@@ -392,7 +392,7 @@ class CheckTableExistsTest(absltest.TestCase):
         self, database: str = "DB", schema: str = "SCHEMA"
     ) -> tuple[FeatureStoreMetadataManager, MagicMock]:
         session = MagicMock()
-        session.sql.return_value.collect.return_value = [{"CNT": 0}]
+        session.sql.return_value.collect.return_value = []
         manager = FeatureStoreMetadataManager(
             session=session,
             database=SqlIdentifier(database),
@@ -402,40 +402,43 @@ class CheckTableExistsTest(absltest.TestCase):
         )
         return manager, session
 
-    def _assert_probe(self, session: MagicMock, *, database: str, resolved_schema: str) -> None:
-        sql = " ".join(session.sql.call_args.args[0].split())
-        self.assertEqual(
-            sql,
-            f"SELECT COUNT(*) AS CNT FROM {database}.INFORMATION_SCHEMA.TABLES "
-            f"WHERE TABLE_SCHEMA = '{resolved_schema}' AND TABLE_NAME = '_FEATURE_STORE_METADATA'",
-        )
-        self.assertNotIn("params", session.sql.call_args.kwargs)
-
-    def test_probe_is_scoped_to_feature_store_database(self) -> None:
+    def test_probe_is_scoped_to_feature_store_schema(self) -> None:
         manager, session = self._make_unprobed_manager()
 
         manager.table_exists()
 
-        self._assert_probe(session, database="DB", resolved_schema="SCHEMA")
+        self.assertEqual(
+            session.sql.call_args.args[0],
+            "SHOW TABLES LIKE '_FEATURE_STORE_METADATA' IN SCHEMA DB.SCHEMA",
+        )
 
-    def test_probe_resolves_case_sensitive_identifiers(self) -> None:
+    def test_probe_keeps_case_sensitive_identifiers(self) -> None:
         manager, session = self._make_unprobed_manager(database='"my.db"', schema='"my_schema"')
 
         manager.table_exists()
 
-        self._assert_probe(session, database='"my.db"', resolved_schema="my_schema")
+        self.assertEqual(
+            session.sql.call_args.args[0],
+            'SHOW TABLES LIKE \'_FEATURE_STORE_METADATA\' IN SCHEMA "my.db"."my_schema"',
+        )
+
+    def test_exact_name_match_required(self) -> None:
+        manager, session = self._make_unprobed_manager()
+        session.sql.return_value.collect.return_value = [{"name": "XFEATURE_STORE_METADATA"}]
+
+        self.assertFalse(manager.table_exists())
 
     def test_absent_table_is_not_cached(self) -> None:
         manager, session = self._make_unprobed_manager()
         self.assertFalse(manager.table_exists())
         self.assertIsNone(manager._table_exists)
 
-        session.sql.return_value.collect.return_value = [{"CNT": 1}]
+        session.sql.return_value.collect.return_value = [{"name": "_FEATURE_STORE_METADATA"}]
         self.assertTrue(manager.table_exists())
 
     def test_present_table_is_cached(self) -> None:
         manager, session = self._make_unprobed_manager()
-        session.sql.return_value.collect.return_value = [{"CNT": 1}]
+        session.sql.return_value.collect.return_value = [{"name": "_FEATURE_STORE_METADATA"}]
         self.assertTrue(manager.table_exists())
 
         session.sql.reset_mock()
@@ -446,7 +449,7 @@ class CheckTableExistsTest(absltest.TestCase):
         manager, session = self._make_unprobed_manager()
         specs = AggregationMetadata(feature_granularity="1h", features=[])
         session.sql.return_value.collect.side_effect = [
-            [{"CNT": 1}],
+            [{"name": "_FEATURE_STORE_METADATA"}],
             [{"METADATA": specs.to_dict()}],
         ]
 

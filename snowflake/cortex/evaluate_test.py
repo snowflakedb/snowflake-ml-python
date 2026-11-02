@@ -68,6 +68,7 @@ class EvaluateTest(absltest.TestCase):
             yaml.safe_load(create_args.kwargs["specification"]),
             {
                 "query_text": "AI_COMPLETE('llama3.1-70b', PROMPT('Answer {0}', QUESTION))::VARCHAR",
+                "evaluation": {},
                 "metrics": [{"name": "exact_match"}],
                 "dataset": {
                     "name": "DB.SCHEMA.EVAL_DATA",

@@ -823,6 +823,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             model=lm,
             model_name=name,
             sample_input_data=sample_nans_back,
+            options={"embed_local_ml_library": True},
         )
 
         def _check(res: pd.DataFrame, expected_input: pd.DataFrame) -> None:
@@ -895,6 +896,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             model_name=name,
             version_name=version,
             sample_input_data=sample_df,
+            options={"embed_local_ml_library": True},
         )
 
         stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)
@@ -987,6 +989,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             model_name=name,
             version_name=version,
             sample_input_data=sample_df,
+            options={"embed_local_ml_library": True},
         )
 
         stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)
@@ -1028,7 +1031,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             model_name=name,
             version_name=version,
             sample_input_data=sample_df,
-            options={"capture_sample_input_data": False},
+            options={"embed_local_ml_library": True, "capture_sample_input_data": False},
         )
 
         stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)

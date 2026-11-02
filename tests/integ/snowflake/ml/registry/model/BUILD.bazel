@@ -396,6 +396,22 @@ py_test(
 )
 
 py_test(
+    name = "registry_tabular_foundation_model_test",
+    timeout = "eternal",
+    srcs = ["registry_tabular_foundation_model_test.py"],
+    optional_dependencies = ["tabicl"],
+    shard_count = 1,
+    tags = [
+        "exclusive",
+        "feature:model_registry",
+    ],
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+    ],
+)
+
+py_test(
     name = "registry_in_sproc_test",
     timeout = "long",
     srcs = ["registry_in_sproc_test.py"],

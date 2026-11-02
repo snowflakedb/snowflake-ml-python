@@ -226,13 +226,15 @@ class ModelParameterReconciler:
 
     def _reconcile_target_platforms(self) -> list[model_types.TargetPlatform] | None:
         """Reconcile target platforms with proper defaulting logic."""
+        handler_supported_platforms = self._get_handler_supported_target_platforms()
+
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
         if self._target_platforms:
             # Convert any string target platforms to TargetPlatform objects
-            reconciled_target_platforms = [model_types.TargetPlatform(platform) for platform in self._target_platforms]
+            requested_platforms = [model_types.TargetPlatform(platform) for platform in self._target_platforms]
 
             # PEFT adapters are served only through a service of their pinned base; they cannot run in a Warehouse.
-            if self._is_peft_adapter() and set(reconciled_target_platforms) != set(
+            if self._is_peft_adapter() and set(requested_platforms) != set(
                 target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
             ):
                 raise exceptions.SnowflakeMLException(
@@ -244,7 +246,8 @@ class ModelParameterReconciler:
                     ),
                 )
 
-            return reconciled_target_platforms
+            self._validate_target_platforms_supported(requested_platforms, handler_supported_platforms)
+            return requested_platforms
 
         # PEFT adapters are served only through a service of their pinned base; they cannot run in a Warehouse.
         if self._is_peft_adapter():
@@ -253,6 +256,11 @@ class ModelParameterReconciler:
                 'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
             )
             return [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+
+        # A model that cannot run on every platform (e.g. a multi-GB foundation that is infeasible in a
+        # Warehouse) narrows the unspecified default to only the platforms its handler supports.
+        if handler_supported_platforms is not None:
+            return handler_supported_platforms
 
         # Default the target platform to warehouse if not specified and any table function exists
         if self._has_table_function():
@@ -276,6 +284,43 @@ class ModelParameterReconciler:
             ]
 
         return None
+
+    def _get_handler_supported_target_platforms(self) -> list[model_types.TargetPlatform] | None:
+        """Platforms the model's handler restricts logging to, or None when unrestricted."""
+        from snowflake.ml.model._packager import model_handler
+
+        handler = model_handler.find_handler(self._model)
+        if handler is None:
+            return None
+        return handler.get_supported_target_platforms(self._model)
+
+    @staticmethod
+    def _validate_target_platforms_supported(
+        requested_platforms: list[model_types.TargetPlatform],
+        supported_platforms: list[model_types.TargetPlatform] | None,
+    ) -> None:
+        """Warn when the user explicitly requested a platform the model is not known to support.
+
+        The handler's supported platforms are a default, not a hard limit: a user who explicitly
+        overrides `target_platforms` may know about capacity (e.g. a GPU warehouse) that is not yet
+        reflected in the handler, so we log a warning and let the override through.
+
+        Args:
+            requested_platforms: The platforms the user asked for.
+            supported_platforms: The platforms the handler supports, or None when unrestricted.
+        """
+        if supported_platforms is None:
+            return
+        unsupported_platforms = [platform for platform in requested_platforms if platform not in supported_platforms]
+        if not unsupported_platforms:
+            return
+
+        unsupported_names = ", ".join(sorted(platform.value for platform in unsupported_platforms))
+        supported_literal = "[" + ", ".join(f'"{platform.value}"' for platform in supported_platforms) + "]"
+        logger.warning(
+            f"This model is not known to support the requested target platform(s): {unsupported_names}. "
+            f"The handler's default is target_platforms={supported_literal}."
+        )
 
     def _is_peft_adapter(self) -> bool:
         """Check if the model being logged is a PEFT adapter."""

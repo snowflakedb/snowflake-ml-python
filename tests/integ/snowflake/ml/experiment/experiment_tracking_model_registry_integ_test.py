@@ -73,6 +73,7 @@ class ExperimentModelRegistryIntegTest(absltest.TestCase):
                 model_name="TEST_MODEL",
                 sample_input_data=X,
                 target_platforms=["WAREHOUSE"],
+                options={"embed_local_ml_library": True},
             )
 
         # Model should be in the model db, not the experiment db
@@ -109,6 +110,7 @@ class ExperimentModelRegistryIntegTest(absltest.TestCase):
                 model_name="TEST_MODEL",
                 sample_input_data=X,
                 target_platforms=["WAREHOUSE"],
+                options={"embed_local_ml_library": True},
             )
 
         models = self._session.sql(f"SHOW MODELS IN DATABASE {self._experiment_db}").collect()
@@ -145,6 +147,7 @@ class ExperimentModelRegistryIntegTest(absltest.TestCase):
                 model_name="TEST_MODEL",
                 sample_input_data=X,
                 target_platforms=["WAREHOUSE"],
+                options={"embed_local_ml_library": True},
             )
 
         # Model should still be in the model db

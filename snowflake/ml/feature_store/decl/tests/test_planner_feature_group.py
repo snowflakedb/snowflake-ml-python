@@ -25,6 +25,7 @@ from snowflake.ml.feature_store.decl.invariants import (
     fg_content_hash,
     model_to_dict,
     spec_key,
+    structural_fingerprint_hash,
 )
 from snowflake.ml.feature_store.decl.planner import generate_plan
 from snowflake.ml.feature_store.decl.spec_models import (
@@ -150,22 +151,33 @@ class TestPlannerNoChangeFG:
 
 
 # ---------------------------------------------------------------------------
-# Destructive CREATE_FG (semantically RECREATE)
+# Changed FG — replace as DROP_FG + non-destructive CREATE_FG
 # ---------------------------------------------------------------------------
 
 
-class TestPlannerDestructiveFG:
-    def test_changed_fg_emits_destructive_create(self) -> None:
+class TestPlannerChangedFG:
+    def test_changed_fg_emits_drop_then_create(self) -> None:
+        # The imperative API has no ``update_feature_group``, so a changed FG
+        # is replaced: the deployed FG is dropped, then the desired FG is
+        # created.  The drop is destructive (it tears down a live object); the
+        # create is not.
         fg = _fg_model(desc="new description")
-        # Applied side has the old desc → hash mismatch → destructive CREATE_FG.
         applied_payload = _fg_payload(desc="old description")
         applied = _applied_with_fg(applied_payload)
 
         plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts())
-        fg_ops = [op for op in plan.ops if op.kind == OpKind.CREATE_FG]
-        assert len(fg_ops) == 1
-        # Hash mismatch must produce a destructive op (no in-place update_feature_group).
-        assert fg_ops[0].destructive is True
+        drop_ops = [op for op in plan.ops if op.kind == OpKind.DROP_FG]
+        create_ops = [op for op in plan.ops if op.kind == OpKind.CREATE_FG]
+        assert len(drop_ops) == 1
+        assert len(create_ops) == 1
+        assert drop_ops[0].destructive is True
+        assert create_ops[0].destructive is False
+        # No destructive CREATE_FG is emitted any more.
+        assert not any(op.kind == OpKind.CREATE_FG and op.destructive for op in plan.ops)
+        # The drop runs before the create.
+        drop_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FG)
+        create_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.CREATE_FG)
+        assert drop_idx < create_idx
 
 
 # ---------------------------------------------------------------------------
@@ -551,10 +563,12 @@ class TestPlannerFGMemberStillReferenced:
         rc_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.RECREATE_FV)
         assert fg_idx < rc_idx
 
-    def test_membership_change_create_fg_before_member_recreate(self) -> None:
-        # Local FG no longer lists MEMBER_FV (lists OTHER_FV) → destructive
-        # CREATE_FG; member changed → RECREATE_FV.  CREATE_FG precedes
-        # RECREATE_FV and the member op is NOT refused.
+    def test_membership_change_drop_fg_before_member_recreate(self) -> None:
+        # Local FG no longer lists MEMBER_FV (lists OTHER_FV) → hash mismatch
+        # replaces it as DROP_FG + CREATE_FG; member changed → RECREATE_FV.
+        # The member op is NOT refused, and the ordering is
+        # DROP_FG → RECREATE_FV → CREATE_FG so no FG online table references
+        # the member while it is being recreated.
         fg = _fg_model(name="MY_FG", refs=[FeatureViewRef(name="OTHER_FV", version="V1")])
         member = _member_fv_model(name="MEMBER_FV")
         objects: dict[str, AppliedObject] = {}
@@ -570,12 +584,77 @@ class TestPlannerFGMemberStillReferenced:
             _opts(full_directory_mode=True),
         )
         kinds = [op.kind for op in plan.ops]
+        assert OpKind.DROP_FG in kinds
         assert OpKind.CREATE_FG in kinds
         assert OpKind.RECREATE_FV in kinds
         assert not any(e.code == "FG_MEMBER_STILL_REFERENCED" for e in plan.errors)
-        create_fg_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.CREATE_FG)
+        drop_fg_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.DROP_FG)
         rc_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.RECREATE_FV)
-        assert create_fg_idx < rc_idx
+        create_fg_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.CREATE_FG)
+        assert drop_fg_idx < rc_idx < create_fg_idx
+
+
+# ---------------------------------------------------------------------------
+# A FeatureGroup not yet deployed never blocks its members
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerNewFGDoesNotBlockMembers:
+    """A FeatureGroup owns an online table that references its members' online
+    tables, so a *deployed* FG blocks a member recreate.  A FG that is only
+    being created in this plan has no such table, so it must not block — and
+    it is created after its members exist.
+    """
+
+    def test_new_fg_does_not_block_member_recreate(self) -> None:
+        # A new FG lists a member FV that the plan recreates.  No applied FG
+        # exists, so there is nothing to block the recreate; the FG is created
+        # after the member.
+        fg = _fg_model(name="NEW_FG", refs=[FeatureViewRef(name="MEMBER_FV", version="V1")])
+        member = _member_fv_model(name="MEMBER_FV")
+        objects: dict[str, AppliedObject] = {}
+        m_key, m_obj = _applied_fv_from_model(member, content_hash="stale-hash")
+        objects[m_key] = m_obj
+        applied = AppliedState(objects=objects)
+
+        plan = generate_plan(
+            SpecBatch(specs=[fg, member], source_files=[]),
+            applied,
+            _opts(full_directory_mode=True),
+        )
+        kinds = [op.kind for op in plan.ops]
+        assert OpKind.RECREATE_FV in kinds
+        assert OpKind.CREATE_FG in kinds
+        assert not any(e.code == "FG_MEMBER_STILL_REFERENCED" for e in plan.errors)
+        create = next(op for op in plan.ops if op.kind == OpKind.CREATE_FG)
+        assert create.destructive is False
+        rc_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.RECREATE_FV)
+        create_fg_idx = next(i for i, op in enumerate(plan.ops) if op.kind == OpKind.CREATE_FG)
+        assert rc_idx < create_fg_idx
+
+    def test_new_fg_over_unchanged_members_is_non_destructive(self) -> None:
+        # The reported scenario's additive half: the member FVs are already
+        # deployed and unchanged (NO_CHANGE); adding a new FG over them is a
+        # single non-destructive CREATE_FG that needs no --allow-recreate.
+        fg = _fg_model(name="NEW_FG", refs=[FeatureViewRef(name="MEMBER_FV", version="V1")])
+        member = _member_fv_model(name="MEMBER_FV")
+        member_payload = model_to_dict(member)
+        objects: dict[str, AppliedObject] = {}
+        m_key, m_obj = _applied_fv_from_model(member, content_hash=structural_fingerprint_hash(member_payload))
+        objects[m_key] = m_obj
+        applied = AppliedState(objects=objects)
+
+        plan = generate_plan(
+            SpecBatch(specs=[fg, member], source_files=[]),
+            applied,
+            _opts(full_directory_mode=True),
+        )
+        kinds = [op.kind for op in plan.ops]
+        assert OpKind.CREATE_FG in kinds
+        assert OpKind.RECREATE_FV not in kinds
+        assert OpKind.DROP_FG not in kinds
+        assert not any(op.destructive for op in plan.ops)
+        assert not any(e.code == "FG_MEMBER_STILL_REFERENCED" for e in plan.errors)
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,16 @@ from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Session
 
 
+class _SpcsOnlyHandler:
+    """A stand-in handler that reports a model can only run on Snowpark Container Services."""
+
+    HANDLER_TYPE = "fake_spcs_only"
+
+    @classmethod
+    def get_supported_target_platforms(cls, model: Any) -> list[model_types.TargetPlatform]:
+        return [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+
+
 class ModelParameterReconcilerTest(parameterized.TestCase):
     """Test cases for ModelParameterReconciler functionality."""
 
@@ -369,6 +379,34 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             reconciler = self._create_reconciler(target_platforms=None, options=None)
             result = reconciler.reconcile()
             self.assertIsNone(result.target_platforms)
+
+    def test_reconcile_target_platforms_handler_restricts_default(self) -> None:
+        """A handler that restricts platforms narrows the unspecified default to that set."""
+        with mock.patch(
+            "snowflake.ml.model._packager.model_handler.find_handler",
+            return_value=_SpcsOnlyHandler,
+        ):
+            reconciler = self._create_reconciler(target_platforms=None, options=None)
+            result = reconciler.reconcile()
+            self.assertEqual(result.target_platforms, [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+
+    def test_reconcile_target_platforms_handler_warns_on_unsupported_explicit(self) -> None:
+        """Explicitly requesting a platform the handler does not support warns but is honored."""
+        with mock.patch(
+            "snowflake.ml.model._packager.model_handler.find_handler",
+            return_value=_SpcsOnlyHandler,
+        ):
+            reconciler = self._create_reconciler(target_platforms=["WAREHOUSE"])
+            with self.assertLogs(model_parameter_reconciler.__name__, level="WARNING") as cm:
+                result = reconciler.reconcile()
+            self.assertEqual(result.target_platforms, [model_types.TargetPlatform.WAREHOUSE])
+            self.assertTrue(any("WAREHOUSE" in message for message in cm.output))
+
+            reconciler = self._create_reconciler(
+                target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+            )
+            result = reconciler.reconcile()
+            self.assertEqual(result.target_platforms, [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
 
     @parameterized.parameters(True, False)  # type: ignore[misc]
     def test_reconcile_target_platforms_peft_adapter_defaults_to_spcs(self, in_ml_runtime: bool) -> None:

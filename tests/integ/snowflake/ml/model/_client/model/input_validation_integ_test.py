@@ -73,6 +73,7 @@ class TestInputValidationInteg(parameterized.TestCase):
                     ],
                 )
             },
+            options={"embed_local_ml_library": True},
         )
 
         self._mv_timestamp = self.registry.log_model(
@@ -92,6 +93,7 @@ class TestInputValidationInteg(parameterized.TestCase):
                     ],
                 )
             },
+            options={"embed_local_ml_library": True},
         )
 
     @classmethod
@@ -196,6 +198,7 @@ class TestInputValidationInteg(parameterized.TestCase):
                     ],
                 )
             },
+            options={"embed_local_ml_library": True},
         )
 
         sp_df = self._session.create_dataframe(

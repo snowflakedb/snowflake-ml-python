@@ -3766,6 +3766,7 @@ class ModelOpsTest(parameterized.TestCase):
         raw_model_spec = {
             "version": "2.0",
             "model": {
+                "name": "primary",
                 "type": "USER_MODEL",
                 "framework": "CUSTOM_RUNTIME",
                 "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
@@ -3774,11 +3775,15 @@ class ModelOpsTest(parameterized.TestCase):
             "serving": {
                 "functions": {
                     "predict": {
+                        "env": ["python_env"],
                         "type": "FUNCTION",
+                        "handler": "functions.predict.infer",
                         "signature": _DUMMY_SIG["predict"].to_dict(),
                     },
                     "predict_table": {
+                        "env": ["python_env"],
                         "type": "TABLE_FUNCTION",
+                        "handler": "functions.predict_table.infer",
                         "signature": _DUMMY_SIG["predict_table"].to_dict(),
                         "properties": {"is_partition": False},
                     },
@@ -3833,6 +3838,7 @@ class ModelOpsTest(parameterized.TestCase):
         raw_model_spec = {
             "version": "2.0",
             "model": {
+                "name": "primary",
                 "type": "USER_MODEL",
                 "framework": "CUSTOM_RUNTIME",
                 "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
@@ -3840,7 +3846,9 @@ class ModelOpsTest(parameterized.TestCase):
             "serving": {
                 "functions": {
                     "predict": {
+                        "env": ["python_env"],
                         "type": "TABLE_FUNCTION",
+                        "handler": "functions.predict.infer",
                         "signature": _DUMMY_SIG["predict"].to_dict(),
                     },
                 }
@@ -3882,15 +3890,23 @@ class ModelOpsTest(parameterized.TestCase):
         raw_model_spec = {
             "version": "2.0",
             "model": {
+                "name": "primary",
                 "type": "USER_MODEL",
                 "framework": "CUSTOM_RUNTIME",
                 "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
             },
             "serving": {
                 "functions": {
-                    "predict": {"type": "FUNCTION", "signature": predict_signature},
+                    "predict": {
+                        "env": ["python_env"],
+                        "type": "FUNCTION",
+                        "handler": "functions.predict.infer",
+                        "signature": predict_signature,
+                    },
                     "predict_table": {
+                        "env": ["python_env"],
                         "type": "TABLE_FUNCTION",
+                        "handler": "functions.predict_table.infer",
                         "signature": table_signature,
                         "properties": {"is_partition": True},
                     },
@@ -4065,6 +4081,7 @@ class ModelOpsTest(parameterized.TestCase):
         raw_model_spec = {
             "version": "2.0",
             "model": {
+                "name": "primary",
                 "type": "USER_MODEL",
                 "framework": "CUSTOM_RUNTIME",
                 "details": {"models": {"primary": {"model_type": "CUSTOM_RUNTIME"}}},
@@ -4073,7 +4090,9 @@ class ModelOpsTest(parameterized.TestCase):
             "serving": {
                 "functions": {
                     "predict": {
+                        "env": ["python_env"],
                         "type": "FUNCTION",
+                        "handler": "functions.predict.infer",
                         "signature": _DUMMY_SIG["predict"].to_dict(),
                     }
                 }

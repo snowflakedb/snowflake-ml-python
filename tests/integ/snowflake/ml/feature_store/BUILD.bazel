@@ -162,6 +162,24 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_inherited_grants_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_inherited_grants_test.py",
+    ],
+    imports = ["."],
+    tags = [
+        "feature:feature_store",
+    ],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
     name = "feature_store_access_test",
     timeout = "eternal",
     srcs = [

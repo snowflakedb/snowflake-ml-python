@@ -1,9 +1,11 @@
 import json
 import uuid
 
+import pandas as pd
 from absl.testing import parameterized
 
 from snowflake.ml._internal.utils import connection_params
+from snowflake.ml.model import custom_model, task
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
@@ -13,6 +15,19 @@ from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 
 NUM_FEATURES = 8
 INPUT_FEATURE_COLUMNS_NAMES = [f"input_feature_{i}" for i in range(NUM_FEATURES)]
+
+
+class _NumericPredictionModel(custom_model.CustomModel):
+    """Echoes an input feature so the prediction column stays numeric.
+
+    Inference-table monitors read the prediction column type directly from the model's output
+    signature (unlike table-sourced monitors, whose columns are declared independently), so models
+    used with `_add_inference_table_monitor` must predict a numeric value, not a boolean class label.
+    """
+
+    @custom_model.inference_api
+    def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input_df[INPUT_FEATURE_COLUMNS_NAMES[0]]})
 
 
 class ModelMonitorIntegrationTestBase(parameterized.TestCase):
@@ -49,6 +64,7 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
             model_name=cls._model_name,
             version_name="V1",
             sample_input_data=cls._features,
+            options={"embed_local_ml_library": True},
         )
 
     def setUp(self) -> None:
@@ -154,6 +170,29 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
             model_name=model_name,
             version_name=version_name,
             sample_input_data=features,
+            options={"embed_local_ml_library": True},
+        )
+
+    @classmethod
+    def _log_inference_model(cls) -> None:
+        cls._inference_model_name = "TEST_INFERENCE_MODEL"
+        cls._inference_model_version = cls.registry.log_model(
+            model=_NumericPredictionModel(custom_model.ModelContext()),
+            model_name=cls._inference_model_name,
+            version_name="V1",
+            sample_input_data=pd.DataFrame({name: [1.0] for name in INPUT_FEATURE_COLUMNS_NAMES}),
+            task=task.Task.TABULAR_REGRESSION,
+            options={"embed_local_ml_library": True},
+        )
+
+    def _log_inference_table_model_version(self, model_name: str, version_name: str) -> model_version_impl.ModelVersion:
+        return self.registry.log_model(
+            model=_NumericPredictionModel(custom_model.ModelContext()),
+            model_name=model_name,
+            version_name=version_name,
+            sample_input_data=pd.DataFrame({name: [1.0] for name in INPUT_FEATURE_COLUMNS_NAMES}),
+            task=task.Task.TABULAR_REGRESSION,
+            options={"embed_local_ml_library": True},
         )
 
     def _add_sample_monitor(
@@ -181,6 +220,34 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
                 model_version=model_version,
                 model_function_name="predict",
                 background_compute_warehouse_name=self._warehouse_name,
+            ),
+        )
+
+    def _add_inference_table_monitor(
+        self,
+        monitor_name: str,
+        model_version: model_version_impl.ModelVersion,
+        *,
+        ground_truth: str | None = None,
+        id_columns: list[str] | None = None,
+        segment_columns: list[str] | None = None,
+        prediction_score_columns: list[str] | None = None,
+        actual_score_columns: list[str] | None = None,
+    ) -> model_monitor.ModelMonitor:
+        return self.registry.add_monitor(
+            name=monitor_name,
+            source_config=model_monitor_config.ModelMonitorSourceConfig._from_inference_table(
+                ground_truth=ground_truth,
+                id_columns=id_columns,
+                segment_columns=segment_columns,
+                prediction_score_columns=prediction_score_columns,
+                actual_score_columns=actual_score_columns,
+            ),
+            model_monitor_config=model_monitor_config.ModelMonitorConfig(
+                model_version=model_version,
+                model_function_name="predict",
+                background_compute_warehouse_name=self._warehouse_name,
+                refresh_interval="1 minute",
             ),
         )
 

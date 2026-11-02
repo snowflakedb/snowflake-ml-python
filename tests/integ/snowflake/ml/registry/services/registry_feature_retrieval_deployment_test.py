@@ -207,7 +207,7 @@ class TestRegistryFeatureRetrievalDeploymentInteg(registry_model_deployment_test
             model_name=model_name,
             version_name=version_name,
             sample_input_data=sample_input,
-            options={"enable_explainability": False},
+            options={"embed_local_ml_library": True, "enable_explainability": False},
         )
 
         mv.create_service(

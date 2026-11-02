@@ -60,6 +60,24 @@ def _get_login_token() -> str | bytes:
         return f.read()
 
 
+def _get_connector_telemetry_client(
+    conn: connector.SnowflakeConnection,
+) -> connector_telemetry.TelemetryClient | None:
+    """Return the connector's private in-band telemetry client, or None when it is unavailable.
+
+    Connector 5.0 ("Universal Core") dropped the private SnowflakeConnection._telemetry client; in-band
+    telemetry moved to an internal model with no public equivalent. When the attribute is absent,
+    snowflake-ml telemetry degrades to a no-op instead of raising.
+
+    Args:
+        conn: The Snowflake connection to read the telemetry client from.
+
+    Returns:
+        The connector's TelemetryClient if the connection exposes one, otherwise None.
+    """
+    return getattr(conn, "_telemetry", None)
+
+
 def _get_snowflake_connection() -> connector.SnowflakeConnection | None:
     global _conn
     if _conn is not None and _conn.is_valid():
@@ -90,9 +108,12 @@ def _get_snowflake_connection() -> connector.SnowflakeConnection | None:
     # cache the connection if it's a SnowflakeConnection. there is a behavior at runtime where it could be a
     # StoredProcConnection perhaps incorrect type hinting somewhere
     if isinstance(conn, connector.SnowflakeConnection):
-        # if _conn was expired, we need to copy telemetry data to new connection
+        # if _conn was expired, copy any buffered telemetry to the new connection
         if _conn is not None and conn is not None:
-            conn._telemetry._log_batch.extend(_conn._telemetry._log_batch)
+            previous_client = _get_connector_telemetry_client(_conn)
+            new_client = _get_connector_telemetry_client(conn)
+            if previous_client is not None and new_client is not None:
+                new_client._log_batch.extend(previous_client._log_batch)
         _conn = conn
     return conn
 
@@ -755,7 +776,9 @@ class _SourceTelemetryClient:
         """
         # TODO(hayu): [SNOW-750111] Support telemetry when libraries are used in SProc.
         self._telemetry: connector_telemetry.TelemetryClient | None = (
-            None if utils.is_in_stored_procedure() else conn._telemetry  # type: ignore[no-untyped-call]
+            None
+            if utils.is_in_stored_procedure()  # type: ignore[no-untyped-call]
+            else _get_connector_telemetry_client(conn)
         )
         self.source: str = env.SOURCE
         self.project: str | None = project

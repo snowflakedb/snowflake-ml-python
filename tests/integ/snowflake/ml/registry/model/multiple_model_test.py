@@ -35,7 +35,13 @@ class MultipleModelTest(registry_model_test_base.RegistryModelTestBase):
             )
             name_1 = f"model_{self._run_id}_1"
 
-            mv1 = self.registry.log_model(lm_1, model_name=name_1, version_name=version, sample_input_data=pd_df)
+            mv1 = self.registry.log_model(
+                lm_1,
+                model_name=name_1,
+                version_name=version,
+                sample_input_data=pd_df,
+                options={"embed_local_ml_library": True},
+            )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
@@ -45,7 +51,13 @@ class MultipleModelTest(registry_model_test_base.RegistryModelTestBase):
             )
             name_2 = f"model_{self._run_id}_2"
 
-            mv2 = self.registry.log_model(lm_2, model_name=name_2, version_name=version, sample_input_data=pd_df)
+            mv2 = self.registry.log_model(
+                lm_2,
+                model_name=name_2,
+                version_name=version,
+                sample_input_data=pd_df,
+                options={"embed_local_ml_library": True},
+            )
 
         res = (
             self.session.sql(f"SELECT {name_1}!predict(1):output as A, {name_2}!predict(1):output as B")

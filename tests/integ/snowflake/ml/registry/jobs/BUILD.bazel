@@ -270,6 +270,19 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_tabular_foundation_model_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_tabular_foundation_model_test.py"],
+    optional_dependencies = ["tabicl"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
+        "//snowflake/ml/model/_packager/model_env",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_partition_on_write_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_partition_on_write_test.py"],
@@ -408,18 +421,6 @@ py_test(
     deps = [
         ":registry_batch_inference_test_base",
         "//snowflake/ml/model/models:huggingface",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_huggingface_pipeline_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_huggingface_pipeline_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
     ],
 )
 

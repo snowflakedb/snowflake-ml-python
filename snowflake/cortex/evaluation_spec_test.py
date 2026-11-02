@@ -62,6 +62,7 @@ class EvaluationSpecificationTest(absltest.TestCase):
             specification.to_spec_dict(),
             {
                 "query_text": "AI_COMPLETE('claude-sonnet-4-5', PROMPT('Classify: {0}', REVIEW))::VARCHAR",
+                "evaluation": {},
                 "metrics": [{"name": "exact_match"}],
                 "dataset": {
                     "name": "DB.SCHEMA.EVAL_DATA",

@@ -1,8 +1,12 @@
 """Sharded runner for all spec-based OFT e2e integration tests.
 
-Each Bazel shard gets its own schema (and thus its own Online Service runtime)
-within a shared database.  Runtimes are created in parallel across shards so
-wall-clock setup time stays ~4 min regardless of shard count.
+Each execution slice gets its own schema (and thus its own Online Service
+runtime) within a shared database: a Bazel shard is keyed by ``TEST_SHARD_INDEX``,
+and a pytest-xdist worker is keyed by ``PYTEST_XDIST_WORKER``. This per-slice
+schema isolation is required because each test's declarative plan scans the
+whole schema, so two slices sharing a schema would race each other's OFTs.
+Runtimes are created in parallel across slices so wall-clock setup time stays
+~4 min regardless of slice count.
 
 Usage::
 
@@ -68,8 +72,18 @@ def _run_id() -> str:
 
 
 def _shard_schema_name() -> str:
-    shard_idx = os.environ.get("TEST_SHARD_INDEX", "0")
-    return f"SNOWML_SFV_E2E_SHARD_{shard_idx}"
+    # Bazel sharding sets TEST_SHARD_INDEX (one schema + Online Service per shard).
+    # pytest-xdist sets PYTEST_XDIST_WORKER (gw0, gw1, ...) and runs workers
+    # concurrently against one shared DB, so the schema must be worker-unique too
+    # or sibling classes race this schema's OFTs (a schema-wide SHOW + per-OFT
+    # DESCRIBE in one worker hits an object another worker is dropping). Neither is
+    # set in a plain single-process run (-> "0").
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker:
+        token = "".join(c for c in worker.upper() if c.isalnum()) or "0"
+    else:
+        token = os.environ.get("TEST_SHARD_INDEX", "0")
+    return f"SNOWML_SFV_E2E_SHARD_{token}"
 
 
 def _parse_reuse_target() -> tuple[str, str] | None:
@@ -235,8 +249,7 @@ def setUpModule() -> None:
     )
 
     logger.info(
-        "Shard %s: Online Service RUNNING for %s.%s — starting e2e tests.",
-        os.environ.get("TEST_SHARD_INDEX", "0"),
+        "Online Service RUNNING for %s.%s — starting e2e tests.",
         test_db,
         test_schema,
     )
@@ -259,9 +272,11 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     # Each xdist worker runs this when its own slice of the bundled module is done. Workers in the
-    # same run share one DB / schema / Online Service (keyed by PYTEST_XDIST_TESTRUNUID), so dropping
-    # them here would race other workers still using them. Reclamation happens via the default
-    # cleanup_databases (snowml_test_ prefix) sweep at the start of the next run.
+    # same run share one DB (keyed by PYTEST_XDIST_TESTRUNUID) but each has its own schema +
+    # Online Service (keyed by PYTEST_XDIST_WORKER), so dropping the shared DB here would race
+    # other workers still using it. Reclamation happens via the default cleanup_databases
+    # (snowml_test_ prefix) sweep at the start of the next run, which reclaims every per-worker
+    # schema along with the shared DB.
     global _module_state
     if _module_state is None:
         return

@@ -1354,17 +1354,12 @@ class FeatureStoreMetadataManager:
         if self._table_exists:
             return True
 
-        schema_name = self._schema.resolved().replace("'", "''")
-        result = self._session.sql(
-            f"""
-            SELECT COUNT(*) AS CNT
-            FROM {self._database}.INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_SCHEMA = '{schema_name}'
-            AND TABLE_NAME = '{_METADATA_TABLE_NAME}'
-            """
+        rows = self._session.sql(
+            f"SHOW TABLES LIKE '{_METADATA_TABLE_NAME}' IN SCHEMA {self._database}.{self._schema}"
         ).collect(statement_params=self._telemetry_stmp)
 
-        if result[0]["CNT"] == 0:
+        # ``_`` is a LIKE wildcard, so require an exact name match.
+        if not any(row["name"] == _METADATA_TABLE_NAME for row in rows):
             return False
         self._table_exists = True
         return True

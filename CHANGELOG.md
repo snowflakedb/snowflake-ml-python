@@ -1,6 +1,38 @@
 # Release History
 
-## 2.7.0
+## 2.8.0
+
+### New Features
+
+* Cortex: Added `cortex.evaluate()` and `cortex.optimize_prompt()`, which run AI function evaluation and
+  prompt optimization as Snowflake experiments on a versioned `snowflake.ml.Dataset`. `evaluate()` scores an
+  `AI_COMPLETE` model and prompt template with one metric and returns an `EvaluationJob`, whose `result()` is an
+  `EvaluationResult`. `optimize_prompt()` searches for better prompts and models and returns an
+  `OptimizationJob`, whose `result()` is an `OptimizationResult` with the cost/quality frontier of `Candidate`s and
+  selectors such as `best_quality()`, `cheapest()`, and `best_under_cost()`. Prompt placeholders `{0}`, `{1}`, ...
+  must match the `inputs` columns.
+* Registry: Added support for logging TabICL tabular foundation model classifiers and regressors. A
+  fitted estimator is served *bound*: its training frame is packaged as the context and the estimator
+  is re-fit on load, so `predict` runs as a scalar function over the named feature columns. An unfitted
+  estimator is served *unbound* (in-context-learning): `predict` is a partitioned table function whose
+  input carries both the labeled context and the rows to score.
+
+### Bug Fixes
+
+* Cortex: `cortex.evaluate()` now works on AI function experiment executors before V14. It previously
+  failed with "specification must contain a top-level 'evaluation' or 'optimization' section".
+* Feature Store: A streaming feature view's backfill now pre-imports `copy`, `re`, `numpy` (as `np`) and
+  `pandas` (as `pd`), the names `StreamConfig` already allows a transformation function to use without
+  importing them. Previously only `pd` was available, so a function using bare `np` passed registration
+  and then failed during backfill.
+* Feature Store: Online reads over the WebSocket transport now raise `INVALID_ARGUMENT`, as HTTP reads do, when a
+  realtime feature view's UDF fails in its own code (`UDF_EXECUTION_FAILED`), instead of an internal error.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.7.0 (2026-10-28)
 
 ### New Features
 

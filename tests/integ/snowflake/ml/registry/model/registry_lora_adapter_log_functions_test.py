@@ -75,6 +75,7 @@ class TestRegistryLoraAdapterLogFunctionsInteg(registry_model_test_base.Registry
             version_name="V1",
             signatures=openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE,
             target_platforms=spcs_only,
+            options={"embed_local_ml_library": True},
         )
         with tempfile.TemporaryDirectory() as adapter_dir:
             adapter_mv = self.registry.log_model(
@@ -84,6 +85,7 @@ class TestRegistryLoraAdapterLogFunctionsInteg(registry_model_test_base.Registry
                 ),
                 model_name=self._name("ADAPTER"),
                 version_name="V1",
+                options={"embed_local_ml_library": True},
             )
         base_by_method = {fn["target_method"]: fn["signature"] for fn in base_mv.show_functions()}
         adapter_by_method = {fn["target_method"]: fn["signature"] for fn in adapter_mv.show_functions()}

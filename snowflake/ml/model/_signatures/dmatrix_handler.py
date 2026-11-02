@@ -27,7 +27,6 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
 
     @staticmethod
     def truncate(data: "xgboost.DMatrix", length: int) -> "xgboost.DMatrix":
-
         num_rows = min(
             XGBoostDMatrixHandler.count(data),
             length,
@@ -81,7 +80,7 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
 
         enable_categorical = False
         for col, d_type in df.dtypes.items():
-            if pd.api.extensions.ExtensionDtype.is_dtype(d_type):
+            if isinstance(d_type, pd.api.extensions.ExtensionDtype):
                 continue
             if not np.issubdtype(d_type, np.number):
                 df[col] = df[col].astype("category")

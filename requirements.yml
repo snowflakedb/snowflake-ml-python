@@ -345,6 +345,15 @@
 - name: sqlparse
   dev_version: 0.5.2
   version_requirements: '>=0.4,<1'
+- name_pypi: tabicl
+  # Not on the Snowflake Anaconda channel. build_test_env installs the dev pin into
+  # the conda integration test env via conda-env-build-test.yml.
+  dev_version_pypi: 2.2.0
+  version_requirements_pypi: '>=2.0,<3'
+  tags:
+    - build_test_env
+  requirements_extra_tags:
+    - tabicl
 - name: tensorflow
   dev_version: 2.21.0
   version_requirements: '>=2.17.0,<3'
