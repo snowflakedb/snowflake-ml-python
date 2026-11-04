@@ -1391,7 +1391,8 @@ class JobManagerTest(JobTestBase):
         job = self._submit_func_as_file(check_runtime_version, runtime_environment=runtime_environment)
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn(runtime_environment, job._container_spec["image"])
-        self.assertEqual("1.7.1", job.get_logs(verbose=False).strip(), job_logs)
+        # The container merges stdout and stderr, so unrelated log records can land between the payload banners.
+        self.assertIn("1.7.1", job.get_logs(verbose=False).splitlines(), job_logs)
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("patch_version", "2.9.0"),

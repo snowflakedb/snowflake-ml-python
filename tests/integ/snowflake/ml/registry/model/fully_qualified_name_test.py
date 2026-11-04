@@ -42,6 +42,7 @@ class FullyQualifiedNameTest(registry_model_test_base.RegistryModelTestBase):
             model_name=name,
             version_name="V1",
             sample_input_data=iris_X,
+            options={"embed_local_ml_library": True},
         )
 
         mv.run(iris_X, function_name="predict")

@@ -85,33 +85,6 @@ py_test(
     deps = [":registry_model_deployment_test_base"],
 )
 
-py_test(
-    name = "registry_huggingface_pipeline_model_deployment_test",
-    timeout = "eternal",
-    srcs = ["registry_huggingface_pipeline_model_deployment_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_model_deployment_test_base",
-        "//snowflake/ml/model/models:huggingface",
-    ],
-)
-
-py_test(
-    name = "registry_huggingface_pipeline_model_deployment_gpu_test",
-    timeout = "eternal",
-    srcs = ["registry_huggingface_pipeline_model_deployment_gpu_test.py"],
-    data = ["data/living-with-cats-dogs.jpg"],
-    optional_dependencies = ["llm"],
-    shard_count = 4,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_model_deployment_test_base",
-        "//snowflake/ml/model/models:huggingface",
-    ],
-)
-
 py_library(
     name = "registry_model_garden_deployment_test_lib",
     testonly = True,

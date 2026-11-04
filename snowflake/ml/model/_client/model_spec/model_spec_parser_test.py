@@ -19,6 +19,7 @@ def _model_extension_spec() -> dict[str, Any]:
         "version": "2.0",
         "extension_field": {"retained": True},
         "model": {
+            "name": "model",
             "type": "USER_MODEL",
             "framework": "CUSTOM_RUNTIME",
             "details": {
@@ -55,6 +56,7 @@ def _model_extension_spec() -> dict[str, Any]:
                     "custom_function_field": "retained",
                 },
                 "forecast": {
+                    "env": ["python_env"],
                     "type": "TABLE_FUNCTION",
                     "handler": "functions.forecast.infer",
                     "signature": {"inputs": [], "outputs": []},
@@ -170,6 +172,18 @@ class ModelSpecParserTest(parameterized.TestCase):
 
         self.assertFalse(parsed.supports_gpu)
 
+    def test_v2_model_name_may_be_omitted(self) -> None:
+        for model_name in (None, ""):
+            raw_spec = _model_extension_spec()
+            if model_name is None:
+                del raw_spec["model"]["name"]
+            else:
+                raw_spec["model"]["name"] = model_name
+
+            parsed = model_spec_parser.parse_model_spec(raw_spec)
+
+            self.assertIsInstance(parsed, model_extension_spec.ModelExtensionSpecV2)
+
     @mock.patch.object(model_meta.ModelMetadata, "_validate_model_metadata", autospec=True)
     def test_v2_bypasses_legacy_validation(self, validate_model_metadata: mock.Mock) -> None:
         parsed = model_spec_parser.parse_model_spec(_model_extension_spec())
@@ -181,30 +195,35 @@ class ModelSpecParserTest(parameterized.TestCase):
         ("non_dict", [], "document must be a mapping"),
         ("missing_model", {"version": "2.0", "serving": {"functions": {}}}, "model section must be a mapping"),
         (
+            "non_string_model_name",
+            {"version": "2.0", "model": {"name": 1, "details": {"models": {}}}, "serving": {"functions": {}}},
+            "model name must be a string",
+        ),
+        (
             "missing_serving",
-            {"version": "2.0", "model": {"details": {"models": {}}}},
+            {"version": "2.0", "model": {"name": "model", "details": {"models": {}}}},
             "serving section must be a mapping",
         ),
         (
             "missing_details",
-            {"version": "2.0", "model": {}, "serving": {"functions": {}}},
+            {"version": "2.0", "model": {"name": "model"}, "serving": {"functions": {}}},
             "model details must be a mapping",
         ),
         (
             "missing_models",
-            {"version": "2.0", "model": {"details": {}}, "serving": {"functions": {}}},
+            {"version": "2.0", "model": {"name": "model", "details": {}}, "serving": {"functions": {}}},
             "model blobs must be a mapping",
         ),
         (
             "missing_functions",
-            {"version": "2.0", "model": {"details": {"models": {}}}, "serving": {}},
+            {"version": "2.0", "model": {"name": "model", "details": {"models": {}}}, "serving": {}},
             "serving functions must be a mapping",
         ),
         (
             "non_dict_blob",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {"primary": []}}},
+                "model": {"name": "model", "details": {"models": {"primary": []}}},
                 "serving": {"functions": {}},
             },
             "model blob 'primary' must be a mapping",
@@ -213,7 +232,7 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_blob_options",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {"primary": {"options": []}}}},
+                "model": {"name": "model", "details": {"models": {"primary": {"options": []}}}},
                 "serving": {"functions": {}},
             },
             "model blob 'primary' options must be a mapping",
@@ -222,7 +241,7 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_list_target_platforms",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}, "target_platforms": "WAREHOUSE"},
+                "model": {"name": "model", "details": {"models": {}}, "target_platforms": "WAREHOUSE"},
                 "serving": {"functions": {}},
             },
             "target platforms must be a list",
@@ -231,7 +250,7 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_serving_environments",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {"env": [], "functions": {}},
             },
             "serving environments must be a mapping",
@@ -240,17 +259,55 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_function",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {"functions": {"predict": []}},
             },
             "function 'predict' must be a mapping",
         ),
         (
+            "missing_function_env",
+            {
+                "version": "2.0",
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {"functions": {"predict": {}}},
+            },
+            "function 'predict' env must be a list of strings",
+        ),
+        (
+            "non_list_function_env",
+            {
+                "version": "2.0",
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {"functions": {"predict": {"env": "python_env"}}},
+            },
+            "function 'predict' env must be a list of strings",
+        ),
+        (
+            "missing_function_handler",
+            {
+                "version": "2.0",
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {"functions": {"predict": {"env": ["python_env"]}}},
+            },
+            "function 'predict' handler must be a non-empty string",
+        ),
+        (
+            "empty_function_handler",
+            {
+                "version": "2.0",
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {"functions": {"predict": {"env": ["python_env"], "handler": ""}}},
+            },
+            "function 'predict' handler must be a non-empty string",
+        ),
+        (
             "missing_signature",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
-                "serving": {"functions": {"predict": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {
+                    "functions": {"predict": {"env": ["python_env"], "handler": "functions.predict.infer"}},
+                },
             },
             "function 'predict' signature must be a mapping",
         ),
@@ -258,8 +315,12 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_signature",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
-                "serving": {"functions": {"predict": {"signature": []}}},
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {
+                    "functions": {
+                        "predict": {"env": ["python_env"], "handler": "functions.predict.infer", "signature": []},
+                    }
+                },
             },
             "function 'predict' signature must be a mapping",
         ),
@@ -267,8 +328,12 @@ class ModelSpecParserTest(parameterized.TestCase):
             "missing_function_type",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
-                "serving": {"functions": {"predict": {"signature": {}}}},
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {
+                    "functions": {
+                        "predict": {"env": ["python_env"], "handler": "functions.predict.infer", "signature": {}},
+                    }
+                },
             },
             "function 'predict' type must be FUNCTION or TABLE_FUNCTION",
         ),
@@ -276,8 +341,17 @@ class ModelSpecParserTest(parameterized.TestCase):
             "invalid_function_type",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
-                "serving": {"functions": {"predict": {"type": "UDF", "signature": {}}}},
+                "model": {"name": "model", "details": {"models": {}}},
+                "serving": {
+                    "functions": {
+                        "predict": {
+                            "env": ["python_env"],
+                            "handler": "functions.predict.infer",
+                            "type": "UDF",
+                            "signature": {},
+                        }
+                    }
+                },
             },
             "function 'predict' type must be FUNCTION or TABLE_FUNCTION",
         ),
@@ -285,9 +359,16 @@ class ModelSpecParserTest(parameterized.TestCase):
             "missing_signature_inputs",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {
-                    "functions": {"predict": {"type": "FUNCTION", "signature": {"outputs": []}}},
+                    "functions": {
+                        "predict": {
+                            "env": ["python_env"],
+                            "handler": "functions.predict.infer",
+                            "type": "FUNCTION",
+                            "signature": {"outputs": []},
+                        }
+                    },
                 },
             },
             "function 'predict' signature inputs must be a list",
@@ -296,9 +377,16 @@ class ModelSpecParserTest(parameterized.TestCase):
             "missing_signature_outputs",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {
-                    "functions": {"predict": {"type": "FUNCTION", "signature": {"inputs": []}}},
+                    "functions": {
+                        "predict": {
+                            "env": ["python_env"],
+                            "handler": "functions.predict.infer",
+                            "type": "FUNCTION",
+                            "signature": {"inputs": []},
+                        }
+                    },
                 },
             },
             "function 'predict' signature outputs must be a list",
@@ -307,10 +395,15 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_list_signature_inputs",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {
                     "functions": {
-                        "predict": {"type": "FUNCTION", "signature": {"inputs": {}, "outputs": []}},
+                        "predict": {
+                            "env": ["python_env"],
+                            "handler": "functions.predict.infer",
+                            "type": "FUNCTION",
+                            "signature": {"inputs": {}, "outputs": []},
+                        },
                     }
                 },
             },
@@ -320,10 +413,12 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_function_properties",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}},
+                "model": {"name": "model", "details": {"models": {}}},
                 "serving": {
                     "functions": {
                         "predict": {
+                            "env": ["python_env"],
+                            "handler": "functions.predict.infer",
                             "type": "FUNCTION",
                             "signature": {"inputs": [], "outputs": []},
                             "properties": [],
@@ -337,7 +432,7 @@ class ModelSpecParserTest(parameterized.TestCase):
             "non_dict_client",
             {
                 "version": "2.0",
-                "model": {"details": {"models": {}}, "client": []},
+                "model": {"name": "model", "details": {"models": {}}, "client": []},
                 "serving": {"functions": {}},
             },
             "client must be a mapping",

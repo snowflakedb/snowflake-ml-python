@@ -1375,6 +1375,20 @@ class ModelMethodOptionsTest(absltest.TestCase):
             method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
         )
 
+        # Unbound (partitioned) tabular foundation models default to table function.
+        method_options = model_method.get_model_method_options_from_options(
+            options={}, target_method="predict", model_type="tabular_foundation_model", is_partitioned_function=True
+        )
+        self.assertEqual(
+            method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        )
+
+        # Bound (non-partitioned) tabular foundation models serve as a plain scalar function.
+        method_options = model_method.get_model_method_options_from_options(
+            options={}, target_method="predict", model_type="tabular_foundation_model", is_partitioned_function=False
+        )
+        self.assertEqual(method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value)
+
     def test_get_model_method_options_with_volatility(self) -> None:
         """Test that get_model_method_options_from_options properly handles volatility."""
         # Test unset volatility

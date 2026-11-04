@@ -3,10 +3,11 @@ import pathlib
 import sys
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, Generator, TypedDict
+from typing import Any, Generator, TypedDict, cast
 
 import cloudpickle
 import yaml
@@ -18,12 +19,17 @@ from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer import huggingface_lazy_uploader
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta_schema
+from snowflake.ml.model._packager.model_meta import (
+    model_blob_meta,
+    model_meta_schema,
+    model_meta_v2,
+)
 from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model.code_path import CodePath
 
 MODEL_METADATA_FILE = "model.yaml"
+_MODEL_EXTENSION_SPEC_VERSION = "2.0"
 MODEL_CODE_DIR = "code"
 
 _PACKAGING_REQUIREMENTS = ["cloudpickle"]
@@ -359,6 +365,20 @@ class ModelMetadata:
 
         self._lazy_hf_upload: huggingface_lazy_uploader.LazyHFUpload | None = None
 
+    def function_type(self, function_name: str) -> str | None:
+        """Return the SQL function type recorded for a model function.
+
+        Version 2.0 specifications store this as ``FUNCTION`` or ``TABLE_FUNCTION``.
+        Legacy metadata leaves it unset.
+
+        Args:
+            function_name: Name of the model function.
+
+        Returns:
+            The SQL function type, or None when the metadata does not record one.
+        """
+        return cast(str | None, self.method_options.get(function_name, {}).get("function_type"))
+
     @property
     def min_snowpark_ml_version(self) -> str:
         return self._min_snowpark_ml_version.base_version
@@ -500,6 +520,10 @@ class ModelMetadata:
         with open(model_yaml_path, encoding="utf-8") as f:
             loaded_meta = yaml.safe_load(f.read())
 
+        # Version 2.0 model.yaml is a model extension spec and is parsed by ModelMetadataV2.
+        if isinstance(loaded_meta, dict) and str(loaded_meta.get("version")) == _MODEL_EXTENSION_SPEC_VERSION:
+            return ModelMetadataV2.from_spec(model_dir_path, loaded_meta)
+
         model_dict = cls._validate_model_metadata(loaded_meta)
 
         signatures = {
@@ -548,4 +572,72 @@ class ModelMetadata:
             case_sensitive=model_dict.get("case_sensitive"),
             sample_input_file_paths=sample_input_file_paths,
             packaged_env_dict=packaged_env_dict,
+        )
+
+
+class ModelMetadataV2(ModelMetadata):
+    """Metadata loaded from a version 2.0 model extension spec.
+
+    SQL function type stays on the function. Legacy metadata leaves it unset.
+    """
+
+    def __init__(self, *, function_types: dict[str, str], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._function_types = function_types
+
+    def function_type(self, function_name: str) -> str:
+        """Return the SQL function type declared by a version 2.0 function.
+
+        The type is required on every function and is validated before this metadata is built.
+        A function present in ``signatures`` is present here.
+
+        Args:
+            function_name: Name of the model function.
+
+        Returns:
+            ``FUNCTION`` or ``TABLE_FUNCTION``.
+        """
+        return self._function_types[function_name]
+
+    def save(self, model_dir_path: str) -> None:
+        """Version 2.0 metadata is load-only.
+
+        Args:
+            model_dir_path: Unused. Present so the signature matches ``ModelMetadata.save``.
+
+        Raises:
+            RuntimeError: Always. A version 2.0 spec is not written back as legacy metadata.
+        """
+        raise RuntimeError("Saving a version 2.0 model specification is not supported.")
+
+    @classmethod
+    def from_spec(cls, model_dir_path: str, raw_spec: Mapping[str, Any]) -> "ModelMetadataV2":
+        """Build metadata from a parsed version 2.0 model extension spec.
+
+        Args:
+            model_dir_path: Directory that contains ``model.yaml`` and env files.
+            raw_spec: Parsed ``model.yaml`` document.
+
+        Returns:
+            Metadata for the version 2.0 spec.
+        """
+        parsed = model_meta_v2.parse(model_dir_path, raw_spec)
+        return cls(
+            name=parsed.name,
+            model_type=parsed.model_type,
+            env=parsed.env,
+            runtimes=parsed.runtimes,
+            signatures=parsed.signatures,
+            metadata=parsed.metadata,
+            min_snowpark_ml_version=parsed.min_snowpark_ml_version,
+            models=parsed.models,
+            original_metadata_version=parsed.original_metadata_version,
+            task=parsed.task,
+            explain_algorithm=parsed.explain_algorithm,
+            function_properties=parsed.function_properties,
+            method_options=parsed.method_options,
+            case_sensitive=parsed.case_sensitive,
+            sample_input_file_paths=parsed.sample_input_file_paths,
+            packaged_env_dict=parsed.packaged_env_dict,
+            function_types=parsed.function_types,
         )

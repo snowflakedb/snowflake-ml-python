@@ -440,6 +440,7 @@ COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo
 COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
+COMMON_PYTEST_FLAG+=(--dist loadgroup) # Tests marked xdist_group share a worker; others distribute as with load
 COMMON_PYTEST_FLAG+=(--timeout=3600)
 
 group_exit_codes=()

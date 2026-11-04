@@ -31,6 +31,10 @@ class ModelExtensionSpecV2(model_spec.ModelSpec):
         model_section = raw_spec.get("model")
         if not isinstance(model_section, Mapping):
             raise ValueError("model specification: model section must be a mapping.")
+        # TODO(SNOW-4243898): Require a non-empty model.name once stored specifications include it.
+        model_name = model_section.get("name")
+        if model_name is not None and not isinstance(model_name, str):
+            raise ValueError("model specification: model name must be a string.")
 
         serving_section = raw_spec.get("serving")
         if not isinstance(serving_section, Mapping):
@@ -76,6 +80,12 @@ class ModelExtensionSpecV2(model_spec.ModelSpec):
         for function_name, function_spec in functions.items():
             if not isinstance(function_spec, Mapping):
                 raise ValueError(f"model specification: function '{function_name}' must be a mapping.")
+            function_env = function_spec.get("env")
+            if not isinstance(function_env, list) or not all(isinstance(env_name, str) for env_name in function_env):
+                raise ValueError(f"model specification: function '{function_name}' env must be a list of strings.")
+            handler = function_spec.get("handler")
+            if not isinstance(handler, str) or not handler:
+                raise ValueError(f"model specification: function '{function_name}' handler must be a non-empty string.")
             signature = function_spec.get("signature")
             if not isinstance(signature, Mapping):
                 raise ValueError(f"model specification: function '{function_name}' signature must be a mapping.")

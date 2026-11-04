@@ -100,6 +100,7 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
             conda_dependencies=[
                 test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
             ],
+            options={"embed_local_ml_library": True},
         )
 
     def _log_adapter(
@@ -114,6 +115,7 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
             model=PeftAdapter(base_model=base_mv, adapter_path=adapter_dir),
             model_name=model_name,
             version_name=version_name,
+            options={"embed_local_ml_library": True},
         )
 
     def _show_model_type(self, model_name: str) -> str:
@@ -183,6 +185,7 @@ class TestRegistryLoraAdapterModelInteg(registry_model_test_base.RegistryModelTe
                     ),
                     model_name=self._name("NESTED"),
                     version_name="V1",
+                    options={"embed_local_ml_library": True},
                 )
 
     def test_pre_with_model_pin_rejected_at_log(self) -> None:

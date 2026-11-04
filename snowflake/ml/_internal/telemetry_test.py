@@ -172,6 +172,58 @@ class TelemetryTest(parameterized.TestCase):
         else:
             raise AssertionError("Connections should not be None")
 
+    def test_source_telemetry_client_without_connector_telemetry(self) -> None:
+        """Connector 5.0 removed the private conn._telemetry; the client must degrade to a no-op."""
+        # A spec'd SnowflakeConnection has no _telemetry attribute, matching connector 5.
+        conn_without_telemetry = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
+        self.assertIsNone(utils_telemetry._get_connector_telemetry_client(conn_without_telemetry))
+
+        client = utils_telemetry._SourceTelemetryClient(
+            conn=conn_without_telemetry, project=_PROJECT, subproject=_SUBPROJECT
+        )
+        self.assertIsNone(client._telemetry)
+        # None of these should raise despite the missing connector telemetry client.
+        client._send({"message": "noop"})
+        client.send_function_usage_telemetry(func_name="foo", function_category="usage", duration=0.0)
+        client.send_batch()
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_cached_invalid_connection_without_connector_telemetry(
+        self, mock_get_active_sessions: mock.MagicMock
+    ) -> None:
+        """The expired-connection refresh path must not touch the removed conn._telemetry (connector 5)."""
+
+        def new_session() -> Any:
+            # Intentionally leave _telemetry unset: a spec'd SnowflakeConnection matches connector 5.
+            mock_snowflake_conn = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
+            mock_snowflake_conn._session_parameters = {}
+            mock_snowflake_conn.is_closed.return_value = False
+            mock_snowflake_conn.is_valid.return_value = False
+            mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
+            mock_server_conn._conn = mock_snowflake_conn
+            mock_session = absltest.mock.MagicMock(spec=session.Session)
+            mock_session.telemetry_enabled.return_value = True
+            mock_session._conn = mock_server_conn
+            return {mock_session}
+
+        mock_get_active_sessions.side_effect = new_session
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
+            def foo(self) -> str:
+                return "ok"
+
+        test_obj = DummyObject()
+        # The decorated call must return normally rather than raising AttributeError on conn._telemetry.
+        self.assertEqual(test_obj.foo(), "ok")
+        conn1 = utils_telemetry.get_cached_conn()
+        self.assertEqual(test_obj.foo(), "ok")
+        conn2 = utils_telemetry.get_cached_conn()
+        # Each call refreshed the (invalid) connection; the batch-copy path tolerated the missing client.
+        self.assertIsNotNone(conn1)
+        self.assertIsNotNone(conn2)
+        self.assertIsNot(conn1, conn2)
+
     @typing.no_type_check
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
     def test_new_connection_includes_existing_batch_when_flushing(

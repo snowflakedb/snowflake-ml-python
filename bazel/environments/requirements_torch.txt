@@ -54,6 +54,7 @@ snowflake.core==1.12.0
 sphinx==7.3.7
 sqlparse==0.5.2
 starlette==0.47.3
+tabicl==2.2.0
 tokenizers==0.22.2
 toml==0.10.2
 torch==2.9.1

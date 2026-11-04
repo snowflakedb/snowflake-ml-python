@@ -47,6 +47,8 @@ class ModelClientSpec(TypedDict, total=False):
 class ModelSectionSpec(TypedDict, total=False):
     """The model section of a version 2.0 specification."""
 
+    # TODO(SNOW-4243898): Require model.name once stored specifications include it.
+    name: str
     type: Required[str]
     framework: str
     client: ModelClientSpec
@@ -63,6 +65,7 @@ class ServingEnvironmentSpec(TypedDict, total=False):
     snowpark_ml_version: str
     conda: str
     pip: str
+    pip_extra_index_urls: list[str]
     cuda_version: str | None
     imports: list[str]
     artifact_repository_map: dict[str, Any]
@@ -85,9 +88,9 @@ class ServingFunctionPropertiesSpec(TypedDict, total=False):
 class ServingFunctionSpec(TypedDict, total=False):
     """A function exposed by the model specification."""
 
-    env: list[str]
+    env: Required[list[str]]
     type: Required[str]
-    handler: str
+    handler: Required[str]
     volatility: str
     signature: Required[dict[str, Any]]
     properties: ServingFunctionPropertiesSpec | None

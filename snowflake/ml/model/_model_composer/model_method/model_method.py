@@ -46,7 +46,10 @@ class ModelMethodOptions(TypedDict):
 
 
 def get_model_method_options_from_options(
-    options: type_hints.ModelSaveOption, target_method: str, model_type: str | None = None
+    options: type_hints.ModelSaveOption,
+    target_method: str,
+    model_type: str | None = None,
+    is_partitioned_function: bool = False,
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
@@ -62,8 +65,11 @@ def get_model_method_options_from_options(
             target_method,
             default=global_case_sensitive,
         )
-    elif model_type == "prophet":
-        # Prophet models always require TABLE_FUNCTION because they need entire time series context
+    elif model_type == "prophet" or (model_type == "tabular_foundation_model" and is_partitioned_function):
+        # Prophet needs the entire time series context, and a tabular foundation model served unbound
+        # (in-context-learning) receives its context + query rows together as a partition. Both require
+        # TABLE_FUNCTION. A tabular foundation model served bound (a pre-fitted estimator, scored row by
+        # row) is a plain scalar FUNCTION instead -- it is not partitioned.
         default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
     global_function_type = options.get("function_type", default_function_type)
     function_type = method_option.get("function_type", global_function_type)

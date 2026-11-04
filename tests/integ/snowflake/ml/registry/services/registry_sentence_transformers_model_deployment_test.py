@@ -3,7 +3,7 @@ import random
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from packaging import version as pkg_version
 
 from snowflake.ml.model._packager.model_env import model_env
@@ -20,6 +20,14 @@ HF_HOME = "HF_HOME"
 # publish tokenizers 0.23.2. An explicit pin prevents the packager from
 # capturing the local pkgs/snowflake build.
 _PINNED_TOKENIZERS_CONDA = "tokenizers==0.23.1"
+
+# Pin pip deps for the wrapper path. Unpinned transformers resolves to
+# incompatible releases at image-build time (e.g. 5.19.0 on CPU SPCS).
+_PINNED_PIP_REQUIREMENTS = [
+    "sentence-transformers==5.6.0",
+    "torch==2.6.0",
+    "transformers==5.3.0",
+]
 
 
 class TestRegistrySentenceTransformerDeploymentModelInteg(
@@ -41,27 +49,19 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             os.environ[HF_HOME] = self._original_hf_home
         self.cache_dir.cleanup()
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0", "transformers"]],
-    )
     # TODO: Remove torch dependency when the version is available in go/conda
-    def test_sentence_transformers(
-        self,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if pip_requirements is None:
-            import sentence_transformers
-            import transformers
-
-            if pkg_version.parse(sentence_transformers.__version__) >= pkg_version.parse("5.3.0") and pkg_version.parse(
-                transformers.__version__
-            ) >= pkg_version.parse("5.0.0"):
-                self.skipTest(
-                    f"sentence-transformers {sentence_transformers.__version__} with transformers "
-                    f"{transformers.__version__}: model serving container image build fails because pinned "
-                    "transformers>=5.0.0 conflicts with sentence-transformers requiring transformers<5.0.0."
-                )
+    def test_sentence_transformers(self) -> None:
         import sentence_transformers
+        import transformers
+
+        if pkg_version.parse(sentence_transformers.__version__) >= pkg_version.parse("5.3.0") and pkg_version.parse(
+            transformers.__version__
+        ) >= pkg_version.parse("5.0.0"):
+            self.skipTest(
+                f"sentence-transformers {sentence_transformers.__version__} with transformers "
+                f"{transformers.__version__}: model serving container image build fails because pinned "
+                "transformers>=5.0.0 conflicts with sentence-transformers requiring transformers<5.0.0."
+            )
 
         # Sample Data
         sentences = pd.DataFrame(
@@ -102,24 +102,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             additional_dependencies=[_PINNED_TOKENIZERS_CONDA],
-            pip_requirements=pip_requirements,
             rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
             params={"truncate_dim": truncate_dim},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0", "transformers"]],
-    )
-    def test_sentence_transformer_wrapper(
-        self,
-        pip_requirements: list[str] | None,
-    ) -> None:
-        if not pip_requirements:
-            self.skipTest(
-                """SNOW-3420922: Skipping test due to known issue with
-                sentence-transformers and transformers package conflict"""
-            )
-
+    def test_sentence_transformer_wrapper(self) -> None:
         import sentence_transformers
 
         model_name = random.choice(MODEL_NAMES)
@@ -155,7 +142,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            pip_requirements=pip_requirements,
+            pip_requirements=_PINNED_PIP_REQUIREMENTS,
             rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
         )
 

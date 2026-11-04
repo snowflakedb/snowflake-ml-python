@@ -42,6 +42,7 @@ class HiddenLiveCommitIntegTest(common_test_base.CommonTestBase):
             model_name=model_name,
             version_name="V1",
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
 
         with self.session.query_history() as query_history:
@@ -50,6 +51,7 @@ class HiddenLiveCommitIntegTest(common_test_base.CommonTestBase):
                 model_name=model_name,
                 version_name="V2",
                 sample_input_data=test_features,
+                options={"embed_local_ml_library": True},
             )
 
         executed_sql = [query.sql_text.upper() for query in query_history.queries]
@@ -104,6 +106,7 @@ class HiddenLiveCommitIntegTest(common_test_base.CommonTestBase):
             model_name=model_name,
             version_name="V1",
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
 
         executed_sql = self._log_model_expecting_failure(
@@ -142,6 +145,7 @@ class HiddenLiveCommitIntegTest(common_test_base.CommonTestBase):
                     version_name=version_name,
                     sample_input_data=sample_input_data,
                     conda_dependencies=["A-NON-EXISTING-PACKAGE==0.1.0"],
+                    options={"embed_local_ml_library": True},
                 )
         return [query.sql_text.upper() for query in query_history.queries]
 

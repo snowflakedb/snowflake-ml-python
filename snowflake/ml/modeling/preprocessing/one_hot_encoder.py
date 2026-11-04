@@ -871,15 +871,8 @@ class OneHotEncoder(base.BaseTransformer):
         # In case of fitting with pandas dataframe and transforming with snowpark dataframe
         # state_pandas cannot recognize the datatype of _CATEGORY and _FITTED_CATEGORY column
         # Therefore, apply the convert_to_string_excluding_nan function to _CATEGORY and _FITTED_CATEGORY
-        # applymap is depreciated since pandas 2.1.0, replaced by map
-        if pd.__version__ < "2.1.0":
-            state_pandas[[_CATEGORY]] = state_pandas[[_CATEGORY]].applymap(convert_to_string_excluding_nan)
-            state_pandas[[_FITTED_CATEGORY]] = state_pandas[[_FITTED_CATEGORY]].applymap(
-                convert_to_string_excluding_nan
-            )
-        else:
-            state_pandas[[_CATEGORY]] = state_pandas[[_CATEGORY]].map(convert_to_string_excluding_nan)
-            state_pandas[[_FITTED_CATEGORY]] = state_pandas[[_FITTED_CATEGORY]].map(convert_to_string_excluding_nan)
+        state_pandas[[_CATEGORY]] = state_pandas[[_CATEGORY]].map(convert_to_string_excluding_nan)
+        state_pandas[[_FITTED_CATEGORY]] = state_pandas[[_FITTED_CATEGORY]].map(convert_to_string_excluding_nan)
         state_df = dataset._session.create_dataframe(state_pandas)
 
         transformed_dataset = dataset

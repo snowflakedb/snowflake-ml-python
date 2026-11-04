@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from snowflake.ml.feature_store.decl.service import (
+    format_describe_display,
     format_status_display,
     get_service_endpoint,
     parse_service_status,
@@ -838,6 +840,100 @@ class TestFormatStatusDisplayCompactSpacing:
         assert "" in between, (
             f"verbose mode lost the blank line separator between " f"Compute Pool and Postgres; got {between!r}"
         )
+
+
+class TestFormatDescribeDisplayAssociatedObjects:
+    """``format_describe_display`` Associated Objects section.
+
+    The OFT is always listed. The $UDF_TRANSFORMED / $BACKFILL landing tables
+    are streaming-only and are derived from oft_name, keeping quoted-identifier
+    casing.
+    """
+
+    @staticmethod
+    def _display(
+        fv_name: str = "user_clicks",
+        version: str = "v1",
+        spec: dict[str, Any] | None = None,
+        oft_name: str = "USER_CLICKS$V1$ONLINE",
+    ) -> str:
+        return format_describe_display(
+            fv_name=fv_name,
+            version=version,
+            database="MYDB",
+            schema="PUBLIC",
+            oft_name=oft_name,
+            entities=["USER_ID"],
+            describe_rows=[],
+            spec=spec,
+        )
+
+    def _streaming_display(self) -> str:
+        return self._display(spec={"kind": "StreamingFeatureView"})
+
+    def test_associated_objects_header_present(self) -> None:
+        assert "Associated Objects:" in self._display()
+
+    def test_online_feature_table_fully_qualified(self) -> None:
+        # The OFT line is rendered regardless of kind (including no spec).
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$ONLINE" in self._display()
+
+    def test_streaming_offline_table_derived_from_oft(self) -> None:
+        # The landing-table base is the OFT name minus its ``$ONLINE`` suffix.
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$UDF_TRANSFORMED" in self._streaming_display()
+
+    def test_streaming_backfill_table_rendered(self) -> None:
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$UDF_TRANSFORMED$BACKFILL" in self._streaming_display()
+
+    def test_streaming_landing_tables_preserve_quoted_case(self) -> None:
+        # Regression: a quoted FV keeps its stored casing; not a blind .upper().
+        display = self._display(
+            spec={"kind": "StreamingFeatureView"},
+            oft_name="myFv$v1$ONLINE",
+        )
+        assert "MYDB.PUBLIC.myFv$v1$UDF_TRANSFORMED" in display
+        assert "MYDB.PUBLIC.myFv$v1$UDF_TRANSFORMED$BACKFILL" in display
+        assert "MYFV$V1$UDF_TRANSFORMED" not in display
+
+    def test_streaming_landing_tables_share_oft_base(self) -> None:
+        # The landing-table prefix matches the OFT base (minus $ONLINE).
+        display = self._display(
+            spec={"kind": "StreamingFeatureView"},
+            oft_name="myFv$v1$ONLINE",
+        )
+        assert "MYDB.PUBLIC.myFv$v1$ONLINE" in display
+        base = "MYDB.PUBLIC.myFv$v1"
+        assert f"{base}$UDF_TRANSFORMED" in display
+        assert f"{base}$UDF_TRANSFORMED$BACKFILL" in display
+
+    def test_batch_omits_landing_tables(self) -> None:
+        # A batch FV has no ``$UDF_TRANSFORMED`` landing table; only the OFT
+        # and the section header are rendered.
+        display = self._display(spec={"kind": "BatchFeatureView"})
+        assert "Associated Objects:" in display
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$ONLINE" in display
+        assert "$UDF_TRANSFORMED" not in display
+
+    def test_realtime_omits_landing_tables(self) -> None:
+        # A realtime FV is OFT-only; same omission as batch.
+        display = self._display(spec={"kind": "RealtimeFeatureView"})
+        assert "Associated Objects:" in display
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$ONLINE" in display
+        assert "$UDF_TRANSFORMED" not in display
+
+    def test_no_spec_omits_landing_tables(self) -> None:
+        # Kind is unknown without a local spec; do not invent landing tables.
+        display = self._display()
+        assert "Associated Objects:" in display
+        assert "MYDB.PUBLIC.USER_CLICKS$V1$ONLINE" in display
+        assert "$UDF_TRANSFORMED" not in display
+
+    def test_section_ordered_after_identifiers_before_entities(self) -> None:
+        lines = self._streaming_display().splitlines()
+        assoc = next(i for i, ln in enumerate(lines) if "Associated Objects:" in ln)
+        ident = next(i for i, ln in enumerate(lines) if "Identifiers:" in ln)
+        entities = next(i for i, ln in enumerate(lines) if "Entities (Primary Key):" in ln)
+        assert ident < assoc < entities
 
 
 if __name__ == "__main__":

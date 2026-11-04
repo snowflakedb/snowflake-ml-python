@@ -1,7 +1,5 @@
 //tests/integ/snowflake/ml/extra_tests:xgboost_external_memory_training_test
 //tests/integ/snowflake/ml/extra_tests:pipeline_with_ohe_and_xgbr_test
-//tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
-//tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_model_garden_deployment_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_multi_modality_audio_video_test
 //tests/integ/snowflake/ml/feature_store:feature_store_rollup_test
@@ -9,3 +7,5 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_external_stage_test
 //tests/integ/snowflake/ml/jobs:classical_models_integ_test
 //tests/integ/snowflake/ml/jobs:tensorflow_integ_test
+//tests/integ/snowflake/ml/monitoring:model_monitor_integ_inference_table_test
+//tests/integ/snowflake/ml/monitoring:model_monitor_integ_inference_table_e2e_test

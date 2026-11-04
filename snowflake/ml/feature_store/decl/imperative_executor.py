@@ -1736,11 +1736,24 @@ def _execute_create_feature_group(fs: Any, op: Any) -> None:
 
 
 def _execute_drop_feature_group(fs: Any, op: Any) -> None:
-    """Apply ``OpKind.DROP_FG`` via ``FeatureStore.delete_feature_group``."""
+    """Apply ``OpKind.DROP_FG`` via ``FeatureStore.delete_feature_group``.
+
+    An already-absent group is a no-op: a stopped apply reruns every op from
+    the top, so a ``DROP_FG`` that already succeeded (or an orphan whose OFT
+    was dropped manually) must not fail the second pass.  Mirrors the
+    best-effort delete in :func:`_execute_create_feature_group`.
+
+    Args:
+        fs: Active ``FeatureStore`` instance.
+        op: The ``DROP_FG`` plan op carrying the FG payload.
+    """
     payload = op.payload or {}
     name = str(payload.get("name", "") or op.name)
     version = str(payload.get("version", "V1") or "V1")
-    fs.delete_feature_group(name, version)
+    try:
+        fs.delete_feature_group(name, version)
+    except Exception as exc:  # noqa: BLE001 — a missing group is a no-op, see docstring
+        logger.warning("delete_feature_group(%s, %s) failed during DROP_FG: %s", name, version, exc)
 
 
 def _build_feature_group(

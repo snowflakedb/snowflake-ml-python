@@ -669,11 +669,12 @@ def generate_plan(
        ``DROP_ENTITY`` ops for each orphan, reverse-topologically ordered
        (FeatureGroup → FeatureView → Source → Entity).
     4. Authored-spec FG/member gate: refuse a member ``DROP_FV`` /
-       ``RECREATE_FV`` (``FG_MEMBER_STILL_REFERENCED``) when a still-authored
-       batch FeatureGroup lists that ``(name, version)`` — never invent
-       ``DROP_FG`` / ``CREATE_FG`` for a hash-matched FeatureGroup.
-    5. Reorder ops into teardown bands so FeatureGroup teardown precedes the
-       member FeatureView deletes it unblocks.
+       ``RECREATE_FV`` (``FG_MEMBER_STILL_REFERENCED``) only when a
+       hash-matched (``NO_CHANGE``) FeatureGroup still lists that
+       ``(name, version)`` — never invent a drop/recreate for it.
+    5. Reorder ops into teardown bands: FeatureGroup drops, then member
+       FeatureView deletes, then FeatureGroup creates, so a group never
+       references a member while that member is being recreated.
     6. Return ``Plan`` with ordered ops, warnings, and any blocking errors.
 
     For FeatureView kinds, when ``applied.from_specification`` is True the
@@ -1038,21 +1039,33 @@ def generate_plan(
             continue
 
         if kind == "FeatureGroup":
-            # FG hash mismatch → destructive CREATE_FG.  Mirrors the FV-level
-            # ``backfill.overwrite=True`` pattern that reuses ``CREATE_FV``
-            # with ``destructive=True`` rather than minting a new
-            # ``RECREATE_FG`` enum.  The imperative side is a delete +
-            # register pair; the executor walks both at apply time.  Gated
-            # by ``--destructive`` via the existing ``execute_plan`` gate.
+            # The imperative API has no ``update_feature_group``, so a changed
+            # FeatureGroup is replaced: drop the deployed group, then create
+            # the desired one.  These land in separate teardown bands below
+            # (``DROP_FG`` before member FV deletes, ``CREATE_FG`` after), so a
+            # member FeatureView the group references can be recreated in
+            # between without the group's online table referencing it.  The
+            # drop is destructive (``--destructive`` gate); the create is not.
+            ops.append(
+                PlanOp(
+                    kind=OpKind.DROP_FG,
+                    name=name,
+                    depends_on=[],
+                    destructive=True,
+                    reason="FeatureGroup content hash changed (desc, auto_prefix, or "
+                    "feature_views[]); dropping the deployed group before re-creating it "
+                    "(no imperative update_feature_group). Requires --destructive.",
+                    payload=data,
+                )
+            )
             ops.append(
                 PlanOp(
                     kind=OpKind.CREATE_FG,
                     name=name,
                     depends_on=[],
-                    destructive=True,
-                    reason="FeatureGroup content hash changed (desc, auto_prefix, or "
-                    "feature_views[]); dropping and re-registering "
-                    "(no imperative update_feature_group). Requires --destructive.",
+                    destructive=False,
+                    reason="FeatureGroup content hash changed; re-creating with the new spec "
+                    "after the deployed group is dropped.",
                     payload=data,
                 )
             )
@@ -1237,23 +1250,23 @@ def generate_plan(
             )
 
     # --- Authored-spec FeatureGroup/member referential-integrity gate ---
-    # A member FeatureView ``DROP_FV`` / ``RECREATE_FV`` must not run while a
-    # still-authored FeatureGroup lists that ``(name, version)``: Snowflake's
-    # online FG table (``<FG>$<V>$ONLINE``) references each member's online
-    # table, so the member delete is refused.  The authored-spec rule forbids
-    # inventing ``DROP_FG`` / destructive ``CREATE_FG`` for a hash-matched FG
-    # to unblock it — a matched hash means the operator did not change the
-    # spec.  So we refuse the member op with ``FG_MEMBER_STILL_REFERENCED`` and
-    # leave the FG's own op untouched.  Membership comes from the already-loaded
-    # batch FG specs (the change signal is the hash / batch key, never a file
-    # walk); an FG whose new payload dropped the member is not in this set, so
-    # its member delete is allowed and merely reordered below.
+    # Snowflake's online FG table (``<FG>$<V>$ONLINE``) references each member's
+    # online table, so a *deployed* FeatureGroup blocks a member FeatureView
+    # ``DROP_FV`` / ``RECREATE_FV``.  Only a hash-matched (``NO_CHANGE``)
+    # FeatureGroup blocks: a matched hash means the operator did not change the
+    # spec, and the authored-spec rule forbids inventing a drop/recreate for it
+    # to unblock the member.  So we refuse the member op with
+    # ``FG_MEMBER_STILL_REFERENCED`` and leave the FG untouched.  A FeatureGroup
+    # being created or replaced in this plan is not in this set: a new one has
+    # no online table yet, and a replaced one is dropped before the member
+    # delete and re-created after it (teardown bands below).  Membership comes
+    # from the ``NO_CHANGE`` FG ops already produced above, never a file walk.
     errors: list[ValidationResult] = []
     batch_fg_members: set[tuple[str, str]] = set()
-    for data in sorted_dicts:
-        if data.get("kind") != "FeatureGroup":
+    for op in ops:
+        if op.kind != OpKind.NO_CHANGE or op.payload.get("kind") != "FeatureGroup":
             continue
-        for fv_ref in data.get("feature_views", []) or []:
+        for fv_ref in op.payload.get("feature_views", []) or []:
             if not isinstance(fv_ref, dict):
                 continue
             fv_name = (fv_ref.get("name") or "").upper()
@@ -1286,22 +1299,27 @@ def generate_plan(
         ops = kept_ops
 
     # --- Teardown banding ---
-    # Reorder ops into dependency-safe teardown bands, preserving the relative
-    # order within each band (Python's ``sorted`` is stable):
+    # Reorder ops into dependency-safe bands, preserving the relative order
+    # within each band (Python's ``sorted`` is stable):
     #   band 0 — everything else (creates, updates, no-change);
-    #   band 1 — FeatureGroup teardown (``DROP_FG``, destructive ``CREATE_FG``);
+    #   band 1 — FeatureGroup drops (``DROP_FG``);
     #   band 2 — member FeatureView deletes (``RECREATE_FV``, ``DROP_FV``);
-    #   band 3 — source / entity drops (``DROP_SOURCE``, ``DROP_ENTITY``).
-    # A FeatureGroup teardown therefore always precedes the member deletes it
-    # unblocks.  Only FG ops the diff / orphan pass already produced land in
-    # band 1; a hash-matched FeatureGroup stays ``NO_CHANGE`` in band 0.
+    #   band 3 — FeatureGroup creates (``CREATE_FG``);
+    #   band 4 — source / entity drops (``DROP_SOURCE``, ``DROP_ENTITY``).
+    # An FG drop precedes the member deletes it would otherwise block, and an
+    # FG create follows them, so a group that references a recreated member
+    # finds that member in place.  A replaced FG lands a ``DROP_FG`` in band 1
+    # and a ``CREATE_FG`` in band 3; a brand-new FG lands only the create; a
+    # hash-matched FeatureGroup stays ``NO_CHANGE`` in band 0.
     def _teardown_band(op: PlanOp) -> int:
-        if op.kind == OpKind.DROP_FG or (op.kind == OpKind.CREATE_FG and op.destructive):
+        if op.kind == OpKind.DROP_FG:
             return 1
         if op.kind in (OpKind.RECREATE_FV, OpKind.DROP_FV):
             return 2
-        if op.kind in (OpKind.DROP_SOURCE, OpKind.DROP_ENTITY):
+        if op.kind == OpKind.CREATE_FG:
             return 3
+        if op.kind in (OpKind.DROP_SOURCE, OpKind.DROP_ENTITY):
+            return 4
         return 0
 
     ops = sorted(ops, key=_teardown_band)

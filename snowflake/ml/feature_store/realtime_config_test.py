@@ -26,6 +26,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml.feature_store._compute_fn_validation import (
     ALLOWED_NAMESPACE_KEYS,
     FORBIDDEN_BUILTINS,
+    RUNTIME_PRELUDE,
     validate_compute_fn_callable,
 )
 from snowflake.ml.feature_store.entity import Entity
@@ -743,6 +744,13 @@ class RuntimeNamespaceTest(absltest.TestCase):
             set(_RTFV_RUNTIME_NAMESPACE.keys()),
             set(ALLOWED_NAMESPACE_KEYS),
         )
+
+    def test_runtime_prelude_binds_validation_allowlist(self) -> None:
+        namespace: dict[str, Any] = {}
+        exec(RUNTIME_PRELUDE, namespace)
+        namespace.pop("__builtins__")
+        self.assertEqual(set(namespace), set(ALLOWED_NAMESPACE_KEYS))
+        self.assertEqual(RUNTIME_PRELUDE.count("\n"), 1)
 
     def test_forbidden_builtins_covers_both_layers(self) -> None:
         """The unified forbidden-builtin set must contain both the

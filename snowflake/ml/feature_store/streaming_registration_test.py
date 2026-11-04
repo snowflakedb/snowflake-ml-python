@@ -2,6 +2,7 @@
 
 import datetime
 import json
+from typing import Any
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -2066,6 +2067,29 @@ class RunStreamingPostambleTest(absltest.TestCase):
                 user_fn_name="f",
                 user_fn_source=bad_source,
             )
+
+    def test_render_backfill_udtf_binds_runtime_namespace(self) -> None:
+        """The UDTF body pre-imports the names the validator lets through."""
+        from snowflake.ml.feature_store.streaming_registration import (
+            _render_backfill_udtf_sql,
+        )
+
+        source = "def f(df):\n    df['B'] = np.log1p(numpy.abs(df['A']))\n    return df\n"
+        ddl = _render_backfill_udtf_sql(
+            fq_udtf="DB.SCH.UDTF",
+            input_col_names=["A"],
+            input_col_types=["FLOAT"],
+            output_col_names=["A", "B"],
+            output_col_types=["FLOAT", "FLOAT"],
+            user_fn_name="f",
+            user_fn_source=source,
+        )
+        body = ddl.split("$$\n", 1)[1].rsplit("$$", 1)[0]
+        namespace: dict[str, Any] = {}
+        exec(body, namespace)
+        result = namespace["_Handler"]().process(pd.DataFrame({"A": [0.0, -1.0]}))
+        self.assertEqual(list(result.columns), ["A", "B"])
+        self.assertAlmostEqual(result["B"][1], 0.6931, places=4)
 
 
 # ============================================================================

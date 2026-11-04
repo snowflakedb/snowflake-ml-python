@@ -176,6 +176,7 @@ py_test(
 
 py_library(
     name = "autolog_integ_test_base",
+    testonly = True,
     srcs = ["autolog_integ_test_base.py"],
     deps = [
         "//snowflake/ml/_internal/utils:connection_params",
@@ -183,6 +184,7 @@ py_library(
         "//snowflake/ml/experiment",
         "//snowflake/ml/model:model_signature",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:embed_local_ml_library",
     ],
 )
 

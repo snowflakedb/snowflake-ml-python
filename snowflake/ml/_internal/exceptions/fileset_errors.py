@@ -2,6 +2,9 @@
 ERRNO_FILE_EXIST_IN_STAGE = 1030
 ERRNO_DOMAIN_NOT_EXIST = 2003
 ERRNO_STAGE_NOT_EXIST = 391707
+# Vendored from snowflake.connector.errorcode.ER_FILE_NOT_EXISTS, which the connector 5.0 ("Universal
+# Core") release removed from the public surface.
+ERRNO_FILE_NOT_EXIST = 253006
 
 
 class FileSetError(Exception):

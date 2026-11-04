@@ -142,6 +142,26 @@ class BaseModelHandler(Generic[model_types._ModelType], _BaseModelHandlerProtoco
     IS_AUTO_SIGNATURE = False
 
     @classmethod
+    def get_supported_target_platforms(
+        cls, model: model_types.SupportedModelType
+    ) -> list[model_types.TargetPlatform] | None:
+        """Target platforms this model can be deployed to, or None for no restriction.
+
+        None (the default) means the model imposes no platform restriction and normal
+        target-platform defaulting applies. A handler returns a narrowed list when a model
+        cannot feasibly run on some platform -- e.g. a multi-GB foundation that cannot run in
+        a Snowflake Warehouse -- so logging defaults to, and is validated against, only the
+        feasible platforms.
+
+        Args:
+            model: The model being logged.
+
+        Returns:
+            The platforms the model is restricted to, or None when unrestricted.
+        """
+        return None
+
+    @classmethod
     @final
     def try_upgrade(cls, name: str, model_meta: model_meta.ModelMetadata, model_blobs_dir_path: str) -> None:
         """Try upgrade the stored model to adapt latest handler

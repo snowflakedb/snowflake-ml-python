@@ -11,6 +11,7 @@ import logging
 import os
 import time
 
+import pytest
 from absl.testing import absltest
 
 import snowflake.snowpark.exceptions
@@ -22,7 +23,9 @@ logger = logging.getLogger(__name__)
 _EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-@absltest.skip("critical libmamba Could not solve for environment specs")
+# Keep the class on one pytest-xdist worker so the shared service is deployed once (see the sentinel in
+# AISQLBYOMTestBase); split across workers, each one deploys its own GPU service.
+@pytest.mark.xdist_group("registry_ai_embed")
 class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
     """Integration tests for AI_EMBED against a user-deployed SPCS SentenceTransformer service."""
 
@@ -66,11 +69,13 @@ class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
             version_name=version_name,
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
             options={"embed_local_ml_library": True},
-            # Adding a conda dependency forces the conda build path, which routes
-            # torch through conda (not pip). This avoids --extra-index-url being
-            # written to requirements.txt, which SPCS rejects as a non-PEP-508 line.
+            # Conda build path: on pip, SPCS rejects the torch==X.Y.Z+cuNNN pin the client writes.
+            # pytorch is pinned because conda-forge builds after 2.12.0 need libabseil/libprotobuf
+            # versions that no protobuf<6.34 build (required by snowpark) can be solved with; this
+            # pin overrides the locally installed torch version the handler would add.
             conda_dependencies=[
-                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python"),
+                "pytorch==2.12.0",
             ],
         )
 
@@ -432,7 +437,6 @@ class TestAIEmbedEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
         for row in result:
             self.assertIsNotNone(row["E"])
 
-    @absltest.skip("Invalid pip requirement : --extra-index-url https://download.pytorch.org/whl/cu124.")
     def test_ai_embed_any_value_aggregate(self) -> None:
         """B6: AI_EMBED inside ANY_VALUE with GROUP BY — one vector per category."""
         service_name = self._service_name

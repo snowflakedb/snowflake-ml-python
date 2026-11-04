@@ -171,6 +171,7 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
             ),
             model_name=model_name,
             version_name=version_name,
+            options={"embed_local_ml_library": True},
         )
 
     def _log_tiny_with_model_base(self, *, model_name: str, version_name: str) -> ModelVersion:
@@ -196,6 +197,7 @@ class TestBatchInferenceLoraAdapterInteg(registry_batch_inference_test_base.Regi
                 model=PeftAdapter(base_model=base_mv, adapter_path=_write_stub_adapter_dir(tmp)),
                 model_name=model_name,
                 version_name=version_name,
+                options={"embed_local_ml_library": True},
             )
 
     def _run_lora_job(

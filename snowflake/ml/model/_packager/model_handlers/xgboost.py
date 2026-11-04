@@ -239,8 +239,8 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
                     enable_categorical = False
                     for col, d_type in X.dtypes.items():
-                        if pd.api.extensions.ExtensionDtype.is_dtype(d_type):
-                            if pd.CategoricalDtype.is_dtype(d_type):
+                        if isinstance(d_type, pd.api.extensions.ExtensionDtype):
+                            if isinstance(d_type, pd.CategoricalDtype):
                                 enable_categorical = True
                             elif isinstance(d_type, pd.StringDtype):
                                 X[col] = X[col].astype("category")

@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 import pandas as pd
+import pytest
 import requests
 from absl.testing import absltest
 from retrying import retry
@@ -38,6 +39,9 @@ def _unescaped_object_name_parts(name: str) -> list[str] | None:
     return identifier.get_unescaped_names([database_name, schema_name, object_name])
 
 
+# Keep the class on one pytest-xdist worker so the shared service is deployed once (see the sentinel in
+# AISQLBYOMTestBase); split across workers, each one deploys its own GPU service.
+@pytest.mark.xdist_group("registry_ai_complete")
 class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
     """Integration tests for the /ai_complete endpoint."""
 

@@ -166,24 +166,28 @@ snowpark SDK.
   For `FeatureGroup` specs,
   the planner uses `fg_content_hash` (see `invariants.py` notes
   above) — a hash match emits `NO_CHANGE`, a new key emits
-  non-destructive `CREATE_FG`, a hash mismatch emits
-  `CREATE_FG(destructive=True)` (gated by `--allow-recreate`), and
-  an orphan FG in `full_directory_mode` emits `DROP_FG`.  There is
-  no `UPDATE_FG` op — the imperative side has no
-  `fs.update_feature_group` API and every FG edit materialises as
-  "delete then register" (see "Why `FeatureGroup` skips the
-  operational/structural split" below).
+  non-destructive `CREATE_FG`, a hash mismatch replaces the group as
+  `DROP_FG` + non-destructive `CREATE_FG` (gated by `--allow-recreate`
+  via the destructive `DROP_FG`), and an orphan FG in
+  `full_directory_mode` emits `DROP_FG`.  There is no `UPDATE_FG` op —
+  the imperative side has no `fs.update_feature_group` API and every FG
+  edit materialises as "delete then register" (see "Why `FeatureGroup`
+  skips the operational/structural split" below).
   After the diff and orphan passes, `generate_plan` runs two
   post-processing steps: (1) **Authored-spec FG/member gate** — a
-  member `DROP_FV` / `RECREATE_FV` is refused when a still-authored
-  batch FeatureGroup lists that `(name, version)` (`FG_MEMBER_STILL_REFERENCED`
-  on `Plan.errors`; a hash-matched FeatureGroup is never promoted to
-  `DROP_FG` / destructive `CREATE_FG`); (2) **Teardown banding** —
-  remaining ops are stably reordered so FeatureGroup teardown
-  (`DROP_FG`, destructive `CREATE_FG`) precedes member deletes, which
-  precede source/entity drops. `Plan.errors` is a blocking, plan-time
-  list distinct from `validate_specs` output; a non-empty list means
-  the plan must not be written or applied.
+  member `DROP_FV` / `RECREATE_FV` is refused only when a hash-matched
+  (`NO_CHANGE`) FeatureGroup still lists that `(name, version)`
+  (`FG_MEMBER_STILL_REFERENCED` on `Plan.errors`; a `NO_CHANGE`
+  FeatureGroup is never promoted to `DROP_FG` / `CREATE_FG`); a new or
+  changed FeatureGroup does not block, since it has no online table yet
+  (new) or is dropped before the member delete (changed). (2) **Teardown
+  banding** — remaining ops are stably reordered into bands: FeatureGroup
+  drops (`DROP_FG`) → member deletes (`RECREATE_FV` / `DROP_FV`) →
+  FeatureGroup creates (`CREATE_FG`) → source/entity drops, so a group
+  never references a member while that member is being recreated.
+  `Plan.errors` is a blocking, plan-time list distinct from
+  `validate_specs` output; a non-empty list means the plan must not be
+  written or applied.
 - **`state.py`** populates three kinds of `AppliedObject`:
   - `FeatureView` — **`FeatureStore.list_feature_views()` (via the
     `feature_view_rows` kwarg) is the authoritative discovery
@@ -597,9 +601,11 @@ existing kind).  The numbered entries map onto the eight steps above:
    never `FeatureView(...)` — so the seven advanced BFV fields (and any future
    FV authoring fields) ride along automatically.  CREATE_FG and DROP_FG
    ops dispatch through `fs.register_feature_group` and
-   `fs.delete_feature_group`; destructive CREATE_FG (the FG-side replacement
-   for "update") issues a best-effort `delete_feature_group` followed by
-   `register_feature_group`.  Honoured the existing `--allow-recreate` gate.
+   `fs.delete_feature_group` (both tolerant of an already-absent group).
+   The planner replaces a changed FG as `DROP_FG` + non-destructive
+   `CREATE_FG`; the executor also keeps a legacy destructive `CREATE_FG`
+   (best-effort delete + register) so plans written before the split still
+   apply.  Honoured the existing `--allow-recreate` gate.
 6. **`__init__.py`** — `FeatureGroup` and `FeatureViewRef` are re-exported
    alongside the other top-level spec models.
 7. **Tests** — new files: `tests/test_spec_models_feature_group.py`,
@@ -625,10 +631,11 @@ Dynamic Table.  **`FeatureGroup` does not honour this split.**  The
 imperative side has no `fs.update_feature_group` API today — every FG edit
 materialises as "delete then register" — so any non-structural authoring
 edit on the FG would silently degrade to a destructive recreate anyway.
-The planner reflects this: a hash mismatch on `fg_content_hash` always
-emits `CREATE_FG(destructive=True)` (gated by `--allow-recreate`), and there
-is no FG analogue of `UPDATE_FV`.  Treat the `fg_content_hash` field set as
-purely structural; do not introduce an `_OPERATIONAL_FG_KEYS` mirror.
+The planner reflects this: a hash mismatch on `fg_content_hash` replaces the
+group as `DROP_FG` + non-destructive `CREATE_FG` (the destructive `DROP_FG`
+is `--allow-recreate`-gated), and there is no FG analogue of `UPDATE_FV`.
+Treat the `fg_content_hash` field set as purely structural; do not introduce
+an `_OPERATIONAL_FG_KEYS` mirror.
 
 ### How to Add a New BFV Operational or Structural Field
 

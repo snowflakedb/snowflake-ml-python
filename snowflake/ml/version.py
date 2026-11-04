@@ -1,2 +1,2 @@
 # This is parsed by regex in conda recipe meta file. Make sure not to break it.
-VERSION = "2.7.0"
+VERSION = "2.8.0"

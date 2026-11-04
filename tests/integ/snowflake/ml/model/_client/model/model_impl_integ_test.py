@@ -49,12 +49,14 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name=MODEL_NAME,
             version_name=VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         self._mv2 = self.registry.log_model(
             model=model,
             model_name=MODEL_NAME,
             version_name=VERSION_NAME2,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         self._model = self.registry.get_model(model_name=MODEL_NAME)
 
@@ -95,6 +97,7 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name=MODEL_NAME,
             version_name="V3",
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         self._model.delete_version("V3")
         self.assertLen(self._model.show_versions(), 2)
@@ -142,6 +145,7 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name="MODEL",
             version_name="V1",
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         model = self.registry.get_model(model_name="MODEL")
         model.rename("MODEL2")
@@ -155,6 +159,7 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name="MODEL",
             version_name="V1",
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         model = self.registry.get_model(model_name="MODEL")
         model.rename(f"{self._test_db}.{self._test_schema}.MODEL2")
@@ -168,12 +173,14 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name="MODEL_ALIAS",
             version_name=VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         self.registry.log_model(
             model=model,
             model_name="MODEL_ALIAS",
             version_name=VERSION_NAME2,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         model = self.registry.get_model(model_name="MODEL_ALIAS")
         self.assertEqual(model.first().version_name, VERSION_NAME)
@@ -188,6 +195,7 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name=model_name,
             version_name=VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
 
         model_v_v1.set_alias("A1")
@@ -217,6 +225,7 @@ class TestModelImplInteg(parameterized.TestCase):
             model_name=model_name,
             version_name=VERSION_NAME,
             sample_input_data=test_features,
+            options={"embed_local_ml_library": True},
         )
         model = self.registry.get_model(model_name=model_name)
         with self.assertRaisesRegex(ValueError, "Unable to find version or alias with name V2 in model"):

@@ -12,7 +12,9 @@ class RandomVersionNameTest(registry_model_test_base.RegistryModelTestBase):
         regr = linear_model.LogisticRegression()
         regr.fit(iris_X, iris_y)
         name = f"model_{self._run_id}"
-        mv = self.registry.log_model(regr, model_name=name, sample_input_data=iris_X)
+        mv = self.registry.log_model(
+            regr, model_name=name, sample_input_data=iris_X, options={"embed_local_ml_library": True}
+        )
         pd.testing.assert_series_equal(
             mv.run(iris_X, function_name="predict")["output_feature_0"],
             pd.Series(regr.predict(iris_X), name="output_feature_0"),

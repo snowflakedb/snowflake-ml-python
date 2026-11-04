@@ -245,6 +245,7 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
             ),
             model_name=model_name,
             version_name=version_name,
+            options={"embed_local_ml_library": True},
         )
 
     def _log_tiny_with_model_base(self, *, model_name: str, version_name: str) -> ModelVersion:
@@ -271,6 +272,7 @@ class RegistryLoraAdapterDeploymentTestBase(registry_model_deployment_test_base.
                 model=PeftAdapter(base_model=base_mv, adapter_path=write_stub_adapter_dir(tmp)),
                 model_name=model_name,
                 version_name=version_name,
+                options={"embed_local_ml_library": True},
             )
 
     def _vllm_engine_options(self, *, extra_args: list[str] | None = None) -> dict[str, Any]:

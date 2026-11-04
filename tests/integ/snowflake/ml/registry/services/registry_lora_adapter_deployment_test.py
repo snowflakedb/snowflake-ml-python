@@ -89,6 +89,7 @@ class TestRegistryLoraAdapterDeploymentInteg(
             model=PeftAdapter(base_model=garden_mv, adapter_path=garden_adapter_dir),
             model_name=self._name("GARDEN_ADAPTER"),
             version_name="V1",
+            options={"embed_local_ml_library": True},
         )
         service_name = self._name("GARDEN_SVC")
         svc = None

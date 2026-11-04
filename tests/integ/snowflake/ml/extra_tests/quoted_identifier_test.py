@@ -153,6 +153,7 @@ class QuotedIdentifierTest(parameterized.TestCase):
             model_name=snowflake_model_name,
             version_name="v1",
             comment=snowflake_registry_model_description,
+            options={"embed_local_ml_library": True},
         )
 
         # Need to set tags at the parent model level

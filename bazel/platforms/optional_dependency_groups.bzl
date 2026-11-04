@@ -10,5 +10,5 @@ OPTIONAL_DEPENDENCY_GROUPS = {
     "ml": ["lightgbm", "catboost", "mlflow", "altair", "streamlit", "prophet", "shap", "scikit-learn", "xgboost", "category-encoders"],
     "keras": ["torch", "tensorflow", "keras", "scikit-learn"],
     "llm": ["llm", "scikit-learn"],
-    "torch": ["torch", "transformers", "mlflow", "scikit-learn", "xgboost"],
+    "torch": ["torch", "transformers", "mlflow", "scikit-learn", "xgboost", "tabicl"],
 }

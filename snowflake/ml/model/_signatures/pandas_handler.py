@@ -63,7 +63,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
             np.uint64,
             np.float64,
             np.object_,
-        ]:  # To keep compatibility with Pandas 2.x and 1.x
+        ] and not pd.api.types.is_string_dtype(df_cols.dtype):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
                 original_exception=ValueError("Data Validation Error: Unsupported column index type is found."),

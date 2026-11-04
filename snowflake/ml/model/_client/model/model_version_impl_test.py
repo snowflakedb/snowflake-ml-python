@@ -90,7 +90,9 @@ def _model_spec_v2(
     function_signature = signature or _DUMMY_SIG["predict"].to_dict()
     functions: dict[str, dict[str, Any]] = {
         "__call__": {
+            "env": ["python_env"],
             "type": "FUNCTION",
+            "handler": "functions.__call__.infer",
             "signature": function_signature,
             "properties": {"case_sensitive": case_sensitive} if case_sensitive else {},
         }
@@ -107,7 +109,9 @@ def _model_spec_v2(
                 }
             else:
                 functions[function_name] = {
+                    "env": ["python_env"],
                     "type": "FUNCTION",
+                    "handler": f"functions.{function_name}.infer",
                     "signature": function_signature,
                     "properties": properties,
                 }
@@ -115,6 +119,7 @@ def _model_spec_v2(
         {
             "version": "2.0",
             "model": {
+                "name": "primary",
                 "type": "USER_MODEL",
                 "framework": framework,
                 "details": {

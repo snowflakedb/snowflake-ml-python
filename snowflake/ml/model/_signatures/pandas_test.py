@@ -106,6 +106,9 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
             pandas_handler.PandasDataFrameHandler.validate(df)
 
+        string_columns_df = pd.DataFrame([[1]], columns=pd.Index(["a"], dtype=pd.StringDtype()))
+        pandas_handler.PandasDataFrameHandler.validate(string_columns_df)
+
     def test_trunc_pd_DataFrame(self) -> None:
         df = pd.DataFrame([1] * 11)
 
@@ -119,6 +122,16 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         pd.testing.assert_frame_equal(
             df,
             pandas_handler.PandasDataFrameHandler.truncate(df, 10),
+        )
+
+    def test_future_string_inference(self) -> None:
+        with pd.option_context("future.infer_string", True):
+            df = pd.DataFrame({"a": ["x", "y", "z"]})
+
+        pandas_handler.PandasDataFrameHandler.validate(df)
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.STRING)],
         )
 
     def test_infer_signature_pd_DataFrame(self) -> None:
@@ -156,6 +169,12 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         df = pd.DataFrame(["a", "b", None, "d"], columns=["a"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.STRING)],
+        )
+
+        string_dtype_df = pd.DataFrame({"a": pd.Series(["a", "b", None, "d"], dtype=pd.StringDtype())})
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(string_dtype_df, role="input"),
             [core.FeatureSpec("a", core.DataType.STRING)],
         )
 

@@ -21,4 +21,5 @@ dependencies:
   - pip
   - pip:
       - datasets==5.0.1
+      - tabicl==2.2.0
       - tf-keras==2.21.0

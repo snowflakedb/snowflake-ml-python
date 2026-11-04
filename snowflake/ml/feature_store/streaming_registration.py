@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store._compute_fn_validation import RUNTIME_PRELUDE
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewVersion,
@@ -728,7 +729,7 @@ def _render_backfill_udtf_sql(
     user_source_dedented = textwrap.dedent(user_fn_source).rstrip()
 
     handler_body = (
-        "import pandas as pd\n"
+        f"{RUNTIME_PRELUDE}"
         "\n"
         f"{user_source_dedented}\n"
         "\n"

@@ -91,14 +91,9 @@ class OneHotEncoderTest(parameterized.TestCase):
     @staticmethod
     def convert_sparse_df_to_arr(sparse_df: DataFrame, output_cols: list[str], id_col: str) -> np.ndarray:
         """Convert sparse transformed dataframe to an array of [row, column]."""
-        if pd.__version__ < "2.1.0":
-            sparse_output_pandas = (
-                sparse_df.sort(id_col)[output_cols].to_pandas().applymap(lambda x: json.loads(x) if x else None)
-            )
-        else:
-            sparse_output_pandas = (
-                sparse_df.sort(id_col)[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
-            )
+        sparse_output_pandas = (
+            sparse_df.sort(id_col)[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
+        )
 
         def map_output(x: dict[str, Any] | None) -> list[int] | None:
             """Map {encoding: 1, "array_length": length} to [encoding, length]."""
@@ -112,7 +107,7 @@ class OneHotEncoderTest(parameterized.TestCase):
                     res[0] = int(key)
             return res
 
-        mapped_pandas = sparse_output_pandas.applymap(map_output)
+        mapped_pandas = sparse_output_pandas.map(map_output)
         base_encoding = 0
         for idx in range(1, len(mapped_pandas.columns)):
             base_encoding += mapped_pandas.iloc[0, idx - 1][1]
@@ -487,10 +482,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         self.assertTrue(self.compare_sparse_transform_results(actual_arr2, sklearn_arr))
 
         # assert array length
-        if pd.__version__ < "2.1.0":
-            output_pandas = transformed_df[output_cols].to_pandas().applymap(lambda x: json.loads(x) if x else None)
-        else:
-            output_pandas = transformed_df[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
+        output_pandas = transformed_df[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
         for idx, n_features_out in enumerate(encoder_sklearn._n_features_outs):
             array_length = output_pandas.iloc[0, idx]["array_length"]
             self.assertEqual(array_length, n_features_out)

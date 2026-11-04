@@ -113,6 +113,7 @@ class ExperimentCrudIntegTest(ExperimentTrackingIntegTestBase):
             yaml.safe_load(result[0]["spec"]),
             {
                 "query_text": "AI_COMPLETE('llama3.1-8b', PROMPT('Answer {0}', QUESTION))::VARCHAR",
+                "evaluation": {},
                 "metrics": [{"name": "exact_match"}],
                 "dataset": {
                     "name": f"{self._db_name}.{self._schema_name}.EVALUATION_DATASET",

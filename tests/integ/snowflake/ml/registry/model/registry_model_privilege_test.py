@@ -76,6 +76,7 @@ class RegistryModelPrivilegeTest(registry_model_test_base.RegistryModelTestBase)
             model_name=self._model_name,
             version_name=self._version_name,
             sample_input_data=iris_X,
+            options={"embed_local_ml_library": True},
         )
         self._fq_model_name = self._mv.fully_qualified_model_name
 

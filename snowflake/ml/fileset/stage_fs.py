@@ -9,7 +9,7 @@ import fsspec
 from fsspec.implementations import http as httpfs
 
 from snowflake import snowpark
-from snowflake.connector import connection, errorcode, errors as snowpark_errors
+from snowflake.connector import connection, errors as snowpark_errors
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -291,7 +291,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         try:
             return self._session.file.get_stream(f"{self.stage_name}/{path}", **kwargs)
         except snowpark_exceptions.SnowparkSQLException as e:
-            if _match_error_code(e, errorcode.ER_FILE_NOT_EXISTS):
+            if _match_error_code(e, fileset_errors.ERRNO_FILE_NOT_EXIST):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.SNOWML_NOT_FOUND,
                     original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),

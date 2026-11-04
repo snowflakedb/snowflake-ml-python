@@ -258,7 +258,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 version_name=version + "_error",
                 sample_input_data=iris_X_df,
                 conda_dependencies=conda_dependencies,
-                options={"enable_explainability": True},
+                options={"embed_local_ml_library": True, "enable_explainability": True},
             )
 
         mv = self.registry.log_model(
@@ -267,6 +267,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             version_name=version,
             sample_input_data=iris_X_df,
             conda_dependencies=conda_dependencies,
+            options={"embed_local_ml_library": True},
         )
 
         res = mv.run(iris_X[-10:], function_name="predict")
@@ -321,6 +322,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             version_name=version,
             sample_input_data=df[input_features],
             options={
+                "embed_local_ml_library": True,
                 "enable_explainability": True,
                 # Ensure some methods are registered as case-sensitive, including explain
                 "method_options": {
@@ -556,6 +558,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             model_name=name,
             version_name=version,
             sample_input_data=X_df,
+            options={"embed_local_ml_library": True},
         )
 
         statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": "TRUE"}
@@ -673,7 +676,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             version_name=version,
             sample_input_data=df[input_features],
             conda_dependencies=conda_dependencies,
-            options={"enable_explainability": True},
+            options={"embed_local_ml_library": True, "enable_explainability": True},
         )
 
         predict_result = mv.run(df[input_features], function_name="predict")
