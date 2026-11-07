@@ -15,7 +15,11 @@ from snowflake.ml.feature_store.metadata_manager import (
     MetadataType,
     StreamingMetadata,
     _sanitize_json_for_dollar_quoting,
+    _sql_str,
 )
+
+# What DELETE returns in Snowflake: exactly one row.
+_DELETE_RESULT = [{"number of rows deleted": 1}]
 
 
 def _make_manager() -> tuple[FeatureStoreMetadataManager, MagicMock]:
@@ -186,12 +190,100 @@ class StreamSourceMetadataNormalizationTest(absltest.TestCase):
     def test_delete_quoted_name_preserves_case(self) -> None:
         """Delete uses the same case-preserving key as save."""
         manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = _DELETE_RESULT
         name = SqlIdentifier('"mySource"').resolved()  # 'mySource'
 
         manager.delete_stream_source_metadata(name)
 
         sql = session.sql.call_args[0][0]
         self.assertIn("'mySource'", sql)
+
+
+class StreamSourceRefCountTest(absltest.TestCase):
+    """The ref count is derived from STREAM_CONFIG rows, never read-modify-written."""
+
+    def test_delete_source_is_conditional_on_no_references(self) -> None:
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = [{"number of rows deleted": 0}]
+
+        self.assertFalse(manager.delete_stream_source_metadata("MYSOURCE"))
+
+        self.assertEqual(session.sql.call_count, 1)
+        sql = session.sql.call_args[0][0]
+        self.assertIn("DELETE FROM", sql)
+        self.assertIn("NOT EXISTS", sql)
+        self.assertIn(f"METADATA_TYPE = '{MetadataType.STREAM_CONFIG.value}'", sql)
+
+    def test_delete_source_reports_deleted_row(self) -> None:
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = [{"number of rows deleted": 1}]
+
+        self.assertTrue(manager.delete_stream_source_metadata("MYSOURCE"))
+
+    def test_save_streaming_metadata_is_guarded_on_the_source(self) -> None:
+        manager, session = _make_manager()
+        manager.ensure_table_exists = MagicMock()  # type: ignore[method-assign]
+        session.sql.return_value.collect.return_value = [{"number of rows inserted": 0, "number of rows updated": 0}]
+
+        written = manager.save_streaming_metadata(
+            "MY_FV", "V1", StreamingMetadata(stream_source_name="TXN_EVENTS", transformation_fn_name="fn")
+        )
+
+        self.assertFalse(written)
+        sql = session.sql.call_args[0][0]
+        self.assertIn("MERGE INTO", sql)
+        self.assertIn("WHERE EXISTS", sql)
+        self.assertIn(f"s.METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'", sql)
+        self.assertIn("s.OBJECT_NAME = 'TXN_EVENTS'", sql)
+
+    def test_list_stream_source_references(self) -> None:
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = [
+            {"OBJECT_NAME": "FV_A", "VERSION": "v1"},
+            {"OBJECT_NAME": "FV_B", "VERSION": "v2"},
+        ]
+
+        self.assertEqual(manager.list_stream_source_references("TXN_EVENTS"), [("FV_A", "v1"), ("FV_B", "v2")])
+        self.assertIn("METADATA:stream_source_name::STRING = 'TXN_EVENTS'", session.sql.call_args[0][0])
+
+    def test_get_ref_count_counts_stream_config_rows(self) -> None:
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = [{"CNT": 3}]
+
+        self.assertEqual(manager.get_stream_source_ref_count('"mySource"'), 3)
+
+        sql = session.sql.call_args[0][0]
+        self.assertIn(f"METADATA_TYPE = '{MetadataType.STREAM_CONFIG.value}'", sql)
+        self.assertIn("COUNT(DISTINCT r.OBJECT_NAME, r.VERSION)", sql)
+        self.assertIn("METADATA:stream_source_name::STRING = 'mySource'", sql)
+
+    def test_sync_sets_ref_count_in_one_statement(self) -> None:
+        manager, session = _make_manager()
+
+        manager.sync_stream_source_ref_count("MYSOURCE")
+
+        self.assertEqual(session.sql.call_count, 1)
+        sql = session.sql.call_args[0][0]
+        self.assertIn("UPDATE", sql)
+        self.assertIn("OBJECT_INSERT(METADATA, 'ref_count'", sql)
+        self.assertNotIn("MERGE", sql)
+        self.assertIn("OBJECT_NAME = 'MYSOURCE'", sql)
+        self.assertIn("METADATA:stream_source_name::STRING = 'MYSOURCE'", sql)
+
+    def test_sync_failure_is_logged_not_raised(self) -> None:
+        manager, session = _make_manager()
+        session.sql.side_effect = RuntimeError("warehouse suspended")
+
+        with self.assertLogs("snowflake.ml.feature_store.metadata_manager", level="WARNING") as logs:
+            manager.sync_stream_source_ref_count("MYSOURCE")
+
+        self.assertIn("warehouse suspended", logs.output[0])
+
+    def test_sql_str_escapes_quotes_and_backslashes(self) -> None:
+        self.assertEqual(_sql_str("plain"), "'plain'")
+        self.assertEqual(_sql_str("O'Neil"), "'O''Neil'")
+        self.assertEqual(_sql_str("a\\'b"), "'a\\\\''b'")
+        self.assertEqual(_sql_str("50% ?"), "'50% ?'")
 
 
 class TestFvSourceRefsMetadata(absltest.TestCase):

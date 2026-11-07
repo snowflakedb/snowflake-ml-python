@@ -64,6 +64,7 @@ py_library(
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:sql_literal",
         "//snowflake/ml/dataset",
         "//snowflake/ml/lineage",
         "//snowflake/ml/utils:authentication",
@@ -157,7 +158,10 @@ py_test(
 py_test(
     name = "online_service_test",
     srcs = ["online_service_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -166,7 +170,10 @@ py_test(
 py_test(
     name = "online_service_http_client_test",
     srcs = ["online_service_http_client_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -260,7 +267,10 @@ py_test(
     name = "spec_models_test",
     srcs = ["spec/models_test.py"],
     main = "spec/models_test.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -270,7 +280,10 @@ py_test(
     name = "spec_table_schema_evolution_test",
     srcs = ["spec/table_schema_evolution_test.py"],
     main = "spec/table_schema_evolution_test.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -280,7 +293,10 @@ py_test(
     name = "spec_builder_test",
     srcs = ["spec/builder_test.py"],
     main = "spec/builder_test.py",
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -289,7 +305,10 @@ py_test(
 py_test(
     name = "stream_config_test",
     srcs = ["stream_config_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -298,7 +317,10 @@ py_test(
 py_test(
     name = "streaming_registration_test",
     srcs = ["streaming_registration_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],

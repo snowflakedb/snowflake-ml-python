@@ -1,6 +1,29 @@
 # Release History
 
-## 2.8.0
+## 2.9.0
+
+### New Features
+
+### Bug Fixes
+
+* Registry: GPU packaging now adds `pytorch-gpu` when a model has a conda `pytorch` dependency, so
+  `log_model` does not require extra GPU conda deps and the image build cannot silently install a
+  CPU PyTorch wheel for a GPU service.
+* Feature Store: Offline reads (`read_feature_view(..., store_type=StoreType.OFFLINE)`) and online reads from a
+  hybrid table online store (`store_type=StoreType.ONLINE` with `OnlineStoreType.HYBRID_TABLE`) now accept
+  `feature_names` that name a case-sensitive column, such as `'"f1"'`, and `keys` values that contain a backslash.
+  Both previously produced malformed SQL, so the read failed or filtered on the wrong value. Online reads from a
+  Postgres online store were not affected.
+* Feature Store: Entity and feature view descriptions that contain a backslash are now stored as written; one
+  ending in a backslash previously made the statement fail.
+* Feature Store: Concurrent registers and deletes of streaming feature views no longer leave a stream source's
+  reference count wrong or let a stream source that is still in use be deleted.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.8.0 (2026-11-04)
 
 ### New Features
 

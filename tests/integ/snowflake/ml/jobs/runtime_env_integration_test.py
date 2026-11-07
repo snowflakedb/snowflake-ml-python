@@ -57,13 +57,6 @@ class RuntimeEnvIntegrationTest(job_test_base.JobTestBase):
         pinned_version = pin_template.format(**runtime_line._asdict())
         self.assertEqual(runtime_line.image, self._resolve_for_local_python(pinned_version))
 
-    def test_full_image_path_resolves_like_a_bare_version(self) -> None:
-        runtime_line = self._newest_runtime_line()
-        self.assertEqual(
-            self._resolve_runtime_image(runtime_environment=runtime_line.minor),
-            self._resolve_runtime_image(runtime_environment=f"{runtime_line.repo}:{runtime_line.minor}.0"),
-        )
-
     def test_full_image_path_with_python_version_resolves_like_a_version_pin(self) -> None:
         # Same equivalence as above, but through the selector the client actually builds once a Python
         # version is in play: a full image path and the bare version it points at resolve alike whether

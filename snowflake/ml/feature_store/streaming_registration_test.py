@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_view import (
@@ -132,8 +133,8 @@ class CleanupStreamingTest(absltest.TestCase):
         self.assertFalse(any("ALTER TASK" in s for s in sql_strs))
         self.assertFalse(any("DROP TASK" in s for s in sql_strs))
 
-        # Verify ref count was decremented
-        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+        # The caller recounts after deleting the FV's metadata rows; cleanup doesn't.
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
 
     def test_safety_net_drops_leftover_backfill_tasks_and_proc(self) -> None:
         """When task + proc names are present in metadata, cleanup suspends the root,
@@ -188,8 +189,7 @@ class CleanupStreamingTest(absltest.TestCase):
         # Tables are still dropped after task cleanup.
         table_drops = [s for s in sql_strs if "DROP TABLE IF EXISTS" in s]
         self.assertEqual(len(table_drops), 2)
-        # Ref count is still decremented.
-        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
 
     def test_iceberg_landing_tables_dropped_with_generic_drop_table(self) -> None:
         """Cleanup issues a plain DROP TABLE even when the landing tables are Iceberg.
@@ -259,8 +259,7 @@ class CleanupStreamingTest(absltest.TestCase):
             telemetry_stmp={},
         )
 
-        # ref count should NOT be decremented
-        metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
 
 
 # ============================================================================
@@ -905,8 +904,8 @@ class RunStreamingPreambleTest(absltest.TestCase):
             self.assertIn('"EVENT_TIME" TIMESTAMP_NTZ', sql)
             self.assertNotIn("TIMESTAMP_NTZ(6)", sql)
 
-    def test_preamble_with_overwrite_decrements_old_ref(self) -> None:
-        """On overwrite, preamble decrements old stream source ref count."""
+    def test_preamble_with_overwrite_records_old_source(self) -> None:
+        """On overwrite, preamble records the replaced FV's stream source for the postamble to recount."""
         backfill_df = _make_mock_backfill_df()
         backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
 
@@ -918,7 +917,7 @@ class RunStreamingPreambleTest(absltest.TestCase):
             transformation_fn_name="old_fn",
         )
 
-        run_streaming_preamble(
+        result = run_streaming_preamble(
             session=session,
             feature_view=fv,
             version=FeatureViewVersion("v1"),
@@ -930,7 +929,8 @@ class RunStreamingPreambleTest(absltest.TestCase):
             get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
         )
 
-        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("OLD_SOURCE")
+        self.assertEqual(result.replaced_source_name, "OLD_SOURCE")
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
 
     def test_preamble_overwrite_suspends_and_drops_old_backfill_objects(self) -> None:
         """On overwrite, preamble suspends the old root task and drops finalizer + root + proc."""
@@ -948,7 +948,7 @@ class RunStreamingPreambleTest(absltest.TestCase):
             backfill_proc_name="DB.SCH.TEST_FV$v1$BACKFILL_PROC",
         )
 
-        run_streaming_preamble(
+        result = run_streaming_preamble(
             session=session,
             feature_view=fv,
             version=FeatureViewVersion("v1"),
@@ -974,11 +974,10 @@ class RunStreamingPreambleTest(absltest.TestCase):
         self.assertLess(finalize_drop_idx, root_drop_idx)
         self.assertLess(root_drop_idx, proc_drop_idx)
         self.assertIn("(TIMESTAMP_NTZ, TIMESTAMP_NTZ)", sql_strs[proc_drop_idx])
-        # Old ref count still decremented.
-        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("OLD_SOURCE")
+        self.assertEqual(result.replaced_source_name, "OLD_SOURCE")
 
-    def test_preamble_no_overwrite_skips_decrement(self) -> None:
-        """Without overwrite, preamble does not touch ref count."""
+    def test_preamble_no_overwrite_records_no_replaced_source(self) -> None:
+        """Without overwrite, there is no replaced stream source."""
         backfill_df = _make_mock_backfill_df()
         backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
 
@@ -986,7 +985,7 @@ class RunStreamingPreambleTest(absltest.TestCase):
         session = MagicMock()
         metadata_manager = MagicMock()
 
-        run_streaming_preamble(
+        result = run_streaming_preamble(
             session=session,
             feature_view=fv,
             version=FeatureViewVersion("v1"),
@@ -998,7 +997,7 @@ class RunStreamingPreambleTest(absltest.TestCase):
             get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
         )
 
-        metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        self.assertIsNone(result.replaced_source_name)
 
     def test_preamble_backfill_start_time_applies_filter(self) -> None:
         """backfill_start_time causes F.col filter on backfill_df."""
@@ -1455,7 +1454,7 @@ class RunStreamingPostambleTest(absltest.TestCase):
         # Initial state is RUNNING; the finalizer flips it to COMPLETED/FAILED later.
         self.assertEqual(saved_meta.backfill_state, "RUNNING")
 
-        metadata_manager.increment_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+        metadata_manager.sync_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
 
     def test_postamble_invokes_resource_callback_in_creation_order(self) -> None:
         """``on_resource_created`` fires once per backfill resource, in creation order.
@@ -1535,7 +1534,7 @@ class RunStreamingPostambleTest(absltest.TestCase):
         This is the rollback-leak regression guard: previously, the caller
         only learned about the UDTF/proc/tasks via the function's return
         value, which is never delivered when an exception propagates from
-        ``save_streaming_metadata`` or ``increment_stream_source_ref_count``.
+        ``save_streaming_metadata`` or ``sync_stream_source_ref_count``.
         With ``on_resource_created`` the caller registers each resource
         the moment its DDL succeeds, so the outer ``except`` rollback can
         drop them.
@@ -1597,9 +1596,9 @@ class RunStreamingPostambleTest(absltest.TestCase):
             [k for k, _ in events],
             ["BACKFILL_UDTF", "BACKFILL_PROC", "BACKFILL_ROOT_TASK", "BACKFILL_FINALIZE_TASK"],
         )
-        # The ref-count increment must NOT have run, since metadata save
+        # The ref_count recount must NOT have run, since metadata save
         # failed first.
-        metadata_manager.increment_stream_source_ref_count.assert_not_called()
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
         # The graph must NOT have been resumed: resume happens only after
         # the metadata row (with backfill_state='RUNNING') has been written,
         # so the finalizer can never race ahead of the row it must update.
@@ -1613,6 +1612,100 @@ class RunStreamingPostambleTest(absltest.TestCase):
                 "SYSTEM$TASK_DEPENDENTS_ENABLE" in sql,
                 f"task graph was enabled despite metadata save failure: {sql!r}",
             )
+
+    def test_postamble_raises_not_found_if_source_deleted_during_registration(self) -> None:
+        """The guarded STREAM_CONFIG write writes nothing once the source is gone; fail before recounting."""
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=_make_mock_backfill_df(),
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[_make_entity()],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+        metadata_manager.save_streaming_metadata.return_value = False
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+            replaced_source_name="OLD_SOURCE",
+        )
+
+        with self.assertRaises(exceptions.SnowflakeMLException) as cm:
+            run_streaming_postamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
+                preamble=preamble,
+                metadata_manager=metadata_manager,
+                default_warehouse=None,
+                get_fully_qualified_name_fn=self._fq,
+                telemetry_stmp={},
+            )
+
+        self.assertEqual(cm.exception.error_code, error_codes.NOT_FOUND)
+        self.assertIn("was deleted while registering", str(cm.exception))
+        # The replaced FV's row was not overwritten, so neither source's count changed.
+        metadata_manager.sync_stream_source_ref_count.assert_not_called()
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+        self.assertFalse(any("SYSTEM$TASK_DEPENDENTS_ENABLE" in sql for sql in sql_calls))
+
+    def test_postamble_recounts_replaced_source_on_overwrite(self) -> None:
+        """An overwrite that changes the stream source recounts both the new and the replaced source."""
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=_make_mock_backfill_df(),
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[_make_entity()],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+            replaced_source_name="OLD_SOURCE",
+        )
+
+        run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+        )
+
+        self.assertEqual(
+            [c.args[0] for c in metadata_manager.sync_stream_source_ref_count.call_args_list],
+            ["TXN_EVENTS", "OLD_SOURCE"],
+        )
 
     def test_postamble_uses_default_warehouse_when_fv_has_none(self) -> None:
         """Without an explicit FV warehouse, the FS default warehouse is used for both tasks."""
@@ -2251,31 +2344,6 @@ class CleanupExceptionHandlingTest(absltest.TestCase):
             telemetry_stmp={},
         )
 
-    def test_decrement_failure_logged_not_raised(self) -> None:
-        """Decrement failure is caught and logged, not raised."""
-        session = MagicMock()
-        metadata_manager = MagicMock()
-        metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
-            stream_source_name="SRC",
-            transformation_fn_name="fn",
-        )
-        metadata_manager.decrement_stream_source_ref_count.side_effect = Exception("decrement failed")
-
-        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("fv"), FeatureViewVersion("v1"))
-        fv_metadata = _FeatureViewMetadata(entities=["E"], timestamp_col="TS", is_streaming=True)
-
-        # Should not raise
-        cleanup_streaming_feature_view(
-            session=session,
-            feature_view_name=feature_view_name,
-            version="v1",
-            fv_name="FV",
-            fv_metadata=fv_metadata,
-            metadata_manager=metadata_manager,
-            get_fully_qualified_name_fn=lambda n: f"DB.SCH.{n}",
-            telemetry_stmp={},
-        )
-
 
 # ============================================================================
 # _build_streaming_feature_view_spec tests
@@ -2677,8 +2745,10 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
         # get_streaming_metadata is consulted both by the orphan helper's own guard and by
         # cleanup_streaming_feature_view, so assert it was called with the right args (not once).
         fs._metadata_manager.get_streaming_metadata.assert_any_call("MY_FV", "V1")
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
         fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        calls = [c[0] for c in fs._metadata_manager.method_calls]
+        self.assertLess(calls.index("delete_feature_view_metadata"), calls.index("sync_stream_source_ref_count"))
+        fs._metadata_manager.sync_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
 
     def test_cleanup_orphaned_returns_false_when_nothing_exists(self) -> None:
         """_cleanup_orphaned_feature_view_resources returns False when there is no streaming
@@ -2693,7 +2763,6 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
 
         self.assertFalse(result)
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
         fs._metadata_manager.delete_feature_view_metadata.assert_not_called()
 
     def test_cleanup_orphaned_drops_snapshot_table_when_task_already_gone(self) -> None:
@@ -2717,7 +2786,6 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
 
         self.assertTrue(result)
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
         fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
         issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
         self.assertTrue(
@@ -2745,7 +2813,6 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
 
         self.assertTrue(result)
         # No streaming cleanup happened, but the task drop and metadata deletion did.
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
         fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
         issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
         self.assertTrue(
@@ -2766,7 +2833,6 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
 
         self.assertTrue(result)
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
         fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
         issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
         self.assertTrue(
@@ -2796,8 +2862,10 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             # Should not raise — orphaned resources are cleaned up and the call returns.
             fs.delete_feature_view("MY_FV", "V1")
 
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
         fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        calls = [c[0] for c in fs._metadata_manager.method_calls]
+        self.assertLess(calls.index("delete_feature_view_metadata"), calls.index("sync_stream_source_ref_count"))
+        fs._metadata_manager.sync_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
 
     def test_delete_feature_view_reraises_when_nothing_to_clean_up(self) -> None:
         """delete_feature_view(name, version) re-raises NOT_FOUND when neither the
@@ -2816,8 +2884,6 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 fs.delete_feature_view("MY_FV", "V1")
             self.assertIn("Failed to find FeatureView", str(cm.exception))
-
-        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
 
     def test_delete_feature_view_propagates_non_not_found_errors(self) -> None:
         """delete_feature_view propagates errors other than NOT_FOUND, without attempting
@@ -2844,6 +2910,55 @@ class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
             self.assertIn("something went wrong", str(cm.exception))
 
         fs._metadata_manager.get_streaming_metadata.assert_not_called()
+
+
+def _make_registered_batch_fv() -> FeatureView:
+    mock_df = MagicMock()
+    mock_df.columns = ["USER_ID", "AMOUNT"]
+    mock_df.queries = {"queries": ["SELECT * FROM source"]}
+    fv = FeatureView(
+        name="MY_FV",
+        entities=[_make_entity()],
+        feature_df=mock_df,
+        refresh_freq="1 day",
+    )
+    fv._version = FeatureViewVersion("V1")
+    fv._status = FeatureViewStatus.ACTIVE
+    fv._database = SqlIdentifier("TEST_DB")
+    fv._schema = SqlIdentifier("TEST_SCHEMA")
+    return fv
+
+
+class DeleteBatchFeatureViewStreamConfigTest(absltest.TestCase):
+    """Tests for deleting a batch feature view that overwrote a streaming one."""
+
+    def test_recounts_source_of_replaced_streaming_version(self) -> None:
+        """The replaced version's STREAM_CONFIG row is deleted, so its source is recounted after."""
+        fs = _create_feature_store_with_mocks()
+        fv = _make_registered_batch_fv()
+        fs._validate_feature_view_name_and_version_input = MagicMock(return_value=fv)
+        fs._metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="TXN_EVENTS",
+            transformation_fn_name="my_fn",
+        )
+
+        fs.delete_feature_view(fv)
+
+        fs._metadata_manager.get_streaming_metadata.assert_called_once_with("MY_FV", "V1")
+        calls = [c[0] for c in fs._metadata_manager.method_calls]
+        self.assertLess(calls.index("delete_feature_view_metadata"), calls.index("sync_stream_source_ref_count"))
+        fs._metadata_manager.sync_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+
+    def test_no_recount_without_stream_config(self) -> None:
+        fs = _create_feature_store_with_mocks()
+        fv = _make_registered_batch_fv()
+        fs._validate_feature_view_name_and_version_input = MagicMock(return_value=fv)
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+
+        fs.delete_feature_view(fv)
+
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        fs._metadata_manager.sync_stream_source_ref_count.assert_not_called()
 
 
 class StreamConfigReconstructionTest(absltest.TestCase):

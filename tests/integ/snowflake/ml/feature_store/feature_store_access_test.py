@@ -14,7 +14,11 @@ from snowflake.ml.feature_store.access_manager import (
 )
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
-from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewStatus,
+    OnlineConfig,
+)
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -494,6 +498,63 @@ class FeatureStoreAccessTest(parameterized.TestCase):
             )
         finally:
             self._feature_store.delete_feature_view(fv)
+
+    def test_online_feature_table_privileges(self) -> None:
+        # The schema owner creates the table so the producer does not own it. Suspend and resume
+        # then depend on OPERATE, and a consumer read depends on SELECT and MONITOR.
+        e = self._feature_store.get_entity("foo")
+        fv = FeatureView(
+            name=f"test_oft_{uuid4().hex.upper()}"[:32],
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT id, name, TO_TIMESTAMP_NTZ(ts) AS ts FROM {self._mock_table}"),
+            timestamp_col="ts",
+            refresh_freq="1m",
+            online_config=OnlineConfig(enable=True),
+        )
+        registered = self._feature_store.register_feature_view(fv, "v1")
+        self.assertTrue(registered.online)
+        self.assertIn("$ONLINE", registered.fully_qualified_online_table_name())
+        online_table = registered.fully_qualified_online_table_name()
+        online_name = FeatureView._get_online_table_name(registered.name, registered.version).resolved()
+
+        def read_online_feature_table() -> None:
+            self._session.sql(f"SELECT ID FROM {online_table}").collect()
+            shown = self._session.sql(
+                f"SHOW ONLINE FEATURE TABLES IN SCHEMA {self._test_database}.{self._test_schema}"
+            ).collect()
+            visible_names = [str(row["name"]) for row in shown]
+            self.assertIn(online_name, visible_names)
+
+        try:
+            self._test_access(
+                lambda: self._feature_store.suspend_feature_view(registered),
+                Role.PRODUCER,
+                Role.PRODUCER,
+                lambda suspended: self.assertEqual(FeatureViewStatus.SUSPENDED, suspended.status),
+            )
+            self._test_access(
+                lambda: self._feature_store.resume_feature_view(registered),
+                Role.PRODUCER,
+                Role.PRODUCER,
+                lambda resumed: self.assertIn(resumed.status, (FeatureViewStatus.RUNNING, FeatureViewStatus.ACTIVE)),
+            )
+            for role in (Role.PRODUCER, Role.CONSUMER):
+                self._test_access(read_online_feature_table, Role.CONSUMER, role)
+            self._test_access(
+                read_online_feature_table,
+                Role.CONSUMER,
+                Role.NONE,
+                access_exception_dict={Role.NONE: SnowparkSQLException},
+            )
+            for role in (Role.CONSUMER, Role.NONE):
+                self._test_access(
+                    lambda: self._feature_store.suspend_feature_view(registered),
+                    Role.PRODUCER,
+                    role,
+                )
+        finally:
+            self._session.use_role(self._test_admin)
+            self._feature_store.delete_feature_view(registered)
 
     @parameterized.product(
         required_access=[Role.CONSUMER],

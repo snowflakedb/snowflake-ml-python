@@ -9,6 +9,10 @@ from pandas.testing import assert_frame_equal
 from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import FeatureView
+from snowflake.ml.feature_store.metadata_manager import (
+    FeatureStoreMetadataManager,
+    StreamingMetadata,
+)
 from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
@@ -233,3 +237,17 @@ def execute_snapshot_refresh(
     """
     task_body = fs._build_snapshot_task_body(feature_view_name, fully_qualified_name)
     fs._session.sql(f"EXECUTE IMMEDIATE $${task_body}$$").collect(statement_params=fs._telemetry_stmp)
+
+
+def register_streaming_fv_metadata(mgr: FeatureStoreMetadataManager, fv_name: str, source: str) -> None:
+    """Write the STREAM_CONFIG row a streaming FV registration leaves, then recount, without building the FV."""
+    mgr.save_streaming_metadata(
+        fv_name, "V1", StreamingMetadata(stream_source_name=source, transformation_fn_name="fn")
+    )
+    mgr.sync_stream_source_ref_count(source)
+
+
+def delete_streaming_fv_metadata(mgr: FeatureStoreMetadataManager, fv_name: str, source: str) -> None:
+    """Delete an FV's metadata rows and recount its stream source, as delete_feature_view does."""
+    mgr.delete_feature_view_metadata(fv_name, "V1")
+    mgr.sync_stream_source_ref_count(source)

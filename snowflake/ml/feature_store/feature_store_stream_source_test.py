@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import error_codes
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import online_service
 from snowflake.ml.feature_store.stream_source import StreamSource, _schema_to_dict
@@ -184,11 +185,12 @@ class DeleteStreamSourceTest(absltest.TestCase):
         """Test deleting a stream source with no active references."""
         fs = _create_feature_store_with_mocks()
         fs._metadata_manager.stream_source_exists.return_value = True
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 0
+        fs._metadata_manager.delete_stream_source_metadata.return_value = True
 
         fs.delete_stream_source("txn_events")
 
         fs._metadata_manager.delete_stream_source_metadata.assert_called_once_with("TXN_EVENTS")
+        fs._metadata_manager.list_stream_source_references.assert_not_called()
 
     def test_delete_nonexistent_raises(self) -> None:
         """Test that deleting a non-existent stream source raises ValueError (unwrapped by dispatch_decorator)."""
@@ -199,24 +201,54 @@ class DeleteStreamSourceTest(absltest.TestCase):
             fs.delete_stream_source("nonexistent")
         self.assertIn("does not exist", str(cm.exception))
 
-    def test_delete_with_active_references_raises(self) -> None:
-        """Test that deleting a stream source with active references fails."""
+    def test_delete_with_active_references_names_them(self) -> None:
+        """A refused guarded delete reports the referencing feature views."""
         fs = _create_feature_store_with_mocks()
         fs._metadata_manager.stream_source_exists.return_value = True
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 2
+        fs._metadata_manager.delete_stream_source_metadata.return_value = False
+        fs._metadata_manager.list_stream_source_references.return_value = [("FV_A", "v1"), ("FV_B", "v2")]
 
         with self.assertRaises(ValueError) as cm:
             fs.delete_stream_source("txn_events")
-        self.assertIn("2 active reference(s)", str(cm.exception))
+        self.assertEqual(
+            f"({error_codes.SNOWML_DELETE_FAILED}) Cannot delete StreamSource TXN_EVENTS: has 2 active reference(s) "
+            "(FV_A/v1, FV_B/v2). Delete those feature views first.",
+            str(cm.exception),
+        )
+        fs._metadata_manager.delete_stream_source_metadata.assert_called_once_with("TXN_EVENTS")
 
-        # Should not reach the actual delete
-        fs._metadata_manager.delete_stream_source_metadata.assert_not_called()
+    def test_delete_of_concurrently_deleted_source_raises_not_found(self) -> None:
+        """Nothing deleted and nothing referencing it means another caller deleted it first."""
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.stream_source_exists.side_effect = [True, False]
+        fs._metadata_manager.delete_stream_source_metadata.return_value = False
+        fs._metadata_manager.list_stream_source_references.return_value = []
+
+        with self.assertRaises(ValueError) as cm:
+            fs.delete_stream_source("txn_events")
+        self.assertIn("does not exist", str(cm.exception))
+        fs._metadata_manager.delete_stream_source_metadata.assert_called_once_with("TXN_EVENTS")
+
+    def test_delete_refused_then_unreferenced_asks_to_try_again(self) -> None:
+        """Refused, then the last referencing FV is deleted before the listing: report it, don't delete."""
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.stream_source_exists.return_value = True
+        fs._metadata_manager.delete_stream_source_metadata.return_value = False
+        fs._metadata_manager.list_stream_source_references.return_value = []
+
+        with self.assertRaises(ValueError) as cm:
+            fs.delete_stream_source("txn_events")
+        self.assertEqual(
+            f"({error_codes.SNOWML_DELETE_FAILED}) Cannot delete StreamSource TXN_EVENTS: its references changed "
+            "during the delete. Try again.",
+            str(cm.exception),
+        )
+        fs._metadata_manager.delete_stream_source_metadata.assert_called_once_with("TXN_EVENTS")
 
     def test_delete_db_failure_raises(self) -> None:
         """Test that a database failure during delete is raised as RuntimeError (unwrapped by dispatch_decorator)."""
         fs = _create_feature_store_with_mocks()
         fs._metadata_manager.stream_source_exists.return_value = True
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 0
         fs._metadata_manager.delete_stream_source_metadata.side_effect = RuntimeError("DB error")
 
         with self.assertRaises(RuntimeError) as cm:
@@ -378,7 +410,6 @@ class StreamSourceCaseSensitivityTest(absltest.TestCase):
         """Test that delete_stream_source uses the case-preserving resolved name for lookup."""
         fs = _create_feature_store_with_mocks()
         fs._metadata_manager.stream_source_exists.return_value = True
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 0
 
         fs.delete_stream_source('"myMixed"')
 
@@ -428,7 +459,6 @@ class StreamSourceCRUDIntegrationTest(absltest.TestCase):
         self.assertEqual(updated.desc, "Updated")
 
         # 4. Delete (no references)
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 0
         fs.delete_stream_source("txn_events")
         fs._metadata_manager.delete_stream_source_metadata.assert_called_once_with("TXN_EVENTS")
 
@@ -444,14 +474,15 @@ class StreamSourceCRUDIntegrationTest(absltest.TestCase):
 
         # Try to delete with active reference
         fs._metadata_manager.stream_source_exists.return_value = True
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 1
+        fs._metadata_manager.delete_stream_source_metadata.return_value = False
+        fs._metadata_manager.list_stream_source_references.return_value = [("FV_A", "v1")]
 
         with self.assertRaises(ValueError) as cm:
             fs.delete_stream_source("txn_events")
-        self.assertIn("1 active reference(s)", str(cm.exception))
+        self.assertIn("1 active reference(s) (FV_A/v1)", str(cm.exception))
 
         # Remove reference, then delete succeeds
-        fs._metadata_manager.get_stream_source_ref_count.return_value = 0
+        fs._metadata_manager.delete_stream_source_metadata.return_value = True
         fs.delete_stream_source("txn_events")
 
 

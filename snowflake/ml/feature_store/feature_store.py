@@ -34,7 +34,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
     sql_error_codes,
 )
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, sql_literal
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     get_fully_qualified_name,
@@ -358,27 +358,6 @@ _SNAPSHOT_STATUS_TABLE = "SNOWML_SNAPSHOT_STATUS"
 # skip refresh_freq handling entirely when the caller omits it, while still accepting None
 # as an intentional value — preserving backward compatibility with callers that never set it.
 _UNSET: Any = object()
-
-
-def _sql_string_literal(value: str) -> str:
-    """Quote a string for safe inclusion as a Snowflake DDL string literal.
-
-    Doubles embedded single quotes (the Snowflake convention for escaping
-    inside single-quoted literals) and wraps the result in single quotes so
-    callers cannot forget the surrounding quotes. Use this everywhere a
-    user-controlled string is interpolated into a single-quoted SQL literal
-    such as ``COMMENT = ...`` or ``ALLOWED_VALUES ...`` — Snowflake DDL does
-    not accept ``?`` bind parameters in those positions, so quote-doubling
-    is the only safe option.
-
-    Args:
-        value: Raw string to escape.
-
-    Returns:
-        ``'<value with `'` doubled>'`` — already quoted, ready to drop into
-        SQL with no surrounding quotes at the call site.
-    """
-    return "'" + value.replace("'", "''") + "'"
 
 
 @dataclass(frozen=True)
@@ -1198,8 +1177,8 @@ class FeatureStore:
         try:
             self._session.sql(
                 f"""CREATE TAG IF NOT EXISTS {full_tag_name}
-                    ALLOWED_VALUES {_sql_string_literal(join_keys_str)}
-                    COMMENT = {_sql_string_literal(entity.desc)}
+                    ALLOWED_VALUES {sql_literal.string_literal(join_keys_str)}
+                    COMMENT = {sql_literal.string_literal(entity.desc)}
                 """
             ).collect(statement_params=self._telemetry_stmp)
         except Exception as e:
@@ -1268,7 +1247,7 @@ class FeatureStore:
         full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
 
         try:
-            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = {_sql_string_literal(new_desc)}").collect(
+            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = {sql_literal.string_literal(new_desc)}").collect(
                 statement_params=self._telemetry_stmp
             )
         except Exception as e:
@@ -1422,7 +1401,6 @@ class FeatureStore:
 
         created_resources: list[tuple[_FeatureStoreObjTypes, str]] = []
         streaming_preamble = None
-        streaming_ref_count_incremented = False
         try:
             fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
             refresh_freq = feature_view.refresh_freq
@@ -1623,7 +1601,6 @@ class FeatureStore:
                     telemetry_stmp=self._telemetry_stmp,
                     on_resource_created=_track_streaming_resource,
                 )
-                streaming_ref_count_incremented = True
 
         except Exception as e:
             # We can't rollback in case of overwrite.
@@ -1636,17 +1613,8 @@ class FeatureStore:
                     or (feature_view.append_only and feature_view.backup_source is not None)
                 ):
                     self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), version)
-                # Only decrement ref_count if postamble successfully incremented it
-                if streaming_preamble is not None and streaming_ref_count_incremented:
-                    try:
-                        self._metadata_manager.decrement_stream_source_ref_count(
-                            streaming_preamble.resolved_source_name
-                        )
-                    except Exception as rollback_err:
-                        logger.warning(
-                            f"Best-effort rollback: failed to decrement stream source ref_count "
-                            f"for {streaming_preamble.resolved_source_name}: {rollback_err}"
-                        )
+                if streaming_preamble is not None:
+                    self._metadata_manager.sync_stream_source_ref_count(streaming_preamble.resolved_source_name)
 
             if isinstance(e, snowml_exceptions.SnowflakeMLException):
                 raise
@@ -3213,14 +3181,15 @@ class FeatureStore:
             drop_snapshot_table=True,
         )
 
-        # Clean up streaming FV resources (udf_transformed table + ref count)
+        # Clean up streaming FV resources (udf_transformed table, backfill graph)
+        stream_source_name = None
         if feature_view.is_streaming:
             from snowflake.ml.feature_store.streaming_registration import (
                 cleanup_streaming_feature_view,
             )
 
             feature_view_name = FeatureView._get_physical_name(feature_view.name, feature_view.version)
-            cleanup_streaming_feature_view(
+            stream_source_name = cleanup_streaming_feature_view(
                 session=self._session,
                 feature_view_name=feature_view_name,
                 version=str(feature_view.version),
@@ -3230,9 +3199,19 @@ class FeatureStore:
                 get_fully_qualified_name_fn=self._get_fully_qualified_name,
                 telemetry_stmp=self._telemetry_stmp,
             )
+        else:
+            # A batch FV that overwrote a streaming one keeps the replaced version's STREAM_CONFIG
+            # row, which the metadata delete below removes, so its source is recounted too.
+            streaming_meta = self._metadata_manager.get_streaming_metadata(
+                str(feature_view.name), str(feature_view.version)
+            )
+            if streaming_meta is not None and streaming_meta.stream_source_name:
+                stream_source_name = streaming_meta.stream_source_name
 
         # Delete aggregation metadata and feature descriptions if exist
         self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), str(feature_view.version))
+        if stream_source_name is not None:
+            self._metadata_manager.sync_stream_source_ref_count(stream_source_name)
 
         logger.info(f"Deleted FeatureView {feature_view.name}/{feature_view.version}.")
 
@@ -3780,24 +3759,47 @@ class FeatureStore:
                 original_exception=ValueError(f"StreamSource {name_id} does not exist."),
             )
 
-        # Check for active feature view references
-        ref_count = self._metadata_manager.get_stream_source_ref_count(name_id.resolved())
-        if ref_count > 0:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.SNOWML_DELETE_FAILED,
-                original_exception=ValueError(
-                    f"Cannot delete StreamSource {name_id}: has {ref_count} active reference(s)."
-                ),
-            )
-
         try:
-            self._metadata_manager.delete_stream_source_metadata(name_id.resolved())
+            deleted = self._metadata_manager.delete_stream_source_metadata(name_id.resolved())
         except Exception as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                 original_exception=RuntimeError(f"Failed to delete stream source: {e}."),
             ) from e
+        if not deleted:
+            self._raise_if_stream_source_referenced(name_id)
+            if not self._metadata_manager.stream_source_exists(name_id.resolved()):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_FOUND,
+                    original_exception=ValueError(f"StreamSource {name_id} does not exist."),
+                )
+            # Refused, yet nothing references it now: the last reference was removed after the refusal.
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_DELETE_FAILED,
+                original_exception=ValueError(
+                    f"Cannot delete StreamSource {name_id}: its references changed during the delete. Try again."
+                ),
+            )
         logger.info(f"Deleted StreamSource {name_id}.")
+
+    def _raise_if_stream_source_referenced(self, name_id: SqlIdentifier) -> None:
+        """Raise if any feature view references the stream source.
+
+        Args:
+            name_id: Stream source name.
+
+        Raises:
+            SnowflakeMLException: [SNOWML_DELETE_FAILED] If it is referenced; lists the feature views.
+        """
+        refs = self._metadata_manager.list_stream_source_references(name_id.resolved())
+        if refs:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_DELETE_FAILED,
+                original_exception=ValueError(
+                    f"Cannot delete StreamSource {name_id}: has {len(refs)} active reference(s) "
+                    f"({', '.join(f'{fv}/{v}' for fv, v in refs)}). Delete those feature views first."
+                ),
+            )
 
     @dispatch_decorator()
     def update_stream_source(self, name: str, *, desc: str | None = None) -> StreamSource | None:
@@ -4545,7 +4547,7 @@ class FeatureStore:
         fqn = feature_view.fully_qualified_name()
 
         if feature_view.status == FeatureViewStatus.STATIC:
-            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = {_sql_string_literal(desc)}")], []
+            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = {sql_literal.string_literal(desc)}")], []
 
         # Managed (Dynamic-Table-backed) FVs always have a refresh_freq — the
         # only refresh_freq=None case is an external (View-backed) FV, which
@@ -4565,7 +4567,7 @@ class FeatureStore:
             return (
                 op_type,
                 f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'"
-                f" WAREHOUSE = {wh} COMMENT = {_sql_string_literal(comment)}",
+                f" WAREHOUSE = {wh} COMMENT = {sql_literal.string_literal(comment)}",
             )
 
         def create_task_ops(op_type: str, *, cron_expr: str, wh: SqlIdentifier | None) -> list[tuple[str, str]]:
@@ -6154,7 +6156,7 @@ class FeatureStore:
             assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
             query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = {_sql_string_literal(feature_view.desc)}
+                COMMENT = {sql_literal.string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -6163,12 +6165,12 @@ class FeatureStore:
                 INITIALIZE = {feature_view.initialize}
                 CATALOG = 'SNOWFLAKE'
                 EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}
-                BASE_LOCATION = '{storage_config.base_location.replace("'", "''")}'
+                BASE_LOCATION = {sql_literal.string_literal(storage_config.base_location)}
             """
         else:
             query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = {_sql_string_literal(feature_view.desc)}
+                COMMENT = {sql_literal.string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -6248,7 +6250,7 @@ class FeatureStore:
         Called when the backing DT/View no longer exists but companion artifacts
         may still be present.  Handles:
 
-        - Streaming ref_count decrement and ``$UDF_TRANSFORMED`` / ``$UDF_TRANSFORMED$BACKFILL``
+        - ``$UDF_TRANSFORMED`` / ``$UDF_TRANSFORMED$BACKFILL``
           table drops (streaming FVs).
         - The companion refresh Task (append-only / CRON-scheduled FVs) and, probed
           independently, the snapshot table and its status row (append-only FVs).
@@ -6334,6 +6336,8 @@ class FeatureStore:
                 logger.warning("feature store: failed to drop online feature table %s: %s", fq_online_name, e)
 
         self._metadata_manager.delete_feature_view_metadata(fv_name, version)
+        if streaming_meta is not None and streaming_meta.stream_source_name:
+            self._metadata_manager.sync_stream_source_ref_count(streaming_meta.stream_source_name)
         return True
 
     def _cleanup_stale_feature_view_resources(
@@ -6913,7 +6917,7 @@ END;"""
         try:
             query = f"""CREATE{overwrite_clause} DYNAMIC TABLE {fully_qualified_name}
                 TARGET_LAG = '{target_lag}'
-                COMMENT = {_sql_string_literal(feature_view.desc)}
+                COMMENT = {sql_literal.string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause_str}
                 )
@@ -7298,7 +7302,7 @@ END;"""
         # Include column definitions only if provided (empty when feature_descs is None).
         col_clause = f" ({column_descs})" if column_descs else ""
         return f"""CREATE{overwrite_clause} VIEW {view_name}{col_clause}
-            COMMENT = {_sql_string_literal(feature_view.desc)}
+            COMMENT = {sql_literal.string_literal(feature_view.desc)}
             TAG (
                 {tagging_clause_str}
             )
@@ -8243,13 +8247,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         """
         # Use resolved() to get the actual stored name (without SQL quoting/escaping)
         raw_name = table_name.resolved()
-        # Escape single quotes for SQL string literal safety.
-        # The table name goes inside single quotes as a LIKE pattern (string literal),
-        # so single quotes must be escaped as '' (e.g., "foo'bar" -> "foo''bar").
-        # The schema path is a SQL identifier (not a string literal), and is already
-        # properly formatted by full_schema_path using SqlIdentifier utilities.
-        escaped_name = raw_name.replace("'", "''")
-        query = f"SHOW ICEBERG TABLES LIKE '{escaped_name}' IN SCHEMA {self._config.full_schema_path}"
+        # The table name is a LIKE pattern inside a string literal; the schema path is a SQL identifier.
+        query = (
+            f"SHOW ICEBERG TABLES LIKE {sql_literal.string_literal(raw_name)} IN SCHEMA {self._config.full_schema_path}"
+        )
 
         try:
             iceberg_tables = self._session.sql(query).collect(statement_params=self._telemetry_stmp)
@@ -9144,7 +9145,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
         timestamp_clause = ""
         if feature_view.timestamp_col:
-            timestamp_clause = f"TIMESTAMP_COLUMN='{feature_view.timestamp_col}'"
+            # GS expects stored form of the TIMESTAMP_COLUMN name
+            timestamp_clause = f"TIMESTAMP_COLUMN='{feature_view.timestamp_col.resolved()}'"
 
         # Determine source clause based on online store type
         store_type = config.store_type
@@ -9591,7 +9593,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         try:
             res = self._session.sql(
                 f"""
-                SELECT ENTITY_DETAIL('{domain}','{self._get_fully_qualified_name(obj_name)}', '["TAG_REFERENCES"]');
+                SELECT ENTITY_DETAIL(
+                    '{domain}',
+                    {sql_literal.string_literal(self._get_fully_qualified_name(obj_name))},
+                    '["TAG_REFERENCES"]'
+                );
             """
             ).collect(statement_params=self._telemetry_stmp)
             entity_detail = json.loads(res[0][0])
@@ -9631,7 +9637,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         try:
             res = self._session.sql(
                 f"""
-                SELECT ENTITY_DETAIL('TAG','{self._get_fully_qualified_name(tag_name)}', '["TAG_REFERENCES_INTERNAL"]');
+                SELECT ENTITY_DETAIL(
+                    'TAG',
+                    {sql_literal.string_literal(self._get_fully_qualified_name(tag_name))},
+                    '["TAG_REFERENCES_INTERNAL"]'
+                );
             """
             ).collect(statement_params=self._telemetry_stmp)
             entity_detail = json.loads(res[0][0])
@@ -9755,7 +9765,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     all_join_keys.extend([key.resolved() for key in entity.join_keys])
                 select_columns.extend([f'"{key}"' for key in all_join_keys])
 
-            select_columns.extend([f'"{name}"' for name in feature_names])
+            select_columns.extend([SqlIdentifier(name).identifier() for name in feature_names])
             return ", ".join(select_columns)
         else:
             # Select all columns
@@ -9808,8 +9818,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     key_conditions.append(f'"{join_key}" = ?')
                     params.append(value)
                 else:
-                    safe_value = str(value).replace("'", "''")
-                    key_conditions.append(f"\"{join_key}\" = '{safe_value}'")
+                    key_conditions.append(f'"{join_key}" = {sql_literal.string_literal(str(value))}')
             where_conditions.append(f"({' AND '.join(key_conditions)})")
 
         return f" WHERE {' OR '.join(where_conditions)}", params

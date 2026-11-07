@@ -334,7 +334,13 @@ class ModelRuntimeTest(absltest.TestCase):
             # Use the current runtime Python version (major.minor)
             py_version = ".".join(platform.python_version().split(".")[:2])
             self.assertContainsSubset(
-                [f"python=={py_version}.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
+                [
+                    f"python=={py_version}.*",
+                    "pytorch",
+                    "pytorch-gpu",
+                    "snowflake-ml-python==1.0.0",
+                    "nvidia::cuda==11.7.*",
+                ],
                 dependencies["dependencies"],
             )
 

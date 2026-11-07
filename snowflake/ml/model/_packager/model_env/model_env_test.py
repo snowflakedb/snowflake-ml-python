@@ -594,7 +594,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["pytorch==1.0.0"],
+            ["pytorch-gpu==1.0.0", "pytorch==1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -605,7 +605,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["pytorch>=1.0.0"],
+            ["pytorch-gpu>=1.0.0", "pytorch>=1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -638,7 +638,7 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(
             env.conda_dependencies,
-            ["conda-forge::pytorch==1.0.0"],
+            ["conda-forge::pytorch==1.0.0", "pytorch-gpu==1.0.0"],
         )
 
         env = model_env.ModelEnv()
@@ -766,6 +766,7 @@ class ModelEnvTest(absltest.TestCase):
             env.conda_dependencies,
             [
                 "accelerate>=0.22.0",
+                "pytorch-gpu==1.0.0",
                 "pytorch==1.0.0",
                 "scipy>=1.9",
                 "transformers==1.0.0",
@@ -834,6 +835,14 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.pip_requirements, ["tensorflow>=2.10.0"])
             self.assertListEqual(env.conda_dependencies, [])
 
+            # PyTorch pip-only: CUDA wheels are selected at save time, not via pytorch-gpu
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
+            env.pip_requirements = ["torch==2.9.1"]
+            env.cuda_version = "12.4"
+            env.generate_env_for_cuda()
+            self.assertListEqual(env.pip_requirements, ["torch==2.9.1"])
+            self.assertListEqual(env.conda_dependencies, [])
+
             # Transformers pip-only: accelerate/scipy/bitsandbytes should still be added
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["transformers>=4.30.0", "torch>=2.0.0"]
@@ -854,6 +863,12 @@ class ModelEnvTest(absltest.TestCase):
 
         # Should substitute to py-xgboost-gpu in conda_dependencies
         self.assertListEqual(env.conda_dependencies, ["py-xgboost-gpu>=1.0.0"])
+
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["pytorch==2.9.1"]
+        env.cuda_version = "12.4"
+        env.generate_env_for_cuda()
+        self.assertListEqual(env.conda_dependencies, ["pytorch-gpu==2.9.1", "pytorch==2.9.1"])
 
         with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=False):
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)

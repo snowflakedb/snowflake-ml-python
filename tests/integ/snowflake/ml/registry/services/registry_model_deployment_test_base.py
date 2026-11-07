@@ -244,6 +244,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
 
         create_service_kwargs: dict[str, Any] = dict(
             service_name=service_name,
+            # Image builds don't need a GPU; keeping them on the CPU pool leaves the shared GPU pool for services.
+            image_build_compute_pool=self._TEST_CPU_COMPUTE_POOL,
             service_compute_pool=service_compute_pool,
             gpu_requests=gpu_requests,
             num_workers=num_workers,

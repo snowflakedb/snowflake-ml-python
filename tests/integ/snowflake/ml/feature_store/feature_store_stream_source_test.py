@@ -1,11 +1,19 @@
 """Integration tests for FeatureStore stream source CRUD operations."""
 
 from absl.testing import absltest, parameterized
-from common_utils import create_random_schema
-from fs_integ_test_base import FeatureStoreIntegTestBase
+from common_utils import (
+    create_random_schema,
+    delete_streaming_fv_metadata,
+    register_streaming_fv_metadata,
+)
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
+from snowflake.ml.feature_store.metadata_manager import (
+    FvSourceRefsMetadata,
+    StreamingMetadata,
+)
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.snowpark.types import (
     BooleanType,
@@ -222,14 +230,52 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
         with self.assertRaisesRegex(ValueError, "does not exist"):
             fs.delete_stream_source("no_such_source")
 
+    def test_overwritten_stream_config_keeps_counting(self) -> None:
+        """A STREAM_CONFIG row left by a batch overwrite keeps its source referenced until the version is deleted."""
+        fs = self._create_feature_store()
+        mgr = fs._metadata_manager
+        fs.register_stream_source(self._make_stream_source("stale_ref"))
+        register_streaming_fv_metadata(mgr, "FV_A", "STALE_REF")
+        self.assertEqual(mgr.get_stream_source_ref_count("STALE_REF"), 1)
+
+        # A batch overwrite writes rows of other types and leaves STREAM_CONFIG in place.
+        mgr.save_feature_view_source_refs("FV_A", "V1", FvSourceRefsMetadata(sources=[{"name": "SRC_TABLE"}]))
+        self.assertEqual(mgr.get_stream_source_ref_count("STALE_REF"), 1)
+        self.assertEqual(mgr.list_stream_source_references("STALE_REF"), [("FV_A", "V1")])
+        with self.assertRaisesRegex(ValueError, r"active reference\(s\) \(FV_A/V1\)"):
+            fs.delete_stream_source("stale_ref")
+
+        # Deleting the feature view version removes all of its rows and releases the source.
+        delete_streaming_fv_metadata(mgr, "FV_A", "STALE_REF")
+        self.assertIsNone(mgr.get_streaming_metadata("FV_A", "V1"))
+        self.assertEqual(mgr.get_stream_source_ref_count("STALE_REF"), 0)
+        fs.delete_stream_source("stale_ref")
+        self.assertFalse(mgr.stream_source_exists("STALE_REF"))
+
+    def test_references_are_per_version(self) -> None:
+        """Deleting V2 of a feature view does not release the source V1 still streams from."""
+        fs = self._create_feature_store()
+        mgr = fs._metadata_manager
+        fs.register_stream_source(self._make_stream_source("per_version"))
+        register_streaming_fv_metadata(mgr, "FV_A", "PER_VERSION")
+        mgr.save_streaming_metadata(
+            "FV_A", "V2", StreamingMetadata(stream_source_name="PER_VERSION", transformation_fn_name="fn")
+        )
+        self.assertEqual(mgr.get_stream_source_ref_count("PER_VERSION"), 2)
+
+        mgr.delete_feature_view_metadata("FV_A", "V2")
+
+        self.assertEqual(mgr.list_stream_source_references("PER_VERSION"), [("FV_A", "V1")])
+        with self.assertRaisesRegex(ValueError, r"active reference\(s\) \(FV_A/V1\)"):
+            fs.delete_stream_source("per_version")
+
     def test_delete_with_active_references_blocked(self) -> None:
-        """Test that deletion is blocked when ref_count > 0."""
+        """Test that deletion is blocked while a streaming FV references the source."""
         fs = self._create_feature_store()
         ss = self._make_stream_source("ref_source")
         fs.register_stream_source(ss)
 
-        # Simulate a FeatureView registration incrementing the ref count
-        fs._metadata_manager.increment_stream_source_ref_count("REF_SOURCE")
+        register_streaming_fv_metadata(fs._metadata_manager, "FV_A", "REF_SOURCE")
 
         # Verify the ref count
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("REF_SOURCE"), 1)
@@ -238,8 +284,8 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
         with self.assertRaisesRegex(ValueError, "active reference"):
             fs.delete_stream_source("ref_source")
 
-        # Simulate FeatureView deletion decrementing the ref count
-        fs._metadata_manager.decrement_stream_source_ref_count("REF_SOURCE")
+        # Simulate FeatureView deletion
+        delete_streaming_fv_metadata(fs._metadata_manager, "FV_A", "REF_SOURCE")
 
         # Verify ref count is back to 0
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("REF_SOURCE"), 0)
@@ -248,38 +294,39 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
         fs.delete_stream_source("ref_source")
         self.assertEqual(len(fs.list_stream_sources().collect()), 0)
 
-    def test_increment_and_decrement_ref_count(self) -> None:
-        """Test incrementing and decrementing the ref count on a stream source."""
+    def test_ref_count_tracks_referencing_feature_views(self) -> None:
+        """Test that the ref count follows streaming FVs being added and removed."""
         fs = self._create_feature_store()
         fs.register_stream_source(self._make_stream_source("multi_ref"))
 
         # Initially ref_count is 0
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("MULTI_REF"), 0)
 
-        # Increment three times (simulating 3 FeatureView registrations)
-        fs._metadata_manager.increment_stream_source_ref_count("MULTI_REF")
-        fs._metadata_manager.increment_stream_source_ref_count("MULTI_REF")
-        fs._metadata_manager.increment_stream_source_ref_count("MULTI_REF")
+        # Simulate 3 FeatureView registrations
+        for fv_name in ("FV_A", "FV_B", "FV_C"):
+            register_streaming_fv_metadata(fs._metadata_manager, fv_name, "MULTI_REF")
 
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("MULTI_REF"), 3)
+        self.assertEqual(fs._metadata_manager.get_stream_source_metadata("MULTI_REF")["ref_count"], 3)
 
         # Delete should be blocked
         with self.assertRaisesRegex(ValueError, "active reference"):
             fs.delete_stream_source("multi_ref")
 
-        # Decrement once
-        fs._metadata_manager.decrement_stream_source_ref_count("MULTI_REF")
+        # Delete one FV
+        delete_streaming_fv_metadata(fs._metadata_manager, "FV_A", "MULTI_REF")
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("MULTI_REF"), 2)
 
         # Still blocked
         with self.assertRaisesRegex(ValueError, "active reference"):
             fs.delete_stream_source("multi_ref")
 
-        # Decrement remaining
-        fs._metadata_manager.decrement_stream_source_ref_count("MULTI_REF")
-        fs._metadata_manager.decrement_stream_source_ref_count("MULTI_REF")
+        # Delete remaining
+        delete_streaming_fv_metadata(fs._metadata_manager, "FV_B", "MULTI_REF")
+        delete_streaming_fv_metadata(fs._metadata_manager, "FV_C", "MULTI_REF")
 
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count("MULTI_REF"), 0)
+        self.assertEqual(fs._metadata_manager.get_stream_source_metadata("MULTI_REF")["ref_count"], 0)
 
         # Now delete succeeds
         fs.delete_stream_source("multi_ref")
