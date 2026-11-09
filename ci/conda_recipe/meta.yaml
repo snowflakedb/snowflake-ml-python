@@ -20,7 +20,7 @@ build:
     - BAZEL_REPOSITORY_CACHE
 package:
   name: snowflake-ml-python
-  version: 2.8.0
+  version: 2.9.0
 requirements:
   build:
     - python

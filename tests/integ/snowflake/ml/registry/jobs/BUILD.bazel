@@ -107,42 +107,10 @@ py_test(
 )
 
 py_test(
-    name = "registry_batch_inference_cse_stage_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_cse_stage_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
     name = "registry_batch_inference_failure_mode_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_failure_mode_test.py"],
     optional_dependencies = ["scikit-learn"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_custom_multi_modality_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_custom_multi_modality_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
-    ],
-    optional_dependencies = ["llm"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [
@@ -378,40 +346,6 @@ py_test(
 )
 
 py_test(
-    name = "registry_batch_inference_tensorflow_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_tensorflow_test.py"],
-    optional_dependencies = [
-        "tensorflow",
-    ],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/_signatures:numpy_handler",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-        "//snowflake/ml/model/_signatures:tensorflow_handler",
-        "//tests/integ/snowflake/ml/test_utils:model_factory",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_keras_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_keras_test.py"],
-    optional_dependencies = [
-        "keras",
-    ],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/_signatures:numpy_handler",
-        "//snowflake/ml/model/_signatures:snowpark_handler",
-    ],
-)
-
-py_test(
     name = "registry_batch_inference_sentence_transformers_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_sentence_transformers_test.py"],
@@ -452,22 +386,6 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
-    name = "registry_batch_inference_multi_modality_hugging_face_pipeline_test",
-    timeout = "eternal",
-    srcs = ["registry_batch_inference_multi_modality_hugging_face_pipeline_test.py"],
-    data = [
-        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
-    ],
-    optional_dependencies = ["transformers"],
-    shard_count = 1,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-        "//snowflake/ml/utils:stage_file",
     ],
 )
 

@@ -49,26 +49,24 @@ _PRE_INIT_PRIVILEGES: dict[_FeatureStoreRole, list[_Privilege]] = {
             "{database}.{schema}",
             [
                 "CREATE DYNAMIC TABLE",
-                "CREATE TAG",
                 "CREATE VIEW",
+                "CREATE TAG",
                 "CREATE TASK",
                 "CREATE TABLE",
-            ],
-        ),
-        _Privilege(
-            "SCHEMA",
-            "{database}.{schema}",
-            [
-                "CREATE DATASET",  # Handle DATASET privilege separately since it may not be enabled
+                "CREATE ICEBERG TABLE",
+                "CREATE ONLINE FEATURE TABLE",
+                "CREATE DATASET",
             ],
         ),
         _Privilege("DYNAMIC TABLE", _ALL_OBJECTS, ["OPERATE"], "SCHEMA {database}.{schema}"),
         _Privilege("TASK", _ALL_OBJECTS, ["OPERATE"], "SCHEMA {database}.{schema}"),
+        _Privilege("ONLINE FEATURE TABLE", _ALL_OBJECTS, ["OPERATE"], "SCHEMA {database}.{schema}"),
     ],
     _FeatureStoreRole.CONSUMER: [
         _Privilege("DATABASE", "{database}", ["USAGE"]),
         _Privilege("SCHEMA", "{database}.{schema}", ["USAGE"]),
         _Privilege("DYNAMIC TABLE", _ALL_OBJECTS, ["SELECT", "MONITOR"], "SCHEMA {database}.{schema}"),
+        _Privilege("ONLINE FEATURE TABLE", _ALL_OBJECTS, ["SELECT", "MONITOR"], "SCHEMA {database}.{schema}"),
         _Privilege("VIEW", _ALL_OBJECTS, ["SELECT", "REFERENCES"], "SCHEMA {database}.{schema}"),
         _Privilege("TABLE", _ALL_OBJECTS, ["SELECT", "REFERENCES"], "SCHEMA {database}.{schema}"),
         _Privilege("DATASET", _ALL_OBJECTS, ["USAGE"], "SCHEMA {database}.{schema}"),

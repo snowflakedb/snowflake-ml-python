@@ -2036,13 +2036,21 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
     # =========================================================================
 
     def test_spec_oft_get_feature_view_preserves_config(self) -> None:
-        """get_feature_view preserves the spec OFT online config."""
+        """get_feature_view preserves the spec OFT online config and a mixed-case timestamp column.
+
+        The timestamp column is stored as ``purchaseTime``; the online table has to name it by that
+        stored name, since the quoted identifier ``"purchaseTime"`` refers to no column and fails creation.
+        """
         fv_name = f"spec_oft_get_fv_{uuid.uuid4().hex[:8]}"
         fv = FeatureView(
             name=fv_name,
             entities=[self.user_entity],
-            feature_df=self.sample_data.select("USER_ID", "PURCHASE_AMOUNT", "PURCHASE_TIME"),
-            timestamp_col="PURCHASE_TIME",
+            feature_df=self.sample_data.select(
+                "USER_ID",
+                "PURCHASE_AMOUNT",
+                snowpark_functions.col("PURCHASE_TIME").alias('"purchaseTime"'),
+            ),
+            timestamp_col='"purchaseTime"',
             refresh_freq="5m",
             online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
         )
@@ -2051,6 +2059,20 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
         self.assertTrue(retrieved_fv.online)
         self.assertIsNotNone(retrieved_fv.online_config)
         self.assertEqual(retrieved_fv.online_config.target_lag, "10 seconds")
+        self.assertEqual(retrieved_fv.timestamp_col.resolved(), "purchaseTime")
+
+        # TODO: enable once the server-side online table refresh quotes the timestamp and entity columns it reads.
+        # Should also update CHANGELOG.md with: Feature Store: Registering an online feature view whose timestamp
+        # column is stored in lower or mixed case, such as `timestamp_col='"purchaseTime"'`, now creates its online
+        # feature table. It previously failed with `column '"purchaseTime"' does not exist` because the column was
+        # named with its quote delimiters attached.
+        # self._wait_offline_dt_rows(self.fs, fv_name, "v1")
+        #
+        # def _validate(pdf):
+        #     self.assertIn("PURCHASE_AMOUNT", pdf.columns)
+        #     self.assertAlmostEqual(float(pdf.iloc[0]["PURCHASE_AMOUNT"]), 10.5, places=3)
+        #
+        # self._poll_online_read(self.fs, fv_name, "v1", keys=[[1]], validate_fn=_validate, desc="mixed-case timestamp")
 
     # =========================================================================
     # Lifecycle: delete

@@ -26,7 +26,7 @@ from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
 logger = logging.getLogger(__name__)
 
-_MODEL_GARDEN_MODEL_NAME = '"TINYLLAMA-1.1B-CHAT-V1.0-20260902"'
+_MODEL_GARDEN_MODEL_NAME = '"TINYLLAMA-1.1B-CHAT-V1.0-20261102"'
 _FAILED_SERVICE_STATUSES = frozenset({"FAILED", "FAILED_CLEANING_UP", "INTERNAL_ERROR"})
 _GPU_REQUESTS = "1"
 _CPU_REQUESTS = "4"
@@ -215,6 +215,7 @@ class TestRegistryModelGardenDeploymentInteg(registry_model_deployment_test_base
               1.0::FLOAT,
               0.0::FLOAT,
               0.0::FLOAT,
+              NULL,
               NULL
             ) AS RESULT
         """
@@ -244,6 +245,7 @@ class TestRegistryModelGardenDeploymentInteg(registry_model_deployment_test_base
                     "frequency_penalty": 0.0,
                     "presence_penalty": 0.0,
                     "response_format": None,
+                    "model": None,
                 }
             ]
         )

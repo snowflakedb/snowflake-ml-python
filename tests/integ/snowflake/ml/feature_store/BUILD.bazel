@@ -320,6 +320,25 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_stream_source_concurrency_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_stream_source_concurrency_test.py",
+    ],
+    imports = ["."],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
     name = "feature_store_stream_source_test",
     timeout = "eternal",
     srcs = [

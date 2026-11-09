@@ -1469,6 +1469,12 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     def test_streaming_fv_spec_oft_online_read_e2e(self, iceberg: bool) -> None:
         """After backfill, online read via Query API returns rows for a registered entity key.
 
+        When the Postgres OFT refresh dedups a non-aggregated SFV per entity, ``u1``, ``u2`` and
+        ``u3`` each get several unordered backfill events and the online read must serve the one with
+        the latest ``EVENT_TIME`` per entity. Each entity's latest event is neither its first nor its
+        last inserted, nor its largest or smallest ``AMOUNT``, so neither insertion order nor value
+        order can pick it.
+
         Args:
             iceberg: When True, back the offline Dynamic Table and both landing tables with
                 Iceberg storage.
@@ -1480,6 +1486,37 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         fs = self._create_feature_store()
         self._make_stream_source(fs, stream)
         backfill_table = self._create_backfill_table(fs, s)
+        expected_amounts = {"u1": 100.0}
+        rows = self._session.sql(
+            "SHOW PARAMETERS LIKE 'ENABLE_FIX_OFT_PG_SFV_NON_AGG_DEDUP_ENTITY_ONLY' IN ACCOUNT"
+        ).collect()
+        if rows and rows[0]["value"].lower() == "true":
+            self._session.sql(
+                f"""
+                INSERT INTO {backfill_table} VALUES
+                ('u2', '2024-01-03 04:00:00', 430.0),
+                ('u1', '2024-01-05 03:00:00', 720.0),
+                ('u3', '2024-01-04 05:00:00', 990.0),
+                ('u1', '2023-12-30 08:00:00', 480.0),
+                ('u2', '2024-01-06 11:00:00', 910.0),
+                ('u3', '2023-12-31 23:00:00', 370.0),
+                ('u1', '2024-01-02 12:00:00', 95.0),
+                ('u2', '2023-12-29 07:00:00', 65.0),
+                ('u1', '2024-01-09 06:00:00', 260.0),
+                ('u3', '2024-01-10 13:00:00', 180.0),
+                ('u2', '2024-01-08 20:00:00', 320.0),
+                ('u1', '2024-01-04 18:00:00', 15.0),
+                ('u3', '2024-01-06 01:00:00', 25.0),
+                ('u1', '2023-12-28 22:00:00', 830.0),
+                ('u2', '2024-01-02 02:00:00', 1200.0),
+                ('u3', '2024-01-02 21:00:00', 640.0),
+                ('u1', '2024-01-07 09:00:00', 140.0),
+                ('u2', '2024-01-05 16:00:00', 45.0),
+                ('u3', '2024-01-07 14:00:00', 1500.0),
+                ('u1', '2024-01-03 15:00:00', 610.0)
+            """
+            ).collect()
+            expected_amounts = {"u1": 260.0, "u2": 320.0, "u3": 180.0}
         backfill_df = self._session.table(backfill_table)
         storage_config = self._maybe_iceberg_storage_config(iceberg)
         stream_config = StreamConfig(
@@ -1518,10 +1555,19 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         def _validate(pdf):
             self.assertIn("AMOUNT", pdf.columns)
-            self.assertEqual(float(pdf.iloc[0]["AMOUNT"]), 100.0)
+            self.assertEqual(
+                {str(row["USER_ID"]): float(row["AMOUNT"]) for _, row in pdf.iterrows()},
+                expected_amounts,
+            )
 
         self._poll_online_read(
-            fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=240.0, desc="streaming e2e"
+            fs,
+            fv_name,
+            "v1",
+            keys=[[user_id] for user_id in expected_amounts],
+            validate_fn=_validate,
+            timeout=240.0,
+            desc="streaming e2e",
         )
 
     # =========================================================================

@@ -3,9 +3,9 @@
 Extracted from ``FeatureStore`` to isolate the streaming-specific logic:
 
 - Preamble: probe schema inference, empty udf_transformed table creation.
-- Postamble: backfill task graph creation, metadata save, ref_count increment.
+- Postamble: backfill task graph creation, metadata save, ref_count recount.
 - Spec builder: ``_build_streaming_feature_view_spec`` for the OFT spec.
-- Cleanup: drop backfill resources and decrement stream source ref count.
+- Cleanup: drop backfill resources.
 
 DT and OFT creation reuse the existing ``FeatureStore`` code paths; after the
 preamble runs, ``feature_view.query`` / ``output_schema`` already reflect the
@@ -20,6 +20,11 @@ import textwrap
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from snowflake.ml._internal.exceptions import (
+    error_codes,
+    exceptions as snowml_exceptions,
+)
+from snowflake.ml._internal.utils import sql_literal
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store._compute_fn_validation import RUNTIME_PRELUDE
 from snowflake.ml.feature_store.feature_view import (
@@ -299,6 +304,9 @@ class StreamingPreambleResult:
     resolved_source_name: str
     """Resolved stream source name (for ref_count + metadata)."""
 
+    replaced_source_name: str | None = None
+    """On overwrite, the stream source of the replaced FV (its ref_count is recounted in the postamble)."""
+
 
 def run_streaming_preamble(
     *,
@@ -315,7 +323,7 @@ def run_streaming_preamble(
     """Run streaming-specific setup before the existing DT/OFT paths.
 
     Steps:
-      1. On overwrite, decrement old stream source ref_count.
+      1. On overwrite, record the old stream source and tear down its backfill graph.
       2. Validate stream source exists.
       3. Probe — infer UDF output schema (10 rows, fast).
       4. Apply backfill_start_time filter if provided.
@@ -347,15 +355,15 @@ def run_streaming_preamble(
     if stream_config is None:
         raise ValueError(f"FeatureView '{feature_view.name}' does not have a stream_config.")
 
-    # 1. On overwrite, drop the old stream source ref and tear down any
-    #    leftover backfill graph. Snowflake disallows modifying a running
-    #    graph, so SUSPEND the root before DROPping. Usually a no-op because
-    #    the previous finalizer self-drops on success.
+    # 1. On overwrite, remember the old stream source (recounted in the postamble)
+    #    and tear down any leftover backfill graph. Snowflake disallows modifying
+    #    a running graph, so SUSPEND the root before DROPping. Usually a no-op
+    #    because the previous finalizer self-drops on success.
+    replaced_source_name = None
     if overwrite:
         old_meta = metadata_manager.get_streaming_metadata(str(feature_view.name), str(version))
         if old_meta is not None:
-            if old_meta.stream_source_name:
-                metadata_manager.decrement_stream_source_ref_count(old_meta.stream_source_name)
+            replaced_source_name = old_meta.stream_source_name or None
             _drop_stale_backfill_graph_on_overwrite(
                 session=session,
                 old_meta=old_meta,
@@ -429,6 +437,7 @@ def run_streaming_preamble(
         fq_udf_table=fq_udf_table,
         fq_backfill_table=fq_backfill_table,
         resolved_source_name=resolved_source_name,
+        replaced_source_name=replaced_source_name,
     )
 
 
@@ -474,7 +483,7 @@ def run_streaming_postamble(
     telemetry_stmp: dict[str, Any],
     on_resource_created: Callable[[str, str], None] | None = None,
 ) -> StreamingPostambleResult:
-    """Save streaming metadata, increment ref count, and kick off server-side backfill.
+    """Save streaming metadata, recount the stream source ref_count, and kick off server-side backfill.
 
     Called after the DT and OFT are created. The backfill runs as a
     Snowflake Task graph (root + finalizer) so it survives client
@@ -507,7 +516,7 @@ def run_streaming_postamble(
 
             Lets the caller track resources for rollback *as they are
             created*, so failures later in the postamble (metadata save,
-            ref-count increment) still leave a complete cleanup trail. If
+            ref_count recount) still leave a complete cleanup trail. If
             ``None``, no tracking is
             performed and the caller is responsible for cleanup based
             on the returned ``StreamingPostambleResult``. Exceptions
@@ -520,6 +529,7 @@ def run_streaming_postamble(
     Raises:
         ValueError: If the feature view does not have a stream_config, or if
             no warehouse is available for the backfill task graph.
+        SnowflakeMLException: [NOT_FOUND] If the stream source was deleted while registering.
     """
     stream_config = feature_view.stream_config
     if stream_config is None:
@@ -630,7 +640,7 @@ def run_streaming_postamble(
         stream_config.backfill_start_time.isoformat() if stream_config.backfill_start_time is not None else None
     )
 
-    metadata_manager.save_streaming_metadata(
+    written = metadata_manager.save_streaming_metadata(
         fv_name=fv_name_str,
         version=version_str,
         metadata=StreamingMetadata(
@@ -648,8 +658,20 @@ def run_streaming_postamble(
             backfill_table=stream_config.backfill_table,
         ),
     )
+    # The write is guarded on the stream source row; nothing written means it was deleted
+    # after the preamble's lookup. On overwrite the replaced FV's row is left unchanged.
+    if not written:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_FOUND,
+            original_exception=ValueError(
+                f"StreamSource {preamble.resolved_source_name} was deleted while registering "
+                f"FeatureView {feature_view.name}/{version}."
+            ),
+        )
 
-    metadata_manager.increment_stream_source_ref_count(preamble.resolved_source_name)
+    metadata_manager.sync_stream_source_ref_count(preamble.resolved_source_name)
+    if preamble.replaced_source_name and preamble.replaced_source_name != preamble.resolved_source_name:
+        metadata_manager.sync_stream_source_ref_count(preamble.replaced_source_name)
 
     # Now safe to resume — the finalizer's terminal-state UPDATE will
     # find the row written above.
@@ -924,15 +946,13 @@ def _render_backfill_state_update_sql(
     Returns:
         Full ``UPDATE`` statement (no trailing semicolon).
     """
-    safe_name = fv_name.replace("'", "''")
-    safe_version = version.replace("'", "''")
     return (
         f"UPDATE {metadata_table_path}\n"
         f"  SET METADATA = OBJECT_INSERT(METADATA, 'backfill_state', {new_state_sql_expr}, TRUE),\n"
         f"      UPDATED_AT = CURRENT_TIMESTAMP()\n"
         f"  WHERE OBJECT_TYPE = 'FEATURE_VIEW'\n"
-        f"    AND OBJECT_NAME = '{safe_name}'\n"
-        f"    AND VERSION = '{safe_version}'\n"
+        f"    AND OBJECT_NAME = {sql_literal.string_literal(fv_name)}\n"
+        f"    AND VERSION = {sql_literal.string_literal(version)}\n"
         f"    AND METADATA_TYPE = 'STREAM_CONFIG'"
     )
 
@@ -1138,13 +1158,12 @@ def cleanup_streaming_feature_view(
     metadata_manager: FeatureStoreMetadataManager,
     get_fully_qualified_name_fn: Callable[..., str],
     telemetry_stmp: dict[str, Any],
-) -> None:
+) -> str | None:
     """Clean up streaming FV resources during deletion.
 
-    Drops the ``$UDF_TRANSFORMED`` and ``$UDF_TRANSFORMED$BACKFILL`` tables,
-    decrements the stream source ref count, and best-effort drops any
-    leftover backfill graph members. Normally a no-op (the finalizer has
-    already dropped tasks and proc/UDTF) thanks to ``IF EXISTS``.
+    Drops the ``$UDF_TRANSFORMED`` and ``$UDF_TRANSFORMED$BACKFILL`` tables and
+    best-effort drops any leftover backfill graph members. Normally a no-op
+    (the finalizer has already dropped tasks and proc/UDTF) thanks to ``IF EXISTS``.
 
     Args:
         session: Snowpark session.
@@ -1155,6 +1174,10 @@ def cleanup_streaming_feature_view(
         metadata_manager: Metadata manager.
         get_fully_qualified_name_fn: Bound ``FeatureStore._get_fully_qualified_name``.
         telemetry_stmp: Telemetry statement parameters.
+
+    Returns:
+        The FV's stream source name, if its streaming metadata names one, so the caller
+        can recount that source's ref_count once the FV's metadata rows are deleted.
     """
     streaming_meta = metadata_manager.get_streaming_metadata(fv_name, version)
 
@@ -1210,12 +1233,7 @@ def cleanup_streaming_feature_view(
         except Exception as e:
             logger.warning(f"Failed to drop table {table_name}: {e}")
 
-    if streaming_meta and streaming_meta.stream_source_name:
-        try:
-            metadata_manager.decrement_stream_source_ref_count(streaming_meta.stream_source_name)
-            logger.info(f"Decremented ref_count for stream source {streaming_meta.stream_source_name}.")
-        except Exception as e:
-            logger.warning(f"Failed to decrement ref_count for stream source {streaming_meta.stream_source_name}: {e}")
+    return streaming_meta.stream_source_name if streaming_meta and streaming_meta.stream_source_name else None
 
 
 # ---------------------------------------------------------------------------
@@ -1424,12 +1442,12 @@ def _create_empty_table(
                 "Iceberg storage requires an external_volume. Either provide external_volume in "
                 "StorageConfig or set default_iceberg_external_volume when creating FeatureStore."
             )
-        escaped_location = _iceberg_base_location(storage_config, iceberg_location_suffix).replace("'", "''")
+        base_location = _iceberg_base_location(storage_config, iceberg_location_suffix)
         query = (
             f"CREATE {overwrite_clause}ICEBERG TABLE {fq_table_name} ({col_defs_str})"
             f" CATALOG = 'SNOWFLAKE'"
             f" EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}"
-            f" BASE_LOCATION = '{escaped_location}'"
+            f" BASE_LOCATION = {sql_literal.string_literal(base_location)}"
         )
     else:
         query = f"CREATE {overwrite_clause}TABLE {fq_table_name} ({col_defs_str})"

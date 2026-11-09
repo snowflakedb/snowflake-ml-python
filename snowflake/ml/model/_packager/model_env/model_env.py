@@ -301,7 +301,11 @@ class ModelEnv:
         return self.prefer_pip_for_automatic_dependencies and is_pip_only_packaging_enabled() and not has_conda_deps
 
     def _substitute_conda_gpu_packages(self) -> None:
-        """Replace conda packages with their GPU variants (xgboost→py-xgboost-gpu, tensorflow→tensorflow-gpu)."""
+        """Replace conda packages with their GPU variants.
+
+        xgboost → py-xgboost-gpu, tensorflow → tensorflow-gpu. When pytorch is a conda
+        dependency, also add pytorch-gpu so the solver cannot silently pick a CPU build.
+        """
         xgboost_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=False
         )
@@ -331,6 +335,25 @@ class ModelEnv:
         if tf_spec:
             self.include_if_absent(
                 [ModelDependency(requirement=f"tensorflow-gpu{tf_spec.specifier}", pip_name="tensorflow")],
+                check_local_version=False,
+            )
+
+        pytorch_gpu_spec = env_utils.find_dep_spec(
+            self._conda_dependencies, self._pip_requirements, conda_pkg_name="pytorch-gpu", remove_spec=False
+        )
+        pytorch_cuda_spec = env_utils.find_dep_spec(
+            self._conda_dependencies, self._pip_requirements, conda_pkg_name="pytorch-cuda", remove_spec=False
+        )
+        pytorch_spec = env_utils.find_dep_spec(
+            self._conda_dependencies,
+            [],
+            conda_pkg_name="pytorch",
+            pip_pkg_name="torch",
+            remove_spec=False,
+        )
+        if pytorch_spec and not pytorch_gpu_spec and not pytorch_cuda_spec:
+            self.include_if_absent(
+                [ModelDependency(requirement=f"pytorch-gpu{pytorch_spec.specifier}", pip_name="torch")],
                 check_local_version=False,
             )
 

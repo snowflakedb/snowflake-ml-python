@@ -12,6 +12,7 @@ Currently used for:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ from snowflake.ml.feature_store.aggregation import AggregationSpec
 if TYPE_CHECKING:
     from snowflake.snowpark import Session
 
+logger = logging.getLogger(__name__)
 
 # Table and column names
 _METADATA_TABLE_NAME = "_FEATURE_STORE_METADATA"
@@ -44,6 +46,21 @@ def _sanitize_json_for_dollar_quoting(payload: str) -> str:
         The payload with every ``$$`` replaced by ``$\\u0024``.
     """
     return payload.replace("$$", "$\\u0024")
+
+
+def _sql_str(value: str) -> str:
+    """Render a value as a single-quoted SQL string literal.
+
+    Literals rather than ``?`` binds: a session wrapping an existing connection (as the
+    snow CLI does) keeps ``pyformat`` paramstyle, where ``?`` raises ``TypeError``.
+
+    Args:
+        value: Raw string value.
+
+    Returns:
+        The value with ``\\`` and ``'`` escaped, wrapped in single quotes.
+    """
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 class MetadataObjectType(str, Enum):
@@ -924,21 +941,28 @@ class FeatureStoreMetadataManager:
         fv_name: str,
         version: str,
         metadata: StreamingMetadata,
-    ) -> None:
+    ) -> bool:
         """Save streaming metadata for a streaming feature view.
+
+        Written only while the metadata's stream source exists, in the same statement, so a
+        concurrent ``delete_stream_source`` and this write cannot both succeed.
 
         Args:
             fv_name: Feature view name.
             version: Feature view version.
             metadata: Streaming metadata to save.
+
+        Returns:
+            True if the row was written; False if the stream source does not exist.
         """
         self.ensure_table_exists()
-        self._upsert_metadata(
+        return self._upsert_metadata(
             object_type=MetadataObjectType.FEATURE_VIEW,
             object_name=fv_name,
             version=version,
             metadata_type=MetadataType.STREAM_CONFIG,
             metadata=metadata.to_dict(),
+            require_stream_source=metadata.stream_source_name,
         )
 
     def get_streaming_metadata(
@@ -1221,24 +1245,48 @@ class FeatureStoreMetadataManager:
                 sources.append(dict(metadata_value))
         return sources
 
-    def delete_stream_source_metadata(self, name: str) -> None:
-        """Delete a stream source configuration.
+    def delete_stream_source_metadata(self, name: str) -> bool:
+        """Delete a stream source configuration if no streaming feature view references it.
+
+        The reference check and the delete are one statement, which waits on a concurrent
+        STREAM_CONFIG write and then sees its outcome, so the two cannot both succeed.
 
         Args:
             name: Stream source name (resolved identifier).
+
+        Returns:
+            True if the row was deleted; False if it was absent or still referenced.
         """
         if not self._check_table_exists():
-            return
+            return False
 
         normalized_name = name.strip('"')
 
-        self._session.sql(
+        result = self._session.sql(
             f"""
             DELETE FROM {self._table_path}
             WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
             AND OBJECT_NAME = '{normalized_name}'
+            AND NOT EXISTS ({self._stream_source_refs_sql("1", normalized_name)})
             """
         ).collect(statement_params=self._telemetry_stmp)
+        return int(result[0]["number of rows deleted"]) > 0
+
+    def list_stream_source_references(self, name: str) -> list[tuple[str, str]]:
+        """List the streaming feature views whose STREAM_CONFIG row names a stream source.
+
+        Args:
+            name: Stream source name (resolved identifier).
+
+        Returns:
+            ``(feature view name, version)`` pairs, sorted.
+        """
+        if not self._check_table_exists():
+            return []
+        result = self._session.sql(
+            self._stream_source_refs_sql("DISTINCT r.OBJECT_NAME, r.VERSION", name.strip('"')) + " ORDER BY 1, 2"
+        ).collect(statement_params=self._telemetry_stmp)
+        return [(row["OBJECT_NAME"], row["VERSION"]) for row in result]
 
     def stream_source_exists(self, name: str) -> bool:
         """Check if a stream source exists.
@@ -1251,62 +1299,90 @@ class FeatureStoreMetadataManager:
         """
         return self.get_stream_source_metadata(name) is not None
 
+    def _stream_source_refs_sql(self, select: str, source_name: str) -> str:
+        """SQL query over the STREAM_CONFIG rows that name a stream source.
+
+        Every STREAM_CONFIG row counts, including one left by overwriting a streaming FV with a
+        non-streaming one. Such a row keeps its stream source referenced until that feature
+        view version is deleted.
+
+        Args:
+            select: Select list for the query, over the ``r`` alias.
+            source_name: Stream source name, without surrounding quotes. Compared as a literal
+                against the name stored in the STREAM_CONFIG JSON.
+
+        Returns:
+            The SQL query.
+        """
+        return f"""
+            SELECT {select}
+            FROM {self._table_path} AS r
+            WHERE r.OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
+            AND r.METADATA_TYPE = '{MetadataType.STREAM_CONFIG.value}'
+            AND r.METADATA:stream_source_name::STRING = {_sql_str(source_name)}
+        """
+
+    def _stream_source_ref_count_sql(self, source_name: str) -> str:
+        """SQL query counting the distinct feature view versions that reference a stream source.
+
+        Distinct because the table's key is not unique-enforced, so one feature view version
+        can have more than one STREAM_CONFIG row.
+
+        Args:
+            source_name: Stream source name, without surrounding quotes.
+
+        Returns:
+            A scalar subquery body selecting the count.
+        """
+        return self._stream_source_refs_sql("COUNT(DISTINCT r.OBJECT_NAME, r.VERSION)", source_name)
+
     def get_stream_source_ref_count(self, name: str) -> int:
-        """Get the reference count for a stream source.
+        """Get the number of streaming feature views that reference a stream source.
+
+        Counted from the feature views' STREAM_CONFIG rows rather than read from the
+        stored ``ref_count``, so concurrent registers and deletes cannot make it drift.
 
         Args:
             name: Stream source name (resolved identifier).
 
         Returns:
-            Number of active references. 0 if stream source not found.
+            Number of referencing feature views.
         """
-        metadata = self.get_stream_source_metadata(name)
-        if metadata is None:
+        if not self._check_table_exists():
             return 0
-        return int(metadata.get("ref_count", 0))
+        count_sql = self._stream_source_ref_count_sql(name.strip('"'))
+        result = self._session.sql(f"SELECT ({count_sql}) AS CNT").collect(statement_params=self._telemetry_stmp)
+        return int(result[0]["CNT"])
 
-    def increment_stream_source_ref_count(self, name: str) -> None:
-        """Increment the reference count of a stream source.
+    def sync_stream_source_ref_count(self, name: str) -> None:
+        """Set the stored ``ref_count`` to the live number of referencing feature views.
 
-        Called when a FeatureView that uses this stream source is registered.
-
-        Args:
-            name: Stream source name (resolved identifier).
-        """
-        metadata = self.get_stream_source_metadata(name)
-        if metadata is None:
-            return
-
-        metadata["ref_count"] = int(metadata.get("ref_count", 0)) + 1
-        self._upsert_metadata(
-            object_type=MetadataObjectType.STREAM_SOURCE,
-            object_name=name,
-            version="",
-            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
-            metadata=metadata,
-        )
-
-    def decrement_stream_source_ref_count(self, name: str) -> None:
-        """Decrement the reference count of a stream source (clamped to 0).
-
-        Called when a FeatureView that uses this stream source is deleted.
+        Only older SDK clients read the stored value. It is recomputed in one statement, so it
+        cannot lose updates and drifted counts are repaired. Best-effort: failures are logged,
+        not raised, because by then the feature view's objects and STREAM_CONFIG rows are
+        already written or deleted, and an overwrite cannot be rolled back. Call after the
+        STREAM_CONFIG rows have been written or deleted.
 
         Args:
             name: Stream source name (resolved identifier).
         """
-        metadata = self.get_stream_source_metadata(name)
-        if metadata is None:
-            return
-
-        current = int(metadata.get("ref_count", 0))
-        metadata["ref_count"] = max(0, current - 1)
-        self._upsert_metadata(
-            object_type=MetadataObjectType.STREAM_SOURCE,
-            object_name=name,
-            version="",
-            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
-            metadata=metadata,
-        )
+        try:
+            if not self._check_table_exists():
+                return
+            normalized_name = name.strip('"')
+            count_sql = self._stream_source_ref_count_sql(normalized_name)
+            self._session.sql(
+                f"""
+                UPDATE {self._table_path}
+                SET METADATA = OBJECT_INSERT(METADATA, 'ref_count', ({count_sql}), TRUE),
+                    UPDATED_AT = CURRENT_TIMESTAMP()
+                WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
+                AND OBJECT_NAME = '{normalized_name}'
+                AND METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+        except Exception as e:
+            logger.warning(f"Failed to update stored ref_count for stream source {name}: {e}")
 
     def update_stream_source_desc(self, name: str, desc: str) -> None:
         """Update the description of an existing stream source.
@@ -1371,13 +1447,37 @@ class FeatureStoreMetadataManager:
         version: str,
         metadata_type: MetadataType,
         metadata: dict[str, Any],
-    ) -> None:
-        """Insert or update a metadata entry."""
+        require_stream_source: str | None = None,
+    ) -> bool:
+        """Insert or update a metadata entry.
+
+        Args:
+            object_type: Type of object the entry describes.
+            object_name: Object name (resolved identifier).
+            version: Object version.
+            metadata_type: Type of metadata stored in the entry.
+            metadata: Metadata to store.
+            require_stream_source: If set, write only while this stream source's row exists. The
+                check and the write are one statement, which waits on a concurrent delete of that
+                row and then sees its outcome.
+
+        Returns:
+            False if ``require_stream_source`` is set and nothing was written; otherwise True.
+        """
         metadata_json = _sanitize_json_for_dollar_quoting(json.dumps(metadata))
         # Strip surrounding quotes if present; callers pass resolved() which handles casing.
         normalized_name = object_name.strip('"')
+        guard = ""
+        if require_stream_source is not None:
+            guard = f"""
+                WHERE EXISTS (
+                    SELECT 1 FROM {self._table_path} AS s
+                    WHERE s.OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
+                    AND s.OBJECT_NAME = '{require_stream_source.strip('"')}'
+                    AND s.METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
+                )"""
 
-        self._session.sql(
+        result = self._session.sql(
             f"""
             MERGE INTO {self._table_path} AS target
             USING (
@@ -1386,7 +1486,7 @@ class FeatureStoreMetadataManager:
                     '{normalized_name}' AS OBJECT_NAME,
                     '{version}' AS VERSION,
                     '{metadata_type.value}' AS METADATA_TYPE,
-                    PARSE_JSON($${metadata_json}$$) AS METADATA
+                    PARSE_JSON($${metadata_json}$$) AS METADATA{guard}
             ) AS source
             ON target.OBJECT_TYPE = source.OBJECT_TYPE
             AND target.OBJECT_NAME = source.OBJECT_NAME
@@ -1403,6 +1503,9 @@ class FeatureStoreMetadataManager:
             )
             """
         ).collect(statement_params=self._telemetry_stmp)
+        if require_stream_source is None:
+            return True
+        return int(result[0]["number of rows inserted"]) + int(result[0]["number of rows updated"]) > 0
 
     def _get_metadata(
         self,

@@ -17,18 +17,19 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import feature_store as fs_mod
 from snowflake.ml.feature_store.entity import Entity
-from snowflake.ml.feature_store.feature_store import FeatureStore, _sql_string_literal
+from snowflake.ml.feature_store.feature_store import FeatureStore
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewStatus,
     StorageConfig,
     StorageFormat,
 )
+from snowflake.snowpark.types import StringType, StructField, StructType
 
 # A representative exploit payload from the original report. The single quote
 # right after ``x]`` would terminate ``COMMENT = '...'`` in the unescaped code
@@ -124,26 +125,6 @@ def _assert_safely_quoted(test_case: absltest.TestCase, sql: str, desc: str, *, 
     )
 
 
-class SqlStringLiteralTest(parameterized.TestCase):
-    """The helper that every fix site routes through.
-
-    A bug here is a bug everywhere, so cover the common shapes once.
-    """
-
-    @parameterized.parameters(  # type: ignore[misc]
-        ("", "''"),
-        ("foo", "'foo'"),
-        ("It's", "'It''s'"),
-        ("a'b'c", "'a''b''c'"),
-        ("no quotes here", "'no quotes here'"),
-        ("backslash \\ stays", "'backslash \\ stays'"),
-        ("'; DROP TAG x; --", "'''; DROP TAG x; --'"),
-        (_EXPLOIT_DESC, "'x]'' ->> create user hackersqli password = ''aaa'' --'"),
-    )
-    def test_quotes_and_escapes(self, value: str, expected: str) -> None:
-        self.assertEqual(_sql_string_literal(value), expected)
-
-
 class RegisterEntityDescEscapingTest(absltest.TestCase):
     """Regression for the original report: ``register_entity`` desc must not break out of its literal."""
 
@@ -203,6 +184,44 @@ class UpdateEntityDescEscapingTest(absltest.TestCase):
         alter_sqls = [s for s in _captured_sql(sess) if "ALTER TAG" in s]
         self.assertEqual(len(alter_sqls), 1, _captured_sql(sess))
         _assert_safely_quoted(self, alter_sqls[0], _EXPLOIT_DESC, clause_prefix="SET COMMENT = ")
+
+
+class EntityDetailLookupEscapingTest(absltest.TestCase):
+    """Tag lookups escape ``'`` and ``\\`` in the object name passed to ``ENTITY_DETAIL``."""
+
+    _DATABASE = "\"DB\\')||(SELECT CURRENT_ROLE())||('\""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sess = MagicMock()
+        self.fs = _new_fs_with_mocks(session=self.sess)
+        object.__setattr__(
+            self.fs,
+            "_config",
+            fs_mod._FeatureStoreConfig(database=SqlIdentifier(self._DATABASE), schema=SqlIdentifier("SCH")),
+        )
+
+    def test_lookup_tags_escapes_object_name(self) -> None:
+        self.sess.sql.return_value.collect.return_value = [['{"tagReferencesInfo": {"tagReferenceList": []}}']]
+
+        self.fs._lookup_tags("table", "FV$V1")
+
+        self.sess.sql.assert_called_once()
+        self.assertIn(
+            r"""'"DB\\'')||(SELECT CURRENT_ROLE())||(''".SCH.FV$V1'""",
+            self.sess.sql.call_args.args[0],
+        )
+
+    def test_lookup_tagged_objects_escapes_tag_name(self) -> None:
+        self.sess.sql.return_value.collect.return_value = [['{"referencedEntities": {"tagReferenceList": []}}']]
+
+        self.fs._lookup_tagged_objects("SNOWML_FEATURE_STORE_OBJECT")
+
+        self.sess.sql.assert_called_once()
+        self.assertIn(
+            r"""'"DB\\'')||(SELECT CURRENT_ROLE())||(''".SCH.SNOWML_FEATURE_STORE_OBJECT'""",
+            self.sess.sql.call_args.args[0],
+        )
 
 
 class BuildOfflineUpdateQueriesDescEscapingTest(absltest.TestCase):
@@ -349,7 +368,28 @@ class CreateRollupFeatureViewDescEscapingTest(absltest.TestCase):
         # After the fix, the rollup DT's COMMENT clause routes through the
         # helper instead of interpolating ``feature_view.desc`` raw.
         self.assertNotIn("COMMENT = '{feature_view.desc}'", src)
-        self.assertIn("_sql_string_literal(feature_view.desc)", src)
+        self.assertIn("sql_literal.string_literal(feature_view.desc)", src)
+
+
+class ReadFeatureViewQueryEscapingTest(absltest.TestCase):
+    """``read_feature_view`` puts ``keys`` values in string literals and ``feature_names`` in the SELECT list."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fs = _new_fs_with_mocks()
+        self.fv = MagicMock(spec=FeatureView)
+        self.fv.entities = [Entity(name="E", join_keys=["ID"])]
+        self.fv.output_schema = StructType([StructField("ID", StringType()), StructField('"f1"', StringType())])
+
+    def test_backslash_in_key_value_is_escaped(self) -> None:
+        where_clause, _ = self.fs._build_where_clause_for_keys(self.fv, [["x\\"], [") OR 1=1 --"]])
+
+        self.assertEqual(where_clause, r""" WHERE ("ID" = 'x\\') OR ("ID" = ') OR 1=1 --')""")
+
+    def test_case_sensitive_feature_name_is_not_requoted(self) -> None:
+        select_clause = self.fs._build_select_clause_and_validate(self.fv, ['"f1"'])
+
+        self.assertEqual(select_clause, '"ID", "f1"')
 
 
 if __name__ == "__main__":
