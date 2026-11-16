@@ -560,7 +560,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
             )
 
     def test_add_inference_table_monitor(self) -> None:
-        source_config = model_monitor_config.ModelMonitorSourceConfig._from_inference_table(
+        source_config = model_monitor_config.ModelMonitorSourceConfig(
             baseline="mydb.myschema.baseline",
             ground_truth="mydb.myschema.gt",
             id_columns=["ID"],
@@ -618,9 +618,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
             ValueError,
             "Aggregation window for a model version monitor must be a number of days.",
         ):
-            self.mm.add_monitor(
-                "TEST", model_monitor_config.ModelMonitorSourceConfig._from_inference_table(), monitor_config
-            )
+            self.mm.add_monitor("TEST", model_monitor_config.ModelMonitorSourceConfig(), monitor_config)
 
     def test_add_monitor_rejects_hourly_aggregation(self) -> None:
         monitor_config = model_monitor_config.ModelMonitorConfig(
@@ -639,9 +637,30 @@ class ModelMonitorManagerTest(absltest.TestCase):
 class ModelMonitorSourceConfigTest(absltest.TestCase):
     def test_inference_table_config_requires_ground_truth_and_id_columns_together(self) -> None:
         with self.assertRaisesRegex(ValueError, "Pass ground_truth and id_columns together."):
-            model_monitor_config.ModelMonitorSourceConfig._from_inference_table(ground_truth="mydb.myschema.gt")
+            model_monitor_config.ModelMonitorSourceConfig(ground_truth="mydb.myschema.gt")
         with self.assertRaisesRegex(ValueError, "Pass ground_truth and id_columns together."):
-            model_monitor_config.ModelMonitorSourceConfig._from_inference_table(id_columns=["ID"])
+            model_monitor_config.ModelMonitorSourceConfig(id_columns=["ID"])
+
+    def test_inference_table_config_rejects_custom_metric_columns(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "A model inference table monitor does not accept custom metric columns."
+        ):
+            model_monitor_config.ModelMonitorSourceConfig(custom_metric_columns=["METRIC"])
+
+    def test_inference_table_config_rejects_timestamp_custom_metric_table(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "A model inference table monitor does not accept a timestamp custom metric table."
+        ):
+            model_monitor_config.ModelMonitorSourceConfig(timestamp_custom_metric_table="mydb.myschema.metrics")
+
+    def test_user_table_config_rejects_ground_truth(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Ground truth is only available for a model inference table monitor."):
+            model_monitor_config.ModelMonitorSourceConfig(
+                source="SOURCE",
+                timestamp_column="TS",
+                id_columns=["ID"],
+                ground_truth="GT",
+            )
 
 
 if __name__ == "__main__":

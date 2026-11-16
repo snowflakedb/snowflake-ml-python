@@ -5,30 +5,41 @@ from snowflake.ml.model._client.model import model_version_impl
 
 @dataclass
 class ModelMonitorSourceConfig:
-    """Configuration for the source of data to be monitored."""
+    """Configuration for the source of data to be monitored.
 
-    source: str
-    """Name of table or view containing monitoring data."""
+    Pass ``source`` and ``timestamp_column`` to monitor a user table. Omit both to monitor the model inference table.
+    ``ground_truth`` is only valid when monitoring the model inference table, and must be passed with ``id_columns``.
+    """
 
-    timestamp_column: str
-    """Name of column in the source containing timestamp."""
+    source: str | None = None
+    """Name of table or view containing monitoring data. Omit this to monitor the model inference table."""
 
-    id_columns: list[str]
-    """List of columns in the source containing unique identifiers."""
+    timestamp_column: str | None = None
+    """Name of column in the source containing timestamp. Required with ``source``. Omit this for the model inference
+    table.
+    """
+
+    id_columns: list[str] | None = None
+    """List of columns containing unique identifiers. Required with ``source``. Pass with ``ground_truth``."""
 
     prediction_score_columns: list[str] | None = None
     """List of columns in the source containing prediction scores.
     Can be regression scores for regression models and probability scores for classification models.
+    Inferred when omitted for the model inference table.
     """
 
     prediction_class_columns: list[str] | None = None
-    """List of columns in the source containing prediction classes for classification models."""
+    """List of columns in the source containing prediction classes for classification models.
+    Inferred when omitted for the model inference table.
+    """
 
     actual_score_columns: list[str] | None = None
-    """List of columns in the source containing actual scores."""
+    """List of columns in the source containing actual scores. Inferred when omitted for the model inference table."""
 
     actual_class_columns: list[str] | None = None
-    """List of columns in the source containing actual classes for classification models."""
+    """List of columns in the source containing actual classes for classification models.
+    Inferred when omitted for the model inference table.
+    """
 
     baseline: str | None = None
     """Name of table containing the baseline data."""
@@ -37,101 +48,46 @@ class ModelMonitorSourceConfig:
     """List of columns in the source containing segment information for grouped monitoring."""
 
     custom_metric_columns: list[str] | None = None
-    """List of columns in the source containing custom metrics."""
+    """List of columns in the source containing custom metrics. Not accepted for the model inference table."""
 
     timestamp_custom_metric_table: str | None = None
     """Optional name of a table containing timestamp-based custom metrics.
     Can be specified unqualified or fully qualified as database.schema.table.
+    Not accepted for the model inference table.
     """
 
-    _ground_truth: str | None = None
-    _inference_table_source: bool = False
+    ground_truth: str | None = None
+    """Name of the ground truth table. Model inference table monitors only. Pass this with ``id_columns``."""
 
-    def __init__(
-        self,
-        source: str,
-        timestamp_column: str,
-        id_columns: list[str],
-        prediction_score_columns: list[str] | None = None,
-        prediction_class_columns: list[str] | None = None,
-        actual_score_columns: list[str] | None = None,
-        actual_class_columns: list[str] | None = None,
-        baseline: str | None = None,
-        segment_columns: list[str] | None = None,
-        custom_metric_columns: list[str] | None = None,
-        timestamp_custom_metric_table: str | None = None,
-    ) -> None:
-        self.source = source
-        self.timestamp_column = timestamp_column
-        self.id_columns = id_columns
-        self.prediction_score_columns = prediction_score_columns
-        self.prediction_class_columns = prediction_class_columns
-        self.actual_score_columns = actual_score_columns
-        self.actual_class_columns = actual_class_columns
-        self.baseline = baseline
-        self.segment_columns = segment_columns
-        self.custom_metric_columns = custom_metric_columns
-        self.timestamp_custom_metric_table = timestamp_custom_metric_table
-        self._ground_truth = None
-        self._inference_table_source = False
-
-    @classmethod
-    def _from_inference_table(
-        cls,
-        *,
-        baseline: str | None = None,
-        segment_columns: list[str] | None = None,
-        ground_truth: str | None = None,
-        id_columns: list[str] | None = None,
-        prediction_score_columns: list[str] | None = None,
-        prediction_class_columns: list[str] | None = None,
-        actual_score_columns: list[str] | None = None,
-        actual_class_columns: list[str] | None = None,
-    ) -> "ModelMonitorSourceConfig":
-        """Build a source config for the model inference table.
-
-        This entry point is in development. ``ground_truth`` and ``id_columns`` are passed together. Prediction and
-        actual columns are inferred when omitted.
-
-        Args:
-            baseline: Name of the baseline table.
-            segment_columns: Columns used to segment monitoring.
-            ground_truth: Name of the ground truth table. Pass this with ``id_columns``.
-            id_columns: Columns that join the inference table to ``ground_truth``.
-            prediction_score_columns: Prediction score columns. Inferred when omitted.
-            prediction_class_columns: Prediction class columns. Inferred when omitted.
-            actual_score_columns: Actual score columns. Inferred when omitted.
-            actual_class_columns: Actual class columns. Inferred when omitted.
-
-        Returns:
-            A source config that monitors the model inference table.
-
-        Raises:
-            ValueError: If ``ground_truth`` and ``id_columns`` are not passed together.
-        """
-        config = cls.__new__(cls)
-        config.source = None  # type: ignore[assignment]
-        config.timestamp_column = None  # type: ignore[assignment]
-        config.id_columns = id_columns  # type: ignore[assignment]
-        config.prediction_score_columns = prediction_score_columns
-        config.prediction_class_columns = prediction_class_columns
-        config.actual_score_columns = actual_score_columns
-        config.actual_class_columns = actual_class_columns
-        config.baseline = baseline
-        config.segment_columns = segment_columns
-        config.custom_metric_columns = None
-        config.timestamp_custom_metric_table = None
-        config._ground_truth = ground_truth
-        config._inference_table_source = True
-        has_ground_truth = ground_truth is not None
-        has_id_columns = bool(id_columns)
-        if has_ground_truth != has_id_columns:
-            raise ValueError("Pass ground_truth and id_columns together.")
-        return config
+    def __post_init__(self) -> None:
+        if self._uses_inference_table():
+            self._validate_inference_table()
+        else:
+            self._validate_user_table()
 
     def _uses_inference_table(self) -> bool:
         """Return whether this config monitors the model inference table."""
-        return self._inference_table_source
+        return self.source is None
+
+    def _validate_user_table(self) -> None:
+        if self.timestamp_column is None:
+            raise ValueError("A user-table monitor requires a timestamp column.")
+        if self.id_columns is None:
+            raise ValueError("A user-table monitor requires id columns.")
+        if self.ground_truth is not None:
+            raise ValueError("Ground truth is only available for a model inference table monitor.")
+
+    def _validate_inference_table(self) -> None:
+        if self.timestamp_column is not None:
+            raise ValueError("A model inference table monitor does not take a timestamp column.")
+        if self.custom_metric_columns is not None:
+            raise ValueError("A model inference table monitor does not accept custom metric columns.")
+        if self.timestamp_custom_metric_table is not None:
+            raise ValueError("A model inference table monitor does not accept a timestamp custom metric table.")
+        has_ground_truth = self.ground_truth is not None
+        has_id_columns = bool(self.id_columns)
+        if has_ground_truth != has_id_columns:
+            raise ValueError("Pass ground_truth and id_columns together.")
 
 
 @dataclass

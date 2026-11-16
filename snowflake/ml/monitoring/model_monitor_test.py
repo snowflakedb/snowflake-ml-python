@@ -84,7 +84,7 @@ class ModelMonitorInstanceTest(absltest.TestCase):
     def test_describe(self) -> None:
         expected = mock.Mock()
         self.monitor_sql_client.describe_monitor.return_value = expected
-        self.assertIs(self.model_monitor._describe(), expected)
+        self.assertIs(self.model_monitor.describe(), expected)
         self.monitor_sql_client.describe_monitor.assert_called_once_with(
             self.test_monitor_name, statement_params=mock.ANY
         )

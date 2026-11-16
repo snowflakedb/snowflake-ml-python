@@ -1238,6 +1238,29 @@ pandas>=2.0
             torch_req = [r for r in loaded if r.name == "torch"][0]
             self.assertIn("+cu124", str(torch_req))
 
+    def test_save_requirements_file_cuda_torch_pin_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            rl = [requirements.Requirement("sentence-transformers"), requirements.Requirement("torch==2.13.0")]
+            pip_extra_index_urls = env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.9")
+
+            expected_content = "sentence-transformers\ntorch==2.13.0+cu129"
+            self.assertEqual(expected_content, pip_file_path.read_text(encoding="utf-8"))
+            self.assertListEqual(["https://download.pytorch.org/whl/cu129"], pip_extra_index_urls)
+
+            loaded = env_utils.load_requirements_file(pip_file_path)
+            self.assertListEqual(
+                [requirements.Requirement("sentence-transformers"), requirements.Requirement("torch==2.13.0+cu129")],
+                loaded,
+            )
+            self.assertTrue(loaded[1].specifier.contains("2.13.0+cu129"))
+
+            # A model env that is loaded and saved again must keep a single CUDA suffix.
+            resaved_file_path = pathlib.Path(tmpdir, "resaved_requirements.txt")
+            resaved_index_urls = env_utils.save_requirements_file(resaved_file_path, loaded, cuda_version="12.9")
+            self.assertEqual(expected_content, resaved_file_path.read_text(encoding="utf-8"))
+            self.assertListEqual(["https://download.pytorch.org/whl/cu129"], resaved_index_urls)
+
     def test_validate_local_installed_version_of_pip_package(self) -> None:
         with mock.patch.object(
             importlib_metadata, "distribution", side_effect=importlib_metadata.PackageNotFoundError()

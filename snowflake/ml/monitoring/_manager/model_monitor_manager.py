@@ -110,6 +110,8 @@ class ModelMonitorManager:
         if uses_inference_table:
             source_database_name_id, source_schema_name_id, source_name_id = None, None, None
             timestamp_column_id = None
+        elif source_config.source is None or source_config.timestamp_column is None:
+            raise ValueError("A user-table monitor requires a source table and a timestamp column.")
         else:
             source_database_name_id, source_schema_name_id, source_name_id = sql_identifier.parse_fully_qualified_name(
                 source_config.source
@@ -121,8 +123,8 @@ class ModelMonitorManager:
             else (None, None, None)
         )
         ground_truth_database_name_id, ground_truth_schema_name_id, ground_truth_name_id = (
-            sql_identifier.parse_fully_qualified_name(source_config._ground_truth)
-            if source_config._ground_truth
+            sql_identifier.parse_fully_qualified_name(source_config.ground_truth)
+            if source_config.ground_truth
             else (None, None, None)
         )
         (

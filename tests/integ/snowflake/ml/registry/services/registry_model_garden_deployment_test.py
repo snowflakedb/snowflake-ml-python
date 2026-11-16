@@ -108,6 +108,7 @@ class TestRegistryModelGardenDeploymentInteg(registry_model_deployment_test_base
         self.registry = registry.Registry(self.session, database_name=self._test_db, schema_name=self._test_schema)
         if self._has_image_override():
             for key, value in self._get_image_override_session_params().items():
+                logger.info("image override: %s=%s", key, value)
                 self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
 
     def tearDown(self) -> None:

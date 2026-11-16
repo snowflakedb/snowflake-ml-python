@@ -96,7 +96,7 @@ class ModelMonitorInferenceTableE2ETest(RegistryModelDeploymentTestBase):
         warehouse_name = self.session.get_current_warehouse() or self._TEST_SPCS_WH
         monitor = self.registry.add_monitor(
             name=monitor_name,
-            source_config=model_monitor_config.ModelMonitorSourceConfig._from_inference_table(
+            source_config=model_monitor_config.ModelMonitorSourceConfig(
                 ground_truth=_GROUND_TRUTH_TABLE,
                 id_columns=[_ID_COLUMN],
                 prediction_score_columns=["output"],
@@ -173,7 +173,7 @@ class ModelMonitorInferenceTableE2ETest(RegistryModelDeploymentTestBase):
     def _described_monitor(self, monitor_name: str) -> dict[str, object]:
         return {
             str(key).lower(): value
-            for key, value in self.registry.get_monitor(name=monitor_name)._describe().as_dict().items()
+            for key, value in self.registry.get_monitor(name=monitor_name).describe().as_dict().items()
         }
 
     def _describe_columns(self, monitor_name: str) -> dict[str, object]:

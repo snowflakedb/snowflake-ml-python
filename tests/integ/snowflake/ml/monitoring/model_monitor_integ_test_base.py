@@ -236,7 +236,7 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
     ) -> model_monitor.ModelMonitor:
         return self.registry.add_monitor(
             name=monitor_name,
-            source_config=model_monitor_config.ModelMonitorSourceConfig._from_inference_table(
+            source_config=model_monitor_config.ModelMonitorSourceConfig(
                 ground_truth=ground_truth,
                 id_columns=id_columns,
                 segment_columns=segment_columns,
