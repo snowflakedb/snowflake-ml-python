@@ -133,6 +133,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         super().setUp()
         if self._has_image_override():
             for key, value in self._get_batch_image_override_session_params().items():
+                logger.info("image override: %s=%s", key, value)
                 self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
         self.session.sql(f"ALTER SESSION SET {self._SNOWHOUSE_LOGGING_PARAM} = false").collect()
 

@@ -105,6 +105,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         # so all deployment paths use the locally built image instead of the production one.
         if self._has_image_override():
             for key, value in self._get_image_override_session_params().items():
+                logger.info("image override: %s=%s", key, value)
                 self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
 
     def tearDown(self) -> None:

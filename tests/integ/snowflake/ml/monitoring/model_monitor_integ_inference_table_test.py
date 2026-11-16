@@ -42,7 +42,7 @@ class ModelMonitorIntegrationInferenceTableTest(ModelMonitorIntegrationTestBase)
 
         self.assertEqual(self.registry.get_monitor(name=monitor_name).name, monitor_name.upper())
 
-        described = self._row_values(monitor._describe())
+        described = self._row_values(monitor.describe())
         self.assertIsNotNone(described["monitor_start_time"])
         columns = json.loads(described["columns"])
         self.assertEqual(columns["custom_metric_columns"], [])
@@ -74,7 +74,7 @@ class ModelMonitorIntegrationInferenceTableTest(ModelMonitorIntegrationTestBase)
             ground_truth=ground_truth_table,
             id_columns=["id"],
         )
-        described = self._row_values(monitor._describe())
+        described = self._row_values(monitor.describe())
         ground_truth_value = described.get("ground_truth", described.get("fully_qualified_ground_truth"))
         self.assertIsNotNone(ground_truth_value)
         self.assertIn(ground_truth_table.upper(), str(ground_truth_value).upper())
@@ -134,7 +134,7 @@ class ModelMonitorIntegrationInferenceTableTest(ModelMonitorIntegrationTestBase)
         Raises:
             AssertionError: If the described status is not an object.
         """
-        described = self._row_values(self.registry.get_monitor(name=monitor_name)._describe())
+        described = self._row_values(self.registry.get_monitor(name=monitor_name).describe())
         status = json.loads(str(described["aggregation_status"]))
         if not isinstance(status, dict):
             raise AssertionError(f"Monitor '{monitor_name}' aggregation status is missing.")

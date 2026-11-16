@@ -283,6 +283,59 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled")
 
+    def test_batch_fv_spec_oft_case_sensitive_online_read_by_key(self) -> None:
+        """Batch FV with case-sensitive key columns; assert Query API returns the feature for the keyed row.
+
+        The entity join key ``"userId"``, timestamp ``"eventTs"`` and feature ``"feeAmount"`` are quoted
+        mixed case, stored as ``userId``, ``eventTs`` and ``feeAmount``. The online read of the keyed row
+        is skipped on prod deployments, which do not yet support case-sensitive key columns.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_CS_ONLINE_FV_{s}"
+        batch_key = f"U_BATCH_CS_{s}"
+        expected_amount = 888.0
+
+        entity = Entity(name=f"CS_USER_ENTITY_{s}", join_keys=['"userId"'])
+        fs.register_entity(entity)
+        self.addCleanup(fs.delete_entity, entity.name)
+
+        src_table = self._create_batch_source_table(fs, s, batch_key, expected_amount)
+        feature_df = self._session.table(src_table).select(
+            snowpark_functions.col("USER_ID").alias('"userId"'),
+            snowpark_functions.col("EVENT_TIME").alias('"eventTs"'),
+            snowpark_functions.col("AMOUNT").alias('"feeAmount"'),
+        )
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[entity],
+            feature_df=feature_df,
+            timestamp_col='"eventTs"',
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered.is_streaming)
+        self.assertTrue(registered.online)
+        self.assertEqual(registered.timestamp_col.resolved(), "eventTs")
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+        offline_rows = self._session.sql(
+            f"""SELECT "feeAmount" FROM {registered.fully_qualified_name()} WHERE "userId" = '{batch_key}'"""
+        ).collect()
+        self.assertEqual(len(offline_rows), 1)
+        self.assertAlmostEqual(float(offline_rows[0]["feeAmount"]), expected_amount, places=3)
+
+        def _validate(pdf):
+            self.assertEqual(pdf.iloc[0]["userId"], batch_key)
+            self.assertIn("feeAmount", pdf.columns)
+            self.assertAlmostEqual(float(pdf.iloc[0]["feeAmount"]), expected_amount, places=3)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled case-sensitive"
+        )
+
     def _create_iceberg_source_table(self, fs: FeatureStore, suffix: str, entity_key: str, amount: float) -> str:
         """Create a Snowflake-managed Iceberg source table seeded with one row.
 
@@ -1088,6 +1141,103 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, pa
             self.assertAlmostEqual(fee_val, expected_fee_sum, places=2)
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
+
+    def test_batch_tiled_fv_spec_oft_full_case_sensitive_online_read_by_key(self) -> None:
+        """Tiled batch FV with case-sensitive key columns; online read returns tile aggregates.
+
+        The entity join key ``"userId"``, timestamp ``"eventTs"`` and aggregated column ``"feeAmount"``
+        are quoted mixed case, stored as ``userId``, ``eventTs`` and ``feeAmount``. The online read of the
+        keyed row is skipped on prod deployments, which do not yet support case-sensitive key columns.
+        """
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_TILED_CS_ONLINE_FV_{s}"
+        batch_key = f"U_BATCH_TILED_CS_{s}"
+
+        entity = Entity(name=f"CS_USER_ENTITY_{s}", join_keys=['"userId"'])
+        fs.register_entity(entity)
+        self.addCleanup(fs.delete_entity, entity.name)
+
+        src_table, expected_sum, expected_count, expected_fee_sum = self._create_batch_tiled_source_table(
+            fs, s, batch_key
+        )
+        feature_df = self._session.table(src_table).select(
+            snowpark_functions.col("USER_ID").alias('"userId"'),
+            snowpark_functions.col("EVENT_TIME").alias('"eventTs"'),
+            snowpark_functions.col("AMOUNT"),
+            snowpark_functions.col('"feeAmount"'),
+        )
+        features = [
+            Feature.sum("AMOUNT", "2d").alias("AMOUNT_SUM_2D"),
+            Feature.count("AMOUNT", "2d").alias("TXN_COUNT_2D"),
+            Feature.sum('"feeAmount"', "2d").alias("feeSum2d", case_sensitive=True),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[entity],
+            feature_df=feature_df,
+            timestamp_col='"eventTs"',
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered.is_streaming)
+        self.assertTrue(registered.is_tiled)
+        self.assertTrue(registered.online)
+
+        offline_deadline = time.time() + 300.0
+        while time.time() < offline_deadline:
+            try:
+                fv_live = fs.get_feature_view(fv_name, "v1")
+                off = fs.read_feature_view(fv_live, store_type=StoreType.OFFLINE, keys=[[batch_key]])
+                if off.count() > 0:
+                    opdf = off.to_pandas()
+                    if "AMOUNT_SUM_2D" not in opdf.columns or "TXN_COUNT_2D" not in opdf.columns:
+                        time.sleep(5)
+                        continue
+                    o0 = opdf.iloc[0]
+                    try:
+                        s_val = float(o0["AMOUNT_SUM_2D"])
+                        c_val = float(o0["TXN_COUNT_2D"])
+                    except (TypeError, ValueError):
+                        time.sleep(5)
+                        continue
+                    if math.isnan(s_val) or math.isnan(c_val):
+                        time.sleep(5)
+                        continue
+                    if abs(s_val - expected_sum) < 0.01 and abs(c_val - float(expected_count)) < 0.01:
+                        break
+            except Exception:
+                logging.warning("Offline read of %s for %s failed; retrying.", batch_key, fv_name, exc_info=True)
+            time.sleep(5)
+        else:
+            self.fail(
+                f"Timed out waiting for tiled batch FV offline aggregates to match "
+                f"sum={expected_sum} count={expected_count} for key {batch_key!r}."
+            )
+
+        def _validate_tiled(pdf):
+            self.assertIn("AMOUNT_SUM_2D", pdf.columns)
+            self.assertIn("TXN_COUNT_2D", pdf.columns)
+            self.assertIn("feeSum2d", pdf.columns)
+            row = pdf.iloc[0]
+            s_val = float(row["AMOUNT_SUM_2D"])
+            c_val = float(row["TXN_COUNT_2D"])
+            fee_val = float(row["feeSum2d"])
+            if math.isnan(s_val) or math.isnan(c_val):
+                raise AssertionError(f"nan aggregates (sum={s_val}, count={c_val})")
+            if math.isnan(fee_val):
+                raise AssertionError(f"nan case-sensitive aggregate (sum={fee_val})")
+            self.assertAlmostEqual(s_val, expected_sum, places=2)
+            self.assertAlmostEqual(c_val, float(expected_count), places=2)
+            self.assertAlmostEqual(fee_val, expected_fee_sum, places=2)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled case-sensitive"
+        )
 
     @parameterized.named_parameters(  # type: ignore[misc]
         ("native", False),

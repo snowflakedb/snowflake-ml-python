@@ -1,6 +1,22 @@
 # Release History
 
-## 2.9.0
+## 2.10.0
+
+### New Features
+
+* Model Monitoring: Added inference-table model monitors. Omit `source` on `ModelMonitorSourceConfig` to
+  monitor the model inference table. `ModelMonitor.describe` returns the DESC MODEL MONITOR row.
+
+### Bug Fixes
+
+* Registry: Deploying a model whose file names contain spaces or quotes (for example `bar plot.png`) no longer
+  fails with a `001003` SQL compilation error while the inference service downloads the model.
+
+### Behavior Changes
+
+### Deprecations
+
+## 2.9.0 (2026-11-09)
 
 ### New Features
 

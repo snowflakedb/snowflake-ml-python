@@ -1,4 +1,6 @@
 import inspect
+import os
+import tempfile
 import uuid
 
 import pandas as pd
@@ -19,6 +21,25 @@ class DemoModel(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["C1"]})
+
+
+class DemoModelWithSpecialCharacterArtifacts(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+        with open(context.path("plot"), "rb") as plot_file:
+            self._plot = plot_file.read()
+        with open(context.path("notes"), encoding="utf-8") as notes_file:
+            self._notes = notes_file.read()
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "output": input["C1"],
+                "plot": self._plot.decode("utf-8"),
+                "notes": self._notes,
+            }
+        )
 
 
 class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
@@ -251,6 +272,39 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             )
         finally:
             self.session.sql(f"ALTER SESSION UNSET {param}").collect()
+
+    def test_special_character_filenames(self) -> None:
+        """Batch jobs without the proxy download via Snowpark file.get, which quotes paths.
+
+        A file name with a space must still be downloaded and readable after the job.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plot_path = os.path.join(tmpdir, "bar plot.png")
+            notes_path = os.path.join(tmpdir, "notes (1).txt")
+            with open(plot_path, "wb") as plot_file:
+                plot_file.write(b"png")
+            with open(notes_path, "w", encoding="utf-8") as notes_file:
+                notes_file.write("ok")
+
+            model = DemoModelWithSpecialCharacterArtifacts(
+                custom_model.ModelContext(artifacts={"plot": plot_path, "notes": notes_path})
+            )
+            num_cols = 2
+            input_data = [[0] * num_cols, [1] * num_cols]
+            input_cols = [f"C{i}" for i in range(num_cols)]
+            input_pandas_df = pd.DataFrame(input_data, columns=input_cols)
+            model_output = model.predict(input_pandas_df[input_cols])
+            input_df, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
+            sp_df = self.session.create_dataframe(input_data, schema=input_cols)
+            _, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+            self._test_registry_batch_inference(
+                model=model,
+                sample_input_data=sp_df,
+                X=input_df,
+                output_spec=batch_inference_job_specs.OutputSpec(stage_location=output_stage_location),
+                expected_predictions=expected_predictions,
+            )
 
 
 if __name__ == "__main__":

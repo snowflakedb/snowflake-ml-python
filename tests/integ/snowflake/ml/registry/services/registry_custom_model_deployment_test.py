@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 
 import inflection
@@ -21,6 +22,25 @@ class DemoModel(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
+
+
+class DemoModelWithSpecialCharacterArtifacts(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+        with open(context.path("plot"), "rb") as plot_file:
+            self._plot = plot_file.read()
+        with open(context.path("notes"), encoding="utf-8") as notes_file:
+            self._notes = notes_file.read()
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "output": input["c1"],
+                "plot": self._plot.decode("utf-8"),
+                "notes": self._notes,
+            }
+        )
 
 
 class MyCustomModel(custom_model.CustomModel):
@@ -183,6 +203,42 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
                 ),
             },
         )
+
+    def test_custom_model_special_character_filenames(self) -> None:
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override not enabled. Requires the proxy image that quotes GET paths.")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plot_path = os.path.join(tmpdir, "bar plot.png")
+            notes_path = os.path.join(tmpdir, "notes (1).txt")
+            with open(plot_path, "wb") as plot_file:
+                plot_file.write(b"png")
+            with open(notes_path, "w", encoding="utf-8") as notes_file:
+                notes_file.write("ok")
+
+            model = DemoModelWithSpecialCharacterArtifacts(
+                custom_model.ModelContext(artifacts={"plot": plot_path, "notes": notes_path})
+            )
+            num_cols = 2
+            sp_df = self.session.create_dataframe(
+                [[0] * num_cols, [1] * num_cols], schema=[f'"c{i}"' for i in range(num_cols)]
+            )
+            expected_predictions = pd.DataFrame({"output": [0, 1], "plot": ["png", "png"], "notes": ["ok", "ok"]})
+
+            self._test_registry_model_deployment(
+                model=model,
+                sample_input_data=sp_df,
+                prediction_assert_fns={
+                    "predict": (
+                        sp_df.to_pandas(),
+                        lambda res: pd.testing.assert_frame_equal(
+                            res,
+                            expected_predictions,
+                            check_dtype=False,
+                        ),
+                    ),
+                },
+            )
 
 
 if __name__ == "__main__":

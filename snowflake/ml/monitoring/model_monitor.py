@@ -108,10 +108,8 @@ class ModelMonitor:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    def _describe(self) -> snowpark.Row:
+    def describe(self) -> snowpark.Row:
         """Return the DESC MODEL MONITOR row for this Model Monitor.
-
-        This method is in development.
 
         Returns:
             The describe row, including columns and MONITOR_START_TIME.

@@ -330,6 +330,15 @@ if [[ -n "${PYTHON_VERSION}" ]]; then
     esac
 fi
 
+# The downloader config only exists in the internal repository; it routes Bazel's GitHub
+# downloads through a mirror so fetching external repositories on an agent with a cold
+# cache does not depend on github.com being reachable.
+downloader_flags=()
+bazel_downloader_config="${PWD}/ci/internal/bazel_downloader.cfg"
+if [[ -f "${bazel_downloader_config}" ]]; then
+    downloader_flags+=("--experimental_downloader_config=${bazel_downloader_config}")
+fi
+
 cache_test_results="--cache_test_results=no"
 
 case "${mode}" in
@@ -449,7 +458,7 @@ done
 all_test_targets_file=${working_dir}/all_test_targets
 all_test_targets_query_file=${working_dir}/all_test_targets_query
 printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
-"${bazel}" query --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
+"${bazel}" query ${downloader_flags[@]+"${downloader_flags[@]}"} --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
 
 if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
     exit 0
@@ -496,7 +505,7 @@ fi
 
 # Identify non-python test targets that should always run with core
 non_python_test_targets_file="${working_dir}/non_python_test_targets"
-"${bazel}" query 'kind(".*_test rule", set('"$(<"${all_test_targets_file}")"')) - kind("py_test rule", set('"$(<"${all_test_targets_file}")"'))' >"${non_python_test_targets_file}"
+"${bazel}" query ${downloader_flags[@]+"${downloader_flags[@]}"} 'kind(".*_test rule", set('"$(<"${all_test_targets_file}")"')) - kind("py_test rule", set('"$(<"${all_test_targets_file}")"'))' >"${non_python_test_targets_file}"
 
 # Filter targets for each group
 for i in "${!groups[@]}"; do
@@ -504,7 +513,7 @@ for i in "${!groups[@]}"; do
     group_test_targets_files[$i]="${working_dir}/${group}_test_targets"
 
     # Filter out targets that are incompatible with the group
-    "${bazel}" cquery --config="${group}" \
+    "${bazel}" cquery ${downloader_flags[@]+"${downloader_flags[@]}"} --config="${group}" \
         --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
         'set('"$(<"${all_test_targets_file}")"')' | \
         awk NF >"${working_dir}/filtered_targets"
@@ -516,7 +525,7 @@ done
 
 # Find targets compatible with core group
 core_targets_file="${working_dir}/core_targets"
-"${bazel}" cquery --config=core  \
+"${bazel}" cquery ${downloader_flags[@]+"${downloader_flags[@]}"} --config=core \
     --output=starlark --starlark:file=bazel/platforms/filter_incompatible_targets.cquery \
     'set('"$(<"${all_test_targets_file}")"')' | \
     awk NF >"${working_dir}/filtered_targets"
@@ -569,7 +578,7 @@ rewrite_empty_bazel_timeout_reports() {
         return 0
     fi
     # The Jenkins agent python3 is 3.6. Use the toolchain interpreter, same as the other CI tools.
-    if ! "${bazel}" run --config=core ${python_config} //ci/test_compiler:normalize_empty_test_reports -- "${testlogs_dir}"; then
+    if ! "${bazel}" run ${downloader_flags[@]+"${downloader_flags[@]}"} --config=core ${python_config} //ci/test_compiler:normalize_empty_test_reports -- "${testlogs_dir}"; then
         echo "WARNING: could not rewrite empty Bazel timeout reports"
     fi
 }
@@ -594,6 +603,7 @@ if [[ "${action}" = "test" ]]; then
         # Set default test output verbosity (can be overridden via BAZEL_TEST_OUTPUT)
         TEST_OUTPUT_FLAG="--test_output=${BAZEL_TEST_OUTPUT:-errors}"
         "${bazel}" test \
+            ${downloader_flags[@]+"${downloader_flags[@]}"} \
             --jobs="${bazel_jobs}" \
             --local_test_jobs="${local_test_jobs}" \
             --config="${group}" \
@@ -618,6 +628,7 @@ elif [[ "${action}" = "coverage" ]]; then
         group_coverage_report_files[$i]="${working_dir}/${group}_coverage_report.dat"
 
         "${bazel}" coverage \
+            ${downloader_flags[@]+"${downloader_flags[@]}"} \
             --config="${group}" \
             ${python_config} \
             "${cache_test_results}" \

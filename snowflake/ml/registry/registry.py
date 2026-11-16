@@ -608,7 +608,8 @@ class Registry:
 
         Args:
             name: Name of Model Monitor to create.
-            source_config: Configuration options of table for Model Monitor.
+            source_config: Source configuration. Pass a source table to monitor that table. Omit the source to
+                monitor the model inference table.
             model_monitor_config: Configuration options of Model Monitor.
 
         Returns:
