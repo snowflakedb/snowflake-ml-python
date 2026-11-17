@@ -308,7 +308,7 @@ def _return_stream_response(
     deadline: float | None,
     session: snowpark.Session | None = None,
 ) -> Iterator[str]:
-    request_id = _get_request_id(dict(response.headers))
+    request_id = _get_request_id({"headers": dict(response.headers)})
     client = SSEClient(response)
     for event in client.events():
         if deadline is not None and time.time() > deadline:
