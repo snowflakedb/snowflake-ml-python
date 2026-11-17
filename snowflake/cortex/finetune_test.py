@@ -5,6 +5,7 @@ from unittest import mock
 from absl.testing import absltest
 
 from snowflake.cortex import Finetune, FinetuneJob, FinetuneStatus
+from snowflake.cortex._finetune import FinetuneError
 from snowflake.ml.test_utils import mock_data_frame
 
 
@@ -182,6 +183,18 @@ class FinetuneTest(absltest.TestCase):
         run = Finetune().list_jobs()[0]
         self.assertEqual(run.describe(), FinetuneStatus(**sql_return_value))
         mock_call_sql_function.assert_called_with(self.system_function_name, None, "DESCRIBE", "1")
+
+    @mock.patch("snowflake.cortex._finetune.Finetune.list_jobs")
+    @mock.patch("snowflake.cortex._finetune.call_sql_function_literals")
+    def test_finetune_describe_non_dict_response(
+        self, mock_call_sql_function: mock.Mock, mock_finetune_list_jobs: mock.Mock
+    ) -> None:
+        """Test that a non-object JSON response to DESCRIBE raises an error with a readable message."""
+        mock_finetune_list_jobs.return_value = self.list_jobs_expected_result
+        mock_call_sql_function.return_value = json.dumps("unexpected")
+        run = Finetune().list_jobs()[0]
+        with self.assertRaisesRegex(FinetuneError, "Result was not a dictionary"):
+            run.describe()
 
     @mock.patch("snowflake.cortex._finetune.call_sql_function_literals")
     def test_finetune_list_jobs(self, mock_call_sql_function: mock.Mock) -> None:
