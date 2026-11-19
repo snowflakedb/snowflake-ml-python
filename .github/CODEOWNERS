@@ -2,8 +2,7 @@
 # See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
 # Public snowflakedb repos must list at least two Snowflake employees.
-# These are ML Platform members who already own CODEOWNERS on the internal
-# snowml repo, mapped to their sfc-gh GitHub accounts.
+# These are ML Platform members, mapped to their GitHub accounts.
 
 # Default owner for everything in the repo.
-*    @sfc-gh-jiehuang @sfc-gh-jkew @sfc-gh-sdas @sfc-gh-thoyt @sfc-gh-wesong @sfc-gh-hayu
+*    @sfc-gh-jiehuang @sfc-gh-sdas @sfc-gh-thoyt @sfc-gh-hayu @p-ramachandran_snow
