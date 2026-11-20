@@ -30,7 +30,10 @@ import logging
 from typing import Any, Sequence, cast
 
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.feature_store.decl.compiler import _decode_join_keys
+from snowflake.ml.feature_store.decl.compiler import (
+    _decode_join_keys,
+    to_comparison_identifier,
+)
 from snowflake.ml.feature_store.decl.invariants import (
     _VERSIONED_KINDS,
     _full_spec_hash,
@@ -1202,12 +1205,13 @@ def _build_spec_key(kind: str, spec: dict[str, Any]) -> str:
         spec: The parsed spec dict (may contain a ``metadata`` sub-dict).
 
     Returns:
-        Canonical key string with database, schema, and name uppercased.
+        Canonical key string with database and schema uppercased and the name
+        folded through ``to_comparison_identifier``.
     """
     metadata = spec.get("metadata", spec)
     db = (metadata.get("database", "") or spec.get("database", "") or "").upper()
     schema = (metadata.get("schema", "") or spec.get("schema", "") or "").upper()
-    name = (metadata.get("name", "") or spec.get("name", "") or "").upper()
+    name = to_comparison_identifier(metadata.get("name", "") or spec.get("name", "") or "")
     qualifier = f"{db}.{schema}" if (db or schema) else ""
     key = f"{kind}:{qualifier}:{name}"
     # Mirror :func:`invariants.spec_key`: versioned kinds carry a trailing

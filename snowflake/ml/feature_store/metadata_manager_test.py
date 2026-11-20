@@ -1,21 +1,22 @@
 """Unit tests for FeatureStoreMetadataManager."""
 
 import json
+from collections.abc import Callable, Mapping, Sequence
 from unittest.mock import MagicMock
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
     FeatureStoreMetadataManager,
+    FeatureViewMetadataConfig,
     FvSourceRefsMetadata,
     MetadataObjectType,
     MetadataType,
     StreamingMetadata,
     _sanitize_json_for_dollar_quoting,
-    _sql_str,
 )
 
 # What DELETE returns in Snowflake: exactly one row.
@@ -278,12 +279,6 @@ class StreamSourceRefCountTest(absltest.TestCase):
             manager.sync_stream_source_ref_count("MYSOURCE")
 
         self.assertIn("warehouse suspended", logs.output[0])
-
-    def test_sql_str_escapes_quotes_and_backslashes(self) -> None:
-        self.assertEqual(_sql_str("plain"), "'plain'")
-        self.assertEqual(_sql_str("O'Neil"), "'O''Neil'")
-        self.assertEqual(_sql_str("a\\'b"), "'a\\\\''b'")
-        self.assertEqual(_sql_str("50% ?"), "'50% ?'")
 
 
 class TestFvSourceRefsMetadata(absltest.TestCase):
@@ -637,6 +632,149 @@ class TestDollarQuoteEscaping(absltest.TestCase):
         sql = session.sql.call_args[0][0]
         self.assertNotIn("price in $$", sql)
         self.assertIn("$\\u0024", sql)
+
+    def test_save_feature_view_metadata_escapes_double_dollar_in_feature_specs(self) -> None:
+        """A feature alias or source column containing ``$$`` is escaped in the atomic insert."""
+        manager, session = _make_manager()
+        spec = AggregationSpec(
+            source_column="AMT$$",
+            output_column='"A$$) UNION ALL SELECT $$FEATURE_VIEW$$,$$VICTIM_FV$$ -- "',
+            function=AggregationType.SUM,
+            window="1h",
+            offset="0",
+        )
+        specs = AggregationMetadata(feature_granularity="1h", features=[spec])
+
+        manager.save_feature_view_metadata("FV", "v1", specs)
+
+        sql = session.sql.call_args[0][0]
+        # Only the opening and closing ``$$`` delimiters survive; the payload has none.
+        self.assertEqual(sql.count("$$"), 2)
+        self.assertNotIn("UNION ALL SELECT $$", sql)
+        restored = AggregationMetadata.from_dict(json.loads(self._payload_between_dollar_quotes(sql)))
+        restored_features = restored.features
+        assert restored_features is not None
+        self.assertEqual(restored_features[0].output_column, spec.output_column)
+        self.assertEqual(restored_features[0].source_column, spec.source_column)
+
+
+# A feature view name, stream source name, and version that each contain a single quote and a backslash,
+# each paired with the SQL literal it must appear as, with both characters doubled.
+_FV_NAME = "O'Ne\\il"
+_FV_NAME_LITERAL = "'O''Ne\\\\il'"
+_SOURCE_NAME = "Src'\\x"
+_SOURCE_NAME_LITERAL = "'Src''\\\\x'"
+_VERSION = "v'1\\b"
+_VERSION_LITERAL = "'v''1\\\\b'"
+
+
+class NameAndVersionEscapingTest(parameterized.TestCase):
+    """Names and versions reach every statement as escaped SQL literals."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        (
+            "save_feature_view_metadata",
+            lambda m: m.save_feature_view_metadata(
+                f'"{_FV_NAME}"',
+                _VERSION,
+                AggregationMetadata(feature_granularity="1h", features=[]),
+                descs={"F": "d"},
+                fv_metadata_config=FeatureViewMetadataConfig(authoring_pkg_version="1.0.0"),
+            ),
+            [],
+            {_FV_NAME_LITERAL: 3, _VERSION_LITERAL: 3},
+        ),
+        (
+            "get_feature_specs",
+            lambda m: m.get_feature_specs(f'"{_FV_NAME}"', _VERSION),
+            [],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1},
+        ),
+        (
+            "save_feature_descs",
+            lambda m: m.save_feature_descs(f'"{_FV_NAME}"', _VERSION, {"F": "d"}),
+            [],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1},
+        ),
+        (
+            "save_streaming_metadata",
+            lambda m: m.save_streaming_metadata(
+                f'"{_FV_NAME}"',
+                _VERSION,
+                StreamingMetadata(stream_source_name=_SOURCE_NAME, transformation_fn_name="fn"),
+            ),
+            [{"number of rows inserted": 1, "number of rows updated": 0}],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1, _SOURCE_NAME_LITERAL: 1},
+        ),
+        (
+            "delete_feature_view_metadata",
+            lambda m: m.delete_feature_view_metadata(f'"{_FV_NAME}"', _VERSION),
+            [],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1},
+        ),
+        (
+            "delete_feature_group_metadata",
+            lambda m: m.delete_feature_group_metadata(f'"{_FV_NAME}"', _VERSION),
+            [],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1},
+        ),
+        (
+            "delete_realtime_config",
+            lambda m: m.delete_realtime_config(f'"{_FV_NAME}"', _VERSION),
+            [],
+            {_FV_NAME_LITERAL: 1, _VERSION_LITERAL: 1},
+        ),
+        (
+            "save_stream_source",
+            lambda m: m.save_stream_source(f'"{_SOURCE_NAME}"', {"desc": "d"}),
+            [],
+            {_SOURCE_NAME_LITERAL: 1},
+        ),
+        (
+            "get_stream_source_metadata",
+            lambda m: m.get_stream_source_metadata(f'"{_SOURCE_NAME}"'),
+            [],
+            {_SOURCE_NAME_LITERAL: 1},
+        ),
+        (
+            "delete_stream_source_metadata",
+            lambda m: m.delete_stream_source_metadata(f'"{_SOURCE_NAME}"'),
+            _DELETE_RESULT,
+            {_SOURCE_NAME_LITERAL: 2},
+        ),
+        (
+            "sync_stream_source_ref_count",
+            lambda m: m.sync_stream_source_ref_count(f'"{_SOURCE_NAME}"'),
+            [],
+            {_SOURCE_NAME_LITERAL: 2},
+        ),
+        (
+            "get_stream_source_ref_count",
+            lambda m: m.get_stream_source_ref_count(f'"{_SOURCE_NAME}"'),
+            [{"CNT": 0}],
+            {_SOURCE_NAME_LITERAL: 1},
+        ),
+        (
+            "list_stream_source_references",
+            lambda m: m.list_stream_source_references(f'"{_SOURCE_NAME}"'),
+            [],
+            {_SOURCE_NAME_LITERAL: 1},
+        ),
+    )
+    def test_names_and_versions_are_escaped(
+        self,
+        call: Callable[[FeatureStoreMetadataManager], object],
+        rows: Sequence[Mapping[str, object]],
+        expected: Mapping[str, int],
+    ) -> None:
+        manager, session = _make_manager()
+        session.sql.return_value.collect.return_value = rows
+
+        call(manager)
+
+        self.assertEqual(session.sql.call_count, 1)
+        sql = session.sql.call_args[0][0]
+        self.assertEqual({literal: sql.count(literal) for literal in expected}, expected)
 
 
 if __name__ == "__main__":

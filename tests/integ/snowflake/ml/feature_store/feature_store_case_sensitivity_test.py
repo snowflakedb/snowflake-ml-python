@@ -11,8 +11,15 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     Entity,
     FeatureStore,
     FeatureView,
+    streaming_registration,
 )
 from snowflake.ml.feature_store.feature_view import OnlineConfig, StoreType
+from snowflake.ml.feature_store.metadata_manager import (
+    AggregationMetadata,
+    StreamingMetadata,
+)
+from snowflake.ml.feature_store.stream_source import StreamSource
+from snowflake.snowpark.types import StringType, StructField, StructType, TimestampType
 
 # A list of names to be tested.
 #   Each tuple is consisted of:
@@ -527,6 +534,61 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
         for version in invalid_dataset_versions:
             with self.assertRaisesRegex(ValueError, ".* is not a valid feature view version.*"):
                 fs.register_feature_view(fv, version)
+
+    def test_metadata_round_trip_for_names_with_quote_and_backslash(self) -> None:
+        current_schema = create_random_schema(self._session, "TEST_METADATA_ESCAPING", database=self.test_db)
+        fs = FeatureStore(
+            self._session,
+            self.test_db,
+            current_schema,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._active_fs.append(fs)
+        mgr = fs._metadata_manager
+        source = "Src'\\x"
+        fv_name = "O'Ne\\il"
+
+        fs.register_stream_source(
+            StreamSource(
+                name=f'"{source}"',
+                schema=StructType([StructField("a", StringType()), StructField("ts", TimestampType())]),
+            )
+        )
+        self.assertEqual(fs.get_stream_source(f'"{source}"').name.resolved(), source)
+
+        mgr.save_feature_view_metadata(
+            fv_name, "v1", AggregationMetadata(feature_granularity="1h", features=[]), descs={"F": "d"}
+        )
+        self.assertEqual(mgr.get_feature_descs(fv_name, "v1"), {"F": "d"})
+        self.assertTrue(
+            mgr.save_streaming_metadata(
+                fv_name, "v1", StreamingMetadata(stream_source_name=source, transformation_fn_name="fn")
+            )
+        )
+        mgr.sync_stream_source_ref_count(source)
+        self.assertEqual(mgr.get_stream_source_ref_count(source), 1)
+        self.assertEqual(mgr.get_stream_source_metadata(source)["ref_count"], 1)
+        self.assertFalse(mgr.delete_stream_source_metadata(source))
+
+        # The backfill finalizer's UPDATE matches the row the manager wrote.
+        self._session.sql(
+            streaming_registration._render_backfill_state_update_sql(
+                metadata_table_path=mgr.table_path,
+                fv_name=fv_name,
+                version="v1",
+                new_state_sql_expr="'COMPLETED'",
+            )
+        ).collect()
+        self.assertEqual(mgr.get_streaming_metadata(fv_name, "v1").backfill_state, "COMPLETED")
+
+        mgr.delete_feature_view_metadata(fv_name, "v1")
+        mgr.sync_stream_source_ref_count(source)
+        self.assertIsNone(mgr.get_feature_descs(fv_name, "v1"))
+        self.assertIsNone(mgr.get_streaming_metadata(fv_name, "v1"))
+        self.assertEqual(mgr.get_stream_source_metadata(source)["ref_count"], 0)
+        self.assertTrue(mgr.delete_stream_source_metadata(source))
+        self.assertIsNone(mgr.get_stream_source_metadata(source))
 
 
 if __name__ == "__main__":

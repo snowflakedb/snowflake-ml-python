@@ -237,6 +237,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         skip_rest_api_test: bool = False,
         rest_inference_formats: Sequence[RestInferencePayloadFormat] | None = None,
         feature_sources_per_function: dict[str, list[feature_view_mod.FeatureView]] | None = None,
+        image_build_compute_pool: str | None = None,
+        force_rebuild: bool = False,
     ) -> ModelVersion:
         if service_name is None:
             service_name = f"service_{_get_deployment_test_caller_name()}_{self._run_id}"
@@ -246,7 +248,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         create_service_kwargs: dict[str, Any] = dict(
             service_name=service_name,
             # Image builds don't need a GPU; keeping them on the CPU pool leaves the shared GPU pool for services.
-            image_build_compute_pool=self._TEST_CPU_COMPUTE_POOL,
+            image_build_compute_pool=image_build_compute_pool or self._TEST_CPU_COMPUTE_POOL,
+            force_rebuild=force_rebuild,
             service_compute_pool=service_compute_pool,
             gpu_requests=gpu_requests,
             num_workers=num_workers,

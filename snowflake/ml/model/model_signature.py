@@ -234,7 +234,7 @@ def _validate_array_or_series_type(
         dtype = dtype.type
     elif isinstance(dtype, pd.CategoricalDtype):
         dtype = dtype.categories.dtype
-    elif isinstance(dtype, pd.StringDtype):
+    if isinstance(dtype, pd.StringDtype):
         dtype = np.str_
     if feature_type in [
         core.DataType.INT8,
@@ -323,7 +323,7 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
         ft_shape = feature._shape
         if isinstance(df_col_dtype, pd.CategoricalDtype):
             df_col_dtype = df_col_dtype.categories.dtype
-        if df_col_dtype != np.dtype("O"):
+        if df_col_dtype != np.dtype("O") and not isinstance(df_col_dtype, pd.StringDtype):
             if not _validate_array_or_series_type(data_col, ft_type, strict=strict):
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_DATA,

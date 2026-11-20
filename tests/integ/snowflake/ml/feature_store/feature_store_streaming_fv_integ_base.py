@@ -489,8 +489,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             else:
                 assert last_err is not None
                 raise last_err
-            name_id = SqlIdentifier(str(registered.name), case_sensitive=True).identifier()
-            self._tracked_feature_view_keys.append((name_id, str(registered.version)))
+            # ``delete_feature_view`` expects identifier form. ``name`` is already a SqlIdentifier; re-wrapping it
+            # with ``case_sensitive=True`` would turn ``"myFv"`` into ``"""myFv"""``.
+            self._tracked_feature_view_keys.append((registered.name.identifier(), str(registered.version)))
             return registered
 
         def _register_stream_source_tracked(stream_source: StreamSource, *args: Any, **kwargs: Any) -> Any:

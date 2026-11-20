@@ -19,6 +19,7 @@ Both tests deliberately fail until the helpers are implemented.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -203,6 +204,110 @@ class TestFgContentHashIgnoresOutputColumns:
         assert fg_content_hash(a) == fg_content_hash(b)
 
 
+class TestFgContentHashIdentifierCase:
+    """Authored FG identifiers resolve to Snowflake's stored form before hashing.
+
+    The applied half (``list_feature_groups``) carries ``SqlIdentifier.resolved()``
+    names: a quoted ``"myFg"`` is stored as ``myFg`` and an unquoted ``my_fg`` as
+    ``MY_FG``.  The authored half is SQL syntax, so it hashes with
+    ``authored=True`` and must land on the same stored form.
+    """
+
+    @staticmethod
+    def _stored_form_hash(name: str, sources: list[tuple[str, str, list[str] | None]]) -> str:
+        """Hash of a basis whose identifiers are already in Snowflake's stored form."""
+        basis = {
+            "name": name,
+            "version": "V1",
+            "desc": "",
+            "auto_prefix": True,
+            "sources": [
+                {"fv_name": fv_name, "fv_version": fv_version, "slice_columns": slice_columns, "alias": None}
+                for fv_name, fv_version, slice_columns in sources
+            ],
+        }
+        return hashlib.sha256(json.dumps(basis, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+    @staticmethod
+    def _applied_mixed_case() -> dict[str, Any]:
+        return _fg(
+            name="myFg",
+            feature_views=[{"name": "myFv", "version": "V1", "slice_columns": ["userId", "TOTAL"]}],
+        )
+
+    def test_quoted_authoring_matches_case_sensitive_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        authored = _fg(
+            name='"myFg"',
+            feature_views=[{"name": '"myFv"', "version": "V1", "slice_columns": ['"userId"', "TOTAL"]}],
+        )
+        expected = self._stored_form_hash("myFg", [("myFv", "V1", ["userId", "TOTAL"])])
+        assert fg_content_hash(authored, authored=True) == expected
+        assert fg_content_hash(self._applied_mixed_case()) == expected
+
+    def test_unquoted_authoring_does_not_match_case_sensitive_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        # Unquoted ``myFg`` folds to ``MYFG`` on register, a different object
+        # than the deployed case-sensitive ``myFg``.
+        authored = self._applied_mixed_case()
+        assert fg_content_hash(authored, authored=True) == self._stored_form_hash(
+            "MYFG", [("MYFV", "V1", ["USERID", "TOTAL"])]
+        )
+        assert fg_content_hash(self._applied_mixed_case()) == self._stored_form_hash(
+            "myFg", [("myFv", "V1", ["userId", "TOTAL"])]
+        )
+
+    def test_unquoted_slice_column_does_not_match_case_sensitive_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        authored = _fg(
+            name='"myFg"',
+            feature_views=[{"name": '"myFv"', "version": "V1", "slice_columns": ["userId", "TOTAL"]}],
+        )
+        assert fg_content_hash(authored, authored=True) == self._stored_form_hash(
+            "myFg", [("myFv", "V1", ["USERID", "TOTAL"])]
+        )
+        assert fg_content_hash(self._applied_mixed_case()) == self._stored_form_hash(
+            "myFg", [("myFv", "V1", ["userId", "TOTAL"])]
+        )
+
+    def test_lowercase_unquoted_authoring_matches_upper_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        authored = _fg(
+            name="my_fg",
+            version="v1",
+            feature_views=[{"name": "my_fv", "version": "v1", "slice_columns": ["total"]}],
+        )
+        applied = _fg(
+            name="MY_FG",
+            version="V1",
+            feature_views=[{"name": "MY_FV", "version": "V1", "slice_columns": ["TOTAL"]}],
+        )
+        expected = self._stored_form_hash("MY_FG", [("MY_FV", "V1", ["TOTAL"])])
+        assert fg_content_hash(authored, authored=True) == expected
+        assert fg_content_hash(applied) == expected
+
+    def test_applied_unquote_is_idempotent(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        quoted = _fg(name='"myFg"', feature_views=[{"name": '"myFv"', "version": "V1"}])
+        bare = _fg(name="myFg", feature_views=[{"name": "myFv", "version": "V1"}])
+        expected = self._stored_form_hash("myFg", [("myFv", "V1", None)])
+        assert fg_content_hash(quoted) == expected
+        assert fg_content_hash(bare) == expected
+
+    def test_quoted_case_change_is_a_rename(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import fg_content_hash
+
+        lower = _fg(name='"myFg"')
+        upper = _fg(name='"MYFG"')
+        assert fg_content_hash(lower, authored=True) == self._stored_form_hash("myFg", [("FV_A", "V1", None)])
+        assert fg_content_hash(upper, authored=True) == self._stored_form_hash("MYFG", [("FV_A", "V1", None)])
+
+
 # ---------------------------------------------------------------------------
 # _check_feature_group_sources
 # ---------------------------------------------------------------------------
@@ -243,6 +348,53 @@ class TestCheckFeatureGroupSourcesUnresolved:
         results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=applied)
         assert all(r.code != "MISSING_FEATURE_VIEW" for r in results)
 
+    def test_quoted_ref_resolves_case_sensitive_applied(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import (
+            _check_feature_group_sources,
+        )
+
+        spec = _fg(feature_views=[{"name": '"myFv"', "version": "V1"}])
+        applied = _applied_with(_fv_payload("myFv", online=True, store_type="POSTGRES"))
+        results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=applied)
+        assert [r.code for r in results] == []
+
+    def test_quoted_ref_resolves_quoted_batch_fv_via_validate_specs(self) -> None:
+        from snowflake.ml.feature_store.decl.invariants import validate_specs
+        from snowflake.ml.feature_store.decl.spec_models import (
+            BatchFeatureView,
+            FeatureGroup,
+        )
+        from snowflake.ml.feature_store.decl.types import SpecBatch
+
+        fg = FeatureGroup.model_validate(
+            {
+                "kind": "FeatureGroup",
+                "name": '"myFg"',
+                "database": "DB",
+                "schema_": "SCH",
+                "version": "V1",
+                "feature_views": [{"name": '"myFv"', "version": "V1"}],
+            }
+        )
+        fv = BatchFeatureView.model_validate(
+            {
+                "kind": "BatchFeatureView",
+                "name": '"myFv"',
+                "version": "V1",
+                "database": "DB",
+                "schema_": "SCH",
+                "online": True,
+                "target_lag": "1 hour",
+            }
+        )
+        results = validate_specs(
+            SpecBatch(specs=[fg, fv], source_files=[]),
+            AppliedState(objects={}),
+            target_database="DB",
+            target_schema="SCH",
+        )
+        assert "MISSING_FEATURE_VIEW" not in [r.code for r in results]
+
 
 class TestCheckFeatureGroupSourcesDuplicate:
     def test_raises_duplicate_source(self) -> None:
@@ -260,6 +412,27 @@ class TestCheckFeatureGroupSourcesDuplicate:
         results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=applied)
         codes = [r.code for r in results]
         assert "FG_DUPLICATE_SOURCE" in codes
+
+    def test_fv_names_differing_only_in_case_are_duplicates(self) -> None:
+        """FG source refs whose FV names differ only in case fold to one ref and are rejected.
+
+        ``"myFv"`` (stored ``myFv``) and ``MYFV`` are distinct Snowflake objects, and the
+        imperative API accepts both in one FG. Source refs fold names case-insensitively so
+        a quoted ref finds its deployed FV, so the pair reports one ``FG_DUPLICATE_SOURCE``.
+        """
+        from snowflake.ml.feature_store.decl.invariants import (
+            _check_feature_group_sources,
+        )
+
+        spec = _fg(
+            feature_views=[
+                {"name": '"myFv"', "version": "V1"},
+                {"name": "MYFV", "version": "V1"},
+            ]
+        )
+        results = _check_feature_group_sources(spec, batch_fv_specs={}, applied_state=AppliedState(objects={}))
+        codes = [r.code for r in results]
+        assert codes.count("FG_DUPLICATE_SOURCE") == 1
 
 
 class TestCheckFeatureGroupSourcesNotOnlinePostgres:

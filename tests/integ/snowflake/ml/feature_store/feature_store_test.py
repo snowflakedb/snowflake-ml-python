@@ -16,6 +16,7 @@ from common_utils import (
     execute_snapshot_refresh,
     is_incrementalizable_refresh_mode,
     is_list_refresh_modes_incrementalizable,
+    is_missing,
 )
 from pytimeparse.timeparse import timeparse
 
@@ -887,7 +888,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertEqual(fv_list[0]["VERSION"], "2.0")
         self.assertEqual(fv_list[0]["DESC"], "final_reverted_table")
         self.assertEqual(fv_list[0]["ENTITIES"], '[\n  "SQL_FOO"\n]')
-        self.assertIsNone(fv_list[0]["REFRESH_FREQ"])  # Static view has no refresh_freq
+        self.assertTrue(is_missing(fv_list[0]["REFRESH_FREQ"]))  # Static view has no refresh_freq
 
         # Assertion: Verify shadow swap temp objects were cleaned up
         self.assert_no_temp_shadow_swap_objects(fs)
@@ -1979,7 +1980,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertIn("BACKUP_SOURCE", verbose_df.columns)
         self.assertEqual(len(verbose_df), 4)
         for _, row in verbose_df.iterrows():
-            self.assertIsNone(row["BACKUP_SOURCE"])
+            self.assertTrue(is_missing(row["BACKUP_SOURCE"]))
 
         listed_fvs = fs.list_feature_views(entity_name="FOO").to_pandas()
         self.assertTrue(is_list_refresh_modes_incrementalizable(listed_fvs), listed_fvs["REFRESH_MODE"].tolist())

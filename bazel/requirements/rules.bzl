@@ -8,7 +8,6 @@ _AUTOGEN_HEADERS = """# DO NOT EDIT!
 """
 
 _SCHEMA_FILE = "//bazel/requirements:requirements.schema.json"
-_PYPROJECT_FILE = "//bazel/requirements/templates:pyproject.toml"
 
 _GENERATE_TOOL = "//bazel/requirements:parse_and_generate_requirements"
 
@@ -20,17 +19,18 @@ _YAML_START_DOCUMENT_MARKER = "---"
 
 def generate_pyproject_file(
         name,
-        src_requirement_file):
-    _cmd = "$(location {}) $(location {{src_requirement_file}} ) --schema $(location {}) --pyproject-template $(location {}) --mode version_requirements --format toml > $@".format(_GENERATE_TOOL, _SCHEMA_FILE, _PYPROJECT_FILE)
+        src_requirement_file,
+        pyproject_template):
+    _cmd = "$(location {}) $(location {{src_requirement_file}} ) --schema $(location {}) --pyproject-template $(location {{pyproject_template}}) --mode version_requirements --format toml > $@".format(_GENERATE_TOOL, _SCHEMA_FILE)
     py_genrule(
         name = "{name}_pyproject".format(name = name),
         srcs = [
             src_requirement_file,
             _SCHEMA_FILE,
-            _PYPROJECT_FILE,
+            pyproject_template,
         ],
         outs = ["pyproject.toml"],
-        cmd = _cmd.format(src_requirement_file = src_requirement_file),
+        cmd = _cmd.format(src_requirement_file = src_requirement_file, pyproject_template = pyproject_template),
         tools = [_GENERATE_TOOL],
     )
 

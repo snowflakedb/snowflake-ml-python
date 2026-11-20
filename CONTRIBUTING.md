@@ -260,8 +260,8 @@ Another useful command is, `bazel run`. This builds and then run the built targe
 
 To introduce a third-party Python dependency, first check if it is available as a package in the
 [Snowflake conda channel](https://repo.anaconda.com/pkgs/snowflake/). Then modify
-[requirements.yml](https://github.com/snowflakedb/snowflake-ml-python/blob/main/requirements.yml), and run the following
- to re-generate all requirements files, including
+[requirements.yml](https://github.com/snowflakedb/snowflake-ml-python/blob/main/distributions/snowflake-ml-python/requirements.yml),
+and run the following to re-generate all requirements files, including
 [conda-env.yml](https://github.com/snowflakedb/snowflake-ml-python/blob/main/conda-env.yml):
 
 ```sh
@@ -416,7 +416,8 @@ Python packages from both PyPI and Snowflake Conda repositories against your cur
 Run the script in dry-run mode to safely check latest versions without modifying files:
 
 ```bash
-bazel run --config=core //bazel/requirements:update_version_requirements -- requirements.yml --dry-run
+bazel run --config=core //bazel/requirements:update_version_requirements -- \
+    distributions/snowflake-ml-python/requirements.yml --dry-run
 ```
 
 This will scan `requirements.yml` and show the latest version of packages and the suggest changes:
@@ -438,7 +439,8 @@ Each line shows:
 If you want to apply all the suggested changes, run the following command to update the `requirements.yml` file
 
 ```sh
-bazel run --config=core //bazel/requirements:update_version_requirements -- requirements.yml
+bazel run --config=core //bazel/requirements:update_version_requirements -- \
+    distributions/snowflake-ml-python/requirements.yml
 ```
 
 ## Unit Testing

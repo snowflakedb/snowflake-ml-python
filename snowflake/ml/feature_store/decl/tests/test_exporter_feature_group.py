@@ -196,6 +196,33 @@ class TestExportSpecsFGEmission:
         assert (fg_dir / "FG_A_V1.yaml").exists()
         assert (fg_dir / "FG_B_V1.yaml").exists()
 
+    def test_case_sensitive_identifiers_are_requoted(self, tmp_path: Path) -> None:
+        # ``list_feature_groups`` returns stored-form names; a case-sensitive
+        # ``myFg`` must export as ``"myFg"`` or it would re-load as ``MYFG``.
+        sources: list[dict[str, Any]] = [
+            {"fv_name": "myFv", "fv_version": "V1", "slice_columns": ["userId", "TOTAL"]},
+            {"fv_name": "FV_UPPER", "fv_version": "V1"},
+        ]
+        export_specs(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            entity_rows=[],
+            feature_group_rows=[_fg_row(name="myFg", sources=sources)],
+            layout="sources",
+        )
+        fg_path = tmp_path / "sources" / "feature_groups" / "myFg_V1.yaml"
+        assert fg_path.exists()
+        parsed = yaml.safe_load(fg_path.read_text())
+        assert parsed["name"] == '"myFg"'
+        assert parsed["feature_views"] == [
+            {"name": '"myFv"', "version": "V1", "slice_columns": ['"userId"', "TOTAL"]},
+            {"name": "FV_UPPER", "version": "V1"},
+        ]
+
 
 # ---------------------------------------------------------------------------
 # FG version round-trip — strict-fail contract

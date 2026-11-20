@@ -1,5 +1,6 @@
 ---
-exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch|.*/static/swagger-ui-bundle\.js$|.*/static/swagger-ui\.css$)
+# The standalone Agents SDK uses its own Ruff CI workflow.
+exclude: ^(packages/cortex-agent-sdk-python/|.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch|.*/static/swagger-ui-bundle\.js$|.*/static/swagger-ui\.css$)
 repos:
   - repo: local
     hooks:
@@ -142,7 +143,7 @@ repos:
     rev: 0.26.3
     hooks:
       - id: check-jsonschema
-        files: ^requirements.*\.yml$
+        files: ^distributions/[^/]+/requirements\.yml$
         args:
           - --schemafile
           - bazel/requirements/requirements.schema.json

@@ -92,7 +92,9 @@ class OneHotEncoderTest(parameterized.TestCase):
     def convert_sparse_df_to_arr(sparse_df: DataFrame, output_cols: list[str], id_col: str) -> np.ndarray:
         """Convert sparse transformed dataframe to an array of [row, column]."""
         sparse_output_pandas = (
-            sparse_df.sort(id_col)[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
+            sparse_df.sort(id_col)[output_cols]
+            .to_pandas()
+            .map(lambda x: json.loads(x) if isinstance(x, str) and x else None)
         )
 
         def map_output(x: dict[str, Any] | None) -> list[int] | None:
@@ -482,7 +484,9 @@ class OneHotEncoderTest(parameterized.TestCase):
         self.assertTrue(self.compare_sparse_transform_results(actual_arr2, sklearn_arr))
 
         # assert array length
-        output_pandas = transformed_df[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
+        output_pandas = (
+            transformed_df[output_cols].to_pandas().map(lambda x: json.loads(x) if isinstance(x, str) and x else None)
+        )
         for idx, n_features_out in enumerate(encoder_sklearn._n_features_outs):
             array_length = output_pandas.iloc[0, idx]["array_length"]
             self.assertEqual(array_length, n_features_out)

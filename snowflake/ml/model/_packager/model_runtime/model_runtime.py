@@ -122,7 +122,6 @@ class ModelRuntime:
         loaded_dict: model_meta_schema.ModelRuntimeDict,
     ) -> "ModelRuntime":
         env = model_env.ModelEnv()
-        env.python_version = meta_env.python_version
         env.cuda_version = meta_env.cuda_version
         env.snowpark_ml_version = meta_env.snowpark_ml_version
         env.artifact_repository_map = meta_env.artifact_repository_map
@@ -139,4 +138,7 @@ class ModelRuntime:
             if pip_path:
                 pip_requirements_rel_path = pathlib.PurePosixPath(pip_path)
                 env.load_from_pip_file(packager_path / pip_requirements_rel_path)
+        # The conda pin is major.minor only. Apply the runtime version after it so a
+        # free-threading suffix stored on the model env is not replaced by that pin.
+        env.python_version = meta_env.python_version
         return ModelRuntime(name=name, env=env, imports=loaded_dict["imports"], loading_from_file=True)

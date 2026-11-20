@@ -1,3 +1,4 @@
+import collections
 import os
 import pathlib
 import sys
@@ -15,9 +16,12 @@ from packaging import requirements, version
 from typing_extensions import Required
 
 from snowflake.ml import version as snowml_version
-from snowflake.ml._internal import env_utils, file_utils
+from snowflake.ml._internal import env_utils, file_utils, platform_capabilities
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model._client.model_spec import model_extension_spec
 from snowflake.ml.model._model_composer import huggingface_lazy_uploader
+from snowflake.ml.model._model_composer.model_method import model_method_options
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -27,9 +31,15 @@ from snowflake.ml.model._packager.model_meta import (
 from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model.code_path import CodePath
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 MODEL_METADATA_FILE = "model.yaml"
 _MODEL_EXTENSION_SPEC_VERSION = "2.0"
+# Directory holding the packaged model inside the uploaded workspace. The version 2.0 specification resolves every
+# file path from the workspace root.
+_MODEL_DIR_IN_WORKSPACE = "model"
+_WAREHOUSE_RUNTIME_NAME = "warehouse_runtime"
+PYTHON_ENV_NAME = "python_env"
 MODEL_CODE_DIR = "code"
 
 _PACKAGING_REQUIREMENTS = ["cloudpickle"]
@@ -96,6 +106,7 @@ def create_model_metadata(
         A model metadata object.
     """
     model_dir_path = os.path.normpath(model_dir_path)
+    save_options: dict[str, Any] = dict(kwargs)
     embed_local_ml_library = kwargs.pop("embed_local_ml_library", False)
 
     if embed_local_ml_library:
@@ -142,6 +153,7 @@ def create_model_metadata(
     # Persist full method_options
     method_options: dict[str, dict[str, Any]] = kwargs.pop("method_options", {})
     case_sensitive = kwargs.pop("case_sensitive", None)
+    relax_version = bool(kwargs.pop("relax_version", False))
     model_meta = ModelMetadata(
         name=name,
         env=env,
@@ -152,6 +164,9 @@ def create_model_metadata(
         task=task,
         method_options=method_options,
         case_sensitive=case_sensitive,
+        target_platforms=target_platforms,
+        relax_version=relax_version,
+        save_options=save_options,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
@@ -211,6 +226,22 @@ def create_model_metadata(
     finally:
         for mod in imported_modules:
             cloudpickle.unregister_pickle_by_value(mod)
+
+
+def _is_client_model_spec_v2_write_enabled() -> bool:
+    try:
+        return platform_capabilities.PlatformCapabilities.get_instance().is_client_model_spec_v2_write_enabled()
+    except snowpark_exceptions.SnowparkSessionException:
+        # Packaging can run without a Snowpark session; keep writing the legacy spec in that case.
+        return False
+
+
+def _workspace_relative_path(path: str) -> str:
+    """Express a path that is relative to the model directory as relative to the workspace root."""
+    model_dir_prefix = f"{_MODEL_DIR_IN_WORKSPACE}/"
+    if path.startswith(model_dir_prefix):
+        return path
+    return f"{model_dir_prefix}{path}"
 
 
 def _create_env_for_model_metadata(
@@ -327,6 +358,9 @@ class ModelMetadata:
         case_sensitive: bool | None = None,
         sample_input_file_paths: dict[str, str] | None = None,
         packaged_env_dict: model_meta_schema.ModelEnvDict | None = None,
+        target_platforms: list[model_types.TargetPlatform] | None = None,
+        relax_version: bool = False,
+        save_options: Mapping[str, Any] | None = None,
     ) -> None:
         self.name = name
         # Distinguish omitted signatures=None from an explicit empty dict. Both become {}.
@@ -362,6 +396,13 @@ class ModelMetadata:
         # written into model.yaml as the per-method ``sample_input_file_path`` field.
         self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
         self._packaged_env_dict = packaged_env_dict
+        self.target_platforms = target_platforms
+        self.relax_version = relax_version
+        # Options the model was saved with; used to resolve per-function settings exactly as the manifest does.
+        self.save_options: Mapping[str, Any] = save_options or {}
+        # Whether save() wrote the version 2.0 specification. The manifest follows this so that the two files
+        # can never describe different specification versions.
+        self.wrote_v2_spec = False
 
         self._lazy_hf_upload: huggingface_lazy_uploader.LazyHFUpload | None = None
 
@@ -408,13 +449,16 @@ class ModelMetadata:
         Args:
             model_dir_path: Path to the directory containing the model to be loaded.
         """
-        model_yaml_path = os.path.join(model_dir_path, MODEL_METADATA_FILE)
-
         if self.name not in self.models:
             raise RuntimeError("The meta data is not ready to save.")
         if (not self.signatures) and self.model_type != "peft_adapter":
             raise RuntimeError("The meta data is not ready to save.")
 
+        if _is_client_model_spec_v2_write_enabled():
+            self._save_v2(model_dir_path)
+            return
+
+        model_yaml_path = os.path.join(model_dir_path, MODEL_METADATA_FILE)
         model_dict = model_meta_schema.ModelMetadataDict(
             {
                 "creation_timestamp": self.creation_timestamp,
@@ -447,6 +491,213 @@ class ModelMetadata:
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_dict, stream=out, default_flow_style=False)
+
+    def _save_v2(self, model_dir_path: str) -> None:
+        """Write the unified version 2.0 extension specification.
+
+        The packaged environment remains at ``model/env`` for client loading,
+        but is intentionally not declared in the extension specification.
+
+        Args:
+            model_dir_path: Directory that will contain ``model.yaml``.
+
+        Raises:
+            ValueError: If two methods resolve to the same SQL name.
+        """
+        model_dir = pathlib.Path(model_dir_path)
+        self._save_packaged_env(model_dir)
+
+        warehouse_runtime = model_runtime.ModelRuntime(
+            name=_WAREHOUSE_RUNTIME_NAME,
+            env=self.env,
+            imports=[f"{_MODEL_DIR_IN_WORKSPACE}/"],
+            is_warehouse=True,
+        )
+        if self.relax_version:
+            warehouse_runtime.runtime_env.relax_version()
+        warehouse_runtime_dict = warehouse_runtime.save(
+            model_dir, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+        )
+
+        serving_environments: dict[str, dict[str, Any]] = {
+            PYTHON_ENV_NAME: self._serving_environment(
+                warehouse_runtime,
+                warehouse_runtime_dict,
+                environment_type="python",
+                # Only declare pip requirements when the model has some, so that the warehouse environment
+                # matches what the version 1.0 manifest declares for the same model.
+                include_pip=len(self.env.pip_requirements) > 0,
+            )
+        }
+        target_platform_values = {
+            platform.value if isinstance(platform, model_types.TargetPlatform) else str(platform)
+            for platform in self.target_platforms or []
+        }
+        supports_spcs = model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value in target_platform_values
+        if supports_spcs:
+            cpu_runtime = self.runtimes["cpu"]
+            cpu_runtime_dict = cpu_runtime.save(
+                model_dir, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+            )
+            serving_environments["cpu_env"] = self._serving_environment(
+                cpu_runtime,
+                cpu_runtime_dict,
+                environment_type="python",
+            )
+            if self.env.cuda_version:
+                gpu_runtime = self.runtimes["gpu"]
+                gpu_runtime_dict = gpu_runtime.save(
+                    model_dir, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+                )
+                serving_environments["gpu_env"] = self._serving_environment(
+                    gpu_runtime,
+                    gpu_runtime_dict,
+                    environment_type="python",
+                )
+
+        function_env = [PYTHON_ENV_NAME]
+        if supports_spcs:
+            function_env.append("gpu_env" if self.env.cuda_version else "cpu_env")
+
+        set_volatility = (
+            platform_capabilities.PlatformCapabilities.get_instance().is_set_module_functions_volatility_from_manifest()
+        )
+        functions: dict[str, dict[str, Any]] = {}
+        resolved_method_names: list[str] = []
+        for function_name, signature in self.signatures.items():
+            is_partitioned_function = bool(
+                self.function_properties.get(function_name, {}).get(
+                    model_meta_schema.FunctionProperties.PARTITIONED.value, False
+                )
+            )
+            resolved_options = model_method_options.get_model_method_options_from_options(
+                cast(model_types.ModelSaveOption, self.save_options),
+                function_name,
+                self.model_type,
+                is_partitioned_function,
+            )
+            try:
+                resolved_method_names.append(
+                    sql_identifier.SqlIdentifier(
+                        function_name, case_sensitive=bool(resolved_options.get("case_sensitive", False))
+                    ).resolved()
+                )
+            except ValueError as err:
+                raise ValueError(
+                    f"Your target method {function_name} cannot be resolved as valid SQL identifier. "
+                    "Try specifying `case_sensitive` as True."
+                ) from err
+            properties: dict[str, Any] = {"method": function_name}
+            if is_partitioned_function:
+                properties["is_partition"] = True
+            if function_name == "explain":
+                properties["is_explain"] = True
+            if resolved_options.get("case_sensitive"):
+                properties["case_sensitive"] = True
+            max_batch_size = (
+                self.save_options.get("method_options", {})
+                .get(function_name, {})
+                .get("max_batch_size", self.save_options.get("max_batch_size"))
+            )
+            if max_batch_size is not None:
+                properties["max_batch_size"] = max_batch_size
+
+            function_spec: dict[str, Any] = {
+                "env": function_env,
+                "type": resolved_options["function_type"],
+                "handler": f"functions.{function_name}.infer",
+                "signature": self._serialize_signature(function_name, signature),
+                "properties": properties,
+            }
+            volatility = resolved_options.get("volatility")
+            if set_volatility and volatility is not None:
+                function_spec["volatility"] = volatility.name
+            functions[function_name] = function_spec
+
+        method_name_counter = collections.Counter(resolved_method_names)
+        duplicate_method_names = [name for name, count in method_name_counter.items() if count > 1]
+        if duplicate_method_names:
+            raise ValueError(
+                f"Found duplicate method named resolved as {', '.join(duplicate_method_names)} in the model. "
+                "This might because you have methods with same letters but different cases. "
+                "In this case, set case_sensitive as True for those methods to distinguish them."
+            )
+
+        spec: dict[str, Any] = {
+            "version": _MODEL_EXTENSION_SPEC_VERSION,
+            "model": {
+                "name": self.name,
+                "type": "USER_MODEL",
+                "framework": self.model_type,
+                "task": self.task.value,
+                "client": {
+                    "name": "snowflake-ml-python",
+                    "version": snowml_version.VERSION,
+                    "min_version": self.min_snowpark_ml_version,
+                },
+                "details": {
+                    "models": self._v2_model_blobs(),
+                },
+            },
+            "serving": {"env": serving_environments, "functions": functions},
+        }
+        if self.target_platforms:
+            spec["model"]["target_platforms"] = [platform.value for platform in self.target_platforms]
+
+        model_extension_spec.ModelExtensionSpecV2._validate(spec)
+
+        with (model_dir / MODEL_METADATA_FILE).open("w", encoding="utf-8") as out:
+            yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
+            yaml.safe_dump(spec, stream=out, default_flow_style=False)
+        self.wrote_v2_spec = True
+
+    @staticmethod
+    def _serving_environment(
+        runtime: model_runtime.ModelRuntime,
+        runtime_dict: model_meta_schema.ModelRuntimeDict,
+        *,
+        environment_type: str,
+        include_pip: bool = True,
+    ) -> dict[str, Any]:
+        dependencies = runtime_dict["dependencies"]
+        environment: dict[str, Any] = {
+            "type": environment_type,
+            "python_version": runtime.runtime_env.python_version,
+            "snowpark_ml_version": runtime.runtime_env.snowpark_ml_version,
+            "imports": [_workspace_relative_path(path) for path in runtime_dict["imports"]],
+        }
+        conda_path = dependencies.get("conda")
+        if conda_path:
+            environment["conda"] = _workspace_relative_path(conda_path)
+        pip_path = dependencies.get("pip")
+        if pip_path and include_pip:
+            environment["pip"] = _workspace_relative_path(pip_path)
+        if dependencies.get("artifact_repository_map"):
+            environment["artifact_repository_map"] = dependencies["artifact_repository_map"]
+        if runtime.runtime_env.cuda_version:
+            environment["cuda_version"] = runtime.runtime_env.cuda_version
+        if runtime_dict["resource_constraint"]:
+            environment["resource_constraint"] = runtime_dict["resource_constraint"]
+        return environment
+
+    def _v2_model_blobs(self) -> dict[str, dict[str, Any]]:
+        """Serialize blobs for the version 2.0 spec, including per-blob explainability."""
+        blobs: dict[str, dict[str, Any]] = {}
+        for model_name, blob in self.models.items():
+            blob_dict: dict[str, Any] = {
+                "model_type": blob.model_type.upper(),
+                "handler_version": blob.handler_version,
+                "path": blob.path,
+                "artifacts": dict(blob.artifacts),
+                "options": dict(blob.options),
+            }
+            if self.explain_algorithm:
+                blob_dict["explainability"] = {
+                    "algorithm": self.explain_algorithm.value,
+                    "background_data": (f"models/explain_artifacts/{model_name}_background_data.pqt"),
+                }
+            blobs[model_name] = blob_dict
+        return blobs
 
     def _save_packaged_env(self, model_dir_path: pathlib.Path) -> model_meta_schema.ModelEnvDict:
         """Write env files and record the packaged env dict for downstream consumers."""

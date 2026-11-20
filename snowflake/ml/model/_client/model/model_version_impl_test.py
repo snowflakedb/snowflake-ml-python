@@ -1031,6 +1031,22 @@ class ModelVersionImplTest(parameterized.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_export_mode_accepts_strings_and_none(self) -> None:
+        cases = [("full", "full"), ("FULL", "full"), ("Model", "model"), (None, "model")]
+        for export_mode, expected in cases:
+            with self.subTest(export_mode=export_mode):
+                with (
+                    mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+                    tempfile.TemporaryDirectory() as tmpdir,
+                ):
+                    self.m_mv.export(tmpdir, export_mode=export_mode)
+                    self.assertEqual(mock_download_files.call_args.kwargs["mode"], expected)
+
+    def test_export_mode_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(ValueError, "is not a valid ExportMode"):
+                self.m_mv.export(tmpdir, export_mode="bogus")
+
     def test_load(self) -> None:
         m_pk_for_validation = mock.MagicMock()
         m_pk_for_validation.meta = mock.MagicMock()
@@ -1160,10 +1176,16 @@ class ModelVersionImplTest(parameterized.TestCase):
                 ]
             )
 
-    def _patch_current_role_sql(self, executing_role: str | None) -> Any:
-        mock_df = mock.MagicMock()
-        mock_df.collect.return_value = [] if executing_role is None else [(executing_role,)]
-        return mock.patch.object(self.m_mv._model_ops._session, "sql", return_value=mock_df)
+    def _patch_current_role_sql(self, executing_role: str | None, *, owner_in_session: bool = False) -> Any:
+        def _sql(query: str) -> mock.MagicMock:
+            mock_df = mock.MagicMock()
+            if query.startswith("SELECT IS_ROLE_IN_SESSION"):
+                mock_df.collect.return_value = [(owner_in_session,)]
+            else:
+                mock_df.collect.return_value = [] if executing_role is None else [(executing_role,)]
+            return mock_df
+
+        return mock.patch.object(self.m_mv._model_ops._session, "sql", side_effect=_sql)
 
     def test_load_blocked_for_non_owner(self) -> None:
         with (
@@ -1177,10 +1199,32 @@ class ModelVersionImplTest(parameterized.TestCase):
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
         ):
             with self.assertRaisesRegex(
-                RuntimeError, rf"\({error_codes.INSUFFICIENT_PRIVILEGES}\).*only the model's owner role is permitted"
+                RuntimeError,
+                rf"\({error_codes.INSUFFICIENT_PRIVILEGES}\).*"
+                "only the model's owner role, or a role that inherits it, is permitted",
             ):
                 self.m_mv.load()
             mock_download_files.assert_not_called()
+
+    def test_load_allowed_when_owner_role_inherited(self) -> None:
+        m_model = mock.MagicMock()
+        m_pk = mock.MagicMock()
+        m_pk.meta = mock.MagicMock()
+        m_pk.model = m_model
+
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"CHILD_ROLE"'),
+            self._patch_current_role_sql("CHILD_ROLE", owner_in_session=True) as mock_sql,
+            mock.patch.object(self.m_mv._model_ops, "download_files"),
+            mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
+        ):
+            self.assertEqual(self.m_mv.load(force=True), m_model)
+            mock_sql.assert_any_call("SELECT IS_ROLE_IN_SESSION('PROD_OWNER')")
 
     def test_load_owner_match_case_insensitive(self) -> None:
         m_model = mock.MagicMock()

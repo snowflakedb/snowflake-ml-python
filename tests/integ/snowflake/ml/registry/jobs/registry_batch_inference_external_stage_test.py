@@ -76,6 +76,7 @@ class TestBatchInferenceExternalStageInteg(registry_batch_inference_test_base.Re
 
         return self.session.create_dataframe(data, schema=schema)
 
+    @absltest.skip("https://snowflakecomputing.atlassian.net/browse/SNOW-4547647")
     def test_image_with_vllm_external_stage(self) -> None:
         """Test image vLLM inference with files served from an external S3 stage."""
         # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.

@@ -1,7 +1,7 @@
 load("@rules_java//java:defs.bzl", "java_binary")
-load("//:packages.bzl", "PACKAGES")
 load("//bazel:py_rules.bzl", "py_wheel")
-load("//bazel/requirements:rules.bzl", "generate_pyproject_file", "sync_bazelrc_file")
+load("//bazel/requirements:rules.bzl", "sync_bazelrc_file")
+load("//distributions/snowflake-ml-python:packages.bzl", "PACKAGES")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,18 +12,12 @@ exports_files([
     "LICENSE.txt",
     "WORKSPACE",
     "mypy.ini",
-    "requirements.yml",
 ])
 
 java_binary(
     name = "bazel-diff",
     main_class = "com.bazel_diff.Main",
     runtime_deps = ["@bazel_diff//jar"],
-)
-
-generate_pyproject_file(
-    name = "snowml",
-    src_requirement_file = "//:requirements.yml",
 )
 
 py_wheel(
@@ -33,7 +27,7 @@ py_wheel(
         "//:LICENSE.txt",
         "//:README.md",
     ],
-    pyproject_toml = ":snowml_pyproject",
+    pyproject_toml = "//distributions/snowflake-ml-python:snowml_pyproject",
     deps = PACKAGES,
 )
 

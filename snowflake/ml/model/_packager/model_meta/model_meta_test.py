@@ -275,6 +275,18 @@ class ModelMetaEnvTest(absltest.TestCase):
             self.assertEqual(loaded_meta.env.python_version, "2.7")
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, python_version="3.14t"
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            self.assertEqual(meta.env.python_version, "3.14t")
+
+            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+
+            self.assertEqual(loaded_meta.env.python_version, "3.14t")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(version.InvalidVersion):
                 with model_meta.create_model_metadata(
                     model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG, python_version="a"

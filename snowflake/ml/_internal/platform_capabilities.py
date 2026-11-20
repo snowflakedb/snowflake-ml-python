@@ -24,6 +24,7 @@ ENABLE_PIP_ONLY_PACKAGING = "ENABLE_PIP_ONLY_PACKAGING"
 ENABLE_LORA_ADAPTERS = "ENABLE_LORA_ADAPTERS"
 ENABLE_SINGLE_OUTPUT_NATIVE_TYPE = "ENABLE_SINGLE_OUTPUT_NATIVE_TYPE"
 ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE = "ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE"
+ENABLE_CLIENT_MODEL_SPEC_V2_WRITE = "ENABLE_CLIENT_MODEL_SPEC_V2_WRITE"
 
 
 class PlatformCapabilities:
@@ -131,6 +132,17 @@ class PlatformCapabilities:
             True if partition-on-write is enabled for this account.
         """
         return self._get_bool_feature(ENABLE_BATCH_INFERENCE_PARTITION_ON_WRITE, default_value=False)
+
+    def is_client_model_spec_v2_write_enabled(self) -> bool:
+        """Whether the client emits the version 2.0 model specification.
+
+        Independent of the Global Services creation capability, which can be enabled
+        while the client still writes version 1.0. Always disabled for now.
+
+        Returns:
+            True when this account should package models with the version 2.0 specification.
+        """
+        return False
 
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> dict[str, Any]:

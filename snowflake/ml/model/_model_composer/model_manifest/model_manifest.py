@@ -58,6 +58,17 @@ class ModelManifest:
         target_platforms: list[type_hints.TargetPlatform] | None = None,
     ) -> None:
         assert options is not None, "ModelParameterReconciler should have set options with relax_version"
+        if model_meta.wrote_v2_spec:
+            self._save_v2(
+                model_meta=model_meta,
+                model_rel_path=model_rel_path,
+                user_files=user_files,
+                options=options,
+                data_sources=data_sources,
+                experiment_info=experiment_info,
+            )
+            return
+
         relax_version = options["relax_version"]
 
         runtime_to_use = model_runtime.ModelRuntime(
@@ -168,6 +179,69 @@ class ModelManifest:
             # Anchors are not supported in the server, avoid that.
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(manifest_dict, f)
+
+    def _save_v2(
+        self,
+        *,
+        model_meta: model_meta_api.ModelMetadata,
+        model_rel_path: pathlib.PurePosixPath,
+        user_files: dict[str, list[str]] | None,
+        options: type_hints.ModelSaveOption,
+        data_sources: list[data_source.DataSource] | None,
+        experiment_info: "ExperimentInfo | None",
+    ) -> None:
+        """Write the v2 manifest envelope and retain generated local artifacts.
+
+        Args:
+            model_meta: Metadata used to generate the function files.
+            model_rel_path: Model directory relative to the workspace.
+            user_files: Extra files to stage beside the manifest.
+            options: Save options used when generating function files.
+            data_sources: Lineage inputs recorded on the manifest.
+            experiment_info: Experiment lineage recorded on the manifest.
+        """
+        self.function_generator = function_generator.FunctionGenerator(model_dir_rel_path=model_rel_path)
+        for target_method in model_meta.signatures:
+            is_partitioned_function = model_meta.function_properties.get(target_method, {}).get(
+                model_meta_schema.FunctionProperties.PARTITIONED.value, False
+            )
+            method = model_method.ModelMethod(
+                model_meta=model_meta,
+                target_method=target_method,
+                runtime_name=model_meta_api.PYTHON_ENV_NAME,
+                function_generator=self.function_generator,
+                is_partitioned_function=is_partitioned_function,
+                wide_input=len(model_meta.signatures[target_method].inputs) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT,
+                options=model_method.get_model_method_options_from_options(
+                    options, target_method, model_meta.model_type, is_partitioned_function
+                ),
+            )
+            method.save(
+                self.workspace_path,
+                options=function_generator.get_function_generate_options_from_options(options, target_method),
+            )
+
+        self.user_files = []
+        if user_files is not None:
+            for subdirectory, paths in user_files.items():
+                for path in paths:
+                    self.user_files.append(
+                        model_user_file.ModelUserFile(pathlib.PurePosixPath(subdirectory), pathlib.Path(path))
+                    )
+        for user_file in self.user_files:
+            user_file.save(self.workspace_path)
+
+        manifest_dict = model_manifest_v2_schema.ModelManifestV2Dict(
+            manifest_version=model_manifest_v2_schema.MODEL_MANIFEST_VERSION_V2,
+            model_extension_spec=model_manifest_v2_schema.DEFAULT_MODEL_EXTENSION_SPEC_PATH,
+        )
+        lineage_sources = self._extract_lineage_info(data_sources, experiment_info)
+        if lineage_sources:
+            manifest_dict["lineage_sources"] = lineage_sources
+
+        with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("w", encoding="utf-8") as manifest_file:
+            yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
+            yaml.safe_dump(manifest_dict, manifest_file)
 
     def _read_raw_manifest(self) -> dict[str, Any]:
         with (self.workspace_path / ModelManifest.MANIFEST_FILE_REL_PATH).open("r", encoding="utf-8") as f:

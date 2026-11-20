@@ -317,7 +317,7 @@ class OneHotEncoder(base.BaseTransformer):
         return self
 
     def _fit_sklearn(self, dataset: pd.DataFrame) -> None:
-        dataset = self._use_input_cols_only(dataset)
+        dataset = _utils.dataframe_string_na_to_none(self._use_input_cols_only(dataset))
         sklearn_encoder = self._create_unfitted_sklearn_object()
         sklearn_encoder.fit(dataset)
 
@@ -382,6 +382,7 @@ class OneHotEncoder(base.BaseTransformer):
         self._state_pandas = state_df.to_pandas(
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__)
         )
+        self._state_pandas[_CATEGORY] = _utils.string_na_to_none(self._state_pandas[_CATEGORY])
         if self._state_pandas.empty:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_DATA,
@@ -976,7 +977,7 @@ class OneHotEncoder(base.BaseTransformer):
             Output dataset.
         """
         encoder_sklearn = self.to_sklearn()
-        transformed_dataset = encoder_sklearn.transform(dataset[self.input_cols])
+        transformed_dataset = encoder_sklearn.transform(_utils.dataframe_string_na_to_none(dataset[self.input_cols]))
 
         if self.sparse:
             return transformed_dataset

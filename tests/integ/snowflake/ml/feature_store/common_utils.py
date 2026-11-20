@@ -120,6 +120,24 @@ def create_random_schema(
     return schema
 
 
+def is_missing(value: Any) -> bool:
+    """Return True for SQL NULL-like missing values, including pandas 3 NA/NaN."""
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _na_as_none(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace pandas NA/NaN with None so pandas 2 and 3 compare the same missing values."""
+    out = df.copy()
+    for col in out.columns:
+        out[col] = [None if is_missing(v) else v for v in out[col]]
+    return out
+
+
 def compare_dataframe(
     actual_df: pd.DataFrame, target_data: dict[str, Any], sort_cols: list[str], exclude_cols: list[str] | None = None
 ) -> None:
@@ -130,7 +148,9 @@ def compare_dataframe(
 
     target_df = pd.DataFrame(target_data).sort_values(by=sort_cols)
     assert_frame_equal(
-        actual_df.sort_values(by=sort_cols).reset_index(drop=True), target_df.reset_index(drop=True), check_dtype=False
+        _na_as_none(actual_df.sort_values(by=sort_cols).reset_index(drop=True)),
+        _na_as_none(target_df.reset_index(drop=True)),
+        check_dtype=False,
     )
 
 

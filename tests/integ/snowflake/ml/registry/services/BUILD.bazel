@@ -462,3 +462,17 @@ py_test(
         "//snowflake/ml/model/models:huggingface",
     ],
 )
+
+py_test(
+    name = "registry_arm_compute_pool_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_arm_compute_pool_deployment_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 3,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)

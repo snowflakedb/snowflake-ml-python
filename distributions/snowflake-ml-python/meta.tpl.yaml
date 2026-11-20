@@ -15,6 +15,7 @@ requirements:
   build:
     - python
     - bazel==7.7.1
+    - openjdk >=17,<22
     - pip
   run:
     - python>=3.10,<3.15

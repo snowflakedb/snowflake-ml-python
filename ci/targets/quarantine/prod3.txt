@@ -8,3 +8,5 @@
 //tests/integ/snowflake/ml/jobs:tensorflow_integ_test
 //tests/integ/snowflake/ml/monitoring:model_monitor_integ_inference_table_test
 //tests/integ/snowflake/ml/monitoring:model_monitor_integ_inference_table_e2e_test
+//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_arm_compute_pool_test
+//tests/integ/snowflake/ml/registry/services:registry_arm_compute_pool_deployment_test

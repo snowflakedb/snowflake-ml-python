@@ -1,6 +1,7 @@
 import os
 import pathlib
 import tempfile
+from unittest import mock
 
 import importlib_resources
 import yaml
@@ -9,7 +10,10 @@ from packaging import requirements
 
 from snowflake.ml._internal import env_utils, platform_capabilities
 from snowflake.ml.model import model_signature, type_hints
-from snowflake.ml.model._model_composer.model_manifest import model_manifest
+from snowflake.ml.model._model_composer.model_manifest import (
+    model_manifest,
+    model_manifest_v2_schema,
+)
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
     model_meta,
@@ -108,6 +112,44 @@ _MANIFEST_TEST_MOCK_FEATURES = {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING:
 
 
 class ModelManifestTest(parameterized.TestCase):
+    @mock.patch.object(model_meta, "_is_client_model_spec_v2_write_enabled", autospec=True, return_value=True)
+    def test_model_manifest_v2_is_thin_and_generates_function_files(self, _: mock.Mock) -> None:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as model_dir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False}
+            ),
+        ):
+            manifest = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=model_dir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+            ) as metadata:
+                metadata.models["model1"] = _DUMMY_BLOB
+
+            manifest.save(
+                metadata,
+                pathlib.PurePosixPath("model"),
+                options={"relax_version": True},
+                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+            )
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as manifest_file:
+                saved_manifest = yaml.safe_load(manifest_file)
+
+            self.assertEqual(
+                saved_manifest,
+                {
+                    "manifest_version": model_manifest_v2_schema.MODEL_MANIFEST_VERSION_V2,
+                    "model_extension_spec": model_manifest_v2_schema.DEFAULT_MODEL_EXTENSION_SPEC_PATH,
+                },
+            )
+            self.assertEqual(saved_manifest["model_extension_spec"], "model/model.yaml")
+            self.assertTrue((pathlib.Path(workspace) / "functions" / "predict.py").exists())
+            self.assertFalse((pathlib.Path(workspace) / "runtimes").exists())
+
     def test_model_manifest_1(self) -> None:
         with (
             tempfile.TemporaryDirectory() as workspace,
@@ -1081,6 +1123,33 @@ class ModelManifestTest(parameterized.TestCase):
                 {"name": "RGB", "type": "ARRAY", "default": "[255, 128, 0]"},
             ]
             self.assertEqual(method["params"], expected_params)
+
+    def test_manifest_preserves_free_threaded_python_version(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                python_version="3.14t",
+                embed_local_ml_library=False,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm.save(meta, pathlib.PurePosixPath("model"), options={"relax_version": True})
+
+            with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest = yaml.safe_load(f)
+            self.assertEqual(manifest["runtimes"]["python_runtime"]["version"], "3.14t")
+
+            with open(pathlib.Path(workspace, "runtimes", "python_runtime", "env", "conda.yml"), encoding="utf-8") as f:
+                conda_env = yaml.safe_load(f)
+            self.assertIn("python==3.14.*", conda_env["dependencies"])
 
 
 if __name__ == "__main__":

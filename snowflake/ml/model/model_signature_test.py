@@ -264,6 +264,10 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         model_signature._validate_pandas_df(pd.DataFrame([[2, -5], [6, 8]], columns=["a", "b"]), fts)
 
+        fts = [model_signature.FeatureSpec("a", model_signature.DataType.STRING)]
+        string_categories = pd.CategoricalDtype(pd.Index(["x", "y"], dtype="string"))
+        model_signature._validate_pandas_df(pd.DataFrame({"a": pd.Series(["x", "y"], dtype=string_categories)}), fts)
+
         fts = [
             model_signature.FeatureSpec("a", model_signature.DataType.INT8),
             model_signature.FeatureSpec("b", model_signature.DataType.DOUBLE),

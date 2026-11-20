@@ -438,3 +438,18 @@ py_test(
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
+
+py_test(
+    name = "registry_batch_inference_arm_compute_pool_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_arm_compute_pool_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_client/model:batch_inference_job_specs",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)

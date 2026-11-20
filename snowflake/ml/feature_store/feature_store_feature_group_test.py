@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -750,7 +751,7 @@ class RoundTripTest(absltest.TestCase):
         from snowflake.ml.feature_store.feature_view import FeatureViewSlice
 
         self.assertIsInstance(item, FeatureViewSlice)
-        self.assertEqual([n.resolved() for n in item.names], ["F1"])
+        self.assertEqual(item.names, ["F1"])
         self.assertEqual(item.column_alias, "sender")
         self.assertEqual(fg.output_columns, ['"sender_F1"'])
         md.get_feature_group_metadata.assert_called_once_with("FG", "v1")
@@ -1024,6 +1025,155 @@ class DeleteFeatureGroupTest(absltest.TestCase):
         fs = _new_fs_with_mocks()
         with self.assertRaisesRegex(ValueError, "valid feature group version"):
             fs.delete_feature_group("FG", "has space")
+
+
+class MixedCaseIdentifierTest(absltest.TestCase):
+    """Quoted mixed-case FG names, member FV names, join keys and feature columns.
+
+    SQL identifier positions need the quoted form (``"userId"``); spec JSON, metadata and
+    name lookups need the stored name (``userId``). Tests marked ``expectedFailure`` pin
+    known gaps and assert the intended behavior, so they start passing once fixed.
+    """
+
+    def _mixed_case_fv(self, *, version: str = "v1") -> FeatureView:
+        return _make_registered_fv(
+            name='"myFv"',
+            version=version,
+            feature_columns=['"purchaseAmt"', "TOTAL"],
+            entity_join_keys=['"userId"'],
+        )
+
+    def _register(self, fg: FeatureGroup, version: str = "v1") -> tuple[list[str], FeatureGroupMetadata]:
+        md = MagicMock()
+        sess = MagicMock()
+        fs = _new_fs_with_mocks(metadata_manager=md, session=sess)
+        object.__setattr__(fs, "_validate_entity_exists", MagicMock(return_value=True))
+        object.__setattr__(fs, "_find_object", MagicMock(return_value=[]))
+        object.__setattr__(fs, "_get_fv_backend_representations", MagicMock(return_value=[]))
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        with patch.object(online_service, "assert_online_service_running_with_query_endpoint"):
+            fs.register_feature_group(fg, version)
+
+        sql_texts = [str(c.args[0]) for c in sess.sql.call_args_list]
+        return sql_texts, md.save_feature_group_metadata.call_args.args[0]
+
+    def test_register_quotes_sql_identifiers_and_stores_resolved_names(self) -> None:
+        fg = FeatureGroup(name='"myFg"', features=[self._mixed_case_fv()], auto_prefix=False)
+
+        sql_texts, saved_meta = self._register(fg)
+
+        create_sqls = [s for s in sql_texts if "CREATE ONLINE FEATURE TABLE" in s]
+        self.assertLen(create_sqls, 1)
+        self.assertIn('DB.SCH."myFg$v1$ONLINE"', create_sqls[0])
+        self.assertIn('PRIMARY KEY ("userId")', create_sqls[0])
+        self.assertEqual(saved_meta.name, "myFg")
+        self.assertEqual(saved_meta.version, "v1")
+        self.assertEqual([(s.fv_name, s.fv_version) for s in saved_meta.sources], [("myFv", "v1")])
+
+    def test_spec_uses_stored_column_names_without_prefix(self) -> None:
+        fg = FeatureGroup(name="FG", features=[self._mixed_case_fv()], auto_prefix=False)
+
+        spec = fg._to_spec(database="DB", schema="SCH", version="v1").to_dict()
+
+        self.assertEqual(spec["spec"]["ordered_entity_column_names"], ["userId"])
+        self.assertEqual(
+            [f["output_column"]["name"] for f in spec["spec"]["features"]],
+            ["purchaseAmt", "TOTAL"],
+        )
+        self.assertEqual(fg.output_columns, ['"purchaseAmt"', "TOTAL"])
+        self.assertEqual(fg_mod._fg_superset_pk(fg), ["userId"])
+
+    def test_slice_by_quoted_mixed_case_column_records_stored_name(self) -> None:
+        fv = self._mixed_case_fv()
+        fg = FeatureGroup(name="FG", features=[fv.slice(['"purchaseAmt"'])], auto_prefix=False)
+
+        source_refs = fg_mod.build_source_refs(fg._features)
+
+        self.assertEqual(fg.output_columns, ['"purchaseAmt"'])
+        self.assertEqual(source_refs[0].slice_columns, ["purchaseAmt"])
+
+    def test_versions_differing_only_in_case_are_distinct_sources(self) -> None:
+        lower = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["F1"])
+        upper = _make_registered_fv(name="USER_FV", version="V1", feature_columns=["F1"])
+
+        fg = FeatureGroup(name="FG", features=[lower, upper], auto_prefix=True)
+
+        self.assertEqual(fg.output_columns, ['"USER_FV_v1_F1"', "USER_FV_V1_F1"])
+        self.assertEqual(
+            [(s.fv_name, s.fv_version) for s in fg_mod.build_source_refs(fg._features)],
+            [("USER_FV", "v1"), ("USER_FV", "V1")],
+        )
+
+    def test_quoted_version_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "valid feature group version"):
+            self._register(FeatureGroup(name="FG", features=[self._mixed_case_fv()]), version='"v1"')
+
+    @unittest.expectedFailure
+    def test_auto_prefix_uses_stored_fv_name(self) -> None:
+        """The prefix is part of a column name, so it must not carry SQL quote delimiters."""
+        fg = FeatureGroup(name="FG", features=[self._mixed_case_fv()], auto_prefix=True)
+
+        spec = fg._to_spec(database="DB", schema="SCH", version="v1").to_dict()
+
+        self.assertEqual(
+            [f["output_column"]["name"] for f in spec["spec"]["features"]],
+            ["myFv_v1_purchaseAmt", "myFv_v1_TOTAL"],
+        )
+        self.assertEqual(fg.output_columns, ['"myFv_v1_purchaseAmt"', '"myFv_v1_TOTAL"'])
+
+    @unittest.expectedFailure
+    def test_join_key_field_types_include_mixed_case_key(self) -> None:
+        fg = FeatureGroup(name="FG", features=[self._mixed_case_fv()], auto_prefix=False)
+
+        self.assertEqual(fg_mod._fg_join_key_field_types(fg), {"userId": StringType()})
+
+    @unittest.expectedFailure
+    def test_spec_metadata_name_is_stored_fg_name(self) -> None:
+        fg = FeatureGroup(name='"myFg"', features=[self._mixed_case_fv()], auto_prefix=False)
+
+        spec = fg._to_spec(database="DB", schema="SCH", version="v1").to_dict()
+
+        self.assertEqual(spec["metadata"]["name"], "myFg")
+
+    def test_hydrate_round_trips_stored_mixed_case_names(self) -> None:
+        """Persisted source refs hold stored names; hydrating must not re-resolve them case-insensitively."""
+        fv = self._mixed_case_fv()
+        fs = MagicMock()
+        fs.get_feature_view.side_effect = lambda name, version: (
+            fv if SqlIdentifier(name).resolved() == "myFv" else self.fail(f"looked up {name!r}")
+        )
+        refs = [FeatureGroupSourceRef(fv_name="myFv", fv_version="v1", slice_columns=["purchaseAmt"], alias=None)]
+
+        features = fg_mod.hydrate_source_refs(fs, refs)
+
+        self.assertEqual(features[0].names, ['"purchaseAmt"'])
+
+    def test_compose_fv_names_differing_only_in_case(self) -> None:
+        """Sources whose stored FV names differ only in case hydrate to distinct FVs."""
+        upper = _make_registered_fv(name="FEATURE_FV", version="v1", feature_columns=["AMOUNT", "BALANCE"])
+        mixed = _make_registered_fv(name='"featuRE_FV"', version="v1", feature_columns=["AMOUNT", "BALANCE"])
+        fvs_by_stored_name = {"FEATURE_FV": upper, "featuRE_FV": mixed}
+        fs = MagicMock()
+        fs.get_feature_view.side_effect = lambda name, version: fvs_by_stored_name[SqlIdentifier(name).resolved()]
+        meta = FeatureGroupMetadata(
+            name="FG",
+            version="v1",
+            desc="",
+            auto_prefix=False,
+            sources=[
+                FeatureGroupSourceRef(fv_name="FEATURE_FV", fv_version="v1", slice_columns=["AMOUNT"], alias=None),
+                FeatureGroupSourceRef(fv_name="featuRE_FV", fv_version="v1", slice_columns=["BALANCE"], alias=None),
+            ],
+        )
+
+        fg = fg_mod.compose_from_metadata(fs, meta)
+
+        self.assertEqual(
+            [item.feature_view_ref.name.identifier() for item in fg.features],
+            ["FEATURE_FV", '"featuRE_FV"'],
+        )
+        self.assertEqual(fg.output_columns, ["AMOUNT", "BALANCE"])
 
 
 if __name__ == "__main__":

@@ -201,6 +201,9 @@ py_test(
 py_library(
     name = "rbac",
     srcs = ["rbac.py"],
+    deps = [
+        ":sql_identifier",
+    ],
 )
 
 py_test(
@@ -212,6 +215,7 @@ py_test(
     ],
     deps = [
         ":rbac",
+        ":sql_identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

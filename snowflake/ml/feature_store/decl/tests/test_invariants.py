@@ -234,6 +234,20 @@ class TestSpecKey:
         fv = {"kind": "BatchFeatureView", "name": "fv1", "database": "DB", "schema": "SCH"}
         assert spec_key(fv) == "BatchFeatureView:DB.SCH:FV1"
 
+    def test_quoted_name_keys_same_as_stored_form(self) -> None:
+        """An authored ``"myFg"`` keys the same as its deployed stored-form ``myFg``.
+
+        Without the quote-aware fold the authored key is ``"MYFG"`` and never
+        matches the applied ``MYFG``, so a clean replan would emit a CREATE for
+        the local spec plus an orphan DROP for the deployed one.
+        """
+        from snowflake.ml.feature_store.decl.state import _build_spec_key
+
+        authored = {"kind": "FeatureGroup", "name": '"myFg"', "version": "V1", "database": "DB", "schema": "SCH"}
+        applied = {"name": "myFg", "version": "V1", "database": "DB", "schema": "SCH"}
+        assert spec_key(authored) == "FeatureGroup:DB.SCH:MYFG:V1"
+        assert _build_spec_key("FeatureGroup", applied) == spec_key(authored)
+
 
 # ---------------------------------------------------------------------------
 # _spec_hash / _content_hash tests

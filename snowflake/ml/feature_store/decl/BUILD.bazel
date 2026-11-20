@@ -441,6 +441,7 @@ py_test(
     ],
     deps = [
         ":decl_lib_planner",
+        ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )
@@ -592,6 +593,7 @@ py_test(
     ],
     deps = [
         ":decl_lib_planner",
+        ":decl_lib_state",
         "//snowflake/ml/test_utils:pytest_driver",
     ],
 )

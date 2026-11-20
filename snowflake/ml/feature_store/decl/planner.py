@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from snowflake.ml.feature_store.decl.compiler import to_authoring_identifier
 from snowflake.ml.feature_store.decl.dependencies import (
     order_specs_for_drop,
     topological_sort,
@@ -899,7 +900,7 @@ def generate_plan(
             # structural split — the imperative API has no
             # ``update_feature_group``, so every drift is a destructive
             # recreate by construction.  See ``decl/invariants.fg_content_hash``.
-            current_hash = fg_content_hash(data)
+            current_hash = fg_content_hash(data, authored=True)
         else:
             current_hash = structural_fingerprint_hash(data)
 
@@ -1046,6 +1047,9 @@ def generate_plan(
             # member FeatureView the group references can be recreated in
             # between without the group's online table referencing it.  The
             # drop is destructive (``--destructive`` gate); the create is not.
+            # The drop targets the deployed identity, not the local spec's: an
+            # unquoted local ``myFg`` resolves to ``MYFG`` and would miss a
+            # deployed case-sensitive ``myFg``, leaving both groups behind.
             ops.append(
                 PlanOp(
                     kind=OpKind.DROP_FG,
@@ -1055,7 +1059,11 @@ def generate_plan(
                     reason="FeatureGroup content hash changed (desc, auto_prefix, or "
                     "feature_views[]); dropping the deployed group before re-creating it "
                     "(no imperative update_feature_group). Requires --destructive.",
-                    payload=data,
+                    payload={
+                        "name": to_authoring_identifier(applied.name),
+                        "version": applied.version or "V1",
+                        "kind": kind,
+                    },
                 )
             )
             ops.append(
@@ -1218,6 +1226,11 @@ def generate_plan(
             else:
                 payload_kind = kind
                 drop_payload = {"name": name, "version": version, "kind": kind}
+                if op_kind is OpKind.DROP_FG:
+                    # ``delete_feature_group`` resolves its name argument as SQL
+                    # syntax, so a case-sensitive stored name must be re-quoted
+                    # or ``myFg`` would resolve to (and drop) ``MYFG``.
+                    drop_payload["name"] = to_authoring_identifier(name)
 
             # Build the ordering spec from the recovered payload so the FG →
             # member-FV edge (``feature_views``) survives, then override the

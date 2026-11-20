@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.interval_utils import (  # noqa: F401 - re-export
     LIFETIME_WINDOW as LIFETIME_WINDOW,
@@ -169,11 +170,31 @@ class AggregationSpec:
 
     def __post_init__(self) -> None:
         """Validate the aggregation spec after initialization."""
+        # Output column names are emitted in generated SQL as-is, so they must parse as a single
+        # Snowflake identifier: unquoted identifier text, or a quoted name that stays quoted.
+        try:
+            SqlIdentifier(self.output_column)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid output column for aggregation: {self.output_column!r}. "
+                "Output column names must be valid Snowflake identifiers."
+            ) from exc
+
         # Normalize source_column to its SQL identifier form. This ensures consistent
         # storage: unquoted names are uppercased (e.g., 'amount' -> 'AMOUNT'), while
         # quoted/case-sensitive names preserve their quotes (e.g., '"myCol"' -> '"myCol"').
         # The identifier form is safe for JSON round-trips since quotes are preserved.
         object.__setattr__(self, "source_column", SqlIdentifier(self.source_column).identifier())
+
+        # Tile column names such as ``_PARTIAL_SUM_<name>`` embed the de-quoted source column and are
+        # emitted unquoted, so they must form a valid unquoted identifier.
+        resolved_source_column = SqlIdentifier(self.source_column).resolved()
+        if not identifier.UNQUOTED_CASE_INSENSITIVE_RE.fullmatch(f"{_PARTIAL_COL_PREFIX}{resolved_source_column}"):
+            raise ValueError(
+                f"Invalid source column for aggregation '{self.output_column}': "
+                f"{self.source_column!r}. Source column names may contain only letters, digits, "
+                "underscores, and dollar signs."
+            )
 
         # Validate window format (allow "lifetime" as special case)
         if not is_lifetime_window(self.window):

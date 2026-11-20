@@ -103,6 +103,7 @@ py_library(
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/_internal/utils:rbac",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/jobs:ml_job",

@@ -1,6 +1,8 @@
 import copy
 import os
 import pathlib
+import sys
+import sysconfig
 import tempfile
 import warnings
 from unittest import mock
@@ -22,7 +24,8 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.conda_dependencies, [])
         self.assertListEqual(env.pip_requirements, [])
         py_ver = version.parse(snowml_env.PYTHON_VERSION)
-        self.assertEqual(env.python_version, f"{py_ver.major}.{py_ver.minor}")
+        suffix = "t" if snowml_env.interpreter_is_free_threaded() else ""
+        self.assertEqual(env.python_version, f"{py_ver.major}.{py_ver.minor}{suffix}")
         self.assertIsNone(env.cuda_version)
         self.assertEqual(env.snowpark_ml_version, snowml_version.VERSION)
 
@@ -79,6 +82,63 @@ class ModelEnvTest(absltest.TestCase):
 
         env.python_version = None
         self.assertEqual(env.python_version, "3.9")
+
+        env.python_version = "3.14t"
+        self.assertEqual(env.python_version, "3.14t")
+
+        env.python_version = "3.14.10t"
+        self.assertEqual(env.python_version, "3.14t")
+
+        env.python_version = "3.14"
+        self.assertEqual(env.python_version, "3.14")
+
+        env.python_version = None
+        self.assertEqual(env.python_version, "3.14")
+
+        with self.assertRaises(version.InvalidVersion):
+            env.python_version = "3.14t1"
+
+    def test_default_python_version_keeps_free_threaded_abi(self) -> None:
+        with mock.patch.object(snowml_env, "interpreter_is_free_threaded", return_value=True):
+            env = model_env.ModelEnv()
+        py_ver = version.parse(snowml_env.PYTHON_VERSION)
+        self.assertEqual(env.python_version, f"{py_ver.major}.{py_ver.minor}t")
+
+        env.python_version = "3.14"
+        self.assertEqual(env.python_version, "3.14")
+
+    def test_interpreter_free_threaded_detection(self) -> None:
+        with mock.patch.object(sys, "abiflags", "t", create=True):
+            self.assertTrue(snowml_env.interpreter_is_free_threaded())
+
+        with (
+            mock.patch.object(sys, "abiflags", "", create=True),
+            mock.patch.object(sysconfig, "get_config_var", return_value=1),
+        ):
+            self.assertTrue(snowml_env.interpreter_is_free_threaded())
+
+        with (
+            mock.patch.object(sys, "abiflags", "", create=True),
+            mock.patch.object(sysconfig, "get_config_var", return_value="0"),
+        ):
+            self.assertFalse(snowml_env.interpreter_is_free_threaded())
+
+    def test_free_threaded_python_version_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = pathlib.Path(tmpdir)
+            env = model_env.ModelEnv()
+            env.python_version = "3.14t"
+            saved_dict = env.save_as_dict(tmpdir_path)
+
+            self.assertEqual(saved_dict["python_version"], "3.14t")
+            with open(tmpdir_path / "env" / "conda.yml", encoding="utf-8") as f:
+                conda_yml = yaml.safe_load(f)
+            self.assertIn("python==3.14.*", conda_yml["dependencies"])
+            self.assertNotIn("python==3.14t.*", conda_yml["dependencies"])
+
+            loaded_env = model_env.ModelEnv()
+            loaded_env.load_from_dict(tmpdir_path, saved_dict)
+            self.assertEqual(loaded_env.python_version, "3.14t")
 
     def test_cuda_version(self) -> None:
         env = model_env.ModelEnv()

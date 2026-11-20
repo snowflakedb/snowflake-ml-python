@@ -421,6 +421,98 @@ class AggregationSpecTest(absltest.TestCase):
         self.assertEqual(spec.get_cumulative_column_name("SUM"), "_CUM_SUM_myAmount")
 
 
+class AggregationSpecColumnInjectionTest(parameterized.TestCase):
+    """Source and output columns from stored specs must be safe to emit in generated SQL."""
+
+    # Valid as a quoted identifier, but its de-quoted form breaks out of ``_PARTIAL_SUM_<...>``.
+    _INJECTION_SOURCE_COLUMN = (
+        '"AMOUNT ELSE 0 END), '
+        "(SELECT LISTAGG(VALUE,',') FROM PROD.SECRETS.API_KEYS) AS LEAKED, "
+        'SUM(CASE WHEN 1=1 THEN 0"'
+    )
+
+    def test_injection_source_column_rejected_from_dict(self) -> None:
+        """A malicious source_column in stored metadata is rejected when the spec is read."""
+        payload = {
+            "function": "sum",
+            "source_column": self._INJECTION_SOURCE_COLUMN,
+            "window": "24h",
+            "output_column": "amount_sum_24h",
+        }
+        with self.assertRaisesRegex(ValueError, "Invalid source column"):
+            AggregationSpec.from_dict(payload)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        '"a ELSE 0 END), (SELECT 1) AS x, SUM(0"',  # breakout via spaces/parens
+        '"amount; DROP TABLE secrets"',  # statement separator
+        '"a,b"',  # comma splits into extra select-list items
+        '"a)b("',  # unbalanced parens
+        '"a b"',  # embedded space
+        '"a\'b"',  # embedded single quote
+        '"a""b"',  # embedded (escaped) double quote de-quotes to a"b
+        '"a.b"',  # embedded dot
+        '"abc\n"',  # trailing newline
+    )
+    def test_various_injection_payloads_rejected(self, payload: str) -> None:
+        """Any source_column whose resolved form is not a plain identifier is rejected."""
+        with self.assertRaisesRegex(ValueError, "Invalid source column"):
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column=payload,
+                window="24h",
+                output_column="out_col",
+            )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("amount", "_PARTIAL_SUM_AMOUNT"),  # unquoted -> uppercased
+        ('"myAmount"', "_PARTIAL_SUM_MYAMOUNT"),  # quoted case-sensitive, plain body
+        ("order_value", "_PARTIAL_SUM_ORDER_VALUE"),  # underscores allowed
+        ('"col$1"', "_PARTIAL_SUM_COL$1"),  # dollar sign allowed
+    )
+    def test_legitimate_source_columns_still_allowed(self, source_column: str, expected_tile: str) -> None:
+        """Legitimate column names (including quoted case-sensitive) remain accepted."""
+        spec = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column=source_column,
+            window="24h",
+            output_column="some_sum",
+        )
+        self.assertEqual(spec.get_tile_column_name("SUM"), expected_tile)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        "X, (SELECT MAX(VALUE) FROM PROD.SECRETS.API_KEYS) AS L",
+        '"X" , (SELECT 1) AS "L"',  # closes the quoted name early
+        '"a" b"',  # unescaped inner quote
+    )
+    def test_injection_output_column_rejected_from_dict(self, output_column: str) -> None:
+        """A malicious output_column in stored metadata is rejected when the spec is read."""
+        payload = {
+            "function": "sum",
+            "source_column": "AMOUNT",
+            "window": "24h",
+            "output_column": output_column,
+        }
+        with self.assertRaisesRegex(ValueError, "Invalid output column"):
+            AggregationSpec.from_dict(payload)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        "AMOUNT_SUM_24H",
+        "amount_sum_24h",
+        '"MySum"',
+        '"my sum, x"',  # quoted names stay quoted when emitted in SQL
+        '"X""), (SELECT 1) AS ""L"',  # escaped quotes keep it one quoted identifier
+    )
+    def test_legitimate_output_columns_still_allowed(self, output_column: str) -> None:
+        """Valid output column names are accepted and stored unchanged."""
+        spec = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column="AMOUNT",
+            window="24h",
+            output_column=output_column,
+        )
+        self.assertEqual(spec.get_sql_column_name(), output_column)
+
+
 class FeatureTest(absltest.TestCase):
     """Unit tests for Feature class."""
 

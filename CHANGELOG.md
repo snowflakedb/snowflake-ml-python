@@ -1,6 +1,31 @@
 # Release History
 
-## 2.10.0
+## 2.11.0
+
+### New Features
+
+### Bug Fixes
+
+* Feature Store: Metadata for quoted names containing a single quote or a backslash, such as `"O'Neil"`, is now
+  stored as written. A single quote previously made the statement fail.
+* Feature Store: `get_feature_group` and loading a realtime feature view now work when a source feature view or
+  sliced column has a quoted mixed-case name, such as `"myFv"`.
+
+* Feature Store: Tiled feature views now reject an aggregation source column whose name contains characters
+  other than letters, digits, underscores, and dollar signs, and an output column that is not a valid
+  Snowflake identifier, when the feature view is defined or loaded. Such names previously produced invalid SQL.
+
+### Behavior Changes
+
+* Feature Store: Metadata stored by an earlier version for a quoted name containing a backslash is no longer found
+  under that name, and the reverse.
+* Feature Store: In declarative feature groups, an unquoted `myFg` no longer matches a deployed `"myFg"`; write
+  `"myFg"` to refer to it. YAML exported by an earlier version wrote `myFg` unquoted, so re-applying it now replaces
+  `"myFg"` with `MYFG`.
+
+### Deprecations
+
+## 2.10.0 (2026-11-16)
 
 ### New Features
 
@@ -11,6 +36,9 @@
 
 * Registry: Deploying a model whose file names contain spaces or quotes (for example `bar plot.png`) no longer
   fails with a `001003` SQL compilation error while the inference service downloads the model.
+* Registry: `ModelVersion.export(export_mode=...)` now accepts the case-insensitive strings `"model"` and `"full"`,
+  and `None` (the default model-only export), in addition to `ExportMode` members. Passing a string previously
+  failed with `'str' object has no attribute 'value'`.
 
 ### Behavior Changes
 

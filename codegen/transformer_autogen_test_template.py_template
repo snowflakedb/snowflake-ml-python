@@ -148,7 +148,7 @@ class {transform.test_class_name}(TestCase):
                     if (
                         len(output_df_pandas.shape) == 2
                         and output_df_pandas.shape[1] == 1
-                        and (output_df_pandas.dtypes.iloc[0] == object or output_df_pandas.dtypes.iloc[0] == pd.StringDtype)
+                        and pd.api.types.is_string_dtype(output_df_pandas.dtypes.iloc[0])
                     ):
                         # transform() method of HeterogeneousEnsemble estimators return responses of varying 
                         # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes)
@@ -221,7 +221,7 @@ class {transform.test_class_name}(TestCase):
                     if inference_with_udf:
                         actual_inference_result[actual_output_cols] = actual_inference_result[
                             actual_output_cols
-                        ].applymap(lambda x: json.loads(x))
+                        ].map(lambda x: json.loads(x))
                     actual_inference_result = actual_inference_result[actual_output_cols].to_numpy()
                     if actual_inference_result.shape[1] > 1:  # return_distance=True
                         actual_inference_result = np.array(actual_inference_result.tolist())

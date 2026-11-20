@@ -1,4 +1,4 @@
-load("//:packages.bzl", "PACKAGES")
+load("//distributions/snowflake-ml-python:packages.bzl", "PACKAGES")
 load("//third_party/rules_sphinx:defs.bzl", "sphinx_docs")
 
 package_group(

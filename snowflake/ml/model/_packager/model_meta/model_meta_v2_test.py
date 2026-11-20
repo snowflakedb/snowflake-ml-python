@@ -7,6 +7,7 @@ from unittest import mock
 import yaml
 from absl.testing import absltest
 
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.model_spec import model_extension_spec
 from snowflake.ml.model._packager.model_meta import (
@@ -265,7 +266,7 @@ class ModelMetadataV2ParseTest(absltest.TestCase):
 
     def test_client_env_uses_packaged_paths_when_python_env_conda_differs(self) -> None:
         spec = _single_env_v2_spec()
-        spec["serving"]["env"]["python_env"]["conda"] = "runtimes/python_runtime/env/conda.yml"
+        spec["serving"]["env"]["python_env"]["conda"] = "runtimes/warehouse_runtime/env/conda.yml"
         del spec["serving"]["env"]["python_env"]["pip"]
 
         loaded = _load_spec(spec)
@@ -489,6 +490,91 @@ class ModelMetadataV2ParseTest(absltest.TestCase):
 
 
 class ModelMetadataLoadV2Test(absltest.TestCase):
+    @mock.patch.object(model_meta, "_is_client_model_spec_v2_write_enabled", autospec=True, return_value=True)
+    def test_save_v2_writes_unified_spec_and_keeps_packaged_environment(self, _: mock.Mock) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {
+                    platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False,
+                }
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                conda_dependencies=["numpy==1.26.4"],
+                relax_version=True,
+            ) as metadata:
+                metadata.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
+                metadata.models["model1"] = model_blob_meta.ModelBlobMeta(
+                    name="model1", model_type="custom", path="mock_path", handler_version="version_0"
+                )
+
+            with open(os.path.join(tmpdir, model_meta.MODEL_METADATA_FILE), encoding="utf-8") as spec_file:
+                spec = yaml.safe_load(spec_file)
+
+            self.assertEqual(spec["version"], "2.0")
+            self.assertNotIn("env", spec)
+            self.assertNotIn("user_data", spec)
+            self.assertEqual(spec["model"]["name"], "model1")
+            self.assertEqual(spec["model"]["framework"], "custom")
+            self.assertEqual(
+                spec["model"]["client"]["min_version"], model_meta_schema.MODEL_METADATA_MIN_SNOWPARK_ML_VERSION
+            )
+            self.assertEqual(set(spec["serving"]["env"]), {"python_env"})
+            self.assertEqual(spec["serving"]["functions"]["predict"]["env"], ["python_env"])
+            self.assertEqual(
+                spec["model"]["details"]["models"]["model1"]["explainability"],
+                {
+                    "algorithm": "shap",
+                    "background_data": "models/explain_artifacts/model1_background_data.pqt",
+                },
+            )
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "env", "conda.yml")))
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "runtimes", "warehouse_runtime", "env", "conda.yml")))
+            with open(os.path.join(tmpdir, "env", "conda.yml"), encoding="utf-8") as packaged_env:
+                packaged_dependencies = yaml.safe_load(packaged_env)["dependencies"]
+            with open(
+                os.path.join(tmpdir, "runtimes", "warehouse_runtime", "env", "conda.yml"), encoding="utf-8"
+            ) as warehouse_env:
+                warehouse_dependencies = yaml.safe_load(warehouse_env)["dependencies"]
+            self.assertTrue(
+                any(str(dep).startswith("numpy==") for dep in packaged_dependencies if isinstance(dep, str))
+            )
+            warehouse_numpy = [
+                dep for dep in warehouse_dependencies if isinstance(dep, str) and dep.startswith("numpy")
+            ]
+            self.assertLen(warehouse_numpy, 1)
+            self.assertNotIn("==", warehouse_numpy[0])
+            self.assertIn(">=", warehouse_numpy[0])
+
+    @mock.patch.object(model_meta, "_is_client_model_spec_v2_write_enabled", autospec=True, return_value=True)
+    def test_save_v2_client_min_version_follows_handler_requirement(self, _: mock.Mock) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+            ) as metadata:
+                metadata.min_snowpark_ml_version = "1.9.0"
+                metadata.models["model1"] = model_blob_meta.ModelBlobMeta(
+                    name="model1", model_type="custom", path="mock_path", handler_version="version_0"
+                )
+
+            with open(os.path.join(tmpdir, model_meta.MODEL_METADATA_FILE), encoding="utf-8") as spec_file:
+                spec = yaml.safe_load(spec_file)
+            self.assertEqual(spec["model"]["client"]["min_version"], "1.9.0")
+
     def test_load_v2_single_env_model_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_env_files(tmpdir)
@@ -531,6 +617,66 @@ class ModelMetadataLoadV2Test(absltest.TestCase):
             self.assertIsNone(loaded.case_sensitive)
             self.assertEqual(loaded.function_type("predict"), "FUNCTION")
             self.assertEqual(loaded.function_type("predict_table"), "TABLE_FUNCTION")
+
+    @mock.patch.object(model_meta, "_is_client_model_spec_v2_write_enabled", autospec=True, return_value=True)
+    def test_save_v2_rejects_duplicate_resolved_method_names(self, _: mock.Mock) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False}
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "Found duplicate method named resolved as PREDICT in the model."):
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures={"predict": _DUMMY_SIG["predict"], "PREDICT": _DUMMY_SIG["predict"]},
+                ) as metadata:
+                    metadata.models["model1"] = model_blob_meta.ModelBlobMeta(
+                        name="model1", model_type="custom", path="mock_path", handler_version="version_0"
+                    )
+
+    @mock.patch.object(model_meta, "_is_client_model_spec_v2_write_enabled", autospec=True, return_value=True)
+    def test_save_v2_keeps_case_sensitive_method_names(self, _: mock.Mock) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"], "PREDICT": _DUMMY_SIG["predict"]},
+                case_sensitive=True,
+            ) as metadata:
+                metadata.models["model1"] = model_blob_meta.ModelBlobMeta(
+                    name="model1", model_type="custom", path="mock_path", handler_version="version_0"
+                )
+
+            with open(os.path.join(tmpdir, model_meta.MODEL_METADATA_FILE), encoding="utf-8") as spec_file:
+                spec = yaml.safe_load(spec_file)
+            self.assertCountEqual(spec["serving"]["functions"], ["predict", "PREDICT"])
+            self.assertTrue(spec["serving"]["functions"]["predict"]["properties"]["case_sensitive"])
+            self.assertTrue(spec["serving"]["functions"]["PREDICT"]["properties"]["case_sensitive"])
+
+    def test_save_without_active_session_writes_legacy_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+            ) as meta:
+                meta.models["model1"] = model_blob_meta.ModelBlobMeta(
+                    name="model1", model_type="custom", path="mock_path", handler_version="version_0"
+                )
+
+            self.assertFalse(meta.wrote_v2_spec)
+            loaded = model_meta.ModelMetadata.load(tmpdir)
+            self.assertEqual(loaded.original_metadata_version, model_meta_schema.MODEL_METADATA_VERSION)
 
     def test_v2_save_is_rejected(self) -> None:
         loaded = _load_spec(_single_env_v2_spec())

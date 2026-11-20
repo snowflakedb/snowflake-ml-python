@@ -79,7 +79,9 @@ def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> s
     Versioned kinds (FeatureView subkinds and FeatureGroup) key as
     ``kind:database.schema:NAME:VERSION`` because their identity is the name
     plus the version; Entity and Datasource key without the version.  Names
-    are uppercased so the key is case-stable.
+    fold through :func:`to_comparison_identifier` (quotes stripped, then
+    uppercased) so an authored ``"myFg"`` keys the same as its deployed
+    stored-form ``myFg``; the content hash still distinguishes the two.
 
     StreamingSource and BatchSource both collapse to the generic Datasource
     kind, so a freshly-loaded YAML matches the applied-state entry the state
@@ -103,7 +105,7 @@ def spec_key(data: dict[str, Any], *, database: str = "", schema: str = "") -> s
     kind = data.get("kind", "Unknown")
     if kind in _SOURCE_KIND_ALIASES:
         kind = "Datasource"
-    name = data.get("name", "unnamed").upper()
+    name = to_comparison_identifier(data.get("name", "unnamed"))
     db = (data.get("database", "") or database or "").upper()
     schema = (data.get("schema", "") or data.get("schema_", "") or schema or "").upper()
     qualifier = f"{db}.{schema}" if (db or schema) else ""
@@ -1966,7 +1968,7 @@ def full_spec_changed_properties(local_normalized: dict[str, Any], applied_norma
     return sorted(changed)
 
 
-def fg_content_hash(spec: dict[str, Any]) -> str:
+def fg_content_hash(spec: dict[str, Any], *, authored: bool = False) -> str:
     """SHA-256 over the FeatureGroup identity and sources tuple.
 
     The basis is deliberately narrow: the name, the version, the description,
@@ -1980,13 +1982,21 @@ def fg_content_hash(spec: dict[str, Any]) -> str:
     hash reads only the keys above.  An empty alias is preserved as such,
     meaning "no prefix", and stays distinct from an absent one.
 
+    The FG name, source FV names, and slice columns are identifiers and
+    resolve to Snowflake's stored form via :func:`_to_stored_form`, so a quoted
+    ``"myFv"`` authoring matches the deployed case-sensitive ``myFv`` while an
+    unquoted ``myFv`` (which Snowflake folds to ``MYFV``) does not.  Versions
+    are not identifiers and fold symmetrically with ``.upper()``.
+
     Args:
         spec: An FG spec dict from either authoring or applied state.
+        authored: ``True`` for the local authoring half (SQL syntax),
+            ``False`` for the applied half (already in stored form).
 
     Returns:
         Hex-encoded SHA-256 digest.
     """
-    name = (spec.get("name") or "").upper()
+    name = str(_to_stored_form(spec.get("name") or "", authored=authored))
     version = (spec.get("version") or "").upper()
     desc = spec.get("desc") or ""
     auto_prefix = bool(spec.get("auto_prefix", True))
@@ -1995,7 +2005,7 @@ def fg_content_hash(spec: dict[str, Any]) -> str:
     for fv_ref in spec.get("feature_views", []) or []:
         if not isinstance(fv_ref, dict):
             continue
-        fv_name = (fv_ref.get("name") or "").upper()
+        fv_name = str(_to_stored_form(fv_ref.get("name") or "", authored=authored))
         fv_version = (fv_ref.get("version") or "").upper()
         slice_cols = fv_ref.get("slice_columns")
         slice_canon: list[str] | None
@@ -2004,7 +2014,7 @@ def fg_content_hash(spec: dict[str, Any]) -> str:
         else:
             # Preserve the authoring order — slice order is semantically
             # significant on the imperative ``FeatureViewSlice``.
-            slice_canon = [str(c) for c in slice_cols]
+            slice_canon = [str(_to_stored_form(str(c), authored=authored)) for c in slice_cols]
         alias = fv_ref.get("alias", None)
         # ``""`` survives as ``""``; ``None`` stays ``None`` (auto_prefix path).
         sources.append((fv_name, fv_version, slice_canon, alias))
@@ -2394,7 +2404,7 @@ def _check_idempotency(
         # FG identity hash mirrors the planner's ``fg_content_hash``;
         # there is no FV-style operational/structural split (see
         # ``decl/DESIGN.md`` §"Feature Group hash strategy").
-        current_hash = fg_content_hash(spec)
+        current_hash = fg_content_hash(spec, authored=True)
     else:
         current_hash = structural_fingerprint_hash(spec)
     # Compare against the same applied-side hash the planner uses (see
@@ -2719,7 +2729,8 @@ def _check_feature_group_sources(
 
     Args:
         spec: The FG spec dict to validate.
-        batch_fv_specs: Map of uppercased name and version to local FV spec.
+        batch_fv_specs: Map of ``to_comparison_identifier(name)`` and
+            uppercased version to local FV spec.
         applied_state: Applied-state snapshot.
 
     Returns:
@@ -2731,16 +2742,15 @@ def _check_feature_group_sources(
 
     fg_name = spec.get("name", "")
 
-    # Index applied FVs by uppercased ``(name, version)`` for
-    # case-insensitive lookup (Snowflake identifiers are case-insensitive;
-    # YAML round-trip can change the case of the source-FV ref).  Keying by
-    # name alone would let a later version of one name clobber the earlier
-    # one, so an FG pinning a specific version could be validated against
-    # the wrong version's payload.
+    # Index applied FVs by folded ``(name, version)``.  The name fold strips
+    # quotes before upper-casing, so a quoted ``"myFv"`` ref finds the
+    # deployed stored-form ``myFv``.  Keying by name alone would let a later
+    # version of one name clobber the earlier one, so an FG pinning a specific
+    # version could be validated against the wrong version's payload.
     applied_fvs_by_id: dict[tuple[str, str], dict[str, Any]] = {}
     for obj in applied_state.objects.values():
         if "FeatureView" in obj.kind:
-            applied_fvs_by_id[((obj.name or "").upper(), (obj.version or "").upper())] = obj.spec_payload
+            applied_fvs_by_id[(to_comparison_identifier(obj.name), (obj.version or "").upper())] = obj.spec_payload
 
     seen: set[tuple[str, str]] = set()
     for fv_ref in spec.get("feature_views", []) or []:
@@ -2751,7 +2761,7 @@ def _check_feature_group_sources(
         if not fv_name:
             continue
 
-        key = (fv_name.upper(), fv_version.upper())
+        key = (to_comparison_identifier(fv_name), fv_version.upper())
         if key in seen:
             results.append(
                 _result(
@@ -2768,9 +2778,8 @@ def _check_feature_group_sources(
         # soft-pass with a MISSING_FEATURE_VIEW unless it's in either view.
         # Both sides key by ``(name, version)`` so the pinned version is
         # resolved exactly, not shadowed by another version of the name.
-        fv_id = (fv_name.upper(), fv_version.upper())
-        local_payload = batch_fv_specs.get(fv_id)
-        applied_payload = applied_fvs_by_id.get(fv_id)
+        local_payload = batch_fv_specs.get(key)
+        applied_payload = applied_fvs_by_id.get(key)
         if local_payload is None and applied_payload is None:
             results.append(
                 _result(
@@ -3837,7 +3846,7 @@ def validate_specs(
         if d.get("kind") == "BatchSource" and d.get("name"):
             batch_source_specs[d["name"]] = d
 
-    # FeatureView specs keyed by uppercased ``(name, version)`` — the tuple
+    # FeatureView specs keyed by folded ``(name, version)`` — the tuple
     # contract ``_check_feature_group_sources`` expects so an FG source
     # reference resolves to the exact pinned version rather than being
     # shadowed by another version of the same name.
@@ -3845,7 +3854,7 @@ def validate_specs(
     for spec_obj in batch.specs:
         d = model_to_dict(spec_obj)
         if "FeatureView" in str(d.get("kind", "")) and d.get("name"):
-            batch_fv_specs[(d["name"].upper(), str(d.get("version") or "").upper())] = d
+            batch_fv_specs[(to_comparison_identifier(d["name"]), str(d.get("version") or "").upper())] = d
 
     # Entity-name → join-key-columns map, mirroring ``planner.generate_plan``.
     # ``_check_idempotency`` compiles each local FV through

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Callable, Iterable
 
 import numpy as np
+import pandas as pd
 import sklearn
 from packaging import version
 
@@ -231,6 +232,42 @@ def str_to_bool(value: str) -> bool | None:
 
 def _handle_str_bool_type() -> np.vectorize:
     return np.vectorize(str_to_bool)
+
+
+def string_na_to_none(series: pd.Series) -> pd.Series:
+    """Convert a pandas string-dtype series to object dtype with missing values as `None`.
+
+    pandas 3 reads string columns as `str` dtype, which stores missing values as NaN, while fitted categories
+    represent them as `None`. Series of any other dtype are returned unchanged.
+
+    Args:
+        series: The series to convert.
+
+    Returns:
+        The converted series.
+    """
+    if not isinstance(series.dtype, pd.StringDtype):
+        return series
+    return series.astype(object).where(series.notna(), None)
+
+
+def dataframe_string_na_to_none(df: pd.DataFrame) -> pd.DataFrame:
+    """Represent string-dtype missing values as `None`.
+
+    Args:
+        df: The dataframe to convert.
+
+    Returns:
+        `df` unchanged when it has no string-dtype columns; otherwise a copy whose string-dtype
+        missing values are `None`.
+    """
+    string_cols = [col for col in df.columns if isinstance(df[col].dtype, pd.StringDtype)]
+    if not string_cols:
+        return df
+    converted = df.copy()
+    for col in string_cols:
+        converted[col] = string_na_to_none(converted[col])
+    return converted
 
 
 def to_native_format(obj: Any) -> Any:

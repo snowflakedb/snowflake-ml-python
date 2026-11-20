@@ -184,6 +184,41 @@ class FeatureViewValidationTest(parameterized.TestCase):
 
         self.assertIn("differ only in case", str(cm.exception))
 
+    def test_batch_tiled_case_sensitive_source_column_feature_names(self) -> None:
+        """Aggregations over a quoted mixed-case column keep its case in their feature names.
+
+        Without an alias the default name is the stored source column plus an upper-cased suffix. A
+        case-sensitive alias over the same column is a separate feature, not a case-folding collision.
+        """
+        mock_df = MagicMock()
+        mock_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT", '"feeAmount"']
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=mock_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=[
+                Feature.sum("AMOUNT", "2d").alias("AMOUNT_SUM_2D"),
+                Feature.sum('"feeAmount"', "2d"),
+                Feature.sum('"feeAmount"', "2d").alias("feeSum2d", case_sensitive=True),
+            ],
+        )
+
+        self.assertTrue(fv.is_tiled)
+        self.assertEqual(fv.feature_names, ["AMOUNT_SUM_2D", '"feeAmount_SUM_2D"', '"feeSum2d"'])
+        # One spec per feature: the two "feeAmount" sums share a source column but differ in output name,
+        # so they are distinct features rather than duplicates.
+        aggregation_specs = fv.aggregation_specs
+        assert aggregation_specs is not None
+        self.assertEqual(
+            [spec.source_column for spec in aggregation_specs],
+            ["AMOUNT", '"feeAmount"', '"feeAmount"'],
+        )
+
     def test_iceberg_rejects_hybrid_table_online(self) -> None:
         """Hybrid-table online storage is unsupported for Iceberg-backed feature views."""
         mock_df = MagicMock()

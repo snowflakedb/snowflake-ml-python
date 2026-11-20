@@ -682,6 +682,8 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertEqual(env_utils.parse_python_version_string("python==3.8.13"), "3.8.13")
         self.assertEqual(env_utils.parse_python_version_string("python==3.8.*"), "3.8")
         self.assertEqual(env_utils.parse_python_version_string("python=3.11"), "3.11")
+        self.assertEqual(env_utils.parse_python_version_string("python==3.14t"), "3.14t")
+        self.assertEqual(env_utils.parse_python_version_string("python==3.14.10t.*"), "3.14.10t")
         with self.assertRaises(ValueError):
             env_utils.parse_python_version_string("python<=3.11")
 
@@ -1339,6 +1341,56 @@ pandas>=2.0
                 "Requested python version is 3.10.10 while current Python version is 3.8.13",
             ):
                 env_utils.validate_py_runtime_version("3.10.10")
+
+            env_utils.validate_py_runtime_version("3.8t")
+            env_utils.validate_py_runtime_version("3.8.18t")
+
+    def test_parse_python_runtime_version(self) -> None:
+        parsed, free_threaded = env_utils.parse_python_runtime_version("3.14")
+        self.assertEqual(parsed, version.parse("3.14"))
+        self.assertFalse(free_threaded)
+
+        parsed, free_threaded = env_utils.parse_python_runtime_version(" 3.14.10t ")
+        self.assertEqual(parsed, version.parse("3.14.10"))
+        self.assertTrue(free_threaded)
+
+        with self.assertRaises(version.InvalidVersion):
+            env_utils.parse_python_runtime_version("3.14t1")
+
+    def test_get_matched_package_versions_accepts_free_threaded_runtime(self) -> None:
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        query = textwrap.dedent(
+            """
+            SELECT PACKAGE_NAME, VERSION
+            FROM information_schema.packages
+            WHERE (package_name = 'snowflake-ml-python')
+            AND language = 'python'
+            AND (runtime_version = '3.14'
+                OR runtime_version is null);
+            """
+        )
+        m_session.add_mock_sql(
+            query=query,
+            result=mock_data_frame.MockDataFrame([row.Row(PACKAGE_NAME="snowflake-ml-python", VERSION="1.2.3")]),
+        )
+        result = env_utils.get_matched_package_versions_in_information_schema(
+            session=cast(session.Session, m_session),
+            reqs=[requirements.Requirement("snowflake-ml-python")],
+            python_version="3.14t",
+        )
+        self.assertEqual(result["snowflake-ml-python"], [version.parse("1.2.3")])
+        env_utils._SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE = {}
+
+    def test_save_conda_env_file_strips_free_threaded_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file_path = pathlib.Path(tmpdir, "conda.yml")
+            env_utils.save_conda_env_file(env_file_path, collections.defaultdict(list), python_version="3.14t")
+            with open(env_file_path, encoding="utf-8") as f:
+                conda_yml = yaml.safe_load(f)
+            self.assertEqual(conda_yml["dependencies"], ["python==3.14.*"])
+            _, _, python_version, _ = env_utils.load_conda_env_file(env_file_path)
+            self.assertEqual(python_version, "3.14")
 
     @mock.patch("snowflake.snowpark._internal.utils.is_in_stored_procedure")
     @mock.patch.dict("os.environ", {}, clear=False)

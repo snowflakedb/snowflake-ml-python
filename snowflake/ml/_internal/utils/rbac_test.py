@@ -1,15 +1,15 @@
 import datetime
 from typing import cast
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
-from snowflake.ml._internal.utils import rbac
+from snowflake.ml._internal.utils import rbac, sql_identifier
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Session
 
 
-class RbacTest(absltest.TestCase):
+class RbacTest(parameterized.TestCase):
     """Testing RBAC utils."""
 
     def setUp(self) -> None:
@@ -55,6 +55,33 @@ class RbacTest(absltest.TestCase):
         )
         self.assertEqual(
             rbac.get_role_privileges(cast(Session, self._session), "ROLE_A"), {rbac.PRIVILEGE_CREATE_DATABASE}
+        )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (True,),
+        (False,),
+    )
+    def test_is_role_in_session(self, in_session: bool) -> None:
+        """Test checking whether a role is active in the session."""
+        self.add_session_mock_sql(
+            query="SELECT IS_ROLE_IN_SESSION('PROD_OWNER')",
+            result=mock_data_frame.MockDataFrame(collect_result=[snowpark.Row(in_session)]),
+        )
+        self.assertEqual(
+            rbac.is_role_in_session(cast(Session, self._session), sql_identifier.SqlIdentifier("prod_owner")),
+            in_session,
+        )
+
+    def test_is_role_in_session_escapes_role_name(self) -> None:
+        """Test that quoted role names with single quotes are escaped."""
+        self.add_session_mock_sql(
+            query="""SELECT IS_ROLE_IN_SESSION('"it''s role"')""",
+            result=mock_data_frame.MockDataFrame(collect_result=[snowpark.Row(False)]),
+        )
+        self.assertFalse(
+            rbac.is_role_in_session(
+                cast(Session, self._session), sql_identifier.SqlIdentifier("it's role", case_sensitive=True)
+            )
         )
 
 

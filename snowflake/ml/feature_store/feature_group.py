@@ -530,8 +530,14 @@ def hydrate_source_refs(
     """
     features: list[FeatureView | FeatureViewSlice] = []
     for src in sources:
-        fv = feature_store.get_feature_view(src.fv_name, src.fv_version)
-        item: FeatureView | FeatureViewSlice = fv.slice(src.slice_columns) if src.slice_columns is not None else fv
+        fv = feature_store.get_feature_view(
+            SqlIdentifier(src.fv_name, case_sensitive=True).identifier(), src.fv_version
+        )
+        item: FeatureView | FeatureViewSlice = (
+            fv.slice([SqlIdentifier(col, case_sensitive=True).identifier() for col in src.slice_columns])
+            if src.slice_columns is not None
+            else fv
+        )
         if src.alias is not None:
             item = item.with_name(src.alias)
         features.append(item)

@@ -427,6 +427,15 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_lora_adapters_enabled())
 
+    def test_client_model_spec_v2_write_defaults_to_disabled(self) -> None:
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_client_model_spec_v2_write_enabled())
+
     @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
     def test_mocking(self, live_commit: bool) -> None:
         """Test mocking of platform capabilities."""

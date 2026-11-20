@@ -15,7 +15,8 @@ Coverage:
 - Heterogeneous-key sources produce an OFT keyed on the ordered superset.
 - Registering a FG whose source FV is on a non-Postgres / offline store fails
   with the expected ``ValueError`` *before* any side effect.
-- ``read_feature_group`` round-trips against the live Postgres OFT.
+- ``read_feature_group`` round-trips against the live Postgres OFT, with one source
+  using quoted mixed-case FV, entity, timestamp-column and feature-column names.
 - ``generate_training_set(feature_group=...)`` joins a spine against the FG
   (with and without PIT timestamps).
 - ``delete_feature_group`` is idempotent and removes the FG from listings.
@@ -58,6 +59,7 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.feature_store.realtime_config import RealtimeConfig
 from snowflake.ml.feature_store.request_source import RequestSource
 from snowflake.ml.feature_store.stream_config import StreamConfig
+from snowflake.snowpark import functions as snowpark_functions
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,11 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
     _POST_READINESS_BACKOFF_SEC = 5.0
 
     def _register_postgres_fv(
-        self, *, suffix: str, store_type: OnlineStoreType = OnlineStoreType.POSTGRES
+        self,
+        *,
+        suffix: str,
+        store_type: OnlineStoreType = OnlineStoreType.POSTGRES,
+        fv_name: str | None = None,
     ) -> tuple[str, str, str]:
         """Create + register a 1-row Postgres batch FV.
 
@@ -148,12 +154,13 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             suffix: Short label embedded in the source-table / FV name.
             store_type: Online store backing the FV (negative tests pass
                 non-POSTGRES values to exercise rejection paths).
+            fv_name: FV name as SQL syntax; defaults to a unique upper-case name.
 
         Returns:
             Tuple of ``(fv_name, src_table_fqn, seeded_user_id)``.
         """
         s = uuid.uuid4().hex[:8]
-        fv_name = f"FG_INTEG_FV_{suffix}_{s}"
+        fv_name = fv_name or f"FG_INTEG_FV_{suffix}_{s}"
         seeded_user_id = f"U_{suffix}_{s}"
         src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.FG_INTEG_SRC_{suffix}_{s}"
 
@@ -185,6 +192,61 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         )
         self.fs.register_feature_view(fv, "v1")
         return fv_name, src_table, seeded_user_id
+
+    def _register_postgres_fv_with_quoted_identifiers(self, *, suffix: str) -> tuple[str, str, str]:
+        """Create + register a 1-row Postgres batch FV whose identifiers are quoted mixed-case.
+
+        The FV name, entity name, timestamp column and the ``purchaseAmt`` feature column are
+        all case-sensitive; the join key stays ``USER_ID`` so the FV can share an FG with
+        :meth:`_register_postgres_fv` sources.
+
+        Args:
+            suffix: Unique label embedded in the source-table / FV / entity names.
+
+        Returns:
+            Tuple of ``(quoted_fv_name, quoted_entity_name, seeded_user_id)``.
+        """
+        fv_name = f'"fgQuotedFv_{suffix}"'
+        entity_name = f'"fgQuotedEntity_{suffix}"'
+        seeded_user_id = f"U_{suffix}"
+        src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.FG_INTEG_QSRC_{suffix}"
+
+        entity = Entity(name=entity_name, join_keys=["USER_ID"], desc="quoted-name entity for FG integ")
+        self.fs.register_entity(entity)
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AMOUNT FLOAT,
+                BALANCE FLOAT
+            )
+            """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table} VALUES
+            ({seeded_user_id!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), 42.0, 1000.0)
+            """
+        ).collect()
+
+        feature_df = self._session.table(src_table).select(
+            snowpark_functions.col("USER_ID"),
+            snowpark_functions.col("EVENT_TIME").alias('"eventTs"'),
+            snowpark_functions.col("AMOUNT").alias('"purchaseAmt"'),
+            snowpark_functions.col("BALANCE"),
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[entity],
+            feature_df=feature_df,
+            timestamp_col='"eventTs"',
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        self.fs.register_feature_view(fv, "v1")
+        return fv_name, entity_name, seeded_user_id
 
     def _register_postgres_fv_multikey(self, *, suffix: str, join_keys: list[str]) -> str:
         """Create + register a Postgres FV keyed on multiple join keys. Returns the FV name."""
@@ -593,8 +655,16 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         self.assertFalse(any(r["NAME"] == fg_name for r in rows))
 
     def test_read_feature_group_round_trip(self) -> None:
-        """``read_feature_group`` returns pandas with the FG's predetermined output columns."""
-        fv1_name, _src1, entity_key = self._register_postgres_fv(suffix="RA")
+        """``read_feature_group`` returns pandas with the FG's predetermined output columns.
+
+        One source uses quoted mixed-case identifiers for its FV name, entity name, timestamp
+        column and a feature column; ``register_feature_group`` and ``get_feature_group`` must
+        preserve each of them by their stored (case-sensitive) names.
+        """
+        quoted_suffix = f"RA_{uuid.uuid4().hex[:8]}"
+        fv1_name, entity_name, entity_key = self._register_postgres_fv_with_quoted_identifiers(suffix=quoted_suffix)
+        self.assertEqual(fv1_name, f'"fgQuotedFv_{quoted_suffix}"')
+        self.assertEqual(entity_name, f'"fgQuotedEntity_{quoted_suffix}"')
         fv2_name, _src2, _key2 = self._register_postgres_fv(suffix="RB")
 
         fv1 = self.fs.get_feature_view(fv1_name, "v1")
@@ -611,8 +681,19 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
 
         try:
             registered = self.fs.register_feature_group(fg, fg_version)
+            self.assertEqual(registered.output_columns, ['"purchaseAmt"', "BALANCE", '"sender_AMOUNT"'])
 
             fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            self.assertEqual(fg_live.output_columns, registered.output_columns)
+            hydrated_fv = fg_live.features[0]
+            assert isinstance(hydrated_fv, FeatureView)
+            self.assertEqual(hydrated_fv.name, f'"fgQuotedFv_{quoted_suffix}"')
+            self.assertLen(hydrated_fv.entities, 1)
+            self.assertEqual(hydrated_fv.entities[0].name, f'"fgQuotedEntity_{quoted_suffix}"')
+            assert hydrated_fv.timestamp_col is not None
+            self.assertEqual(hydrated_fv.timestamp_col.resolved(), "eventTs")
+            self.assertEqual([n.resolved() for n in hydrated_fv.feature_names], ["purchaseAmt", "BALANCE"])
+
             self._wait_until_fg_read_returns_rows(fg_live, entity_key)
             pdf = self._read_feature_group_with_retry(fg_live, keys=[[entity_key]])
 
@@ -623,6 +704,50 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.assertTrue(expected_cols.issubset(actual_cols), f"missing FG cols: {expected_cols - actual_cols}")
             # ``output_columns`` is feature-only; ``USER_ID`` is the join key the response also carries.
             self.assertIn("USER_ID", actual_cols)
+        finally:
+            self.fs.delete_feature_group(fg_name, fg_version)
+
+    def test_register_feature_group_fv_names_differing_only_in_case(self) -> None:
+        """Sources whose FV names differ only in case are distinct FVs and must stay distinct.
+
+        Unquoted ``featuRE_<id>`` is stored as ``FEATURE_<id>`` while quoted ``"featuRE_<id>"``
+        keeps its case, so each source must hydrate back to itself instead of both resolving to
+        ``FEATURE_<id>`` and colliding.
+        """
+        case_suffix = uuid.uuid4().hex[:8]
+        fv_unquoted_name, _src_unquoted, _key_unquoted = self._register_postgres_fv(
+            suffix="CU", fv_name=f"featuRE_{case_suffix}"
+        )
+        fv_quoted_name, _src_quoted, _key_quoted = self._register_postgres_fv(
+            suffix="CQ", fv_name=f'"featuRE_{case_suffix}"'
+        )
+
+        fv_unquoted = self.fs.get_feature_view(fv_unquoted_name, "v1")
+        fv_quoted = self.fs.get_feature_view(fv_quoted_name, "v1")
+        self.assertEqual(fv_unquoted.name.identifier(), f"FEATURE_{case_suffix.upper()}")
+        self.assertEqual(fv_quoted.name.identifier(), f'"featuRE_{case_suffix}"')
+
+        fg_name = f"FG_INTEG_C_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        # Distinct slice columns keep output columns unique without aliases, so any collision
+        # comes from the source FV names.
+        fg = FeatureGroup(
+            name=fg_name,
+            features=[fv_unquoted.slice(["AMOUNT"]), fv_quoted.slice(["BALANCE"])],
+            auto_prefix=False,
+        )
+
+        try:
+            registered = self.fs.register_feature_group(fg, fg_version)
+            self.assertEqual(registered.output_columns, ["AMOUNT", "BALANCE"])
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            self.assertEqual(fg_live.output_columns, registered.output_columns)
+            hydrated_names = []
+            for item in fg_live.features:
+                assert isinstance(item, FeatureViewSlice)
+                hydrated_names.append(item.feature_view_ref.name.identifier())
+            self.assertEqual(hydrated_names, [f"FEATURE_{case_suffix.upper()}", f'"featuRE_{case_suffix}"'])
         finally:
             self.fs.delete_feature_group(fg_name, fg_version)
 

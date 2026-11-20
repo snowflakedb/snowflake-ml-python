@@ -3,6 +3,7 @@
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_view import _prepend_keys_specs
 from snowflake.ml.feature_store.tile_sql_generator import (
     _SECONDARY_KEY_MAX_COUNT,
@@ -470,6 +471,34 @@ class TilingSqlGeneratorTest(parameterized.TestCase):
         self.assertIn('CASE WHEN _DUP_RN_LAST_PAGEID = 1 THEN "pageId" END', sql)
         self.assertIn("AS _PARTIAL_LAST_DISTINCT_5_PAGEID", sql)
 
+    def test_sum_case_sensitive_source_column(self) -> None:
+        """SUM over a quoted mixed-case column reads it by its quoted name into a folded partial column.
+
+        The default-named and the aliased SUM over the same column share one partial column.
+        """
+        features = [
+            Feature.sum('"feeAmount"', "2d").to_spec(),
+            Feature.sum('"feeAmount"', "2d").alias("feeSum2d", case_sensitive=True).to_spec(),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=features,
+        )
+        sql = generator.generate()
+
+        self.assertEqual(
+            sql,
+            "SELECT\n"
+            "    USER_ID,\n"
+            "    TIME_SLICE(EVENT_TIME, 1, 'DAY', 'START') AS TILE_START,\n"
+            '    SUM("feeAmount") AS _PARTIAL_SUM_FEEAMOUNT\n'
+            "FROM (SELECT * FROM events)\n"
+            "GROUP BY USER_ID, TILE_START",
+        )
+
     # TODO: drop this test when the legacy distinct-N implementation is removed.
     @parameterized.named_parameters(  # type: ignore[misc]
         ("explicit_1_41_0", "1.41.0"),
@@ -606,6 +635,27 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         self.assertIn("TILES_JOINED_FV0", cte_names)
         self.assertIn("SIMPLE_MERGED_FV0", cte_names)
         self.assertIn("FV000", cte_names)
+
+    def test_sum_case_sensitive_source_column_output_names(self) -> None:
+        """Merged SUMs over a quoted mixed-case column read the folded partial column and keep their quoted names."""
+        features = [
+            Feature.sum('"feeAmount"', "2d").to_spec(),
+            Feature.sum('"feeAmount"', "2d").alias("feeSum2d", case_sensitive=True).to_spec(),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.USER_TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+        )
+        sql = "\n".join(cte_sql for _, cte_sql in generator.generate_all_ctes())
+
+        self.assertIn("_PARTIAL_SUM_FEEAMOUNT", sql)
+        self.assertIn('AS "feeAmount_SUM_2D"', sql)
+        self.assertIn('AS "feeSum2d"', sql)
 
     def test_list_aggregation_ctes(self) -> None:
         """Test generating merging CTEs for list aggregations."""

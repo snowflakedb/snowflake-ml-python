@@ -1,7 +1,6 @@
 import json
 from typing import Any, Literal, Sequence, cast
 
-import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard
 
@@ -115,7 +114,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             df.columns = [str(col).upper() for col in df.columns]
 
         df_cols = df.columns
-        if df_cols.dtype != np.object_:
+        if not pd.api.types.is_string_dtype(df_cols.dtype):
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.NOT_IMPLEMENTED,
                 original_exception=ValueError("Cannot convert a Pandas DataFrame whose column index is not a string"),

@@ -174,7 +174,9 @@ class RegistryModelPrivilegeTest(registry_model_test_base.RegistryModelTestBase)
         def _test() -> None:
             reg = registry.Registry(self.session)
             mv = reg.get_model(self._model_name).version(self._version_name)
-            with self.assertRaisesRegex(Exception, r"only the model's owner role is permitted"):
+            with self.assertRaisesRegex(
+                Exception, r"only the model's owner role, or a role that inherits it, is permitted"
+            ):
                 mv.load(force=True)
 
         self._run_as_role(self._usage_role, _test)

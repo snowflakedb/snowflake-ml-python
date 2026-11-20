@@ -74,7 +74,7 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
 
         train_df = pd.DataFrame(data)
 
-        categorical_cols = [col for col in train_df.columns if train_df[col].dtype == "object"]
+        categorical_cols = [col for col in train_df.columns if pd.api.types.is_string_dtype(train_df[col].dtype)]
 
         for col in categorical_cols:
             le = LabelEncoder()

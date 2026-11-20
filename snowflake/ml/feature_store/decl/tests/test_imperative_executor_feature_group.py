@@ -198,6 +198,35 @@ class TestBuildFeatureGroupContract:
         sliced.with_name.assert_called_once_with("a")
         assert captured["features"] == [renamed]
 
+    def test_quoted_identifiers_reach_imperative_api_as_sql_syntax(self) -> None:
+        """Quoted names pass through unchanged so ``SqlIdentifier`` keeps their case.
+
+        The imperative ``get_feature_view`` / ``slice`` / ``FeatureGroup`` resolve
+        their arguments as SQL syntax, so ``'"myFv"'`` must arrive quoted to
+        resolve to the stored ``myFv`` rather than ``MYFV``.
+        """
+        from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+        from snowflake.ml.feature_store.decl.imperative_executor import (
+            _build_feature_group,
+        )
+
+        fs = MagicMock(name="FeatureStore")
+        fv = MagicMock(name="myFv")
+        fs.get_feature_view = MagicMock(return_value=fv)
+        payload = _fg_payload(
+            name='"myFg"',
+            feature_views=[{"name": '"myFv"', "version": "V1", "slice_columns": ['"userId"', "TOTAL"]}],
+        )
+
+        with patch("snowflake.ml.feature_store.feature_group.FeatureGroup") as mock_fg_cls:
+            _build_feature_group(fs, payload, payload["version"])
+
+        fs.get_feature_view.assert_called_once_with('"myFv"', "V1")
+        fv.slice.assert_called_once_with(['"userId"', "TOTAL"])
+        assert mock_fg_cls.call_args.args[0] == '"myFg"'
+        assert SqlIdentifier('"myFv"').resolved() == "myFv"
+        assert [SqlIdentifier(col).resolved() for col in ['"userId"', "TOTAL"]] == ["userId", "TOTAL"]
+
     def test_alias_empty_string_calls_with_name_explicitly(self) -> None:
         """``alias = ""`` is a valid imperative override of ``auto_prefix``.
 

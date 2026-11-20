@@ -17,7 +17,7 @@ py_binary(
 py_binary(
     name = "update_version_requirements",
     srcs = ["update_version_requirements.py"],
-    data = ["//:requirements.yml"],
+    data = ["//distributions/snowflake-ml-python:requirements.yml"],
 )
 
 py_binary(
@@ -44,7 +44,7 @@ py_test(
     ],
 )
 
-_SRC_REQUIREMENT_FILE = "//:requirements.yml"
+_SRC_REQUIREMENT_FILE = "//distributions/snowflake-ml-python:requirements.yml"
 
 _CURRENT_PATH = "bazel/requirements"
 
@@ -155,7 +155,7 @@ generate_requirement_file_yaml(
     generation_cmd = _SYNC_BAZEL_CMD,
     src_requirement_file = _SRC_REQUIREMENT_FILE,
     target = _GENERATED_REQUIREMENTS_FILES["conda_meta"]["target"],
-    template_file = "//bazel/requirements/templates:meta.tpl.yaml",
+    template_file = "//distributions/snowflake-ml-python:meta.tpl.yaml",
 )
 
 # Container images pin the last released version of snowflake-ml-python,

@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_package")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 def get_build_rules_for_native_impl():
     py_library(
@@ -159,6 +159,21 @@ def get_build_rules_for_native_impl():
             ":init",
             "//snowflake/ml/_internal:telemetry",
             "//snowflake/ml/modeling/framework",
+        ],
+    )
+
+    py_test(
+        name = "encoder_string_na_test",
+        srcs = ["encoder_string_na_test.py"],
+        optional_dependencies = ["scikit-learn"],
+        tags = [
+            "feature:modeling",
+            "short_regress",
+        ],
+        deps = [
+            ":label_encoder",
+            ":one_hot_encoder",
+            ":ordinal_encoder",
         ],
     )
 

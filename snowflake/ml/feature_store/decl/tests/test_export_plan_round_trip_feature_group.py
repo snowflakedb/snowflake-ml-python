@@ -139,7 +139,7 @@ class TestExportThenLoadFGRoundTrip:
         # Local: load and compute the hash basis the planner will see.
         batch = load_from_project(tmp_path, database="MYDB", schema="PUBLIC")
         fg = next(s for s in batch.specs if s.kind == "FeatureGroup")
-        local_hash = fg_content_hash(model_to_dict(fg))
+        local_hash = fg_content_hash(model_to_dict(fg), authored=True)
 
         # Applied: build AppliedState from the exact same row.
         state = decl_api.fetch_applied_state(
@@ -151,6 +151,36 @@ class TestExportThenLoadFGRoundTrip:
         ao = state.objects["FeatureGroup:MYDB.PUBLIC:USER_FRAUD_FG:V1"]
         # The planner's NO_CHANGE branch fires iff these two hashes match.
         assert local_hash == ao.content_hash
+
+    def test_case_sensitive_fg_export_then_plan_is_no_change(self, tmp_path: Path) -> None:
+        from snowflake.ml.feature_store.decl.enums import OpKind
+        from snowflake.ml.feature_store.decl.planner import generate_plan
+        from snowflake.ml.feature_store.decl.types import PlanOptions
+
+        row = _fg_row_with_advanced_bfv_source(name="myFraudFg")
+        row["sources"] = [{"fv_name": "advBfv", "fv_version": "V1", "slice_columns": ["userId"]}]
+        export_specs(
+            show_rows=[],
+            describe_rows_by_oft={},
+            output_dir=str(tmp_path),
+            database="MYDB",
+            schema="PUBLIC",
+            specification_map={},
+            entity_rows=[],
+            feature_group_rows=[row],
+            layout="sources",
+        )
+        batch = load_from_project(tmp_path, database="MYDB", schema="PUBLIC")
+        state = decl_api.fetch_applied_state(
+            raw_show_results=[],
+            feature_group_rows=[row],
+            default_database="MYDB",
+            default_schema="PUBLIC",
+        )
+
+        plan = generate_plan(batch, state, PlanOptions(full_directory_mode=True))
+
+        assert [op.kind for op in plan.ops] == [OpKind.NO_CHANGE]
 
 
 if __name__ == "__main__":

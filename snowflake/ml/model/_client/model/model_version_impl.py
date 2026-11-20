@@ -9,7 +9,7 @@ import pandas as pd
 
 from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import rbac, sql_identifier
 from snowflake.ml.feature_store import feature_group, feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
@@ -49,6 +49,14 @@ VALID_OPENAI_SIGNATURES = [
 class ExportMode(enum.Enum):
     MODEL = "model"
     FULL = "full"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ExportMode | None":
+        if isinstance(value, str):
+            for member in cls:
+                if member.value == value.lower():
+                    return member
+        return None
 
 
 class ModelVersion(lineage_node.LineageNode):
@@ -914,18 +922,20 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT, subproject=_TELEMETRY_SUBPROJECT, func_params_to_log=["export_mode"]
     )
-    def export(self, target_path: str, *, export_mode: ExportMode = ExportMode.MODEL) -> None:
+    def export(self, target_path: str, *, export_mode: ExportMode | str | None = ExportMode.MODEL) -> None:
         """Export model files to a local directory.
 
         Args:
             target_path: Path to a local directory to export files to. A directory will be created if does not exist.
-            export_mode: The mode to export the model. Defaults to ExportMode.MODEL.
+            export_mode: The mode to export the model. Defaults to ExportMode.MODEL. Accepts an ExportMode or its
+                case-insensitive string value ("model" or "full"); None is treated as ExportMode.MODEL.
                 ExportMode.MODEL: All model files including environment to load the model and model weights.
                 ExportMode.FULL: Additional files to run the model in Warehouse, besides all files in MODEL mode,
 
         Raises:
-            ValueError: Raised when the target path is a file or an non-empty folder.
+            ValueError: Raised when the target path is a file or an non-empty folder, or export_mode is invalid.
         """
+        export_mode = ExportMode.MODEL if export_mode is None else ExportMode(export_mode)
         target_local_path = pathlib.Path(target_path)
         if target_local_path.is_file() or any(target_local_path.iterdir()):
             raise ValueError(f"Target path {target_local_path} is a file or an non-empty folder.")
@@ -1070,11 +1080,14 @@ class ModelVersion(lineage_node.LineageNode):
             current_role = sql_identifier.SqlIdentifier(current_role_raw)
         else:
             current_role = sql_identifier.SqlIdentifier(current_role_raw, case_sensitive=True)
-        if current_role != owner:
+        if current_role != owner and not rbac.is_role_in_session(
+            self._model_ops._session, owner, statement_params=statement_params
+        ):
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INSUFFICIENT_PRIVILEGES,
                 original_exception=RuntimeError(
-                    f"model registry: cannot {operation} this model — only the model's owner role is permitted. "
+                    f"model registry: cannot {operation} this model — "
+                    "only the model's owner role, or a role that inherits it, is permitted. "
                     "You may use export() instead."
                 ),
             )

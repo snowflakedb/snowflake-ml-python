@@ -92,6 +92,7 @@ class ModelEnv:
         self._conda_dependencies: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(list)
         self._pip_requirements: list[requirements.Requirement] = []
         self._python_version: version.Version = version.parse(snowml_env.PYTHON_VERSION)
+        self._python_free_threaded: bool = snowml_env.interpreter_is_free_threaded()
         self._cuda_version: version.Version | None = None
         self._snowpark_ml_version: version.Version = version.parse(snowml_version.VERSION)
         self._target_platforms = target_platforms
@@ -131,12 +132,13 @@ class ModelEnv:
 
     @property
     def python_version(self) -> str:
-        return f"{self._python_version.major}.{self._python_version.minor}"
+        suffix = "t" if self._python_free_threaded else ""
+        return f"{self._python_version.major}.{self._python_version.minor}{suffix}"
 
     @python_version.setter
     def python_version(self, python_version: str | None = None) -> None:
         if python_version:
-            self._python_version = version.parse(python_version)
+            self._python_version, self._python_free_threaded = env_utils.parse_python_runtime_version(python_version)
 
     @property
     def cuda_version(self) -> str | None:

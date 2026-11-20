@@ -770,7 +770,7 @@ class BaseTransformer(BaseEstimator):
         self._enforce_fit()
         dataset = dataset.copy()
         sklearn_transform = self.to_sklearn()
-        transformed_data = sklearn_transform.transform(dataset[self.input_cols])
+        transformed_data = sklearn_transform.transform(_utils.dataframe_string_na_to_none(dataset[self.input_cols]))
         shape = transformed_data.shape
         if (len(shape) == 1 and len(self.output_cols) != 1) or (len(shape) > 1 and shape[1] != len(self.output_cols)):
             raise exceptions.SnowflakeMLException(

@@ -221,7 +221,6 @@ class ModelRuntimeTest(absltest.TestCase):
 
     def test_model_runtime_dup_basic_dep_other_channel(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
-
             dep_target = _BASIC_DEPENDENCIES_TARGET_RELAXED[:]
             dep_target.remove(next(filter(lambda x: x.startswith("packaging"), dep_target)))
             dep_target.append("conda-forge::packaging")
@@ -424,6 +423,22 @@ class ModelRuntimeTest(absltest.TestCase):
             loaded_mr = model_runtime.ModelRuntime.load(pathlib.Path(workspace), "cpu", m_env, returned_dict)
 
             self.assertDictEqual(loaded_mr.save(pathlib.Path(workspace)), returned_dict)
+
+    def test_model_runtime_preserves_free_threaded_python_version(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.python_version = "3.14t"
+
+            mr = model_runtime.ModelRuntime("cpu", m_env, ["model.zip"])
+            self.assertEqual(mr.runtime_env.python_version, "3.14t")
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
+                conda_yml = yaml.safe_load(f)
+            self.assertIn("python==3.14.*", conda_yml["dependencies"])
+
+            loaded_mr = model_runtime.ModelRuntime.load(pathlib.Path(workspace), "cpu", m_env, returned_dict)
+            self.assertEqual(loaded_mr.runtime_env.python_version, "3.14t")
 
     def test_model_runtime_load_from_file_dir_import(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

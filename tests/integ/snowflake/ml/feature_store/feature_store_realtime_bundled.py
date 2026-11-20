@@ -40,6 +40,7 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.feature_store.realtime_config import RealtimeConfig
 from snowflake.ml.feature_store.request_source import RequestSource
 from snowflake.ml.feature_store.stream_config import StreamConfig
+from snowflake.snowpark import functions as snowpark_functions
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,60 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         )
         self.fs.register_feature_view(fv, "v1")
         return fv_name, src_table, seeded_user_id
+
+    def _register_postgres_fv_with_quoted_identifiers(self, *, suffix: str) -> tuple[str, Entity, str]:
+        """Create + register a 1-row Postgres batch FV whose identifiers are quoted mixed-case.
+
+        The FV name, entity name and timestamp column are case-sensitive. The join key stays
+        ``USER_ID`` and the feature stays ``BALANCE`` so the FV can feed the reference
+        ``compute_fn`` unchanged.
+
+        Args:
+            suffix: Unique label embedded in the source-table / FV / entity names.
+
+        Returns:
+            Tuple of ``(quoted_fv_name, quoted_entity, seeded_user_id)``.
+        """
+        fv_name = f'"rtfvQuotedFv_{suffix}"'
+        seeded_user_id = f"U_{suffix}"
+        src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.RTFV_INTEG_QSRC_{suffix}"
+
+        entity = Entity(
+            name=f'"rtfvQuotedEntity_{suffix}"', join_keys=["USER_ID"], desc="quoted-name entity for RTFV integ"
+        )
+        self.fs.register_entity(entity)
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                BALANCE FLOAT
+            )
+            """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table} VALUES
+            ({seeded_user_id!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), 1000.0)
+            """
+        ).collect()
+
+        feature_df = self._session.table(src_table).select(
+            snowpark_functions.col("USER_ID"),
+            snowpark_functions.col("EVENT_TIME").alias('"eventTs"'),
+            snowpark_functions.col("BALANCE"),
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[entity],
+            feature_df=feature_df,
+            timestamp_col='"eventTs"',
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        self.fs.register_feature_view(fv, "v1")
+        return fv_name, entity, seeded_user_id
 
     def _register_named_feature_postgres_fv(
         self,
@@ -606,6 +661,77 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         try:
             self.fs.register_feature_view(rtfv, version)
             rtfv_live = self.fs.get_feature_view(rtfv_name, version)
+
+            request_context = pd.DataFrame({"WEIGHT": [2.5]})
+
+            def _validate_weighted(pdf: pd.DataFrame) -> None:
+                # Keep polling until the RTFV-computed column converges to the
+                # expected value; a freshly registered RTFV can transiently
+                # return a stale/zero WEIGHTED_BALANCE before its compute_fn sees
+                # the ingested upstream row.
+                weighted_col = next((c for c in pdf.columns if c.upper() == "WEIGHTED_BALANCE"), None)
+                self.assertIsNotNone(weighted_col, "WEIGHTED_BALANCE column missing from RTFV read")
+                self.assertAlmostEqual(float(pdf.iloc[0][weighted_col]), 2500.0, places=4)
+
+            pdf = self._wait_until_rtfv_read_returns_rows(
+                rtfv_live,
+                keys=[[user_id]],
+                request_context=request_context,
+                validate_fn=_validate_weighted,
+            )
+
+            self.assertIsInstance(pdf, pd.DataFrame)
+            self.assertEqual(len(pdf), 1)
+            actual_cols = {c.upper() for c in pdf.columns}
+            self.assertIn("USER_ID", actual_cols)
+            self.assertIn("WEIGHTED_BALANCE", actual_cols)
+            weighted_col = next(c for c in pdf.columns if c.upper() == "WEIGHTED_BALANCE")
+            self.assertAlmostEqual(float(pdf.iloc[0][weighted_col]), 2500.0, places=4)
+        finally:
+            self.fs.delete_feature_view(rtfv_name, version)
+
+    def test_read_feature_view_realtime_quoted_identifiers_round_trip(self) -> None:
+        """RTFV round-trip where every name is a quoted, case-sensitive identifier.
+
+        The RTFV name, the upstream FV name, the shared entity name and the upstream
+        timestamp column are quoted mixed-case identifiers; ``register_feature_view``,
+        ``get_feature_view`` and ``list_feature_views`` must preserve each of them by
+        their stored (case-sensitive) names.
+        """
+        quoted_suffix = f"RDQ_{uuid.uuid4().hex[:8]}"
+        upstream_name, entity, user_id = self._register_postgres_fv_with_quoted_identifiers(suffix=quoted_suffix)
+        self._poll_online_read(self.fs, upstream_name, "v1", keys=[[user_id]], desc="RTFV upstream BFV (RDQ)")
+        upstream = self.fs.get_feature_view(upstream_name, "v1")
+        self.assertEqual(upstream.name.identifier(), f'"rtfvQuotedFv_{quoted_suffix}"')
+
+        rtfv_name = f'"rtfvQuoted_{quoted_suffix}"'
+        realtime_config = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[self._make_request_source(), upstream],
+            output_schema=self._make_output_schema(),
+        )
+        rtfv = FeatureView(
+            name=rtfv_name,
+            entities=[entity],
+            realtime_config=realtime_config,
+            desc="integ-test RTFV quoted-identifier round-trip",
+        )
+
+        version = "v1"
+        try:
+            registered = self.fs.register_feature_view(rtfv, version)
+            self.assertEqual(registered.name.identifier(), rtfv_name)
+
+            rtfv_live = self.fs.get_feature_view(rtfv_name, version)
+            self.assertTrue(rtfv_live.is_realtime_feature_view)
+            self.assertEqual(rtfv_live.name.identifier(), rtfv_name)
+            self.assertLen(rtfv_live.entities, 1)
+            self.assertEqual(rtfv_live.entities[0].name.identifier(), f'"rtfvQuotedEntity_{quoted_suffix}"')
+            hydrated_sources = [s.name.identifier() for s in rtfv_live.realtime_config.feature_view_sources]
+            self.assertEqual(hydrated_sources, [f'"rtfvQuotedFv_{quoted_suffix}"'])
+
+            kinds = {r["NAME"]: r["KIND"] for r in self.fs.list_feature_views().collect()}
+            self.assertEqual(kinds.get(f"rtfvQuoted_{quoted_suffix}"), "REALTIME")
 
             request_context = pd.DataFrame({"WEIGHT": [2.5]})
 

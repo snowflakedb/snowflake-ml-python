@@ -1,9 +1,13 @@
 """Common base class for registry SPCS integration tests."""
 
+import contextlib
 import json
 import logging
 import os
+import re
+import threading
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -161,6 +165,8 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     # --test_env WAREHOUSE=<WAREHOUSE> //...
     _TEST_CPU_COMPUTE_POOL = os.getenv("CPU_COMPUTE_POOL", "REGTEST_INFERENCE_CPU_POOL")
     _TEST_GPU_COMPUTE_POOL = os.getenv("GPU_COMPUTE_POOL", "REGTEST_INFERENCE_GPU_POOL")
+    # ARM (aarch64) CPU pool.
+    _TEST_ARM_COMPUTE_POOL = os.getenv("ARM_COMPUTE_POOL", "REGTEST_INFERENCE_ARM_POOL")
     _TEST_SPCS_WH = os.getenv("WAREHOUSE", "REGTEST_ML_SMALL")
 
     BUILDER_IMAGE_PATH = os.getenv("BUILDER_IMAGE_PATH", None)
@@ -334,3 +340,70 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         if not rows:
             raise ValueError(f"DESCRIBE SERVICE {fully_qualified} returned no rows")
         return rows[0].as_dict()["spec"]
+
+    def get_model_inference_image_name(self, service_name: str) -> str:
+        """Return the model inference image name (repository path and tag stripped) of a service or job.
+
+        Args:
+            service_name: The service or job service name. May be unqualified or fully qualified.
+
+        Returns:
+            Image name such as ``sf-model-inference-<hash>-cpu`` or ``sf-model-batch-inference-<hash>-cpu-arm64``.
+
+        Raises:
+            AssertionError: If the service spec has no model inference image.
+        """
+        spec = self.get_job_service_spec(service_name)
+        match = re.search(r"sf-model-(?:batch-)?inference-[0-9a-zA-Z]+-(?:cpu|gpu)(?:-arm64)?", spec)
+        assert match is not None, f"No model inference image found in spec of {service_name}:\n{spec}"
+        return match.group(0)
+
+    @contextlib.contextmanager
+    def watch_model_build_jobs(self, poll_interval_s: float = 3.0) -> Iterator[set[str]]:
+        """Collect the names of MODEL_BUILD job services in the test database that start while the body runs.
+
+        A finished MODEL_BUILD job may stay listed for minutes or be deleted right away, so jobs are observed by
+        polling, and jobs already listed before the body starts are ignored. Only jobs in this test's database are
+        counted, so builds from other tests running in the same account are not attributed to this one. The yielded
+        set is complete after the ``with`` block exits; it is empty when no image build was triggered.
+
+        Args:
+            poll_interval_s: Seconds to wait between polls of the MODEL_BUILD jobs.
+
+        Yields:
+            The set of new MODEL_BUILD job service names observed while the body runs.
+        """
+
+        def _list_build_jobs() -> set[str]:
+            return {
+                str(job["name"])
+                for job in self.list_job_services(name_like="MODEL_BUILD%")
+                if str(job["database_name"]).upper() == self._test_db
+            }
+
+        preexisting = _list_build_jobs()
+        seen: set[str] = set()
+        stop = threading.Event()
+
+        def _poll() -> None:
+            while True:
+                try:
+                    seen.update(_list_build_jobs() - preexisting)
+                except Exception as e:  # best effort: a failed poll must not fail the test
+                    logging.warning("Polling MODEL_BUILD jobs failed: %s", e)
+                if stop.wait(poll_interval_s):
+                    return
+
+        thread = threading.Thread(target=_poll, daemon=True)
+        thread.start()
+        try:
+            yield seen
+        finally:
+            stop.set()
+            thread.join()
+
+    def assert_compute_pool_exists(self, pool: str) -> None:
+        """Fail the current test when ``pool`` does not exist or is not visible to the current role."""
+        escaped = pool.replace("'", "''")
+        if not self.session.sql(f"SHOW COMPUTE POOLS LIKE '{escaped}'").collect():
+            self.fail(f"Compute pool {pool} does not exist or is not visible to the current role.")

@@ -685,5 +685,112 @@ class TestPlannerFGOverAdvancedBfvNoRegression:
         assert fg_content_hash(a) == fg_content_hash(b)
 
 
+# ---------------------------------------------------------------------------
+# Quoted mixed-case identifiers
+# ---------------------------------------------------------------------------
+
+
+def _applied_from_fg_row(
+    name: str,
+    fv_name: str,
+    slice_columns: list[str] | None = None,
+) -> AppliedState:
+    """Build applied state through the real ``list_feature_groups`` row path."""
+    from snowflake.ml.feature_store.decl.state import _build_feature_group_object
+
+    source: dict[str, Any] = {"fv_name": fv_name, "fv_version": "V1"}
+    if slice_columns is not None:
+        source["slice_columns"] = slice_columns
+    row = {
+        "name": name,
+        "version": "V1",
+        "desc": "",
+        "auto_prefix": True,
+        "sources": [source],
+        "database_name": "DB",
+        "schema_name": "SCH",
+    }
+    ao = _build_feature_group_object(row, "DB", "SCH")
+    assert ao is not None
+    return AppliedState(objects={ao.key: ao})
+
+
+class TestPlannerFGQuotedIdentifiers:
+    """A quoted mixed-case FG matches its deployed stored-form counterpart.
+
+    ``list_feature_groups`` returns ``SqlIdentifier.resolved()`` names, so an
+    FG registered as ``"myFg"`` over ``"myFv"`` comes back as ``myFg`` /
+    ``myFv``.  The authored YAML still carries the quotes.
+    """
+
+    def test_quoted_fg_matches_deployed_case_sensitive_fg(self) -> None:
+        fg = _fg_model(
+            name='"myFg"',
+            refs=[FeatureViewRef(name='"myFv"', version="V1", slice_columns=['"userId"'])],
+        )
+        applied = _applied_from_fg_row("myFg", "myFv", slice_columns=["userId"])
+
+        plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts(full_directory_mode=True))
+
+        assert [op.kind for op in plan.ops] == [OpKind.NO_CHANGE]
+
+    def test_unquoted_fg_does_not_match_deployed_case_sensitive_fg(self) -> None:
+        # Unquoted ``myFg`` resolves to ``MYFG`` on register, so it is not the
+        # deployed case-sensitive ``myFg`` and must not plan NO_CHANGE.
+        fg = _fg_model(name="myFg", refs=[FeatureViewRef(name="myFv", version="V1")])
+        applied = _applied_from_fg_row("myFg", "myFv")
+
+        plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts())
+
+        assert OpKind.NO_CHANGE not in [op.kind for op in plan.ops]
+
+    def test_replace_unquoted_fg_drops_deployed_case_sensitive_fg(self) -> None:
+        # The drop targets the deployed identity (re-quoted ``"myFg"``); the create
+        # carries the full local spec, whose unquoted ``myFg`` registers ``MYFG``.
+        fg = _fg_model(name="myFg", refs=[FeatureViewRef(name="myFv", version="V1")])
+        applied = _applied_from_fg_row("myFg", "myFv")
+
+        plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts())
+
+        drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
+        create = next(op for op in plan.ops if op.kind == OpKind.CREATE_FG)
+        assert drop.payload == {"name": '"myFg"', "version": "V1", "kind": "FeatureGroup"}
+        assert create.payload["name"] == "myFg"
+
+    def test_replace_upper_case_fg_drop_payload_is_unquoted(self) -> None:
+        fg = _fg_model(name="MY_FG", desc="changed", refs=[FeatureViewRef(name="MY_FV", version="V1")])
+        applied = _applied_from_fg_row("MY_FG", "MY_FV")
+
+        plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts())
+
+        drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
+        assert drop.payload == {"name": "MY_FG", "version": "V1", "kind": "FeatureGroup"}
+
+    def test_replace_fg_drop_uses_deployed_version(self) -> None:
+        fg = _fg_model(version="v1", desc="new description")
+        applied = _applied_with_fg(_fg_payload(version="V1", desc="old description"))
+
+        plan = generate_plan(SpecBatch(specs=[fg], source_files=[]), applied, _opts())
+
+        drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
+        assert drop.payload["version"] == "V1"
+
+    def test_orphan_case_sensitive_fg_drop_payload_is_quoted(self) -> None:
+        applied = _applied_from_fg_row("myFg", "myFv")
+
+        plan = generate_plan(SpecBatch(specs=[], source_files=[]), applied, _opts(full_directory_mode=True))
+
+        drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
+        assert drop.payload["name"] == '"myFg"'
+
+    def test_orphan_upper_case_fg_drop_payload_is_unquoted(self) -> None:
+        applied = _applied_from_fg_row("MY_FG", "MY_FV")
+
+        plan = generate_plan(SpecBatch(specs=[], source_files=[]), applied, _opts(full_directory_mode=True))
+
+        drop = next(op for op in plan.ops if op.kind == OpKind.DROP_FG)
+        assert drop.payload["name"] == "MY_FG"
+
+
 if __name__ == "__main__":
     pytest_driver.main()

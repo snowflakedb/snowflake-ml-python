@@ -1310,13 +1310,16 @@ def _fg_source_to_authoring_dict(source: dict[str, Any]) -> dict[str, Any]:
             f"(row: {source!r}) — refusing to emit a YAML feature_views[] "
             f"entry that would re-validate as MISSING_VERSION"
         )
+    # The row carries stored-form identifiers; re-quote them into SQL syntax
+    # so a case-sensitive ``myFv`` / ``userId`` round-trips instead of folding
+    # to ``MYFV`` / ``USERID`` on the next plan.
     out: dict[str, Any] = {
-        "name": fv_name,
+        "name": to_authoring_identifier(fv_name),
         "version": fv_version,
     }
     slice_cols = source.get("slice_columns")
     if slice_cols:
-        out["slice_columns"] = list(slice_cols)
+        out["slice_columns"] = [to_authoring_identifier(col) for col in slice_cols]
     if "alias" in source:
         out["alias"] = source["alias"]
     return out
@@ -1387,7 +1390,7 @@ def _build_fg_yaml_doc(row: dict[str, Any]) -> dict[str, Any]:
     feature_views = [_fg_source_to_authoring_dict(s) for s in sources]
     doc: dict[str, Any] = {
         "kind": "FeatureGroup",
-        "name": name,
+        "name": to_authoring_identifier(name),
         "version": version,
         "desc": row.get("desc", "") or "",
         "auto_prefix": bool(row.get("auto_prefix", True)),
@@ -2272,7 +2275,9 @@ def _export(
         seen_fg_files: set[str] = set()
         for row in feature_group_rows:
             fg_doc = _build_fg_yaml_doc(row)
-            fg_name = str(fg_doc["name"])
+            # Stem and filter on the stored-form name so a re-quoted
+            # case-sensitive name never puts quote characters in a filename.
+            fg_name = str(row["name"])
             if name_filter and fg_name.upper() != name_filter.upper():
                 continue
             file_stem = _versioned_stem(fg_name, fg_doc.get("version"))

@@ -211,6 +211,10 @@ def get_df(
     # This will get converted back to the SF schema in `session.create_dataframe`.
     pd_schema = identifier.get_unescaped_names(schema)
     df_pandas = pd.DataFrame(data, columns=pd_schema)
+    # pandas 3 infers `str` dtype for string columns, which turns None into NaN.
+    for idx, col in enumerate(pd_schema):
+        if isinstance(df_pandas[col].dtype, pd.StringDtype):
+            df_pandas[col] = pd.Series([row[idx] for row in data], dtype=object)
 
     if fillna is not None:
         df_pandas.fillna(value=fillna, inplace=True)

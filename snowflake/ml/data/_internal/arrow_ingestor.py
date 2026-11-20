@@ -1,8 +1,6 @@
-import base64
 import collections
 import logging
 import os
-import re
 import time
 from typing import TYPE_CHECKING, Any, Deque, Iterator, Sequence
 
@@ -184,16 +182,11 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         debug_parts.append(
             "SNOWML DEBUG: " f"data_sources_count={len(self._data_sources)} " f"resolved_sources_count={len(sources)}"
         )
-        # Try to include the exact file path mentioned by pyarrow, if present
+        # Prefer the resolved source pyarrow named in the error. Dataset paths contain double-quoted identifiers,
+        # so the path cannot be reliably extracted from the error text by pattern matching.
         error_text = str(e)
-        snow_paths: list[str] = []
-        try:
-            # Extract snow://... tokens possibly wrapped in quotes
-            for match in re.finditer(r'(snow://[^\s\'"]+)', error_text):
-                token = match.group(1).rstrip(").,;]")
-                snow_paths.append(token)
-        except Exception:
-            pass
+        str_sources = [s for s in sources if isinstance(s, str)]
+        snow_paths = [s for s in str_sources if s in error_text] or str_sources
         fs = self._kwargs.get("filesystem")
         if fs is not None:
             # Always include a directory listing with sizes for context
@@ -209,7 +202,7 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
                         debug_parts.append(f"  - {s} info_failed={le}")
             except Exception as le:
                 debug_parts.append(f"SNOWML DEBUG: listing sources failed: {le}")
-            # If pyarrow referenced a specific file, dump its full contents (base64) for inspection
+            # Report only sizes and Parquet magic bytes; never log file contents, which may hold user data.
             for path in snow_paths[:1]:  # usually only one path appears in the message
                 try:
                     info = fs.info(path)
@@ -222,13 +215,11 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
                     looks_like_parquet = (magic_head == b"PAR1") and (magic_tail == b"PAR1")
                     debug_parts.append(
                         "SNOWML DEBUG: "
+                        f"bytes_read={len(content)} "
                         f"file_magic_head={magic_head!r} "
                         f"file_magic_tail={magic_tail!r} "
                         f"parquet_magic_detected={looks_like_parquet}"
                     )
-                    b64 = base64.b64encode(content).decode("ascii")
-                    debug_parts.append("SNOWML DEBUG: file_content_base64 (entire file):")
-                    debug_parts.append(b64)
                 except Exception as fe:
                     debug_parts.append(f"SNOWML DEBUG: failed to read referenced file {path}: {fe}")
         else:

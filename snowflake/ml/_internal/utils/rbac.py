@@ -1,4 +1,7 @@
+from typing import Any
+
 from snowflake import snowpark
+from snowflake.ml._internal.utils import sql_identifier
 
 # Constants for privileges.
 
@@ -54,3 +57,24 @@ def get_role_privileges(session: snowpark.Session, role_name: str) -> set[str]:
 
     grants_on_account = session.sql("SHOW GRANTS ON ACCOUNT").collect()
     return {x["privilege"] for x in filter(filter_predicate, grants_on_account)}
+
+
+def is_role_in_session(
+    session: snowpark.Session,
+    role: sql_identifier.SqlIdentifier,
+    *,
+    statement_params: dict[str, Any] | None = None,
+) -> bool:
+    """Checks whether a role is active in the session, directly or through role inheritance.
+
+    Args:
+        session: Authenticated snowpark session to communicate with the Snowflake backend.
+        role: The role to look for.
+        statement_params: Optional statement parameters to attach to the query.
+
+    Returns:
+        True if the role is the current role, is inherited by it, or is activated as a secondary role.
+    """
+    escaped_role = role.identifier().replace("'", "''")
+    rows = session.sql(f"SELECT IS_ROLE_IN_SESSION('{escaped_role}')").collect(statement_params=statement_params)
+    return bool(rows and rows[0][0])

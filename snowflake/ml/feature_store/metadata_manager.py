@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from snowflake.ml._internal.utils import sql_literal
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec
 
@@ -46,21 +47,6 @@ def _sanitize_json_for_dollar_quoting(payload: str) -> str:
         The payload with every ``$$`` replaced by ``$\\u0024``.
     """
     return payload.replace("$$", "$\\u0024")
-
-
-def _sql_str(value: str) -> str:
-    """Render a value as a single-quoted SQL string literal.
-
-    Literals rather than ``?`` binds: a session wrapping an existing connection (as the
-    snow CLI does) keeps ``pyformat`` paramstyle, where ``?`` raises ``TypeError``.
-
-    Args:
-        value: Raw string value.
-
-    Returns:
-        The value with ``\\`` and ``'`` escaped, wrapped in single quotes.
-    """
-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 class MetadataObjectType(str, Enum):
@@ -673,24 +659,19 @@ class FeatureStoreMetadataManager:
         specs_json = _sanitize_json_for_dollar_quoting(json.dumps(specs.to_dict()))
 
         # Build SELECT statements for atomic insert (PARSE_JSON can't be used in VALUES)
-        selects = [
-            f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
-            f"'{version}', '{MetadataType.FEATURE_SPECS.value}', PARSE_JSON($${specs_json}$$)"
-        ]
+        row_prefix = (
+            f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', "
+            f"{sql_literal.string_literal(normalized_name)}, {sql_literal.string_literal(version)}"
+        )
+        selects = [f"{row_prefix}, '{MetadataType.FEATURE_SPECS.value}', PARSE_JSON($${specs_json}$$)"]
 
         if descs:
             descs_json = _sanitize_json_for_dollar_quoting(json.dumps(descs))
-            selects.append(
-                f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
-                f"'{version}', '{MetadataType.FEATURE_DESCS.value}', PARSE_JSON($${descs_json}$$)"
-            )
+            selects.append(f"{row_prefix}, '{MetadataType.FEATURE_DESCS.value}', PARSE_JSON($${descs_json}$$)")
 
         if fv_metadata_config is not None:
             config_json = _sanitize_json_for_dollar_quoting(json.dumps(fv_metadata_config.to_dict()))
-            selects.append(
-                f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
-                f"'{version}', '{MetadataType.FEATURE_VIEW_METADATA.value}', PARSE_JSON($${config_json}$$)"
-            )
+            selects.append(f"{row_prefix}, '{MetadataType.FEATURE_VIEW_METADATA.value}', PARSE_JSON($${config_json}$$)")
 
         union_query = " UNION ALL ".join(selects)
 
@@ -876,8 +857,8 @@ class FeatureStoreMetadataManager:
             f"""
             DELETE FROM {self._table_path}
             WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
-            AND OBJECT_NAME = '{normalized_name}'
-            AND VERSION = '{version}'
+            AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
+            AND VERSION = {sql_literal.string_literal(version)}
             """
         ).collect(statement_params=self._telemetry_stmp)
 
@@ -1075,8 +1056,8 @@ class FeatureStoreMetadataManager:
             f"""
             DELETE FROM {self._table_path}
             WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_GROUP.value}'
-            AND OBJECT_NAME = '{normalized_name}'
-            AND VERSION = '{version}'
+            AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
+            AND VERSION = {sql_literal.string_literal(version)}
             AND METADATA_TYPE = '{MetadataType.FEATURE_GROUP_CONFIG.value}'
             """
         ).collect(statement_params=self._telemetry_stmp)
@@ -1175,8 +1156,8 @@ class FeatureStoreMetadataManager:
             f"""
             DELETE FROM {self._table_path}
             WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
-            AND OBJECT_NAME = '{normalized_name}'
-            AND VERSION = '{version}'
+            AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
+            AND VERSION = {sql_literal.string_literal(version)}
             AND METADATA_TYPE = '{MetadataType.REALTIME_CONFIG.value}'
             """
         ).collect(statement_params=self._telemetry_stmp)
@@ -1266,7 +1247,7 @@ class FeatureStoreMetadataManager:
             f"""
             DELETE FROM {self._table_path}
             WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
-            AND OBJECT_NAME = '{normalized_name}'
+            AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
             AND NOT EXISTS ({self._stream_source_refs_sql("1", normalized_name)})
             """
         ).collect(statement_params=self._telemetry_stmp)
@@ -1319,7 +1300,7 @@ class FeatureStoreMetadataManager:
             FROM {self._table_path} AS r
             WHERE r.OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
             AND r.METADATA_TYPE = '{MetadataType.STREAM_CONFIG.value}'
-            AND r.METADATA:stream_source_name::STRING = {_sql_str(source_name)}
+            AND r.METADATA:stream_source_name::STRING = {sql_literal.string_literal(source_name)}
         """
 
     def _stream_source_ref_count_sql(self, source_name: str) -> str:
@@ -1377,7 +1358,7 @@ class FeatureStoreMetadataManager:
                 SET METADATA = OBJECT_INSERT(METADATA, 'ref_count', ({count_sql}), TRUE),
                     UPDATED_AT = CURRENT_TIMESTAMP()
                 WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
-                AND OBJECT_NAME = '{normalized_name}'
+                AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
                 AND METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
                 """
             ).collect(statement_params=self._telemetry_stmp)
@@ -1473,7 +1454,7 @@ class FeatureStoreMetadataManager:
                 WHERE EXISTS (
                     SELECT 1 FROM {self._table_path} AS s
                     WHERE s.OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
-                    AND s.OBJECT_NAME = '{require_stream_source.strip('"')}'
+                    AND s.OBJECT_NAME = {sql_literal.string_literal(require_stream_source.strip('"'))}
                     AND s.METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
                 )"""
 
@@ -1483,8 +1464,8 @@ class FeatureStoreMetadataManager:
             USING (
                 SELECT
                     '{object_type.value}' AS OBJECT_TYPE,
-                    '{normalized_name}' AS OBJECT_NAME,
-                    '{version}' AS VERSION,
+                    {sql_literal.string_literal(normalized_name)} AS OBJECT_NAME,
+                    {sql_literal.string_literal(version)} AS VERSION,
                     '{metadata_type.value}' AS METADATA_TYPE,
                     PARSE_JSON($${metadata_json}$$) AS METADATA{guard}
             ) AS source
@@ -1530,8 +1511,8 @@ class FeatureStoreMetadataManager:
             SELECT METADATA
             FROM {self._table_path}
             WHERE OBJECT_TYPE = '{object_type.value}'
-            AND OBJECT_NAME = '{normalized_name}'
-            AND VERSION = '{version}'
+            AND OBJECT_NAME = {sql_literal.string_literal(normalized_name)}
+            AND VERSION = {sql_literal.string_literal(version)}
             AND METADATA_TYPE = '{metadata_type.value}'
             ORDER BY UPDATED_AT DESC, CREATED_AT DESC
             LIMIT 1

@@ -968,17 +968,46 @@ Python-form coverage in `tests/test_load_python_form.py`
 (`TestPythonFormIdentifierResolution`); uppercase byte-stability is covered by
 that file's existing `TestThreeShapeParity`.
 
-**Known limitations (deferred, same root cause, different owners).**
-`spec_key` / `state._build_spec_key` uppercase `name` / `database` / `schema`,
-so a quoted mixed-case FV *name* never matches its applied object (owned by
-`6b1`); and `_normalise_fv_sources_for_hash` uses `table.strip().upper()` rather
-than identifier resolution for source bindings. Both are out of scope here. The
-exporter copies `metadata.name` / `database` / `schema` from the deployed FV's
-stored form verbatim (it does **not** route them through
-`compiler.to_authoring_identifier`), so a quoted mixed-case FV *name* leaks the
-same way — but it is moot: `spec_key` already upper-cases names before the
-match, so such a name never resolves to its applied object regardless. Extend
-the `6b1` fix there rather than re-quoting `metadata.name` on export.
+**Object keys.** `spec_key` / `state._build_spec_key` fold `name` through
+`compiler.to_comparison_identifier` (quotes stripped, then upper-cased), so an
+authored `"myFg"` keys the same as its deployed stored-form `myFg`; the content
+hash then decides whether the two are the same object. `database` / `schema`
+are still plain `.upper()`.
+
+**FeatureGroup identifiers.** `fg_content_hash(spec, *, authored)` follows the
+same authored/applied contract: the FG name, each source FV name, and each
+`slice_columns` entry go through `_to_stored_form`; versions fold with
+`.upper()` on both halves. The planner and `_check_idempotency` hash the local
+FG with `authored=True`; `state._build_feature_group_object` hashes the
+`list_feature_groups` row (already `SqlIdentifier.resolved()`) with the
+default `authored=False`. `_check_feature_group_sources` resolves source refs
+by `to_comparison_identifier(name)`. The exporter re-quotes the FG name, source
+FV names, and slice columns via `compiler.to_authoring_identifier` (the file
+stem stays the bare stored name), and every `DROP_FG` (orphan or replace)
+targets the deployed group with its stored name re-quoted, because
+`delete_feature_group` resolves its argument as SQL syntax.
+Pinned by `TestFgContentHashIdentifierCase` in
+`tests/test_invariants_feature_group.py`, `TestPlannerFGQuotedIdentifiers` in
+`tests/test_planner_feature_group.py`, and the case-sensitive export → plan
+round-trip in `tests/test_export_plan_round_trip_feature_group.py`.
+
+**Known limitations (deferred).** `_normalise_fv_sources_for_hash` uses
+`table.strip().upper()` rather than identifier resolution for source bindings.
+The exporter copies FV `metadata.name` / `database` / `schema` from the deployed
+FV's stored form verbatim (it does **not** route them through
+`compiler.to_authoring_identifier`), so exporting a case-sensitive FV name
+writes it unquoted and it re-resolves to upper case; likewise an orphan
+`DROP_FV` passes the stored name to `delete_feature_view` unquoted. Because
+object keys and FG source refs fold names case-insensitively, two objects whose
+names differ only in case (`"myFv"` stored as `myFv`, and `MYFV`) cannot both be
+declared: `validate_specs` reports `DUPLICATE_SPEC_KEY` for the pair, and an FG
+listing both reports `FG_DUPLICATE_SOURCE`, although the imperative API keeps
+them distinct. Keying by stored form instead (resolving authored names with
+`_to_stored_form(..., authored=True)`) would lift this. Pinned by
+`test_fv_names_differing_only_in_case_collide` in
+`tests/test_loader_duplicate_specs.py` and
+`test_fv_names_differing_only_in_case_are_duplicates` in
+`tests/test_invariants_feature_group.py`.
 
 **Applied identity keys on the deployed SHOW row, not SPECIFICATION
 `metadata`.** A deployed `DESCRIBE … TYPE = SPECIFICATION` payload can carry a

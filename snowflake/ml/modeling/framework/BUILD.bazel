@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,5 +18,18 @@ py_library(
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/modeling/_internal:transformer_protocols",
+    ],
+)
+
+py_test(
+    name = "_utils_test",
+    srcs = ["_utils_test.py"],
+    optional_dependencies = ["scikit-learn"],
+    tags = [
+        "feature:modeling",
+        "short_regress",
+    ],
+    deps = [
+        ":framework",
     ],
 )

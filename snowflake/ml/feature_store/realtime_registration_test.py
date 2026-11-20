@@ -13,6 +13,7 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
+    FeatureViewSlice,
     FeatureViewStatus,
     FeatureViewVersion,
     OnlineConfig,
@@ -24,6 +25,7 @@ from snowflake.ml.feature_store.realtime_registration import (
     _resolve_realtime_unwrapped_upstream_fvs,
     _resolve_realtime_upstream_fvs,
     build_rtfv_source_refs,
+    compose_rtfv_from_metadata,
     request_schema_from_json,
     request_schema_to_json,
     validate_rtfv_entity_contract,
@@ -466,6 +468,68 @@ class BuildRtfvSourceRefsTest(absltest.TestCase):
         self.assertEqual(refs[0].fv_version, "v1")
         self.assertIsNone(refs[0].slice_columns)
         self.assertIsNone(refs[0].alias)
+
+
+class ComposeRtfvQuotedUpstreamTest(absltest.TestCase):
+    """Rebuild an RTFV whose upstream is the case-sensitive ``"myFv"`` sliced to ``"purchaseAmt"``.
+
+    Source refs are persisted in Snowflake's stored form, so the metadata holds
+    ``myFv`` and ``purchaseAmt`` without quotes.
+    """
+
+    @staticmethod
+    def _fs_and_metadata() -> tuple[MagicMock, Any]:
+        from snowflake.ml.feature_store.metadata_manager import RealtimeConfigMetadata
+
+        upstream = _build_upstream_fv('"myFv"', feature_columns=('"purchaseAmt"', "TOTAL"))
+        rtc = RealtimeConfig(
+            compute_fn=_cf_one_upstream,
+            sources=[_build_request_source(), upstream.slice(['"purchaseAmt"'])],
+            output_schema=StructType([StructField("risk_score", DoubleType())]),
+        )
+        assert rtc.request_source is not None
+        metadata = RealtimeConfigMetadata(
+            name="MY_RTFV",
+            version="v1",
+            desc="",
+            compute_fn_name=rtc.get_function_name(),
+            compute_fn_source=rtc.get_function_source(),
+            sources=build_rtfv_source_refs(rtc),
+            request_schema_json=request_schema_to_json(rtc.request_source.schema),
+            output_schema_json=request_schema_to_json(rtc.output_schema),
+            output_columns=["risk_score"],
+            entity_names=["USER"],
+        )
+
+        def _get_feature_view(name: str, version: str) -> FeatureView:
+            if SqlIdentifier(name).resolved() != "myFv":
+                raise ValueError(f"Failed to find FeatureView {name}/{version}")
+            return upstream
+
+        fs = MagicMock()
+        fs._config.database = SqlIdentifier("DB")
+        fs._config.schema = SqlIdentifier("SCH")
+        fs.get_feature_view.side_effect = _get_feature_view
+        return fs, metadata
+
+    def test_quoted_upstream_lookup(self) -> None:
+        """A persisted ``myFv`` upstream is fetched as ``"myFv"`` with its ``"purchaseAmt"`` slice reapplied.
+
+        Passing the stored name unquoted would make Snowflake fold it to
+        ``MYFV``, so the lookup would fail and the RTFV could not be loaded.
+        """
+        fs, metadata = self._fs_and_metadata()
+        self.assertEqual(metadata.sources[0].fv_name, "myFv")
+        self.assertEqual(metadata.sources[0].slice_columns, ["purchaseAmt"])
+
+        rtfv = compose_rtfv_from_metadata(fs, metadata)
+
+        fs.get_feature_view.assert_called_once_with('"myFv"', "v1")
+        assert rtfv.realtime_config is not None
+        upstream = rtfv.realtime_config.feature_view_sources
+        self.assertEqual(len(upstream), 1)
+        self.assertIsInstance(upstream[0], FeatureViewSlice)
+        self.assertEqual(upstream[0].names, ['"purchaseAmt"'])
 
 
 class RealtimeConfigMetadataRoundTripTest(absltest.TestCase):

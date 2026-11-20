@@ -357,8 +357,8 @@ def validate_py_runtime_version(provided_py_version_str: str) -> None:
         IncorrectLocalEnvironmentError: Raised when the provided python version has different major or minor.
     """
     if provided_py_version_str != snowml_env.PYTHON_VERSION:
-        provided_py_version = version.parse(provided_py_version_str)
-        current_py_version = version.parse(snowml_env.PYTHON_VERSION)
+        provided_py_version, _ = parse_python_runtime_version(provided_py_version_str)
+        current_py_version, _ = parse_python_runtime_version(snowml_env.PYTHON_VERSION)
         if (
             provided_py_version.major != current_py_version.major
             or provided_py_version.minor != current_py_version.minor
@@ -487,7 +487,7 @@ def get_matched_package_versions_in_information_schema(
             f"package_name = '{req_name}'" for req_name in sorted(req.name for req in reqs_to_request)
         )
 
-        parsed_python_version = version.Version(python_version)
+        parsed_python_version, _ = parse_python_runtime_version(python_version)
         sql = textwrap.dedent(
             f"""
             SELECT PACKAGE_NAME, VERSION
@@ -543,7 +543,8 @@ def save_conda_env_file(
     Args:
         path: Path to the conda.yml file.
         conda_chan_deps: Dict of conda dependencies after validated.
-        python_version: A string 'major.minor' for the model's python version.
+        python_version: A string 'major.minor' for the model's python version. A trailing ``t`` is omitted
+            from the conda pin.
         cuda_version: A string 'major.minor' for the model's cuda version.
         default_channel_override: The default channel to be put in the first place of the channels section.
     """
@@ -561,7 +562,8 @@ def save_conda_env_file(
         channels.remove(default_channel_override)
 
     env["channels"] = [default_channel_override] + channels + [_NODEFAULTS]
-    env["dependencies"] = [f"python=={python_version}.*"]
+    numeric_python_version, _ = parse_python_runtime_version(python_version)
+    env["dependencies"] = [f"python=={numeric_python_version.major}.{numeric_python_version.minor}.*"]
 
     if cuda_version is not None:
         env["dependencies"].extend([f"nvidia::cuda=={cuda_version}.*"])
@@ -790,8 +792,29 @@ def load_requirements_file(path: pathlib.Path) -> list[requirements.Requirement]
     return validate_pip_requirement_string_list(reqs)
 
 
-# We have to use re to support MLFlow generated python string, which use = rather than ==
-PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+))?(\.*)?")
+# We have to use re to support MLFlow generated python string, which use = rather than ==.
+# An optional trailing "t" is the free-threading ABI flag (for example python==3.14t).
+PYTHON_VERSION_PATTERN = re.compile(r"python(?:(?P<op>=|==|>|<|>=|<=|~=|===)(?P<ver>\d(?:\.\d+)+)(?P<abi>t)?)?(\.*)?")
+
+# Snowflake runtime versions are major.minor[.patch] plus an optional free-threading suffix.
+# packaging.version rejects the suffix, so it is split off before parsing.
+_PYTHON_RUNTIME_VERSION_PATTERN = re.compile(r"^(?P<version>\d+(?:\.\d+)*)(?P<abi>t)?$")
+
+
+def parse_python_runtime_version(python_version: str) -> tuple[version.Version, bool]:
+    """Parse a Python runtime version that may include a trailing ``t``.
+
+    Args:
+        python_version: Runtime version such as ``3.14``, ``3.14.10``, or ``3.14t``.
+
+    Returns:
+        The numeric version and whether the trailing ``t`` was present.
+    """
+    stripped = python_version.strip()
+    match = _PYTHON_RUNTIME_VERSION_PATTERN.fullmatch(stripped)
+    if match is None:
+        return version.parse(stripped), False
+    return version.parse(match.group("version")), match.group("abi") is not None
 
 
 def parse_python_version_string(dep: str) -> str | None:
@@ -804,7 +827,7 @@ def parse_python_version_string(dep: str) -> str | None:
             raise ValueError("Unsupported operator for python version specifier.")
         ver = m.group("ver")
         if ver:
-            return ver
+            return f"{ver}{m.group('abi') or ''}"
         else:
             # "python" only, no specifier
             return ""
